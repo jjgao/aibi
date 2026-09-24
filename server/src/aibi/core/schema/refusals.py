@@ -83,6 +83,32 @@ class RefusalCode(StrEnum):
     """The release was withdrawn: it is never published or withdrawn again (§12.3)."""
     ERASURE_BLOCKED = "ERASURE_BLOCKED"
     """An erasure whose first step is missing: the latest release still holds the rows."""
+    # The validation gate's structural checks (§13.2, D230):
+    KEY_NULL = "KEY_NULL"
+    """A primary-key cell that is not PRESENT."""
+    KEY_NOT_UNIQUE = "KEY_NOT_UNIQUE"
+    """Two rows with the same key, or the same parent columns of a relationship."""
+    CARDINALITY_VIOLATED = "CARDINALITY_VIOLATED"
+    """Child rows of a one-to-one relationship that share their parent."""
+    DANGLING_REFERENCE = "DANGLING_REFERENCE"
+    """A foreign key, every cell PRESENT, that no parent row has (§5.5)."""
+    COVERAGE_NULL = "COVERAGE_NULL"
+    """A cell that is not PRESENT in a column a coverage names (§5.6)."""
+    COVERAGE_UNKNOWN = "COVERAGE_UNKNOWN"
+    """A coverage or assignment row naming a parent or group that does not exist (§5.6)."""
+    OUTSIDE_RECORD_FILTER = "OUTSIDE_RECORD_FILTER"
+    """A PRESENT value outside its relationship's ``record_filter`` (§5.6)."""
+    NOT_APPLICABLE_IN_FILTER = "NOT_APPLICABLE_IN_FILTER"
+    """A NOT_APPLICABLE cell in a column a ``record_filter`` names (§5.6)."""
+    # Importing files (§13.1, §14, D224–D235):
+    PATH_NOT_CONFINED = "PATH_NOT_CONFINED"
+    """A path that is not an absolute path inside the upload area or an import directory."""
+    ARCHIVE_REFUSED = "ARCHIVE_REFUSED"
+    """An archive entry the import refuses: a link, an absolute or ``..`` name, encryption."""
+    UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
+    """A file or column type no importer reads; the alternatives list those it reads."""
+    EMPTY_SOURCE = "EMPTY_SOURCE"
+    """A source in which no table was found."""
 
 
 class Limit(Output):
