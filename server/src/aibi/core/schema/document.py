@@ -13,6 +13,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -33,6 +34,7 @@ from pydantic_core import PydanticCustomError
 from aibi.core.schema.ids import (
     CONCEPT_ID_RE,
     IDENT,
+    IDENTIFIER_PARTS,
     MAX_SAFE_INTEGER,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
@@ -45,6 +47,7 @@ from aibi.core.schema.ids import (
     Name,
     PackId,
     RelationshipId,
+    identifier_parts,
     no_double_underscore,
 )
 from aibi.core.schema.limits import (
@@ -52,7 +55,6 @@ from aibi.core.schema.limits import (
     COHORTS,
     CONSTANT_CHARACTERS,
     DATASETS,
-    IDENTIFIER_CHARACTERS,
     KEY_COLUMNS,
     LIST_MEMBERS,
     MAX_CLAUSES,
@@ -73,6 +75,7 @@ from aibi.core.schema.limits import (
     PACKS,
     PARAMETERS,
     PATH_STEPS,
+    REFERENCE_CHARACTERS,
     SCOPE_COLUMNS,
     VIEWS,
     LimitName,
@@ -176,14 +179,16 @@ ColumnOrConcept = Annotated[
         pattern=rf"^(?:{IDENT}\.{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$",
         max_length=_REFERENCE_LENGTH,
     ),
-    LimitName(IDENTIFIER_CHARACTERS),
+    LimitName(REFERENCE_CHARACTERS),
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 TableOrConcept = Annotated[
     str,
     Field(pattern=rf"^(?:{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$", max_length=_REFERENCE_LENGTH),
-    LimitName(IDENTIFIER_CHARACTERS),
+    LimitName(REFERENCE_CHARACTERS),
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
@@ -238,6 +243,7 @@ _DRAFTED_BY_RE = re.compile(_DRAFTED_BY)
 def _drafted_by(value: str) -> str:
     kind, _, name = value.partition(":")
     if kind == "model":
+        identifier_parts(name)
         no_double_underscore(name)
     if kind in ("agent", "operator") and len(name) > MAX_NAME:
         raise PydanticCustomError(
@@ -483,9 +489,15 @@ class UnitKey(DocModel):
     ]
 
 
-def _ids_text(value: str) -> str:
+def _ids_dataset(value: object) -> object:
     """The dataset part of ``"<dataset>:<key>"`` is an identifier; the key is anything."""
-    no_double_underscore(value.split(":", 1)[0])
+    if isinstance(value, str):
+        identifier_parts(value.partition(":")[0])
+    return value
+
+
+def _ids_text(value: str) -> str:
+    no_double_underscore(value.partition(":")[0])
     return value
 
 
@@ -501,8 +513,13 @@ IdsMember = Annotated[
     Annotated[
         Annotated[
             str,
-            Field(pattern=rf"^{IDENT}:[^\x00-\x1f\x7f\u2028\u2029]+$", max_length=MAX_STRING),
+            Field(
+                pattern=rf"^{IDENT}:[^\x00-\x1f\x7f\u2028\u2029]+$",
+                max_length=MAX_STRING,
+                json_schema_extra={"not": {"pattern": "^[^:]*__"}},
+            ),
             LimitName(CONSTANT_CHARACTERS),
+            BeforeValidator(_ids_dataset),
             AfterValidator(_ids_text),
         ],
         Tag("ids:text"),
@@ -554,7 +571,8 @@ class PackLeaf(BaseModel):
             max_length=2 * MAX_IDENTIFIER + 1,
             json_schema_extra={"not": {"anyOf": [_RESERVED_NAMESPACE, {"pattern": "__"}]}},
         ),
-        LimitName(IDENTIFIER_CHARACTERS),
+        LimitName(REFERENCE_CHARACTERS),
+        IDENTIFIER_PARTS,
     ]
 
     @model_validator(mode="after")
@@ -610,7 +628,9 @@ _LEAF_TAGS = {
     "cohort": "leaf:cohort",
 }
 _COMBINATORS = ("all", "any", "not", "known", "unknown")
-_PACK_KIND = re.compile(PACK_LEAF_KIND_RE.pattern)
+_PACK_KIND = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+"""A kind shaped like ``<pack>.<name>``, however long: the pack leaf's checks then name the limit
+that a long one hits."""
 
 
 def _clause_tag(value: object) -> str:
@@ -727,8 +747,12 @@ class View(DocModel):
 
 
 _PACK_NAMES: dict[str, JsonValue] = {
-    "propertyNames": {"not": {"enum": [*sorted(RESERVED_PACK_IDS)]}}
+    "propertyNames": {
+        "maxLength": MAX_IDENTIFIER,
+        "not": {"anyOf": [{"pattern": "__"}, {"enum": [*sorted(RESERVED_PACK_IDS)]}]},
+    }
 }
+"""Replaces the key schema Pydantic generates for ``packs``, so it restates that schema."""
 
 
 class Document(DocModel):

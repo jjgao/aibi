@@ -5,12 +5,14 @@ problem lies inside a value that a parameter supplied, the path points at the ``
 and the message names the parameter.
 
 Loading goes on past ``null`` members and refused parameter references, so that independent
-problems are all reported, but nothing is reported under a position already refused. Refusals
-are de-duplicated by (path, code), sorted, and capped at ``MAX_REFUSALS``; a last refusal says
-how many were left out.
+problems are all reported, but nothing is reported under a position already refused, nor what
+follows from it: a clause whose ``kind`` was refused is not checked, and an object that lost a
+null member is not refused for lacking it. Refusals are de-duplicated by (path, code), sorted,
+and capped at ``MAX_REFUSALS``; a last refusal says how many were left out.
 """
 
 import json
+import re
 import types
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -111,12 +113,16 @@ def load_document(source: str | bytes) -> DocumentResult:
         refused.add(path)
         found.append(_Found(path, RefusalCode.NULL_NOT_ALLOWED, _null_refusal(path)))
     # A null member is reported above; leaving it out lets its siblings be checked.
-    cleaned = cast(dict[str, JsonValue], _without_null_members(written)) if nulls else written
+    dropped: set[str] = set()
+    cleaned = written
+    if nulls:
+        cleaned = cast(dict[str, JsonValue], _without_null_members(written, "", None, dropped))
     substitution = substitute(cleaned, size)
     for refusal in substitution.refusals:
         found.append(_Found(refusal.path, refusal.code, _given(refusal)))
     refused.update(substitution.failed)
-    refused.update(_knock_ons(nulls, substitution.failed, substitution.positions))
+    knock_ons = _knock_ons(nulls, dropped, substitution.failed, substitution.positions)
+    refused.update(knock_ons.under)
 
     document: Document | None = None
     try:
@@ -126,10 +132,14 @@ def load_document(source: str | bytes) -> DocumentResult:
             if details["type"] == "null_not_allowed" and nulls:
                 continue  # every null is already reported, at its own path
             path = pointer(_tokens(details["loc"]))
+            if details["type"] in _OBJECT_RULES and path in knock_ons.lost_members:
+                continue  # the object lacks a member only because a null was left out
             if not _under(path, refused):
                 found.append(_Found(path, _code(details["type"]), _error_refusal(details)))
     else:
         for refusal in check_document(document):
+            if knock_ons.no_dataset and refusal.code in _DATASET_RULES:
+                continue  # which datasets a cohort draws on is not known
             if refusal.path is None or not _under(refusal.path, refused):
                 found.append(_Found(refusal.path, refusal.code, _given(refusal)))
 
@@ -163,34 +173,96 @@ def _error_refusal(details: ErrorDetails) -> Callable[[], Refusal]:
 _MAPS = frozenset({"packs", "params", "cohorts", "scope", "via"})
 """Members whose values are maps: a null entry there is kept, so it is refused where it is."""
 
+_OBJECT_RULES = frozenset({"not_a_clause", "unknown_kind", "conflicting_members", "empty_range"})
+"""Errors about an object as a whole, which a member left out can cause."""
 
-def _without_null_members(value: JsonValue, parent: str | int | None = None) -> JsonValue:
+_DATASET_RULES = frozenset(
+    {
+        RefusalCode.DATASET_MISSING,
+        RefusalCode.COHORT_MISMATCH,
+        RefusalCode.CROSS_DATASET_ONLY,
+        RefusalCode.UNKNOWN_DATASET,
+        RefusalCode.CONCEPT_REQUIRED,
+    }
+)
+"""Document checks that depend on which datasets each cohort draws on."""
+
+
+def _without_null_members(
+    value: JsonValue, path: str, parent: str | int | None, dropped: set[str]
+) -> JsonValue:
     """The document without the null members of its objects, which are reported already.
 
-    Leaving a null member out lets its siblings be checked. Entries of maps are kept, since
-    leaving one out could make the map look empty or a cohort look unknown, and ``params``
-    values are verbatim.
+    Leaving a null member out lets its siblings be checked; ``dropped`` collects the pointers
+    of the members left out. Entries of maps are kept, since leaving one out could make the map
+    look empty or a cohort look unknown. A null ``params`` is kept too, so that references are
+    marked as failed rather than unknown, and ``params`` values are verbatim.
     """
     if isinstance(value, list):
-        return [_without_null_members(item, index) for index, item in enumerate(value)]
+        return [
+            _without_null_members(item, f"{path}/{index}", index, dropped)
+            for index, item in enumerate(value)
+        ]
     if not isinstance(value, dict):
         return value
     result: dict[str, JsonValue] = {}
     for key, member in value.items():
-        if member is None and parent not in _MAPS:
-            continue
+        at = f"{path}/{escape_token(key)}"
         verbatim = parent is None and key == "params"
-        result[key] = member if verbatim else _without_null_members(member, key)
+        if member is None and parent not in _MAPS and not verbatim:
+            dropped.add(at)
+            continue
+        result[key] = member if verbatim else _without_null_members(member, at, key, dropped)
     return result
 
 
-def _knock_ons(nulls: list[str], failed: list[str], positions: dict[str, str]) -> set[str]:
-    """Positions whose problems follow from others already reported.
+@dataclass(frozen=True)
+class _KnockOns:
+    under: set[str]
+    """Positions under which nothing is reported."""
+    lost_members: set[str]
+    """Objects that a null member was left out of, or that hold a null from a parameter."""
+    no_dataset: bool
+    """A ``dataset`` or ``datasets`` member was null."""
 
-    A null inside a parameter's value recurs wherever the value was substituted, and a leaf
-    whose ``kind`` is a refused reference has no shape to check.
+
+_INDEX = re.compile(r"0|[1-9][0-9]*")
+
+
+def _is_clause(path: str) -> bool:
+    """Whether a pointer names a clause: an item of a cohort's ``all``, or a clause below one."""
+    tokens = path.split("/")[1:]
+    if len(tokens) < 4 or tokens[0] != "cohorts" or tokens[2] != "all":
+        return False
+    if _INDEX.fullmatch(tokens[3]) is None:
+        return False
+    rest = tokens[4:]
+    while rest:
+        if rest[0] in ("not", "known", "unknown"):
+            rest = rest[1:]
+        elif len(rest) > 1 and rest[0] in ("all", "any", "where") and _INDEX.fullmatch(rest[1]):
+            rest = rest[2:]
+        else:
+            return False
+    return True
+
+
+def _parent(path: str) -> str:
+    return path[: path.rfind("/")]
+
+
+def _knock_ons(
+    nulls: list[str], dropped: set[str], failed: list[str], positions: dict[str, str]
+) -> _KnockOns:
+    """Problems that follow from others already reported.
+
+    A null inside a parameter's value recurs wherever the value was substituted; a clause whose
+    ``kind`` is a refused reference has no shape to check; an object that lost a null member
+    may look like no clause, or lack a member it needs; and without a cohort's datasets, the
+    checks that compare them cannot be made.
     """
-    refused: set[str] = set()
+    under: set[str] = set()
+    lost = {_parent(path) for path in dropped}
     by_parameter: dict[str, list[str]] = {}
     for position, name in positions.items():
         by_parameter.setdefault(name, []).append(position)
@@ -199,9 +271,24 @@ def _knock_ons(nulls: list[str], failed: list[str], positions: dict[str, str]) -
             continue
         token, _, rest = null.removeprefix("/params/").partition("/")
         name = token.replace("~1", "/").replace("~0", "~")
-        refused.update(f"{at}/{rest}" if rest else at for at in by_parameter.get(name, []))
-    refused.update(path.removesuffix("/kind") for path in failed if path.endswith("/kind"))
-    return refused
+        for at in by_parameter.get(name, []):
+            substituted = f"{at}/{rest}" if rest else at
+            under.add(substituted)
+            lost.add(_parent(substituted))
+    under.update(
+        clause
+        for path in failed
+        if path.endswith("/kind") and _is_clause(clause := path.removesuffix("/kind"))
+    )
+    no_dataset = any(
+        path == "/dataset"
+        or (
+            _parent(_parent(path)) == "/cohorts"
+            and path.rsplit("/", 1)[1] in ("dataset", "datasets")
+        )
+        for path in dropped
+    )
+    return _KnockOns(under, lost, no_dataset)
 
 
 def _nulls(value: JsonValue) -> Iterator[str]:

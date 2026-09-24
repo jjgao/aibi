@@ -8,7 +8,9 @@ An identifier is at most 64 characters of ``[a-z0-9_]``, starting with a letter,
 ``__``, which is reserved for the system (§12.2). The pattern bounds each identifier in a compound
 form such as ``<table>.<column>``; ``__`` is refused by a separate check (``NO_DOUBLE_UNDERSCORE``)
 and in JSON Schema by ``not: {pattern: "__"}``, because a pattern alone cannot say both without
-look-around.
+look-around. An identifier in a compound form that is too long is refused before the pattern is
+tried, naming the identifier limit (``IDENTIFIER_PARTS``); the form as a whole is bounded by the
+reference limit.
 """
 
 import re
@@ -16,15 +18,23 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, StringConstraints
+from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints
 from pydantic_core import PydanticCustomError
 
-from aibi.core.schema.limits import IDENTIFIER_CHARACTERS, MAX_IDENTIFIER, LimitName
+from aibi.core.schema.limits import (
+    IDENTIFIER_CHARACTERS,
+    MAX_COLUMNS,
+    MAX_IDENTIFIER,
+    REFERENCE_CHARACTERS,
+    LimitName,
+)
 
 IDENT = rf"[a-z][a-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
 """One identifier: the pattern bounds its length; ``__`` is refused separately."""
 NAME = rf"[A-Za-z_][A-Za-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
 HEX64 = r"[0-9a-f]{64}"
+CODE = rf"[A-Z][A-Z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
+"""A code, in upper snake case: bounded like an identifier, and never holding ``__`` either."""
 _COLUMNS = rf"{IDENT}(?:\+{IDENT})*"
 
 IDENTIFIER_RE = re.compile(rf"^{IDENT}$")
@@ -46,6 +56,7 @@ LEAF_KEY_RE = re.compile(rf"^leaf:{HEX64}$")
 ISSUANCE_ID_RE = re.compile(r"^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 """``iss:`` and a ULID in Crockford's base 32; never hashed."""
 DECIMAL_INTEGER_RE = re.compile(r"^(?:0|-?[1-9][0-9]*)$")
+PACK_CODE_RE = re.compile(rf"^{IDENT}\.{CODE}$")
 
 MAX_SAFE_INTEGER = 2**53 - 1
 """Integers beyond ±(2^53 - 1) are carried as decimal strings (SPEC §5.1)."""
@@ -59,6 +70,8 @@ DATASET_DESCRIPTOR_ID = "dataset"
 """The dataset descriptor's id, which no table may take (SPEC §5.1)."""
 
 _LIMIT = LimitName(IDENTIFIER_CHARACTERS)
+_REFERENCE_LIMIT = LimitName(REFERENCE_CHARACTERS)
+_SEPARATORS = re.compile(r"[.:+]")
 
 
 def no_double_underscore(value: str) -> str:
@@ -74,12 +87,36 @@ NO_DOUBLE_UNDERSCORE = AfterValidator(no_double_underscore)
 NO_DOUBLE_UNDERSCORE_SCHEMA = Field(json_schema_extra={"not": {"pattern": "__"}})
 
 
+def identifier_parts(value: object) -> object:
+    """Refuses a compound form holding an identifier or code longer than one may be.
+
+    The form's pattern would refuse it too, without naming the limit (SPEC §8.6). Only the part
+    before an ``@`` is made of identifiers: a pin after it is left to the pattern.
+    """
+    if isinstance(value, str):
+        for part in _SEPARATORS.split(value.partition("@")[0]):
+            if len(part) > MAX_IDENTIFIER:
+                raise PydanticCustomError(
+                    "string_too_long",
+                    "An identifier has at most {max_length} characters",
+                    {"max_length": MAX_IDENTIFIER, "limit": IDENTIFIER_CHARACTERS},
+                )
+    return value
+
+
+IDENTIFIER_PARTS = BeforeValidator(identifier_parts)
+
+
 def _form(regex: re.Pattern[str], max_length: int) -> StringConstraints:
     return StringConstraints(pattern=regex.pattern, max_length=max_length)
 
 
 _COMPOUND = 2 * MAX_IDENTIFIER + 1
 """``<identifier>.<identifier>``."""
+_KEYED = 4 + MAX_IDENTIFIER + 1 + MAX_COLUMNS * MAX_IDENTIFIER + MAX_COLUMNS - 1
+"""``rel:<table>.<column>[+<column>…]`` with ``MAX_COLUMNS`` columns; ``cov:`` is as long."""
+_CONCEPT = 4 * MAX_IDENTIFIER
+"""A concept id; its dotted parts are not counted, so its length is."""
 
 Identifier = Annotated[
     str,
@@ -93,55 +130,80 @@ TableId = Identifier
 ColumnId = Identifier
 PackId = Identifier
 ColumnRef = Annotated[
-    str, _form(COLUMN_REF_RE, _COMPOUND), _LIMIT, NO_DOUBLE_UNDERSCORE, NO_DOUBLE_UNDERSCORE_SCHEMA
+    str,
+    _form(COLUMN_REF_RE, _COMPOUND),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 """``<table>.<column>``: a column's descriptor id."""
 ConceptId = Annotated[
     str,
-    _form(CONCEPT_ID_RE, 4 * MAX_IDENTIFIER),
-    _LIMIT,
+    _form(CONCEPT_ID_RE, _CONCEPT),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 RelationshipId = Annotated[
     str,
-    _form(RELATIONSHIP_ID_RE, 8 * MAX_IDENTIFIER),
-    _LIMIT,
+    _form(RELATIONSHIP_ID_RE, _KEYED),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 CoverageId = Annotated[
     str,
-    _form(COVERAGE_ID_RE, 8 * MAX_IDENTIFIER),
-    _LIMIT,
+    _form(COVERAGE_ID_RE, _KEYED),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 EndpointId = Annotated[
     str,
     _form(ENDPOINT_ID_RE, MAX_IDENTIFIER + 3),
-    _LIMIT,
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 AnalysisId = Annotated[
-    str, _form(ANALYSIS_ID_RE, _COMPOUND), _LIMIT, NO_DOUBLE_UNDERSCORE, NO_DOUBLE_UNDERSCORE_SCHEMA
+    str,
+    _form(ANALYSIS_ID_RE, _COMPOUND),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 ModelCardId = Annotated[
     str,
     _form(MODEL_CARD_ID_RE, MAX_IDENTIFIER + 6),
-    _LIMIT,
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 DatasetRef = Annotated[
     str,
     _form(DATASET_REF_RE, MAX_IDENTIFIER + 72),
-    _LIMIT,
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
     NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 """A dataset id, optionally pinned: ``x``, ``x@3``, ``x@sha256:<hex>`` or ``x@draft``."""
+PackCode = Annotated[
+    str,
+    _form(PACK_CODE_RE, _COMPOUND),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+"""A pack's refusal or caveat code: ``<pack id>.<CODE>``."""
 Name = Annotated[str, _form(NAME_RE, MAX_IDENTIFIER), _LIMIT]
 """A cohort or parameter name."""
 JsonPointer = Annotated[str, StringConstraints(pattern=JSON_POINTER_RE.pattern)]

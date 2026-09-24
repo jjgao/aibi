@@ -470,7 +470,16 @@ LIMITED: list[tuple[dict[str, Any], str, str, int]] = [
     ({"drafted_by": "agent:" + "x" * 201}, "/drafted_by", "name_characters", 200),
     ({"packs": {f"p{index}": ">=1" for index in range(17)}}, "/packs", "packs", 16),
     ({"cohorts": {"c" * 65: {"all": []}}}, "/cohorts/" + "c" * 65, "identifier_characters", 64),
-    ({"unit": "t" * 257}, "/unit", "identifier_characters", 256),
+    ({"unit": "t" * 257}, "/unit", "identifier_characters", 64),
+    ({"unit": "core:" + "a." * 130 + "a"}, "/unit", "reference_characters", 256),
+    ({"dataset": "d" * 65}, "/dataset", "identifier_characters", 64),
+    (
+        {"views": [{"analysis": "compare." + "x" * 65}]},
+        "/views/0/analysis",
+        "identifier_characters",
+        64,
+    ),
+    ({"drafted_by": "model:" + "m" * 65}, "/drafted_by", "identifier_characters", 64),
     (
         {"cohorts": {"c": {"all": [], "datasets": [f"d{index}" for index in range(65)]}}},
         "/cohorts/c/datasets",
@@ -485,6 +494,13 @@ LIMITED_LEAVES: list[tuple[dict[str, Any], str, str, int]] = [
     ({"values": [1], "via": [{"rel": "rel:a.b", "dir": "up"}] * 17}, "/via", "path_steps", 16),
     ({"values": [1], "quantifier": ["some"] * 17}, "/quantifier", "path_steps", 16),
     ({"values": [1], "via": {f"d{i}": [] for i in range(65)}}, "/via", "datasets", 64),
+    ({"column": "t." + "c" * 65, "values": [1]}, "/column", "identifier_characters", 64),
+    (
+        {"values": [1], "via": [{"rel": "rel:a." + "b" * 65, "dir": "up"}]},
+        "/via/0/rel",
+        "identifier_characters",
+        64,
+    ),
 ]
 
 
@@ -513,6 +529,8 @@ def test_other_leaf_limits_are_named() -> None:
     for clause, path, name in [
         (covered, "/scope", "scope_columns"),
         (ids, "/ids/0/key", "key_columns"),
+        ({"kind": "ids", "ids": ["d" * 65 + ":1"]}, "/ids/0", "identifier_characters"),
+        ({"kind": "p." + "x" * 65}, "/kind", "identifier_characters"),
     ]:
         [refusal] = load(with_clause(clause)).refusals
         assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/cohorts/c/all/0" + path)
@@ -691,6 +709,88 @@ def test_knock_on_refusals_are_not_reported() -> None:
     document = with_clause({"kind": "value", "column": "$col", "values": "$v"})
     document["params"] = [1]
     assert refusals(document) == [("WRONG_TYPE", "/params")]
+
+
+def test_only_a_clause_kind_refused_hides_the_clause() -> None:
+    nested = with_clause({"not": {"kind": "$nope", "column": "BAD"}})
+    assert refusals(nested) == [("UNKNOWN_PARAMETER", "/cohorts/c/all/0/not/kind")]
+    bad_leaf = {"kind": "value", "column": "BAD", "values": [1]}
+    root = {**with_clause(bad_leaf), "kind": "$typo"}
+    assert refusals(root) == [
+        ("INVALID_VALUE", "/cohorts/c/all/0/column"),
+        ("UNKNOWN_PARAMETER", "/kind"),
+    ]
+    named_kind = {
+        **with_clause(bad_leaf),
+        "cohorts": {"kind": "$nope", "other": {"all": [bad_leaf]}},
+    }
+    assert refusals(named_kind) == [
+        ("UNKNOWN_PARAMETER", "/cohorts/kind"),
+        ("INVALID_VALUE", "/cohorts/other/all/0/column"),
+    ]
+    scope = with_clause({"kind": "covered", "table": "m", "scope": {"kind": "$nope", "g": []}})
+    assert refusals(scope) == [
+        ("INVALID_VALUE", "/cohorts/c/all/0/scope/g"),
+        ("UNKNOWN_PARAMETER", "/cohorts/c/all/0/scope/kind"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        (with_clause({"kind": None, "column": "t.c", "values": [1]}), "/cohorts/c/all/0/kind"),
+        (
+            with_clause({"kind": "value", "column": "t.c", "values": None}),
+            "/cohorts/c/all/0/values",
+        ),
+        (with_clause({"not": None}), "/cohorts/c/all/0/not"),
+        (
+            with_clause({"kind": "value", "column": "t.c", "range": {"gt": None}}),
+            "/cohorts/c/all/0/range/gt",
+        ),
+        ({**with_clause({"all": []}), "dataset": None}, "/dataset"),
+        ({**with_clause({"all": []}), "cohorts": {"c": {"all": [], "dataset": None}}}, None),
+        (
+            {**with_clause({"kind": "value", "column": "t.c", "values": "$v"}), "params": None},
+            "/params",
+        ),
+        (
+            {**with_clause("$p"), "params": {"p": {"kind": None, "column": "t.c", "values": [1]}}},
+            "/params/p/kind",
+        ),
+    ],
+)
+def test_a_null_left_out_does_not_make_its_object_refused(
+    document: dict[str, Any], path: str | None
+) -> None:
+    """Only the null is reported: not the clause, range or cohort that then lacks the member."""
+    [refusal] = load(document).refusals
+    assert refusal.code == "NULL_NOT_ALLOWED"
+    assert refusal.path == (path or "/cohorts/c/dataset")
+
+
+def test_problems_beside_a_null_left_out_are_still_reported() -> None:
+    leaf = {"kind": "value", "column": "t.c", "values": None, "lift": "loose"}
+    assert refusals(with_clause(leaf)) == [
+        ("INVALID_VALUE", "/cohorts/c/all/0/lift"),
+        ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/values"),
+    ]
+    duplicates = {"all": [], "datasets": ["a", "a"], "unmapped": None}
+    document = {**with_clause({"all": []}), "unit": "core:person", "cohorts": {"c": duplicates}}
+    assert refusals(document) == [
+        ("DUPLICATE_ENTRY", "/cohorts/c/datasets/1"),
+        ("NULL_NOT_ALLOWED", "/cohorts/c/unmapped"),
+    ]
+
+
+def test_references_to_the_longest_relationships_are_accepted() -> None:
+    columns = "+".join(f"{index:02d}".rjust(64, "c") for index in range(16))
+    step = {"rel": f"rel:{'t' * 64}.{columns}", "dir": "up"}
+    assert len(step["rel"]) == 1108
+    assert (
+        refusals(with_clause({"kind": "value", "column": "t.c", "values": [1], "via": [step]}))
+        == []
+    )
 
 
 def test_substituted_values_may_not_nest_too_deep() -> None:

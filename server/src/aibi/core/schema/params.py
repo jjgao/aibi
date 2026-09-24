@@ -53,8 +53,8 @@ def _size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
-def _measure(value: JsonValue) -> tuple[int, int, int]:
-    """A value's size in bytes, its number of JSON values and its nesting depth."""
+def _shape(value: JsonValue) -> tuple[int, int]:
+    """A value's number of JSON values and its nesting depth."""
     count = 0
     depth = 0
     pending: list[tuple[JsonValue, int]] = [(value, 0)]
@@ -65,7 +65,7 @@ def _measure(value: JsonValue) -> tuple[int, int, int]:
             depth = max(depth, level + 1)
             members = current.values() if isinstance(current, dict) else current
             pending.extend((member, level + 1) for member in members)
-    return _size(value), count, depth
+    return count, depth
 
 
 @dataclass
@@ -88,20 +88,22 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
     result = Substitution(document=None)
     usable = isinstance(params_value, dict)
     if not usable:
-        # Every reference fails with it; they are marked, but only params itself is refused.
+        # Every reference fails with it; they are marked, but only params itself is refused (a
+        # null params by the loader, which refuses every null).
         result.failed.append("/params")
-        result.refusals.append(
-            Refusal(
-                code=RefusalCode.WRONG_TYPE,
-                path="/params",
-                message=[text("params must be an object mapping names to values")],
+        if params_value is not None:
+            result.refusals.append(
+                Refusal(
+                    code=RefusalCode.WRONG_TYPE,
+                    path="/params",
+                    message=[text("params must be an object mapping names to values")],
+                )
             )
-        )
     params: dict[str, JsonValue] = params_value if isinstance(params_value, dict) else {}
     sizes: dict[str, tuple[int, int, int]] = {}
     pointer_value: dict[str, JsonValue] = {}
     total = _size(document) if size is None else size
-    values = _measure(document)[1]
+    values = _shape(document)[0]
 
     def refuse(refusal: Refusal) -> JsonValue:
         """Record a refusal; the reference stays in place, and nothing under it is reported."""
@@ -140,7 +142,7 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
                 )
             )
         if name not in sizes:
-            sizes[name] = _measure(params[name])
+            sizes[name] = (_size(params[name]), *_shape(params[name]))
         value_bytes, value_count, value_depth = sizes[name]
         grown = total + value_bytes - _size(value)
         more = values + value_count - 1

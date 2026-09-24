@@ -139,6 +139,10 @@ INVALID = [
     _with_clause({"kind": "value", "column": "t__x.c", "values": [1]}),
     _with_clause({"kind": "value", "column": "t" * 65 + ".c", "values": [1]}),
     {**BASE, "unit": "t__state", "cohorts": {"c": {"all": []}}},
+    {**BASE, "unit": "core:" + "a." * 130 + "a", "cohorts": {"c": {"all": []}}},
+    {**BASE, "packs": {"a__b": ">=1"}, "cohorts": {"c": {"all": []}}},
+    _with_clause({"kind": "ids", "ids": ["d__x:1"]}),
+    _with_clause({"kind": "p." + "x" * 65}),
 ]
 
 
@@ -156,6 +160,15 @@ VALID = [
     _with_clause({"kind": "exists", "table": "s", "min_count": 2, "quantifier": "some"}),
     {**BASE, "params": {"p": ["$5"], "q": {"k": "$5"}}, "cohorts": {"c": {"all": []}}},
     _with_clause({"kind": "testpack.flag", "q": "$$5", "n": [1, {"x": True}]}),
+    _with_clause({"kind": "ids", "ids": ["d:x__y", "d:a:b"]}),
+    _with_clause(
+        {
+            "kind": "value",
+            "column": "t.c",
+            "values": [1],
+            "via": [{"rel": "rel:t." + "+".join(["c" * 64] * 16), "dir": "up"}],
+        }
+    ),
 ]
 
 

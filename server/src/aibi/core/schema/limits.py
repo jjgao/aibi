@@ -47,6 +47,9 @@ CONSTANT_CHARACTERS = "constant_characters"
 NOTE_CHARACTERS = "note_characters"
 NAME_CHARACTERS = "name_characters"
 IDENTIFIER_CHARACTERS = "identifier_characters"
+REFERENCE_CHARACTERS = "reference_characters"
+"""A compound id or reference, such as ``<table>.<column>``, is at most as long as its parts
+allow; each identifier in it is bounded by ``identifier_characters``."""
 PATH_STEPS = "path_steps"
 KEY_COLUMNS = "key_columns"
 SCOPE_COLUMNS = "scope_columns"
@@ -99,6 +102,7 @@ __all__ = [
     "PACKS",
     "PARAMETERS",
     "PATH_STEPS",
+    "REFERENCE_CHARACTERS",
     "REFUSALS",
     "SCOPE_COLUMNS",
     "SUBSTITUTED_BYTES",

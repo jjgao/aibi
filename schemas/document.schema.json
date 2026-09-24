@@ -529,6 +529,9 @@
             "oneOf": [
               {
                 "maxLength": 4096,
+                "not": {
+                  "pattern": "^[^:]*__"
+                },
                 "pattern": "^[a-z][a-z0-9_]{0,63}:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
                 "type": "string"
               },
@@ -789,7 +792,7 @@
           "type": "string"
         },
         "rel": {
-          "maxLength": 512,
+          "maxLength": 1108,
           "not": {
             "pattern": "__"
           },
@@ -1236,17 +1239,25 @@
         }
       },
       "propertyNames": {
+        "maxLength": 64,
         "not": {
-          "enum": [
-            "cohort",
-            "compare",
-            "core",
-            "covered",
-            "exists",
-            "ids",
-            "summary",
-            "survival",
-            "value"
+          "anyOf": [
+            {
+              "pattern": "__"
+            },
+            {
+              "enum": [
+                "cohort",
+                "compare",
+                "core",
+                "covered",
+                "exists",
+                "ids",
+                "summary",
+                "survival",
+                "value"
+              ]
+            }
           ]
         }
       },

@@ -9,12 +9,8 @@ from typing import Annotated
 
 from pydantic import Field, JsonValue
 
-from aibi.core.schema.ids import IDENT, JsonPointer
+from aibi.core.schema.ids import JsonPointer, PackCode
 from aibi.core.schema.output import Output, Segment
-
-PACK_CODE = rf"^{IDENT}\.[A-Z][A-Z0-9_]*$"
-PackCode = Annotated[str, Field(pattern=PACK_CODE)]
-"""A pack's refusal or caveat code: ``<pack id>.<CODE>``."""
 
 
 class RefusalCode(StrEnum):
