@@ -158,14 +158,20 @@
         },
         "dataset": {
           "maxLength": 136,
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
           "title": "Dataset",
           "type": "string"
         },
         "datasets": {
           "items": {
             "maxLength": 136,
-            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
             "type": "string"
           },
           "maxItems": 64,
@@ -198,7 +204,7 @@
       "properties": {
         "cohort": {
           "maxLength": 64,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
           "title": "Cohort",
           "type": "string"
         },
@@ -237,7 +243,7 @@
           "maxProperties": 16,
           "minProperties": 1,
           "patternProperties": {
-            "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+            "^[a-z][a-z0-9_]{0,63}$": {
               "items": {
                 "anyOf": [
                   {
@@ -245,10 +251,12 @@
                     "type": "string"
                   },
                   {
-                    "type": [
-                      "boolean",
-                      "number"
-                    ]
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "number"
                   }
                 ]
               },
@@ -258,14 +266,20 @@
             }
           },
           "propertyNames": {
-            "maxLength": 64
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
           },
           "title": "Scope",
           "type": "object"
         },
         "table": {
           "maxLength": 256,
-          "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
           "title": "Table",
           "type": "string"
         },
@@ -282,7 +296,7 @@
               "additionalProperties": false,
               "maxProperties": 64,
               "patternProperties": {
-                "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                "^[a-z][a-z0-9_]{0,63}$": {
                   "items": {
                     "$ref": "#/$defs/Step"
                   },
@@ -291,7 +305,10 @@
                 }
               },
               "propertyNames": {
-                "maxLength": 64
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
               },
               "type": "object"
             }
@@ -311,9 +328,13 @@
         {
           "type": [
             "string",
-            "number",
             "boolean"
           ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
         },
         {
           "items": {
@@ -403,7 +424,10 @@
         },
         "table": {
           "maxLength": 256,
-          "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
           "title": "Table",
           "type": "string"
         },
@@ -420,7 +444,7 @@
               "additionalProperties": false,
               "maxProperties": 64,
               "patternProperties": {
-                "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                "^[a-z][a-z0-9_]{0,63}$": {
                   "items": {
                     "$ref": "#/$defs/Step"
                   },
@@ -429,7 +453,10 @@
                 }
               },
               "propertyNames": {
-                "maxLength": 64
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
               },
               "type": "object"
             }
@@ -502,7 +529,7 @@
             "oneOf": [
               {
                 "maxLength": 4096,
-                "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
+                "pattern": "^[a-z][a-z0-9_]{0,63}:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
                 "type": "string"
               },
               {
@@ -625,15 +652,24 @@
       "type": "object"
     },
     "PackLeaf": {
-      "additionalProperties": true,
+      "additionalProperties": {
+        "$ref": "#/$defs/DocumentJson"
+      },
       "description": "A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema.",
       "properties": {
         "kind": {
           "maxLength": 129,
           "not": {
-            "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+            "anyOf": [
+              {
+                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+              },
+              {
+                "pattern": "__"
+              }
+            ]
           },
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
           "title": "Kind",
           "type": "string"
         }
@@ -671,6 +707,8 @@
               "type": "string"
             },
             {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
               "type": "number"
             }
           ],
@@ -683,6 +721,8 @@
               "type": "string"
             },
             {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
               "type": "number"
             }
           ],
@@ -695,6 +735,8 @@
               "type": "string"
             },
             {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
               "type": "number"
             }
           ],
@@ -707,6 +749,8 @@
               "type": "string"
             },
             {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
               "type": "number"
             }
           ],
@@ -746,7 +790,10 @@
         },
         "rel": {
           "maxLength": 512,
-          "pattern": "^rel:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\+[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
           "title": "Rel",
           "type": "string"
         }
@@ -763,7 +810,10 @@
       "properties": {
         "dataset": {
           "maxLength": 64,
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "title": "Dataset",
           "type": "string"
         },
@@ -775,10 +825,12 @@
                 "type": "string"
               },
               {
-                "type": [
-                  "boolean",
-                  "number"
-                ]
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
               }
             ]
           },
@@ -896,7 +948,10 @@
       "properties": {
         "column": {
           "maxLength": 256,
-          "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
           "title": "Column",
           "type": "string"
         },
@@ -991,10 +1046,12 @@
               "type": "string"
             },
             {
-              "type": [
-                "boolean",
-                "number"
-              ]
+              "type": "boolean"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
             }
           ],
           "title": "Value"
@@ -1007,10 +1064,12 @@
                 "type": "string"
               },
               {
-                "type": [
-                  "boolean",
-                  "number"
-                ]
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
               }
             ]
           },
@@ -1032,7 +1091,7 @@
               "additionalProperties": false,
               "maxProperties": 64,
               "patternProperties": {
-                "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                "^[a-z][a-z0-9_]{0,63}$": {
                   "items": {
                     "$ref": "#/$defs/Step"
                   },
@@ -1041,7 +1100,10 @@
                 }
               },
               "propertyNames": {
-                "maxLength": 64
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
               },
               "type": "object"
             }
@@ -1062,14 +1124,17 @@
       "properties": {
         "analysis": {
           "maxLength": 129,
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
           "title": "Analysis",
           "type": "string"
         },
         "cohorts": {
           "items": {
             "maxLength": 64,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
             "type": "string"
           },
           "maxItems": 6,
@@ -1098,7 +1163,7 @@
         },
         "reference": {
           "maxLength": 64,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
           "title": "Reference",
           "type": "string"
         },
@@ -1130,7 +1195,7 @@
       "maxProperties": 6,
       "minProperties": 1,
       "patternProperties": {
-        "^[A-Za-z_][A-Za-z0-9_]*$": {
+        "^[A-Za-z_][A-Za-z0-9_]{0,63}$": {
           "$ref": "#/$defs/Cohort"
         }
       },
@@ -1142,12 +1207,15 @@
     },
     "dataset": {
       "maxLength": 136,
-      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
       "title": "Dataset",
       "type": "string"
     },
     "drafted_by": {
-      "pattern": "^(?:model:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
+      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
       "title": "Drafted By",
       "type": "string",
       "x-aibi-data": true
@@ -1162,7 +1230,7 @@
       "additionalProperties": false,
       "maxProperties": 16,
       "patternProperties": {
-        "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+        "^[a-z][a-z0-9_]{0,63}$": {
           "maxLength": 4096,
           "type": "string"
         }
@@ -1189,7 +1257,7 @@
       "additionalProperties": false,
       "maxProperties": 256,
       "patternProperties": {
-        "^[A-Za-z_][A-Za-z0-9_]*$": {
+        "^[A-Za-z_][A-Za-z0-9_]{0,63}$": {
           "$ref": "#/$defs/DocumentJson"
         }
       },
@@ -1201,7 +1269,10 @@
     },
     "unit": {
       "maxLength": 256,
-      "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
       "title": "Unit",
       "type": "string"
     },

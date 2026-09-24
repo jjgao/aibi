@@ -7,8 +7,8 @@ A string that is exactly ``"$name"`` is replaced by that parameter's value, what
 substituted, and substituted values are not scanned again.
 
 Substitution can multiply a document: a large value used in many places. The substituted
-document may be no larger than a document as written, in bytes and in JSON values; a reference
-that would cross either limit is refused.
+document may be no larger than a document as written, in bytes and in JSON values, nor nest
+deeper; a reference that would cross a limit is refused.
 """
 
 import json
@@ -21,8 +21,10 @@ from aibi.core.schema.ids import NAME
 from aibi.core.schema.jsonio import pointer
 from aibi.core.schema.limits import (
     JSON_VALUES,
+    MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
     MAX_VALUES,
+    NESTING_DEPTH,
     SUBSTITUTED_BYTES,
 )
 from aibi.core.schema.output import data, text
@@ -51,18 +53,19 @@ def _size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
-def _values(value: JsonValue) -> int:
-    """The number of JSON values in a value, itself included."""
+def _measure(value: JsonValue) -> tuple[int, int, int]:
+    """A value's size in bytes, its number of JSON values and its nesting depth."""
     count = 0
-    pending = [value]
+    depth = 0
+    pending: list[tuple[JsonValue, int]] = [(value, 0)]
     while pending:
-        current = pending.pop()
+        current, level = pending.pop()
         count += 1
-        if isinstance(current, dict):
-            pending.extend(current.values())
-        elif isinstance(current, list):
-            pending.extend(current)
-    return count
+        if isinstance(current, dict | list):
+            depth = max(depth, level + 1)
+            members = current.values() if isinstance(current, dict) else current
+            pending.extend((member, level + 1) for member in members)
+    return _size(value), count, depth
 
 
 @dataclass
@@ -82,24 +85,23 @@ class Substitution:
 def substitute(document: dict[str, JsonValue], size: int | None = None) -> Substitution:
     """Substitute parameters. ``size`` is the document's size in bytes as written, if known."""
     params_value = document.get("params", {})
-    if not isinstance(params_value, dict):
-        return Substitution(
-            document=document,
-            failed=["/params"],
-            refusals=[
-                Refusal(
-                    code=RefusalCode.WRONG_TYPE,
-                    path="/params",
-                    message=[text("params must be an object mapping names to values")],
-                )
-            ],
-        )
-    params: dict[str, JsonValue] = params_value
     result = Substitution(document=None)
-    sizes: dict[str, tuple[int, int]] = {}
+    usable = isinstance(params_value, dict)
+    if not usable:
+        # Every reference fails with it; they are marked, but only params itself is refused.
+        result.failed.append("/params")
+        result.refusals.append(
+            Refusal(
+                code=RefusalCode.WRONG_TYPE,
+                path="/params",
+                message=[text("params must be an object mapping names to values")],
+            )
+        )
+    params: dict[str, JsonValue] = params_value if isinstance(params_value, dict) else {}
+    sizes: dict[str, tuple[int, int, int]] = {}
     pointer_value: dict[str, JsonValue] = {}
     total = _size(document) if size is None else size
-    values = _values(document)
+    values = _measure(document)[1]
 
     def refuse(refusal: Refusal) -> JsonValue:
         """Record a refusal; the reference stays in place, and nothing under it is reported."""
@@ -108,9 +110,12 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
         result.refusals.append(refusal)
         return pointer_value[refusal.path]
 
-    def reference(value: str, where: str) -> JsonValue:
+    def reference(value: str, where: str, level: int) -> JsonValue:
         nonlocal total, values
         pointer_value[where] = value
+        if not usable:
+            result.failed.append(where)
+            return value
         match = _REFERENCE.fullmatch(value)
         if match is None:
             return refuse(
@@ -135,15 +140,18 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
                 )
             )
         if name not in sizes:
-            sizes[name] = (_size(params[name]), _values(params[name]))
-        grown = total + sizes[name][0] - _size(value)
-        more = values + sizes[name][1] - 1
-        if grown > MAX_DOCUMENT_BYTES or more > MAX_VALUES:
-            limit = (
-                Limit(name=SUBSTITUTED_BYTES, max=MAX_DOCUMENT_BYTES)
-                if grown > MAX_DOCUMENT_BYTES
-                else Limit(name=JSON_VALUES, max=MAX_VALUES)
-            )
+            sizes[name] = _measure(params[name])
+        value_bytes, value_count, value_depth = sizes[name]
+        grown = total + value_bytes - _size(value)
+        more = values + value_count - 1
+        limit: Limit | None = None
+        if grown > MAX_DOCUMENT_BYTES:
+            limit = Limit(name=SUBSTITUTED_BYTES, max=MAX_DOCUMENT_BYTES)
+        elif more > MAX_VALUES:
+            limit = Limit(name=JSON_VALUES, max=MAX_VALUES)
+        elif level + value_depth > MAX_DEPTH:
+            limit = Limit(name=NESTING_DEPTH, max=MAX_DEPTH)
+        if limit is not None:
             return refuse(
                 Refusal(
                     code=RefusalCode.LIMIT_EXCEEDED,
@@ -151,7 +159,7 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
                     message=[
                         text("Substituting parameter "),
                         data(name),
-                        text(" here makes the document larger than a document may be"),
+                        text(" here makes the document larger or deeper than a document may be"),
                     ],
                     limit=limit,
                 )
@@ -171,7 +179,7 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
         if isinstance(value, str) and value.startswith("$"):
             if value.startswith("$$"):
                 return value[1:]
-            return reference(value, pointer(path))
+            return reference(value, pointer(path), len(path))
         return value
 
     substituted: dict[str, JsonValue] = {}

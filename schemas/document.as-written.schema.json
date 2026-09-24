@@ -244,7 +244,10 @@
           "anyOf": [
             {
               "maxLength": 136,
-              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
               "title": "Dataset",
               "type": "string"
             },
@@ -267,7 +270,10 @@
                 "anyOf": [
                   {
                     "maxLength": 136,
-                    "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+                    "not": {
+                      "pattern": "__"
+                    },
+                    "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
                     "type": "string"
                   },
                   {
@@ -340,7 +346,7 @@
           "anyOf": [
             {
               "maxLength": 64,
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
               "title": "Cohort",
               "type": "string"
             },
@@ -435,7 +441,7 @@
               "maxProperties": 16,
               "minProperties": 1,
               "patternProperties": {
-                "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                "^[a-z][a-z0-9_]{0,63}$": {
                   "anyOf": [
                     {
                       "items": {
@@ -447,10 +453,12 @@
                                 "type": "string"
                               },
                               {
-                                "type": [
-                                  "boolean",
-                                  "number"
-                                ]
+                                "type": "boolean"
+                              },
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "number"
                               }
                             ]
                           },
@@ -484,7 +492,10 @@
                 }
               },
               "propertyNames": {
-                "maxLength": 64
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
               },
               "title": "Scope",
               "type": "object"
@@ -505,7 +516,10 @@
           "anyOf": [
             {
               "maxLength": 256,
-              "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Table",
               "type": "string"
             },
@@ -550,7 +564,7 @@
                   "additionalProperties": false,
                   "maxProperties": 64,
                   "patternProperties": {
-                    "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                    "^[a-z][a-z0-9_]{0,63}$": {
                       "anyOf": [
                         {
                           "items": {
@@ -587,7 +601,10 @@
                     }
                   },
                   "propertyNames": {
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "not": {
+                      "pattern": "__"
+                    }
                   },
                   "type": "object"
                 }
@@ -619,9 +636,13 @@
         {
           "type": [
             "string",
-            "number",
             "boolean"
           ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
         },
         {
           "items": {
@@ -825,7 +846,10 @@
           "anyOf": [
             {
               "maxLength": 256,
-              "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Table",
               "type": "string"
             },
@@ -870,7 +894,7 @@
                   "additionalProperties": false,
                   "maxProperties": 64,
                   "patternProperties": {
-                    "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                    "^[a-z][a-z0-9_]{0,63}$": {
                       "anyOf": [
                         {
                           "items": {
@@ -907,7 +931,10 @@
                     }
                   },
                   "propertyNames": {
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "not": {
+                      "pattern": "__"
+                    }
                   },
                   "type": "object"
                 }
@@ -1038,7 +1065,7 @@
                     "anyOf": [
                       {
                         "maxLength": 4096,
-                        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
                         "type": "string"
                       },
                       {
@@ -1227,7 +1254,23 @@
       "type": "object"
     },
     "PackLeaf": {
-      "additionalProperties": true,
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DocumentJson"
+          },
+          {
+            "$ref": "#/$defs/ParameterReference"
+          }
+        ],
+        "if": {
+          "pattern": "^\\$",
+          "type": "string"
+        },
+        "then": {
+          "$ref": "#/$defs/ParameterReference"
+        }
+      },
       "description": "A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema.",
       "properties": {
         "kind": {
@@ -1235,9 +1278,16 @@
             {
               "maxLength": 129,
               "not": {
-                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                "anyOf": [
+                  {
+                    "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                  },
+                  {
+                    "pattern": "__"
+                  }
+                ]
               },
-              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
               "title": "Kind",
               "type": "string"
             },
@@ -1262,8 +1312,36 @@
     },
     "ParameterReference": {
       "description": "A parameter reference, \"$name\", or a literal string written \"$$…\"",
-      "pattern": "^\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\$[\\s\\S]*)$",
+      "pattern": "^\\$(?:[A-Za-z_][A-Za-z0-9_]{0,63}|\\$[\\s\\S]*)$",
       "type": "string"
+    },
+    "ParameterValue": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/ParameterValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/ParameterValue"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value but null"
     },
     "Range": {
       "additionalProperties": false,
@@ -1294,6 +1372,8 @@
                   "type": "string"
                 },
                 {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
                   "type": "number"
                 }
               ],
@@ -1320,6 +1400,8 @@
                   "type": "string"
                 },
                 {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
                   "type": "number"
                 }
               ],
@@ -1346,6 +1428,8 @@
                   "type": "string"
                 },
                 {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
                   "type": "number"
                 }
               ],
@@ -1372,6 +1456,8 @@
                   "type": "string"
                 },
                 {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
                   "type": "number"
                 }
               ],
@@ -1453,7 +1539,10 @@
           "anyOf": [
             {
               "maxLength": 512,
-              "pattern": "^rel:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\+[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
               "title": "Rel",
               "type": "string"
             },
@@ -1484,7 +1573,10 @@
           "anyOf": [
             {
               "maxLength": 64,
-              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
               "title": "Dataset",
               "type": "string"
             },
@@ -1512,10 +1604,12 @@
                         "type": "string"
                       },
                       {
-                        "type": [
-                          "boolean",
-                          "number"
-                        ]
+                        "type": "boolean"
+                      },
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "number"
                       }
                     ]
                   },
@@ -1673,7 +1767,10 @@
           "anyOf": [
             {
               "maxLength": 256,
-              "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Column",
               "type": "string"
             },
@@ -1908,10 +2005,12 @@
                   "type": "string"
                 },
                 {
-                  "type": [
-                    "boolean",
-                    "number"
-                  ]
+                  "type": "boolean"
+                },
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "number"
                 }
               ],
               "title": "Value"
@@ -1940,10 +2039,12 @@
                         "type": "string"
                       },
                       {
-                        "type": [
-                          "boolean",
-                          "number"
-                        ]
+                        "type": "boolean"
+                      },
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "number"
                       }
                     ]
                   },
@@ -2005,7 +2106,7 @@
                   "additionalProperties": false,
                   "maxProperties": 64,
                   "patternProperties": {
-                    "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+                    "^[a-z][a-z0-9_]{0,63}$": {
                       "anyOf": [
                         {
                           "items": {
@@ -2042,7 +2143,10 @@
                     }
                   },
                   "propertyNames": {
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "not": {
+                      "pattern": "__"
+                    }
                   },
                   "type": "object"
                 }
@@ -2077,7 +2181,10 @@
           "anyOf": [
             {
               "maxLength": 129,
-              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
               "title": "Analysis",
               "type": "string"
             },
@@ -2100,7 +2207,7 @@
                 "anyOf": [
                   {
                     "maxLength": 64,
-                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
                     "type": "string"
                   },
                   {
@@ -2197,7 +2304,7 @@
           "anyOf": [
             {
               "maxLength": 64,
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
               "title": "Reference",
               "type": "string"
             },
@@ -2271,7 +2378,7 @@
           "maxProperties": 6,
           "minProperties": 1,
           "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
+            "^[A-Za-z_][A-Za-z0-9_]{0,63}$": {
               "anyOf": [
                 {
                   "$ref": "#/$defs/Cohort"
@@ -2311,7 +2418,10 @@
       "anyOf": [
         {
           "maxLength": 136,
-          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
           "title": "Dataset",
           "type": "string"
         },
@@ -2328,7 +2438,7 @@
       }
     },
     "drafted_by": {
-      "pattern": "^(?:model:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
+      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
       "title": "Drafted By",
       "type": "string",
       "x-aibi-data": true
@@ -2345,7 +2455,7 @@
           "additionalProperties": false,
           "maxProperties": 16,
           "patternProperties": {
-            "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
+            "^[a-z][a-z0-9_]{0,63}$": {
               "anyOf": [
                 {
                   "maxLength": 4096,
@@ -2398,8 +2508,8 @@
       "additionalProperties": false,
       "maxProperties": 256,
       "patternProperties": {
-        "^[A-Za-z_][A-Za-z0-9_]*$": {
-          "$ref": "#/$defs/DocumentJson"
+        "^[A-Za-z_][A-Za-z0-9_]{0,63}$": {
+          "$ref": "#/$defs/ParameterValue"
         }
       },
       "propertyNames": {
@@ -2412,7 +2522,10 @@
       "anyOf": [
         {
           "maxLength": 256,
-          "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
           "title": "Unit",
           "type": "string"
         },

@@ -578,7 +578,7 @@ to `values` and `range`, each with `negate` (§7.6).
   applies per row or item, inside the quantifier: *some mutation whose gene is not TP53*. A
   clause-level `not` around the leaf negates the quantified answer: *no TP53 mutation*.
 - **Constants** have the column's type: numbers for numeric columns (integers for integer
-  columns), strings for categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with
+  columns; numbers beyond ±(2^53 − 1) are written as decimal strings, §5.1), strings for categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with
   an explicit offset for datetimes (compared in UTC), numbers in the column's units for time
   offsets. Anything else is refused.
 - **Ranges** apply to numbers, dates, datetimes, time offsets and ordered categories (by their
@@ -772,16 +772,16 @@ for copy number*), subject to §8.4.
   validated against the document schema. Parameter values are taken verbatim: nothing in them is
   substituted or unescaped. `notes`, `note` and `drafted_by` are plain text and never substituted.
   The substituted document may be no larger than a document may be (§14), in bytes and in JSON
-  values; a reference that would cross either limit is refused. An unknown name is a refusal
+  values, nor nest deeper; a reference that would cross a limit is refused. An unknown name is a refusal
   naming its path; declared but unused parameters are reported; the parameters used are echoed
   in results, outside the digest.
 - **Parsing.** A document is UTF-8 without a byte order mark, and its strings and keys are
-  Unicode text: lone surrogate escapes are refused (as in I-JSON, RFC 7493). Duplicate keys in a
-  JSON object, `null` anywhere in a document (an absent member is omitted) and non-finite numbers
-  are refused. A number is a value, not a spelling: `2.0` is the integer 2, as RFC 8785 writes
-  it, so an integral value beyond ±(2^53 − 1) is refused however it is written (such integers are
-  written as decimal strings, §5.1). Arrays and objects nest at most 64 deep. Size limits are in
-  §14.
+  Unicode text: lone surrogate escapes and noncharacters are refused (as in I-JSON, RFC 7493).
+  Duplicate keys in a JSON object, `null` anywhere in a document (an absent member is omitted)
+  and non-finite numbers are refused. A number is a value, not a spelling: `2.0` is the integer
+  2, as RFC 8785 writes it. Every double beyond ±(2^53 − 1) is an integer, so any number beyond
+  that range is refused, however it is written; such integers are written as decimal strings
+  (§5.1). Arrays and objects nest at most 64 deep. Size limits are in §14.
 - **Caps**, applied to the canonical form (§7.6): depth 8, counted as the number of clause
   objects on the longest chain from a member of a cohort's top-level `all` to a leaf, both
   included, through combinators and `where`; 64 leaves per cohort, counting the leaves inside
@@ -1217,7 +1217,8 @@ be written in a pointer because it is not Unicode text, the pointer is that of i
 carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
 `validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
 refusals with the same `path` and `code` are merged; nothing is reported inside a value already
-refused (a `null`, or a refused parameter reference); and after the first 1,000, one
+refused (a `null`, or a refused parameter reference) or in a leaf whose `kind` was refused; and
+after the first 1,000, one
 `LIMIT_EXCEEDED` refusal with `path` `null` says how many more were found. The other tools fail
 with the first refusal (HTTP 422, or an MCP tool error).
 
@@ -1830,7 +1831,8 @@ flags and counts.
   200,000 JSON values, as written and after substitution; nesting 64 deep; 4,096 characters per
   constant, 10,000 per note and 64 per identifier or name; 16 steps per path; 16 columns per unit
   key or scope; 256 clauses per list; 256 parameters; 64 datasets per cohort; 16 packs; and
-  1,000 refusals returned. Imports have size and decompression-ratio
+  1,000 refusals returned. A structured unit key costs several JSON values, so long `ids` lists
+  can reach the value limit before the list limit. Imports have size and decompression-ratio
   limits. Every tool call has a wall-clock limit that covers the analysis stage, enforced by
   running queries and analyses in worker processes that can be killed; each worker has a DuckDB
   memory limit. Categorical levels per analysis (at most 150) and resampling replicates are

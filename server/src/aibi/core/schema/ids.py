@@ -3,6 +3,12 @@
 Patterns are written without look-around, and without ``.``, so that the same expressions work in
 Pydantic (Rust regex), in Python's ``re`` and in JSON Schema validators (ECMA-262). Python code
 matches them with ``fullmatch``: with ``match``, ``$`` would also accept a trailing newline.
+
+An identifier is at most 64 characters of ``[a-z0-9_]``, starting with a letter, and never holds
+``__``, which is reserved for the system (§12.2). The pattern bounds each identifier in a compound
+form such as ``<table>.<column>``; ``__`` is refused by a separate check (``NO_DOUBLE_UNDERSCORE``)
+and in JSON Schema by ``not: {pattern: "__"}``, because a pattern alone cannot say both without
+look-around.
 """
 
 import re
@@ -10,14 +16,14 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from typing import Annotated, Literal
 
-from pydantic import StringConstraints
+from pydantic import AfterValidator, Field, StringConstraints
+from pydantic_core import PydanticCustomError
 
 from aibi.core.schema.limits import IDENTIFIER_CHARACTERS, MAX_IDENTIFIER, LimitName
 
-# An identifier: ``[a-z][a-z0-9_]*`` without ``__``. The trailing ``_?`` keeps a single final
-# underscore legal, as the grammar allows, while ``(?:_[a-z0-9]+)*`` forbids ``__``.
-IDENT = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?"
-NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+IDENT = rf"[a-z][a-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
+"""One identifier: the pattern bounds its length; ``__`` is refused separately."""
+NAME = rf"[A-Za-z_][A-Za-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
 HEX64 = r"[0-9a-f]{64}"
 _COLUMNS = rf"{IDENT}(?:\+{IDENT})*"
 
@@ -55,6 +61,19 @@ DATASET_DESCRIPTOR_ID = "dataset"
 _LIMIT = LimitName(IDENTIFIER_CHARACTERS)
 
 
+def no_double_underscore(value: str) -> str:
+    if "__" in value:
+        raise PydanticCustomError(
+            "reserved_name", "Names containing __ are reserved for the system"
+        )
+    return value
+
+
+NO_DOUBLE_UNDERSCORE = AfterValidator(no_double_underscore)
+"""Refuses ``__`` in a string made of identifiers."""
+NO_DOUBLE_UNDERSCORE_SCHEMA = Field(json_schema_extra={"not": {"pattern": "__"}})
+
+
 def _form(regex: re.Pattern[str], max_length: int) -> StringConstraints:
     return StringConstraints(pattern=regex.pattern, max_length=max_length)
 
@@ -62,20 +81,66 @@ def _form(regex: re.Pattern[str], max_length: int) -> StringConstraints:
 _COMPOUND = 2 * MAX_IDENTIFIER + 1
 """``<identifier>.<identifier>``."""
 
-Identifier = Annotated[str, _form(IDENTIFIER_RE, MAX_IDENTIFIER), _LIMIT]
+Identifier = Annotated[
+    str,
+    _form(IDENTIFIER_RE, MAX_IDENTIFIER),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
 DatasetId = Identifier
 TableId = Identifier
 ColumnId = Identifier
 PackId = Identifier
-ColumnRef = Annotated[str, _form(COLUMN_REF_RE, _COMPOUND), _LIMIT]
+ColumnRef = Annotated[
+    str, _form(COLUMN_REF_RE, _COMPOUND), _LIMIT, NO_DOUBLE_UNDERSCORE, NO_DOUBLE_UNDERSCORE_SCHEMA
+]
 """``<table>.<column>``: a column's descriptor id."""
-ConceptId = Annotated[str, _form(CONCEPT_ID_RE, 4 * MAX_IDENTIFIER), _LIMIT]
-RelationshipId = Annotated[str, _form(RELATIONSHIP_ID_RE, 8 * MAX_IDENTIFIER), _LIMIT]
-CoverageId = Annotated[str, _form(COVERAGE_ID_RE, 8 * MAX_IDENTIFIER), _LIMIT]
-EndpointId = Annotated[str, _form(ENDPOINT_ID_RE, MAX_IDENTIFIER + 3), _LIMIT]
-AnalysisId = Annotated[str, _form(ANALYSIS_ID_RE, _COMPOUND), _LIMIT]
-ModelCardId = Annotated[str, _form(MODEL_CARD_ID_RE, MAX_IDENTIFIER + 6), _LIMIT]
-DatasetRef = Annotated[str, _form(DATASET_REF_RE, MAX_IDENTIFIER + 72), _LIMIT]
+ConceptId = Annotated[
+    str,
+    _form(CONCEPT_ID_RE, 4 * MAX_IDENTIFIER),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+RelationshipId = Annotated[
+    str,
+    _form(RELATIONSHIP_ID_RE, 8 * MAX_IDENTIFIER),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+CoverageId = Annotated[
+    str,
+    _form(COVERAGE_ID_RE, 8 * MAX_IDENTIFIER),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+EndpointId = Annotated[
+    str,
+    _form(ENDPOINT_ID_RE, MAX_IDENTIFIER + 3),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+AnalysisId = Annotated[
+    str, _form(ANALYSIS_ID_RE, _COMPOUND), _LIMIT, NO_DOUBLE_UNDERSCORE, NO_DOUBLE_UNDERSCORE_SCHEMA
+]
+ModelCardId = Annotated[
+    str,
+    _form(MODEL_CARD_ID_RE, MAX_IDENTIFIER + 6),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
+DatasetRef = Annotated[
+    str,
+    _form(DATASET_REF_RE, MAX_IDENTIFIER + 72),
+    _LIMIT,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
+]
 """A dataset id, optionally pinned: ``x``, ``x@3``, ``x@sha256:<hex>`` or ``x@draft``."""
 Name = Annotated[str, _form(NAME_RE, MAX_IDENTIFIER), _LIMIT]
 """A cohort or parameter name."""
@@ -86,12 +151,12 @@ LeafKey = Annotated[str, StringConstraints(pattern=LEAF_KEY_RE.pattern)]
 IssuanceId = Annotated[str, StringConstraints(pattern=ISSUANCE_ID_RE.pattern)]
 
 
+def is_identifier(value: str) -> bool:
+    return IDENTIFIER_RE.fullmatch(value) is not None and "__" not in value
+
+
 def is_pack_id(value: str) -> bool:
-    return (
-        len(value) <= MAX_IDENTIFIER
-        and IDENTIFIER_RE.fullmatch(value) is not None
-        and value not in RESERVED_PACK_IDS
-    )
+    return is_identifier(value) and value not in RESERVED_PACK_IDS
 
 
 def integer_value(value: int) -> int | str:

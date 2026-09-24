@@ -15,6 +15,7 @@ from aibi.core.schema.ids import (
     RELATIONSHIP_ID_RE,
     SHA256_RE,
     integer_value,
+    is_identifier,
     is_pack_id,
     normalise,
     normalise_names,
@@ -22,14 +23,16 @@ from aibi.core.schema.ids import (
 from aibi.core.schema.limits import MAX_IDENTIFIER
 
 
-@pytest.mark.parametrize("value", ["a", "age", "age_years", "a1", "a_1", "a_", "x2_y3"])
+@pytest.mark.parametrize("value", ["a", "age", "age_years", "a1", "a_1", "a_", "x2_y3", "a" * 64])
 def test_identifiers_accepted(value: str) -> None:
-    assert IDENTIFIER_RE.match(value)
+    assert is_identifier(value)
 
 
-@pytest.mark.parametrize("value", ["", "A", "1a", "_a", "a__b", "a-b", "a.b", "é", "a__"])
+@pytest.mark.parametrize(
+    "value", ["", "A", "1a", "_a", "a__b", "a-b", "a.b", "é", "a__", "a" * 65, "a\n"]
+)
 def test_identifiers_refused(value: str) -> None:
-    assert not IDENTIFIER_RE.match(value)
+    assert not is_identifier(value)
 
 
 def test_descriptor_id_forms() -> None:

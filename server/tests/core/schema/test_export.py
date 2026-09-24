@@ -133,6 +133,12 @@ INVALID = [
     _with_clause({"kind": "value.x"}),
     _with_clause({"kind": "exists", "table": "s", "quantifier": "every", "min_count": 2}),
     _with_clause({"kind": "value", "column": "t.c", "values": ["$5"]}),
+    _with_clause({"kind": "testpack.flag", "q": "$5"}),
+    _with_clause({"kind": "value", "column": "t.c", "values": [6.022e23]}),
+    _with_clause({"kind": "value", "column": "t.c", "range": {"gt": 1e16}}),
+    _with_clause({"kind": "value", "column": "t__x.c", "values": [1]}),
+    _with_clause({"kind": "value", "column": "t" * 65 + ".c", "values": [1]}),
+    {**BASE, "unit": "t__state", "cohorts": {"c": {"all": []}}},
 ]
 
 
@@ -148,6 +154,8 @@ VALID = [
     {**BASE, "cohorts": {"c": {"all": []}}, "drafted_by": "agent:$bot"},
     _with_clause({"kind": "value", "column": "t.c", "values": ["$$5"]}),
     _with_clause({"kind": "exists", "table": "s", "min_count": 2, "quantifier": "some"}),
+    {**BASE, "params": {"p": ["$5"], "q": {"k": "$5"}}, "cohorts": {"c": {"all": []}}},
+    _with_clause({"kind": "testpack.flag", "q": "$$5", "n": [1, {"x": True}]}),
 ]
 
 

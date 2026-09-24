@@ -17,7 +17,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
-from aibi.core.schema.ids import NAME
+from aibi.core.schema.ids import MAX_SAFE_INTEGER, NAME
 
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 PARAMETER_REFERENCE: dict[str, JsonValue] = {
@@ -25,14 +25,22 @@ PARAMETER_REFERENCE: dict[str, JsonValue] = {
     "pattern": f"^\\$(?:{NAME}|\\$[\\s\\S]*)$",
     "description": 'A parameter reference, "$name", or a literal string written "$$…"',
 }
-DOCUMENT_JSON: dict[str, JsonValue] = {
-    "description": "Any JSON value but null",
-    "anyOf": [
-        {"type": ["string", "number", "boolean"]},
-        {"type": "array", "items": {"$ref": "#/$defs/DocumentJson"}},
-        {"type": "object", "additionalProperties": {"$ref": "#/$defs/DocumentJson"}},
-    ],
-}
+
+
+def _json_value(name: str) -> dict[str, JsonValue]:
+    """A definition of any JSON value but null, named ``name`` for its recursion."""
+    return {
+        "description": "Any JSON value but null",
+        "anyOf": [
+            {"type": ["string", "boolean"]},
+            {"type": "number", "minimum": -MAX_SAFE_INTEGER, "maximum": MAX_SAFE_INTEGER},
+            {"type": "array", "items": {"$ref": f"#/$defs/{name}"}},
+            {"type": "object", "additionalProperties": {"$ref": f"#/$defs/{name}"}},
+        ],
+    }
+
+
+DOCUMENT_JSON = _json_value("DocumentJson")
 TEXT_MEMBERS = frozenset({"notes", "note", "drafted_by"})
 """Plain-text members, never substituted (SPEC §7.1)."""
 
@@ -98,7 +106,11 @@ def _allow_references(node: JsonValue, *, skip: bool = False) -> JsonValue:
             }
         elif key == "oneOf":
             # A "$name" in a union's tag member can match several members: the loader decides.
-            result["anyOf"] = _allow_references(value)
+            converted = _allow_references(value)
+            if "anyOf" in node:
+                result["allOf"] = [{"anyOf": converted}]
+            else:
+                result["anyOf"] = converted
         elif key in ("items", "additionalProperties") and isinstance(value, dict):
             result[key] = _wrap(value)
         elif key == "patternProperties" and isinstance(value, dict):
@@ -120,11 +132,28 @@ def _wrap(member: JsonValue) -> JsonValue:
     }
 
 
+def _renamed(node: JsonValue, old: str, new: str) -> JsonValue:
+    if isinstance(node, list):
+        return [_renamed(item, old, new) for item in node]
+    if not isinstance(node, dict):
+        return node
+    return {
+        key: new if key == "$ref" and value == old else _renamed(value, old, new)
+        for key, value in node.items()
+    }
+
+
 def document_as_written_schema() -> JsonObject:
     schema = document_schema()
     transformed = cast(JsonObject, _allow_references(schema, skip=True))
     defs = cast(JsonObject, transformed.setdefault("$defs", {}))
     defs["ParameterReference"] = PARAMETER_REFERENCE
+    # Parameter values are taken verbatim: nothing in them is a reference (SPEC §7.1).
+    defs["ParameterValue"] = _json_value("ParameterValue")
+    properties = cast(JsonObject, transformed["properties"])
+    properties["params"] = _renamed(
+        properties["params"], "#/$defs/DocumentJson", "#/$defs/ParameterValue"
+    )
     transformed["$id"] = "document.as-written.schema.json"
     return transformed
 

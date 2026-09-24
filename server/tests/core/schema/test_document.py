@@ -20,8 +20,19 @@ from aibi.core.schema.document import (
     UnknownClause,
     ValueLeaf,
 )
-from aibi.core.schema.limits import MAX_DOCUMENT_BYTES, MAX_LIST, MAX_REFUSALS, LimitName
-from aibi.core.schema.loading import DocumentResult, load_document
+from aibi.core.schema.limits import (
+    MAX_DEPTH,
+    MAX_DOCUMENT_BYTES,
+    MAX_LIST,
+    MAX_REFUSALS,
+    LimitName,
+)
+from aibi.core.schema.loading import (
+    DocumentResult,
+    _kept,  # pyright: ignore[reportPrivateUsage]
+    load_document,
+    refusal_from_error,
+)
 
 DOCUMENTS = Path(__file__).parent / "documents"
 
@@ -611,3 +622,105 @@ def test_views_over_several_datasets_need_a_concept_unit() -> None:
     }
     assert refusals(document) == [("CONCEPT_REQUIRED", "/unit")]
     assert refusals({**document, "unit": "core:person"}) == []
+
+
+# --- Round-2 review: caching, nulls and knock-on refusals -------------------------------------
+
+
+def test_the_path_cache_holds_no_document_text() -> None:
+    before = _kept.cache_info()
+    for index in range(50):
+        member = f"x{index}" + "y" * 10_000
+        load(with_clause({"kind": "value", "column": "t.c", "values": [1], member: 1}))
+    after = _kept.cache_info()
+    assert after.currsize - before.currsize <= 1
+
+
+def test_many_distinct_unknown_members_share_one_path_shape() -> None:
+    clause: dict[str, Any] = {"kind": "value", "column": "t.c", "values": [1]}
+    clause.update({f"extra_{index}": 1 for index in range(5_000)})
+    before = _kept.cache_info().misses
+    result = load(with_clause(clause))
+    assert len(result.refusals) == MAX_REFUSALS + 1
+    assert _kept.cache_info().misses - before <= 1
+
+
+def test_the_siblings_of_a_null_member_are_checked() -> None:
+    document = with_clause(
+        {"kind": "value", "column": "t.c", "values": [1], "units": None, "lift": "loose"}
+    )
+    assert refusals(document) == [
+        ("INVALID_VALUE", "/cohorts/c/all/0/lift"),
+        ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/units"),
+    ]
+
+
+def test_models_report_nulls_per_member_without_document_text() -> None:
+    with pytest.raises(ValidationError) as raised:
+        Document.model_validate({**with_clause({"all": []}), "notes": None})
+    [details] = raised.value.errors()
+    assert details["loc"] == ("notes",)
+    assert "notes" not in details["msg"]
+    refusal = refusal_from_error(details, Document)
+    assert (refusal.code, refusal.path) == ("NULL_NOT_ALLOWED", "/notes")
+    with pytest.raises(ValidationError):
+        Document.model_validate({**with_clause({"all": []}), "params": {"p": [None]}})
+    with pytest.raises(ValidationError):
+        Document.model_validate(with_clause({"kind": "testpack.flag", "q": None}))
+
+
+def test_dumps_never_write_null_and_keep_names_without_aliases() -> None:
+    document = load(with_clause({"not": {"kind": "value", "column": "t.c", "values": [1]}}))
+    assert document.document is not None
+    clause = document.document.cohorts["c"].all[0]
+    assert isinstance(clause, NotClause)
+    assert clause.model_dump(by_alias=False) == {
+        "not_": {"kind": "value", "column": "t.c", "values": [1]}
+    }
+    leaf = clause.not_
+    assert isinstance(leaf, ValueLeaf)
+    assert "units" not in leaf.model_copy(update={"units": None}).model_dump()
+
+
+def test_knock_on_refusals_are_not_reported() -> None:
+    document = with_clause({"kind": "value", "column": "t.c", "values": "$v"})
+    document["params"] = {"v": [1, None]}
+    assert refusals(document) == [("NULL_NOT_ALLOWED", "/params/v/1")]
+    document = with_clause({"kind": "$nope", "column": "t.c", "values": [1]})
+    assert refusals(document) == [("UNKNOWN_PARAMETER", "/cohorts/c/all/0/kind")]
+    document = with_clause({"kind": "value", "column": "$col", "values": "$v"})
+    document["params"] = [1]
+    assert refusals(document) == [("WRONG_TYPE", "/params")]
+
+
+def test_substituted_values_may_not_nest_too_deep() -> None:
+    deep: Any = {"kind": "value", "column": "t.c", "values": [1]}
+    for _ in range(58):
+        deep = {"not": deep}
+    document = with_clause({"all": ["$deep"]})
+    document["params"] = {"deep": deep}
+    [refusal] = load(document).refusals
+    assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/cohorts/c/all/0/all/0")
+    assert refusal.limit is not None
+    assert (refusal.limit.name, refusal.limit.max) == ("nesting_depth", MAX_DEPTH)
+
+
+@pytest.mark.parametrize(
+    ("members", "path"),
+    [
+        ({"unit": "a" * 100}, "/unit"),
+        ({"dataset": "a" * 100}, "/dataset"),
+        ({"drafted_by": "model:" + "a" * 100}, "/drafted_by"),
+        ({"drafted_by": "model:a__b"}, "/drafted_by"),
+        ({"unit": "t__state"}, "/unit"),
+    ],
+)
+def test_identifiers_inside_references_are_bounded(members: dict[str, Any], path: str) -> None:
+    document = {**with_clause({"kind": "value", "column": "t.c", "values": [1]}), **members}
+    assert [p for _, p in refusals(document)] == [path]
+
+
+def test_column_references_are_bounded_per_identifier() -> None:
+    for column in ("t" * 65 + ".c", "t.c__state", "t__x.c"):
+        clause = {"kind": "value", "column": column, "values": [1]}
+        assert refusals(with_clause(clause)) != [], column

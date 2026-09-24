@@ -5,10 +5,11 @@ refused with a path:
 
 - text that is not UTF-8, or starts with a byte order mark;
 - duplicate keys;
-- strings and keys that are not Unicode text, such as lone surrogate escapes (RFC 7493 §2.1);
+- strings and keys that are not Unicode text: lone surrogate escapes and noncharacters, as I-JSON
+  (RFC 7493 §2.1) requires;
 - non-finite numbers;
-- integers beyond ±(2^53 - 1), however they are written: they are written as decimal strings
-  instead (§5.1);
+- numbers beyond ±(2^53 - 1), however they are written: every such double is an integer, and
+  integers beyond that range are written as decimal strings instead (§5.1);
 - arrays and objects nested more than ``MAX_DEPTH`` deep, and more than ``MAX_VALUES`` values.
 
 A number is a value, not a spelling: an integral number such as ``2.0`` is read as the integer
@@ -85,21 +86,27 @@ def _parse_int(digits: str) -> int | _LongInteger:
     return int(digits)
 
 
+def _is_noncharacter(character: str) -> bool:
+    point = ord(character)
+    return 0xFDD0 <= point <= 0xFDEF or point & 0xFFFE == 0xFFFE
+
+
 def _is_text(value: str) -> bool:
+    """Unicode text: no lone surrogates and no noncharacters (RFC 7493 §2.1)."""
     if value.isascii():
         return True
     try:
         value.encode("utf-8")
     except UnicodeEncodeError:
         return False
-    return True
+    return not any(_is_noncharacter(character) for character in value)
 
 
 def _out_of_range(path: list[str | int]) -> JsonError:
     return JsonError(
         "INTEGER_OUT_OF_RANGE",
         pointer(path),
-        "Integers beyond ±(2^53 - 1) must be written as decimal strings",
+        "Numbers beyond ±(2^53 - 1) are refused; write such an integer as a decimal string",
     )
 
 
@@ -126,7 +133,7 @@ def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
                 raise JsonError(
                     "INVALID_JSON",
                     pointer(path),
-                    "A key in this object is not Unicode text (it has a lone surrogate escape)",
+                    "A key in this object is not Unicode text (a lone surrogate or a noncharacter)",
                 )
             if key in result:
                 raise JsonError(
@@ -142,7 +149,7 @@ def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
             raise JsonError(
                 "INVALID_JSON",
                 pointer(path),
-                "The string is not Unicode text (it has a lone surrogate escape)",
+                "The string is not Unicode text (a lone surrogate or a noncharacter)",
             )
         return value
     if isinstance(value, bool) or value is None:
@@ -153,7 +160,7 @@ def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
         return value
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
-            raise JsonError("NON_FINITE_NUMBER", pointer(path), "The number is not finite")
+            raise _out_of_range(path)  # a finite literal too large for a double
         if value.is_integer():
             if abs(value) > MAX_SAFE_INTEGER:
                 raise _out_of_range(path)

@@ -106,21 +106,25 @@ def load_document(source: str | bytes) -> DocumentResult:
 
     found: list[_Found] = []
     refused: set[str] = set()
-    for path in _nulls(written):
+    nulls = list(_nulls(written))
+    for path in nulls:
         refused.add(path)
         found.append(_Found(path, RefusalCode.NULL_NOT_ALLOWED, _null_refusal(path)))
-    substitution = substitute(written, size)
+    # A null member is reported above; leaving it out lets its siblings be checked.
+    cleaned = cast(dict[str, JsonValue], _without_null_members(written)) if nulls else written
+    substitution = substitute(cleaned, size)
     for refusal in substitution.refusals:
         found.append(_Found(refusal.path, refusal.code, _given(refusal)))
     refused.update(substitution.failed)
+    refused.update(_knock_ons(nulls, substitution.failed, substitution.positions))
 
     document: Document | None = None
     try:
         document = Document.model_validate(substitution.document)
     except ValidationError as error:
         for details in error.errors(include_url=False, include_input=False):
-            if details["type"] == "null_not_allowed" and refused:
-                continue  # the null check above reports each null at its own path
+            if details["type"] == "null_not_allowed" and nulls:
+                continue  # every null is already reported, at its own path
             path = pointer(_tokens(details["loc"]))
             if not _under(path, refused):
                 found.append(_Found(path, _code(details["type"]), _error_refusal(details)))
@@ -154,6 +158,50 @@ def _given(refusal: Refusal) -> Callable[[], Refusal]:
 
 def _error_refusal(details: ErrorDetails) -> Callable[[], Refusal]:
     return lambda: refusal_from_error(details, Document)
+
+
+_MAPS = frozenset({"packs", "params", "cohorts", "scope", "via"})
+"""Members whose values are maps: a null entry there is kept, so it is refused where it is."""
+
+
+def _without_null_members(value: JsonValue, parent: str | int | None = None) -> JsonValue:
+    """The document without the null members of its objects, which are reported already.
+
+    Leaving a null member out lets its siblings be checked. Entries of maps are kept, since
+    leaving one out could make the map look empty or a cohort look unknown, and ``params``
+    values are verbatim.
+    """
+    if isinstance(value, list):
+        return [_without_null_members(item, index) for index, item in enumerate(value)]
+    if not isinstance(value, dict):
+        return value
+    result: dict[str, JsonValue] = {}
+    for key, member in value.items():
+        if member is None and parent not in _MAPS:
+            continue
+        verbatim = parent is None and key == "params"
+        result[key] = member if verbatim else _without_null_members(member, key)
+    return result
+
+
+def _knock_ons(nulls: list[str], failed: list[str], positions: dict[str, str]) -> set[str]:
+    """Positions whose problems follow from others already reported.
+
+    A null inside a parameter's value recurs wherever the value was substituted, and a leaf
+    whose ``kind`` is a refused reference has no shape to check.
+    """
+    refused: set[str] = set()
+    by_parameter: dict[str, list[str]] = {}
+    for position, name in positions.items():
+        by_parameter.setdefault(name, []).append(position)
+    for null in nulls:
+        if not null.startswith("/params/"):
+            continue
+        token, _, rest = null.removeprefix("/params/").partition("/")
+        name = token.replace("~1", "/").replace("~0", "~")
+        refused.update(f"{at}/{rest}" if rest else at for at in by_parameter.get(name, []))
+    refused.update(path.removesuffix("/kind") for path in failed if path.endswith("/kind"))
+    return refused
 
 
 def _nulls(value: JsonValue) -> Iterator[str]:
@@ -342,19 +390,52 @@ def resolve(loc: tuple[int | str, ...], root: type[BaseModel]) -> Resolved:
     return Resolved([loc[at] for at in positions], positions, current, carried + metadata)
 
 
+_OTHER = "\x00"
+"""Stands for any string in a location's shape that is not a member name, tag or label."""
+
+
+@lru_cache(maxsize=1)
+def _structural_names() -> frozenset[str]:
+    """The member names, aliases and union tags of the document models, and Pydantic's label."""
+    names = {_KEY_LABEL}
+    seen: set[int] = set()
+    pending: list[object] = [Document]
+    while pending:
+        annotation = pending.pop()
+        if id(annotation) in seen:
+            continue
+        seen.add(id(annotation))
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            for name, info in annotation.model_fields.items():
+                names.update(key for key in (name, info.alias) if key)
+                pending.append(info.annotation)
+                pending.extend(info.metadata)
+        elif isinstance(annotation, Tag):
+            names.add(annotation.tag)
+        else:
+            pending.extend(get_args(annotation))
+    return frozenset(names)
+
+
 @lru_cache(maxsize=4096)
 def _kept(shape: tuple[str | None, ...]) -> tuple[int, ...]:
     """Which elements of a document error location are path tokens.
 
-    The answer does not depend on list indices, so it is cached by the location's shape, with
-    indices replaced by ``None``: many similar errors then cost little.
+    The answer depends only on the location's structure, so it is cached by its shape: list
+    indices become ``None`` and strings that are not member names, tags or labels (dict keys,
+    unknown members) become one placeholder. The cache therefore holds no document text, and
+    many similar errors cost little.
     """
     loc = tuple(0 if element is None else element for element in shape)
     return tuple(resolve(loc, Document).positions)
 
 
 def _tokens(loc: tuple[int | str, ...]) -> list[str | int]:
-    shape = tuple(None if isinstance(element, int) else element for element in loc)
+    names = _structural_names()
+    shape = tuple(
+        None if isinstance(element, int) else element if element in names else _OTHER
+        for element in loc
+    )
     return [loc[index] for index in _kept(shape)]
 
 

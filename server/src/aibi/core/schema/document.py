@@ -23,6 +23,7 @@ from pydantic import (
     StrictInt,
     Tag,
     WithJsonSchema,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -33,6 +34,8 @@ from aibi.core.schema.ids import (
     CONCEPT_ID_RE,
     IDENT,
     MAX_SAFE_INTEGER,
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
     PACK_LEAF_KIND_RE,
     RESERVED_PACK_IDS,
     AnalysisId,
@@ -42,6 +45,7 @@ from aibi.core.schema.ids import (
     Name,
     PackId,
     RelationshipId,
+    no_double_underscore,
 )
 from aibi.core.schema.limits import (
     CLAUSES,
@@ -87,28 +91,21 @@ class DocModel(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True, serialize_by_alias=True)
 
-    @model_validator(mode="before")
+    @field_validator("*", mode="before")
     @classmethod
-    def _refuse_null(cls, data: object) -> object:
-        if not isinstance(data, dict):
-            return data
-        members = cast(dict[str, object], data)
-        for key, value in members.items():
-            if value is None:
-                raise PydanticCustomError(
-                    "null_not_allowed", "{member} is null; omit it instead", {"member": key}
-                )
-        return members
+    def _refuse_null(cls, value: object) -> object:
+        if value is None:
+            raise PydanticCustomError("null_not_allowed", "null is not allowed; omit the member")
+        return value
 
     @model_serializer(mode="wrap")
     def _dump_given(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         dumped: dict[str, Any] = handler(self)
-        given = {
-            info.serialization_alias or info.alias or name
-            for name, info in type(self).model_fields.items()
-            if name in self.model_fields_set or info.is_required()
-        }
-        return {key: value for key, value in dumped.items() if key in given}
+        given: set[str] = set()
+        for name, info in type(self).model_fields.items():
+            if name in self.model_fields_set or info.is_required():
+                given.update(key for key in (name, info.alias, info.serialization_alias) if key)
+        return {key: value for key, value in dumped.items() if key in given and value is not None}
 
 
 # --- Scalars -------------------------------------------------------------------------------
@@ -148,18 +145,23 @@ def _bound(value: object) -> str | int | float:
 
 
 _STRING_CONSTANT: dict[str, JsonValue] = {"type": "string", "maxLength": MAX_STRING}
+_NUMBER: dict[str, JsonValue] = {
+    "type": "number",
+    "minimum": -MAX_SAFE_INTEGER,
+    "maximum": MAX_SAFE_INTEGER,
+}
 
 Scalar = Annotated[
     str | bool | int | float,
     PlainValidator(_scalar),
-    WithJsonSchema({"anyOf": [_STRING_CONSTANT, {"type": ["boolean", "number"]}]}),
+    WithJsonSchema({"anyOf": [_STRING_CONSTANT, {"type": "boolean"}, _NUMBER]}),
 ]
 """A constant: typed against its column when the document is resolved (SPEC §6.4)."""
 
 Bound = Annotated[
     str | int | float,
     PlainValidator(_bound),
-    WithJsonSchema({"anyOf": [_STRING_CONSTANT, {"type": "number"}]}),
+    WithJsonSchema({"anyOf": [_STRING_CONSTANT, _NUMBER]}),
 ]
 
 Notes = Annotated[
@@ -175,18 +177,39 @@ ColumnOrConcept = Annotated[
         max_length=_REFERENCE_LENGTH,
     ),
     LimitName(IDENTIFIER_CHARACTERS),
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 TableOrConcept = Annotated[
     str,
     Field(pattern=rf"^(?:{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$", max_length=_REFERENCE_LENGTH),
     LimitName(IDENTIFIER_CHARACTERS),
+    NO_DOUBLE_UNDERSCORE,
+    NO_DOUBLE_UNDERSCORE_SCHEMA,
 ]
 Units = Annotated[str, Field(pattern=r"^[!-~]{1,64}$")]
 """A UCUM code, checked against the pinned UCUM tables on resolution (SPEC §6.4)."""
 Lift = Literal["strict", "assessed"]
 
 DOCUMENT_JSON_MARK = "x-aibi-document-json"
-DocumentJson = Annotated[JsonValue, WithJsonSchema({DOCUMENT_JSON_MARK: True})]
+
+
+def _without_null(value: JsonValue) -> JsonValue:
+    pending: list[JsonValue] = [value]
+    while pending:
+        current = pending.pop()
+        if current is None:
+            raise PydanticCustomError("null_not_allowed", "null is not allowed in a document")
+        if isinstance(current, dict):
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return value
+
+
+DocumentJson = Annotated[
+    JsonValue, AfterValidator(_without_null), WithJsonSchema({DOCUMENT_JSON_MARK: True})
+]
 """Any JSON value but ``null``. The schema export replaces the mark with a definition."""
 Count = Annotated[StrictInt, Field(ge=1, le=MAX_SAFE_INTEGER)]
 
@@ -214,6 +237,8 @@ _DRAFTED_BY_RE = re.compile(_DRAFTED_BY)
 
 def _drafted_by(value: str) -> str:
     kind, _, name = value.partition(":")
+    if kind == "model":
+        no_double_underscore(name)
     if kind in ("agent", "operator") and len(name) > MAX_NAME:
         raise PydanticCustomError(
             "string_too_long",
@@ -458,6 +483,12 @@ class UnitKey(DocModel):
     ]
 
 
+def _ids_text(value: str) -> str:
+    """The dataset part of ``"<dataset>:<key>"`` is an identifier; the key is anything."""
+    no_double_underscore(value.split(":", 1)[0])
+    return value
+
+
 def _ids_member_tag(value: object) -> str | None:
     if isinstance(value, str):
         return "ids:text"
@@ -472,6 +503,7 @@ IdsMember = Annotated[
             str,
             Field(pattern=rf"^{IDENT}:[^\x00-\x1f\x7f\u2028\u2029]+$", max_length=MAX_STRING),
             LimitName(CONSTANT_CHARACTERS),
+            AfterValidator(_ids_text),
         ],
         Tag("ids:text"),
     ]
@@ -508,14 +540,19 @@ _RESERVED_NAMESPACE: dict[str, JsonValue] = {
 class PackLeaf(BaseModel):
     """A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema."""
 
-    model_config = ConfigDict(strict=True, extra="allow", frozen=True)
+    model_config = ConfigDict(
+        strict=True,
+        extra="allow",
+        frozen=True,
+        json_schema_extra={"additionalProperties": {DOCUMENT_JSON_MARK: True}},
+    )
 
     kind: Annotated[
         str,
         Field(
             pattern=PACK_LEAF_KIND_RE.pattern,
             max_length=2 * MAX_IDENTIFIER + 1,
-            json_schema_extra={"not": _RESERVED_NAMESPACE},
+            json_schema_extra={"not": {"anyOf": [_RESERVED_NAMESPACE, {"pattern": "__"}]}},
         ),
         LimitName(IDENTIFIER_CHARACTERS),
     ]
@@ -523,6 +560,8 @@ class PackLeaf(BaseModel):
     @model_validator(mode="after")
     def _check_pack(self) -> Self:
         _pack_id(self.kind.split(".", 1)[0])
+        no_double_underscore(self.kind)
+        _without_null(cast(JsonValue, self.model_extra or {}))
         return self
 
 
