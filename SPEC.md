@@ -776,8 +776,9 @@ for copy number*), subject to §8.4.
   bytes and in JSON values, nor nest deeper, nor have longer paths to its values, one by one or
   together; a reference that would cross a limit is refused. A document that declares more
   parameters than it may have is refused before any is substituted. An unknown name is a refusal
-  naming its path; declared but unused parameters are reported; the parameters used are echoed in
-  results, outside the digest.
+  naming its path, whose alternatives are the declared names, or the 16 nearest it in sorted
+  order when more are declared; declared but unused parameters are reported; the parameters used
+  are echoed in results, outside the digest.
 - **Parsing.** A document is UTF-8 without a byte order mark, and its strings and keys are
   Unicode text: lone surrogate escapes and noncharacters are refused (as in I-JSON, RFC 7493).
   Duplicate keys in a JSON object, `null` anywhere in a document (an absent member is omitted)
@@ -1223,11 +1224,13 @@ be written in a pointer because it is not Unicode text, the pointer is that of i
 carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
 `validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
 refusals with the same `path` and `code` are merged; nothing is reported inside a value already
-refused (a `null`, or a refused parameter reference) or in a clause whose `kind` was refused, and
-nothing that follows only from a `null` (an object lacking that member, or a cohort's datasets or
-`unmapped`, or a view's cohorts, being unknown); and after the first 1,000, one `LIMIT_EXCEEDED`
-refusal with `path` `null` says how many more were found. The other tools fail with the first
-refusal (HTTP 422, or an MCP tool error).
+refused (a `null`, a refused parameter reference, `params` refused as a whole, or an array or
+object with more members than it may have) or in a clause whose `kind` was refused, and nothing
+that follows only from a `null` (an object lacking that member, or a cohort's datasets or
+`unmapped`, or a view's cohorts, being unknown), but a malformed reference is refused wherever
+references are substituted, whatever `params` is; and after the first 1,000, one
+`LIMIT_EXCEEDED` refusal with `path` `null` says how many more were found. The other tools fail
+with the first refusal (HTTP 422, or an MCP tool error).
 
 ---
 

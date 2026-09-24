@@ -21,6 +21,7 @@ written only for the refusals returned, so that long keys above many references 
 
 import json
 import re
+from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -130,13 +131,35 @@ class Substitution:
         return [found.build(pointer(found.position)) for found in self.problems]
 
 
+NEAREST = 16
+"""Declared names an unknown parameter's refusal lists at most: with more, those nearest the
+name in sorted order, so that a thousand refusals do not each list every name (§7.1)."""
+
+
+def nearest(name: str, declared: list[str]) -> list[str]:
+    """Up to ``NEAREST`` of the sorted ``declared`` names, those nearest ``name`` in order."""
+    if len(declared) <= NEAREST:
+        return declared
+    start = min(max(bisect_left(declared, name) - NEAREST // 2, 0), len(declared) - NEAREST)
+    return declared[start : start + NEAREST]
+
+
 def _unknown(name: str, declared: list[str]) -> Callable[[str | None], Refusal]:
-    return lambda at: Refusal(
-        code=RefusalCode.UNKNOWN_PARAMETER,
-        path=at,
-        message=[text("Unknown parameter "), data(name)],
-        alternatives=[data(known) for known in declared],
-    )
+    def build(at: str | None) -> Refusal:
+        listed = nearest(name, declared)
+        message = [text("Unknown parameter "), data(name)]
+        if len(listed) < len(declared):
+            message.append(
+                text(f"; {len(declared)} are declared, and the {len(listed)} nearest are listed")
+            )
+        return Refusal(
+            code=RefusalCode.UNKNOWN_PARAMETER,
+            path=at,
+            message=message,
+            alternatives=[data(known) for known in listed],
+        )
+
+    return build
 
 
 def _not_a_reference(value: str) -> Callable[[str | None], Refusal]:
@@ -255,12 +278,13 @@ class _Walker:
     def reference(self, value: str, path: list[str | int], length: int) -> JsonValue:
         """``length`` is that of the pointer to the reference."""
         where = tuple(path)
-        if not self.usable:
-            self.result.failed.append(where)
-            return value
         match = _REFERENCE.fullmatch(value)
         if match is None:
+            # Wrong whatever params is.
             self.refuse(where, RefusalCode.INVALID_PARAMETER_REFERENCE, _not_a_reference(value))
+            return value
+        if not self.usable:
+            self.result.failed.append(where)
             return value
         name = match.group(1)
         if name not in self.params:
@@ -319,4 +343,4 @@ class _Walker:
         return value
 
 
-__all__ = ["Position", "Problem", "Substitution", "substitute"]
+__all__ = ["NEAREST", "Position", "Problem", "Substitution", "nearest", "substitute"]

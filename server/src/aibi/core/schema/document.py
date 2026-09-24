@@ -83,6 +83,7 @@ from aibi.core.schema.limits import (
     SCOPE_COLUMNS,
     VIEWS,
     LimitName,
+    map_cap,
 )
 from aibi.core.schema.output import DATA_MARK
 
@@ -384,7 +385,12 @@ def _via_tag(value: object) -> str | None:
 Via = Annotated[
     Annotated[Path, Tag("via:path")]
     | Annotated[
-        Annotated[dict[DatasetId, Path], Field(max_length=MAX_DATASETS), LimitName(DATASETS)],
+        Annotated[
+            dict[DatasetId, Path],
+            Field(max_length=MAX_DATASETS),
+            LimitName(DATASETS),
+            map_cap(MAX_DATASETS),
+        ],
         Tag("via:datasets"),
     ],
     Discriminator(
@@ -575,6 +581,7 @@ class CoveredLeaf(DocModel):
             dict[ColumnId, ValueList],
             Field(min_length=1, max_length=MAX_COLUMNS),
             LimitName(SCOPE_COLUMNS),
+            map_cap(MAX_COLUMNS),
         ]
         | None
     ) = None
@@ -873,17 +880,26 @@ class Document(DocModel):
             dict[PackKey, PackSpecifier],
             Field(max_length=MAX_PACKS),
             LimitName(PACKS),
+            map_cap(MAX_PACKS),
         ]
         | None
     ) = None
     params: (
-        Annotated[dict[Name, DocumentJson], Field(max_length=MAX_PARAMS), LimitName(PARAMETERS)]
+        Annotated[
+            dict[Name, DocumentJson],
+            Field(max_length=MAX_PARAMS),
+            LimitName(PARAMETERS),
+            map_cap(MAX_PARAMS),
+        ]
         | None
     ) = None
     dataset: DatasetRef | None = None
     unit: TableOrConcept
     cohorts: Annotated[
-        dict[Name, Cohort], Field(min_length=1, max_length=MAX_COHORTS), LimitName(COHORTS)
+        dict[Name, Cohort],
+        Field(min_length=1, max_length=MAX_COHORTS),
+        LimitName(COHORTS),
+        map_cap(MAX_COHORTS),
     ]
     views: Annotated[list[View], Field(max_length=MAX_VIEWS), LimitName(VIEWS)] | None = None
     notes: Notes | None = None

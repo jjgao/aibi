@@ -1,6 +1,7 @@
 """Documents as written: shape, substitution, whole-document checks and refusal paths."""
 
 import copy
+import gc
 import json
 import math
 import time
@@ -14,6 +15,7 @@ from annotated_types import MaxLen
 from pydantic import BaseModel, StringConstraints, TypeAdapter, ValidationError
 from pydantic.fields import FieldInfo
 
+from aibi.core.schema import document as document_module
 from aibi.core.schema.document import (
     AllClause,
     Document,
@@ -26,9 +28,13 @@ from aibi.core.schema.document import (
 from aibi.core.schema.export import SCHEMAS
 from aibi.core.schema.jsonio import escape_token
 from aibi.core.schema.limits import (
+    MAX_COHORTS,
+    MAX_COLUMNS,
+    MAX_DATASETS,
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
     MAX_LIST,
+    MAX_PACKS,
     MAX_PARAMS,
     MAX_POINTER,
     MAX_POINTERS,
@@ -45,6 +51,7 @@ from aibi.core.schema.loading import (
     load_document,
     refusal_from_error,
 )
+from aibi.core.schema.params import NEAREST, nearest
 from aibi.core.schema.refusals import Refusal, RefusalCode
 
 DOCUMENTS = Path(__file__).parent / "documents"
@@ -1324,12 +1331,14 @@ def test_too_many_parameters_are_refused_before_substitution() -> None:
     assert [code for code, _ in refusals(at_cap)] == []
 
 
-def test_unknown_parameters_list_the_declared_names() -> None:
+def test_unknown_parameters_list_the_nearest_declared_names() -> None:
     document = {**with_clause({"kind": "value", "column": "t.c", "values": ["$zz"]})}
     document["params"] = _params(MAX_PARAMS)
     [refusal] = load(document).refusals
     assert refusal.code == "UNKNOWN_PARAMETER"
-    assert len(refusal.alternatives) == MAX_PARAMS
+    listed = [segment.model_dump()["data"] for segment in refusal.alternatives]
+    assert listed == sorted(_params(MAX_PARAMS))[-NEAREST:]
+    assert f"{MAX_PARAMS} are declared" in json.dumps(refusal.model_dump()["message"])
 
 
 _LEAF = {"kind": "value", "column": "t.c"}
@@ -1347,12 +1356,13 @@ _CONFLICT = ("CONFLICTING_MEMBERS", "/cohorts/c/all/0")
         ({"values": [1], "op": "=", "value": None}, True),
         ({"op": "=", "lift": None}, True),
         ({"lift": None}, True),
-        # Giving the null member a value would fix these: only the null is reported.
+        # Giving or omitting the null members removes any conflict: only the nulls are reported.
         ({"value": 1, "op": None}, False),
         ({"values": None}, False),
         ({"op": "=", "value": None}, False),
         ({"range": None, "op": None, "value": None}, False),
         ({"values": [1], "range": None}, False),
+        ({"op": None, "value": None}, False),
     ],
 )
 def test_a_conflict_beside_a_null_is_reported_when_no_fix_of_the_null_removes_it(
@@ -1381,21 +1391,58 @@ def test_text_built_in_code_is_unicode_text(document: dict[str, Any]) -> None:
         Document.model_validate(document)
 
 
-def test_the_parsed_context_skips_copies_of_parameter_values() -> None:
-    """A loaded document's JSON values are not copied again, but each position a parameter
-    fills has its own copy, distinct from the parameter's value."""
+def _containers(value: Any) -> Iterator[Any]:
+    """The arrays and objects in a JSON value, the value included."""
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict | list):
+            yield current
+            pending.extend(current.values() if isinstance(current, dict) else current)
+
+
+def test_each_position_a_parameter_fills_has_its_own_copy() -> None:
+    """No two positions a parameter fills share an array or object, down to the deepest, nor
+    share one with the parameter's value as used or as written."""
     document = {
         **with_clause({"kind": "p.leaf", "a": "$v", "b": "$v"}),
-        "params": {"v": {"x": [1]}},
+        "params": {"v": {"x": [1, [2, {"y": [3]}]]}},
     }
     result = load(document)
     assert result.document is not None
     leaf = result.document.cohorts["c"].all[0]
     assert isinstance(leaf, PackLeaf)
     extra = leaf.model_extra or {}
-    assert extra["a"] == extra["b"] == {"x": [1]}
-    assert extra["a"] is not extra["b"]
-    assert extra["a"] is not result.params_used["v"]
+    assert extra["a"] == extra["b"] == document["params"]["v"]
+    written: Any = result.written
+    groups = [extra["a"], extra["b"], result.params_used["v"], written["params"]["v"]]
+    seen: dict[int, int] = {}
+    for index, group in enumerate(groups[:3]):
+        for container in _containers(group):
+            assert seen.setdefault(id(container), index) == index
+    for container in _containers(groups[3]):
+        assert seen.get(id(container), 2) == 2  # used and as written may be one value
+
+
+def test_the_parsed_context_skips_copying_json_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A loaded document's JSON values are JSON-safe already and are not copied again; those
+    of a document built in code are."""
+    calls: list[object] = []
+    real = document_module.json_value
+
+    def counted(value: Any) -> Any:
+        calls.append(value)
+        return real(value)
+
+    monkeypatch.setattr(document_module, "json_value", counted)
+    document = {
+        **with_clause({"kind": "p.leaf", "a": "$v", "b": {"z": [1]}}),
+        "params": {"v": {"x": [1]}},
+    }
+    assert load(document).document is not None
+    assert calls == []
+    Document.model_validate({**document, "params": {"v": 1}})
+    assert calls != []
 
 
 def test_drafted_by_is_never_substituted() -> None:
@@ -1488,3 +1535,170 @@ def test_the_substituted_depth_is_exact_at_the_cap() -> None:
     document = {**with_clause({"all": []}), "params": {"w": value}}
     assert "nesting_depth" not in _hit({**document, "x": ["$w"]})
     assert "nesting_depth" in _hit({**document, "x": [["$w"]]})
+
+
+# --- Round 7: what a refused params hides, maps over their cap, text beyond ASCII -------------
+
+_OVER = {**_params(MAX_PARAMS)}
+
+
+@pytest.mark.parametrize(
+    "extra", [{"n": None}, {"1bad": 1}, {"n": None, "1bad": 1}, {"n": {"m": [None]}}]
+)
+def test_nothing_inside_params_over_the_cap_is_reported(extra: dict[str, Any]) -> None:
+    """One over the cap, with a null or a bad name among the entries: params alone is refused,
+    and the reference is not looked up (§8.6)."""
+    leaf = {"kind": "value", "column": "t.c", "values": ["$zz"]}
+    document = {**with_clause(leaf), "params": {**_OVER, **extra}}
+    assert refusals(document) == [("LIMIT_EXCEEDED", "/params")]
+
+
+def test_nothing_inside_params_that_is_not_an_object_is_reported() -> None:
+    document = {**with_clause({"all": []}), "params": [None, {"a": None}]}
+    assert refusals(document) == [("WRONG_TYPE", "/params")]
+    assert refusals({**with_clause({"all": []}), "params": None}) == [
+        ("NULL_NOT_ALLOWED", "/params")
+    ]
+
+
+@pytest.mark.parametrize("params", [{**_OVER, "extra": 1}, [1], None])
+def test_malformed_references_are_refused_whatever_params_is(params: Any) -> None:
+    leaves = [
+        {"kind": "value", "column": "t.c", "values": [value]}
+        for value in ("$1bad", "$", "$a-b", "$fine")
+    ]
+    found = refusals({**with_clause({"all": leaves}), "params": params})
+    assert [path for code, path in found if code == "INVALID_PARAMETER_REFERENCE"] == [
+        f"/cohorts/c/all/0/all/{index}/values/0" for index in range(3)
+    ]
+    assert [path for code, path in found if code != "INVALID_PARAMETER_REFERENCE"] == ["/params"]
+
+
+def test_unknown_parameters_list_every_declared_name_in_order_when_few() -> None:
+    document = {
+        **with_clause({"kind": "value", "column": "t.c", "values": ["$zz"]}),
+        "params": {"b": 1, "a": 2},
+    }
+    [refusal] = load(document).refusals
+    assert [segment.model_dump()["data"] for segment in refusal.alternatives] == ["a", "b"]
+    assert "declared" not in json.dumps(refusal.model_dump()["message"])
+
+
+def test_the_nearest_names_are_a_window_in_sorted_order() -> None:
+    declared = sorted(f"n{index:03d}" for index in range(100))
+    assert nearest("n050x", declared) == declared[43:59]
+    assert nearest("a", declared) == declared[:NEAREST]
+    assert nearest("z", declared) == declared[-NEAREST:]
+    assert nearest("x", declared[:NEAREST]) == declared[:NEAREST]
+
+
+def test_many_unknown_references_stay_small() -> None:
+    """A thousand refusals each list at most NEAREST names, however many are declared."""
+    params = {f"{'k' * 61}{index:03d}": index for index in range(MAX_PARAMS)}  # 64 characters
+    leaf = {"kind": "value", "column": "t.c", "values": [f"$u{index}" for index in range(1_000)]}
+    result = load({**with_clause(leaf), "params": params})
+    assert len(result.refusals) == MAX_REFUSALS
+    assert {refusal.code for refusal in result.refusals} == {"UNKNOWN_PARAMETER"}
+    assert all(len(refusal.alternatives) == NEAREST for refusal in result.refusals)
+    # Listing all 256 names made 18.7 MiB.
+    assert len(json.dumps([r.model_dump(mode="json") for r in result.refusals])) < 2_000_000
+
+
+def test_a_conflict_beside_many_unrelated_nulls_is_found_quickly() -> None:
+    """Only the members of a conflict's rule are tried as fixes, not every member lost (trying
+    every subset of these 26 would take a minute)."""
+    nulls = {f"x{index}": None for index in range(26)}
+    start = time.perf_counter()
+    found = refusals(with_clause({**_LEAF, "op": "=", **nulls}))
+    assert time.perf_counter() - start < 2.0
+    assert _CONFLICT in found
+    assert len([code for code, _ in found if code == "NULL_NOT_ALLOWED"]) == 26
+
+
+def _map_over_cap(where: str) -> tuple[dict[str, Any], str, str]:
+    """A document with a map one entry over its cap and one bad entry, the map's pointer and
+    the limit's name."""
+    if where == "cohorts":
+        cohorts: dict[str, Any] = {f"c{index}": {"all": []} for index in range(MAX_COHORTS)}
+        cohorts["bad"] = {"all": 1}
+        return {**with_clause({"all": []}), "cohorts": cohorts}, "/cohorts", "cohorts"
+    if where == "packs":
+        packs: dict[str, Any] = {f"p{index}": ">=1" for index in range(MAX_PACKS)}
+        packs["q"] = "not a specifier"
+        return {**with_clause({"all": []}), "packs": packs}, "/packs", "packs"
+    if where == "scope":
+        scope: dict[str, Any] = {f"t.c{index}": ["a"] for index in range(MAX_COLUMNS)}
+        scope["t.bad"] = []
+        leaf = {"kind": "covered", "table": "t2", "scope": scope}
+        return with_clause(leaf), "/cohorts/c/all/0/scope", "scope_columns"
+    via: dict[str, Any] = {f"d{index}": [] for index in range(MAX_DATASETS)}
+    via["bad"] = 1
+    leaf = {"kind": "value", "column": "t.c", "values": [1], "via": via}
+    return with_clause(leaf), "/cohorts/c/all/0/via", "datasets"
+
+
+@pytest.mark.parametrize("where", ["cohorts", "packs", "scope", "via"])
+def test_a_map_over_its_cap_is_refused_for_its_size_whatever_its_entries(where: str) -> None:
+    """As a list is: Pydantic checks a dict's length only when every entry is valid."""
+    document, at, name = _map_over_cap(where)
+    result = load(document)
+    over = [r for r in result.refusals if r.path == at]
+    assert [r.code for r in over] == ["LIMIT_EXCEEDED"]
+    assert over[0].limit is not None
+    assert over[0].limit.name == name
+    assert not [r for r in result.refusals if r.path and r.path.startswith(at + "/")]
+    with pytest.raises(ValidationError) as raised:
+        Document.model_validate(document)
+    assert "too_long" in [error["type"] for error in raised.value.errors()]
+
+
+_TEXTS = ["café", "日本語", "\U0001f600", "\ufffd", "\ufdcf", "\ufdf0"]
+"""Unicode text beyond ASCII, U+FDCF and U+FDF0 on either side of the noncharacters U+FDD0 to
+U+FDEF."""
+
+
+def _texts_everywhere(value: str) -> dict[str, Any]:
+    clauses = [
+        {"kind": "value", "column": "t.c", "values": [value]},
+        {"kind": "ids", "ids": [f"d:{value}"]},
+        {"kind": "p.leaf", value: value},
+    ]
+    return {
+        **with_clause({"all": clauses}),
+        "notes": value,
+        "drafted_by": f"agent:{value}",
+        "cohorts": {"c": {"all": clauses, "notes": value}},
+        "views": [{"analysis": "compare.x", "cohorts": ["c"], "note": value, "params": {value: 1}}],
+    }
+
+
+@pytest.mark.parametrize("value", _TEXTS)
+def test_text_beyond_ascii_is_accepted_loaded_and_built_in_code(value: str) -> None:
+    document = _texts_everywhere(value)
+    assert refusals(document) == []
+    assert load_document(json.dumps(document, ensure_ascii=False)).refusals == []
+    Document.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        with_clause({**_LEAF, "values": [1], "lift": None}),
+        {**with_clause({"all": []}), "params": {"n": None}},
+        SITES,
+        with_clause({**_LEAF, "values": [1], "x": 1}),
+    ],
+)
+def test_a_load_leaves_no_reference_cycles(document: dict[str, Any]) -> None:
+    """What a load builds is freed when it is dropped, without waiting for the collector."""
+    text = json.dumps(document)
+    load_document(text)  # warm caches
+    gc.collect()
+    gc.disable()
+    try:
+        for _ in range(20):
+            load_document(text)
+        found = gc.collect()
+    finally:
+        gc.enable()
+    assert found == 0

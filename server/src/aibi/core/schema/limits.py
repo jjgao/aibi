@@ -4,6 +4,10 @@ Every refusal names the limit it hit, by one of the names below; clients may dep
 """
 
 from dataclasses import dataclass
+from typing import cast
+
+from pydantic import BeforeValidator
+from pydantic_core import PydanticKnownError
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 """Bytes in a document as written, and in the document after ``params`` substitution."""
@@ -77,6 +81,28 @@ class LimitName:
     name: str
 
 
+def map_cap(maximum: int) -> BeforeValidator:
+    """Annotation metadata refusing a map with more than ``maximum`` entries before any entry
+    is checked, as Pydantic refuses a list: it checks a dict's length only when every entry is
+    valid, so a map too large with a bad entry would be refused for the entry alone. The map's
+    ``Field(max_length=…)`` stays, for the JSON Schema."""
+
+    def check(value: object) -> object:
+        size = _entries(value)
+        if size > maximum:
+            raise PydanticKnownError(
+                "too_long",
+                {"field_type": "Dictionary", "max_length": maximum, "actual_length": size},
+            )
+        return value
+
+    return BeforeValidator(check)
+
+
+def _entries(value: object) -> int:
+    return len(cast(dict[object, object], value)) if isinstance(value, dict) else 0
+
+
 __all__ = [
     "ALL_POINTER_CHARACTERS",
     "CLAUSES",
@@ -120,4 +146,5 @@ __all__ = [
     "SUBSTITUTED_BYTES",
     "VIEWS",
     "LimitName",
+    "map_cap",
 ]

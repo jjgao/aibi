@@ -159,13 +159,15 @@ def load_document(source: str | bytes) -> DocumentResult:
     found: list[_Found] = []
     refused = _Positions()
     nulls = _nulls(written)
-    for position in nulls:
-        refused.add(position)
-        found.append(_Found(position, RefusalCode.NULL_NOT_ALLOWED, _null_refusal))
-    # A null member is reported above; leaving it out lets its siblings be checked.
+    # A null member is reported below; leaving it out lets its siblings be checked.
     dropped: dict[Position, set[str]] = {}
     cleaned = _without_null_members(written, dropped) if nulls else written
     substitution = substitute(cleaned, size)
+    params_refused = any(problem.position == ("params",) for problem in substitution.problems)
+    for position in nulls:
+        refused.add(position)
+        if not (params_refused and position[:1] == ("params",)):
+            found.append(_Found(position, RefusalCode.NULL_NOT_ALLOWED, _null_refusal))
     for problem in substitution.problems:
         found.append(_Found(problem.position, problem.code, problem.build))
     for position in substitution.failed:
@@ -269,28 +271,6 @@ def _without_null_members(
     included, so that references are marked as failed rather than unknown.
     """
     path: list[str | int] = []
-
-    def clean(value: JsonValue, is_map: bool) -> JsonValue:
-        if isinstance(value, list):
-            items: list[JsonValue] = []
-            for index, item in enumerate(value):
-                path.append(index)
-                items.append(clean(item, False))
-                path.pop()
-            return items
-        if not isinstance(value, dict):
-            return value
-        leaf = "kind" in value
-        result: dict[str, JsonValue] = {}
-        for key, member in value.items():
-            if member is None and not is_map:
-                dropped.setdefault(tuple(path), set()).add(key)
-                continue
-            path.append(key)
-            result[key] = clean(member, _is_map(path, leaf))
-            path.pop()
-        return result
-
     result: dict[str, JsonValue] = {}
     for key, member in document.items():
         if key == "params":
@@ -299,8 +279,35 @@ def _without_null_members(
             dropped.setdefault((), set()).add(key)
         else:
             path.append(key)
-            result[key] = clean(member, key in _MAPS_AT_ROOT)
+            result[key] = _clean(member, key in _MAPS_AT_ROOT, path, dropped)
             path.pop()
+    return result
+
+
+def _clean(
+    value: JsonValue, is_map: bool, path: list[str | int], dropped: dict[Position, set[str]]
+) -> JsonValue:
+    """``value`` without null members, at ``path`` (shared, and restored on return). A
+    module-level function: a nested one would refer to itself, and so keep what it holds in a
+    reference cycle after a load."""
+    if isinstance(value, list):
+        items: list[JsonValue] = []
+        for index, item in enumerate(value):
+            path.append(index)
+            items.append(_clean(item, False, path, dropped))
+            path.pop()
+        return items
+    if not isinstance(value, dict):
+        return value
+    leaf = "kind" in value
+    result: dict[str, JsonValue] = {}
+    for key, member in value.items():
+        if member is None and not is_map:
+            dropped.setdefault(tuple(path), set()).add(key)
+            continue
+        path.append(key)
+        result[key] = _clean(member, _is_map(path, leaf), path, dropped)
+        path.pop()
     return result
 
 
