@@ -1,9 +1,15 @@
 # aibi — Specification
 
-**Status:** Draft v0.3.1 · 2026-09-24 · open for review
+**Status:** Draft v0.3.2 · 2026-09-24 · open for review
 **Scope of this document:** product goals, principles, data model, query semantics, result
 contract, analysis registry, domain packs, MCP surface, architecture and milestones. It is
 normative where it says MUST / MUST NOT / SHOULD (RFC 2119); everything else is rationale.
+
+**Changes in v0.3.2:** fixes from a second consistency review (D33–D43): three-valued
+existence over child rows, reordered canonicalisation, position-keyed results, explicit view
+cohort lists, `quantifier` separated from `lift`, dependency upgrades treated as analysis
+changes, clearer record-filter rule, `allow_row_ids: false` requiring `min_cell_count`, draft
+release ids, null foreign keys, and coverage proposed only for structural tables.
 
 **Changes in v0.3.1:** fixes from a consistency review (D20–D32): explicit reference cohorts,
 resolved cohort references, rounding before hashing, suppression settings in derivations, `ids`
@@ -135,8 +141,9 @@ called except through the registry (§9).
 **P6 — Results point to immutable releases.**
 Data is served from content-addressed, read-only releases. Curation changes create a new
 release; the confirmations made in one curation session are batched into a single release when
-the session ends. During a session, queries may run against the session's **draft release**;
-such results carry `DRAFT_RELEASE`, are not cached and are not citable. *Enforced by:* the storage layer (§12.2); a document run
+the session ends. During a session, queries may run against the session's **draft release**, identified as
+`<dataset>@draft-<content hash>`; such results carry `DRAFT_RELEASE`, are not cached and are not
+citable. *Enforced by:* the storage layer (§12.2); a document run
 against the same pins returns the same result digest.
 
 **P7 — One documentation surface for data, computations and models.**
@@ -308,10 +315,11 @@ scope:
 - `record_filter`: what the table holds, e.g. *only non-synonymous calls* or *only serious
   adverse events*. A query for rows outside the filter is **refused**, since absence of such a
   row means nothing. To keep that check decidable, a record filter is a conjunction of value
-  lists on categorical columns (`{column: [allowed values]}`); a query's filter is accepted only
-  if, for each such column, it can be shown to select a subset of the allowed values, and is
-  otherwise refused. A query that does not constrain the column at all means "any row the table
-  holds", and its readback MUST state the record filter (*any non-synonymous mutation*).
+  lists on categorical columns (`{column: [allowed values]}`); for each such column, a query
+  that constrains it is accepted only if it provably selects a subset of the allowed values, and
+  is otherwise refused. A query that does not constrain the column is accepted and implicitly
+  restricted to the filter: it means "any row the table holds", and its readback MUST state the
+  record filter (*any non-synonymous mutation*).
 - `parent_scope`: optional core clause over the parent table naming which parents are **in
   scope** for this table at all, e.g. *tumour samples only*. Parents outside it (a blood
   normal, a sample that failed QC) are ignored when lifting (§6.3) instead of making their own
@@ -319,10 +327,14 @@ scope:
 - Scope columns are matched by equality in v1 (a gene, a visit window). Range-based scope such
   as genomic intervals is out of scope for v1.
 - Coverage applies to **every** downward step, including structural ones such as patient →
-  samples. So that ordinary datasets are usable at once, the importer proposes `parents: "all"`
-  for every relationship, with status `proposed`; packs and people replace the proposal where it
-  is wrong (e.g. gene panels). Until confirmed, results that rely on it carry
-  `DEFAULT_SEMANTICS`, and the curation queue ranks these confirmations first.
+  samples. The importer proposes `parents: "all"` (status `proposed`) only for **structural**
+  child tables: those with a primary key that are themselves parents of other tables (samples,
+  visits, enrolments). **Measurement- and event-like** child tables (mutations, adverse events,
+  lab results) stay `undeclared`, because that is where partial coverage hides; the curation
+  assistant may propose coverage for them with evidence (e.g. *a panel column was found*), and a
+  person decides. Packs declare coverage explicitly (e.g. from gene panels). Results that rely on
+  proposed coverage carry `COVERAGE_PROPOSED`, and the curation queue ranks these confirmations
+  first.
 
 ### 5.6 Concepts and mapping
 
@@ -375,6 +387,9 @@ in the graph, so every step is either a lookup or an existence question. Paths m
 then down (samples → patient → treatments: *samples whose patient has a treatment row*);
 readbacks MUST say so explicitly.
 
+A lookup up the graph through a null foreign key (a sample with no recorded patient) evaluates
+to UNKNOWN, counted under its own reason (`NO_PARENT`) in the accounting.
+
 Paths MUST be unambiguous. If more than one relationship path connects the unit to a referenced
 table, the compiler refuses and lists the paths; the document names one with `via`. There is
 no silent shortest-path choice (biai's BFS was a source of wrong joins).
@@ -410,24 +425,28 @@ Leaf predicates evaluate per unit to `TRUE`, `FALSE` or `UNKNOWN` (Kleene logic)
 - A unit is **in** a cohort iff the cohort predicate is TRUE.
 - `known(clause)` is TRUE iff the clause is not UNKNOWN; `unknown(clause)` is its complement.
   These are the only way to deliberately include unknowns.
-- `exists` with `quantifier: "all"` is TRUE if the unit has at least one covered child and every
-  one matches; FALSE if any covered child fails to match; UNKNOWN otherwise. An empty set of
-  children is UNKNOWN, never vacuously TRUE, and the readback says so.
-- `min_count: k` is TRUE with at least *k* matching rows; FALSE if the unit is covered and has
-  fewer than *k*; UNKNOWN otherwise.
-- **Existence** is evaluated per unit as: TRUE if at least one related row matches; otherwise
-  FALSE if the unit is covered (§6.4) for the whole scope the predicate asks about; otherwise
-  UNKNOWN. So `not exists mutations where gene = TP53` means *assessed for TP53 and no TP53
-  row*, and it excludes units that were never assessed.
+- **Existence** is Kleene logic over the related rows. The `where` clause is evaluated per row
+  (TRUE, FALSE or UNKNOWN; a row with a missing `grade` is UNKNOWN for `grade ≥ 3`). Then, with
+  the default `quantifier: "any"`: TRUE if any row is TRUE; otherwise UNKNOWN if any row is
+  UNKNOWN or the unit is not covered (§6.4) for the whole scope the predicate asks about;
+  otherwise FALSE. So `not exists mutations where gene = TP53` means *assessed for TP53 and no
+  TP53 row*, and it excludes units that were never assessed, and *no grade ≥3 adverse event*
+  excludes participants whose only events have a missing grade.
+- `quantifier: "all"`: FALSE if any row is FALSE; otherwise UNKNOWN if any row is UNKNOWN, the
+  unit is not covered, or it has no rows (never vacuously TRUE; the readback says so); otherwise
+  TRUE.
+- `min_count: k`: TRUE with at least *k* TRUE rows; FALSE if the unit is covered and the TRUE
+  rows plus the UNKNOWN rows number fewer than *k*; UNKNOWN otherwise.
 - **Lifting through intermediate tables.** When a criterion sits two or more steps down
-  (patient → sample → mutation), each step down is its own existence quantifier: `any`
-  (default: Kleene OR over the children) or `all` (Kleene AND over the children). Children
+  (patient → sample → mutation), each step down is its own existence question with its own
+  `quantifier` (default `any`; a leaf may give one quantifier per step as a list). Children
   outside the child table's `parent_scope` (§5.5) are ignored. A parent with no in-scope
   children at that step is UNKNOWN unless the step's own coverage says the parent has none.
   Consequence: a patient with one assessed wild-type tumour sample and one unassessed tumour
   sample is UNKNOWN for "has a TP53 mutation in any sample", while an unassessed blood normal
   changes nothing.
-- `"lift": "assessed"` on a leaf opts into the cBioPortal convention instead: only children
+- `lift` controls only how **unassessed** children are treated. `"lift": "strict"` (default) is
+  the rule above. `"lift": "assessed"` opts into the cBioPortal convention instead: only children
   assessed for the question are considered, so the same patient is FALSE. Whichever rule is
   used, the result reports how many units the choice affected.
 - Where aibi's answer differs from what the cBioPortal convention would give, the result says
@@ -488,7 +507,11 @@ patients; 40 could not be evaluated: not assessed for copy number*).
 
 `Clause := Leaf | {"all": [Clause]} | {"any": [Clause]} | {"not": Clause} | {"known": Clause} | {"unknown": Clause}`.
 
-Leaves that cross a downward step accept `"lift": "any" | "all" | "assessed"` (§6.3).
+Leaves that cross a downward step accept `"quantifier"` (per step) and
+`"lift": "strict" | "assessed"` (§6.3).
+
+`views[].cohorts` defaults to every cohort, in the order they appear in the document;
+canonicalisation writes the list explicitly before anything is dropped.
 
 `views[].reference` names the reference group for effect sizes (hazard ratios, differences,
 risk ratios); it defaults to the first cohort in `views[].cohorts`, and canonicalisation writes
@@ -508,7 +531,7 @@ logic.
 | Kind | Shape | Meaning |
 |---|---|---|
 | `value` | `{column: "<table>.<column>" \| concept, values?, range?: {gt,gte,lt,lte}, op?, value?, via?, match?}` | A value predicate on the unit's own table or any table reachable from it. Reaching a table below the unit implies `exists` with `any`. Units in `range` MUST match the column's `units` or be convertible |
-| `exists` | `{table, where?: [Clause], quantifier?: "any" \| "all", min_count?, via?}` | An existence predicate over a child table, with coverage semantics (§6.4). `min_count` asks for at least *k* matching rows |
+| `exists` | `{table, where?: [Clause], quantifier?: "any" \| "all", min_count?, lift?, via?}` | An existence predicate over a child table, with coverage semantics (§6.4). `min_count` asks for at least *k* matching rows |
 | `covered` | `{table, scope?: {<column>: value}}` | TRUE if the unit is inside the table's coverage (for the scope, if given) |
 | `ids` | `{ids: ["<dataset>:<key>", …]}` | Explicit lists of unit keys. Refused on datasets with `allow_row_ids: false` (§11), since a count over a chosen id reveals that unit's attributes |
 | `cohort` | `{cohort: "<name>"}` | Another cohort in the same document, by name; cycles are refused. `{"all": [{"cohort": "base"}, {"not": X}]}` is the correct "rest of the base" under three-valued logic, which is why references exist: comparing X with not-X within a base is the most common pattern and easy to get wrong by hand |
@@ -542,15 +565,16 @@ Before compilation, the server canonicalises the document:
    manifest hash; pin every pack to its exact version.
 3. Resolve column, table and concept references to descriptor ids and versions; resolve join
    paths and write them explicitly as `via`.
-4. Write every semantically relevant default explicitly (`quantifier`, `match`, analysis
-   parameter defaults).
-5. Sort order-insensitive collections: values in `values`, and clauses inside `all` / `any`,
-   by their own canonical serialisation.
-6. Replace each `cohort` reference with the referenced cohort's canonical form, so that
-   references survive the removal of names.
-7. Write each view's `reference` explicitly and keep the order of `views[].cohorts`; drop fields
-   that do not affect results (`notes`, `note`, cohort names, the order of the top-level
-   `cohorts` map).
+4. Write every semantically relevant default explicitly (`quantifier`, `lift`, `match`,
+   analysis parameter defaults), and write each view's `cohorts` list and `reference`
+   explicitly, in document order.
+5. Replace each `cohort` reference with the referenced cohort's canonical form, so that
+   references survive the removal of names. This MUST happen before any sorting, so that no
+   name influences the order.
+6. Sort order-insensitive collections: values in `values`, and clauses inside `all` / `any`,
+   by their own canonical serialisation. The order of `views[].cohorts` is kept.
+7. Drop fields that do not affect results (`notes`, `note`, cohort names, the order of the
+   top-level `cohorts` map).
 
 The canonical form is serialised with the JSON Canonicalization Scheme (RFC 8785).
 
@@ -563,8 +587,9 @@ The canonical form is serialised with the JSON Canonicalization Scheme (RFC 8785
   point values are rounded to 12 significant digits before serialisation, so that parallel
   aggregation and optimiser noise cannot change a digest. Values are *returned* unrounded.
 
-Cohort names are not part of any hash (step 7). Values in results are keyed by cohort derivation id, and
-names are attached as labels outside the digest, so renaming a cohort changes neither id nor
+Cohort names are not part of any hash (step 7). Values in results are keyed by **position in
+the view**, and each position carries its cohort derivation id; names are attached as labels
+outside the digest, so renaming a cohort changes neither id nor
 digest.
 
 Derivation ids are designed to be citable (e.g. through a future public resolver), but v1 makes
@@ -572,7 +597,8 @@ no promise that any release stays available.
 
 Invariant: the same result derivation id MUST produce the same result digest. A code change
 that alters the digest for an unchanged derivation id is a bug unless the analysis (or pack)
-version was bumped. Golden tests check this (§13.3).
+version was bumped. This includes dependency upgrades: a new version of a statistics library
+or of DuckDB that changes any golden digest requires bumping the affected analyses' versions. Golden tests check this (§13.3).
 
 ### 7.6 Readback
 
@@ -600,10 +626,11 @@ every result and shown next to every figure.
     "engine": "aibi 0.3.1"
   },
   "digest": "sha256:…",
-  "readback": { "cohorts": { "<cohort derivation id>": "…" }, "view": "…" },
-  "population": { "<cohort derivation id>": { "n_true": 0, "n_false": 0, "n_unknown": 0, "unknown_by_leaf": { … } } },
-  "labels": { "<cohort derivation id>": "<cohort name>" },    // outside the digest
-  "values": { /* analysis-specific, keyed by cohort derivation id */ },
+  "cohorts": [ { "position": 0, "id": "drv:…", "reference": true }, … ],   // view order
+  "readback": { "cohorts": [ "…" ], "view": "…" },                          // by position
+  "population": [ { "n_true": 0, "n_false": 0, "n_unknown": 0, "unknown_by_leaf": { … } } ],   // by position
+  "labels": [ "<cohort name>", … ],                            // by position; outside the digest
+  "values": { /* analysis-specific, keyed by position */ },
   "charts": [ /* Vega-Lite specifications generated from values; outside the digest */ ],
   "caveats": [ Caveat ]
 }
@@ -615,7 +642,9 @@ derivation id.
 A deployment setting `min_cell_count` (default: off) suppresses any count below the threshold,
 together with anything from which it could be recovered, and marks it as suppressed. It exists
 for shared or restricted deployments and for future federation. Because it changes outputs, it
-is part of the result derivation (§7.5).
+is part of the result derivation (§7.5). A dataset with `allow_row_ids: false` (§11) MUST have
+`min_cell_count` set; the server refuses to start otherwise, since without it a narrow enough
+cohort identifies a person anyway.
 
 ### 8.2 Proportions
 
@@ -646,6 +675,7 @@ Codes are a stable, documented enum; core codes are unprefixed and pack codes ar
 | `UNMAPPED_COMPARISON` | warn | A cross-dataset comparison used columns without an asserted concept mapping |
 | `TIME_ORIGIN_MISMATCH` | **block** | Time-based values were compared across datasets whose `time_origin` is undeclared or different |
 | `COHORTS_OVERLAP` | warn | Cohorts in a view share units (allowed only with `overlap: "allow"`); test assumptions do not hold |
+| `COVERAGE_PROPOSED` | warn | An existence answer treated absence as "none" on the strength of proposed, unconfirmed coverage; the message names the table |
 | `DRAFT_RELEASE` | warn | The result was computed against a curation session's draft release |
 | `SMALL_N` | warn | A group fell below the analysis's declared minimum for a reliable estimate |
 | `PH_VIOLATED` | warn | A Cox model's proportional-hazards test failed; the hazard ratio is an average over time |
@@ -791,7 +821,8 @@ v1, so an agent can never confirm its own proposal.
 
 Listing row-level keys of a cohort (for follow-up) is controlled per dataset by
 `allow_row_ids`, on by default in local and lab deployments; turning it off leaves only
-aggregates available through every tool, and also refuses the `ids` leaf (§7.2). Descriptors are also exposed as MCP resources (`aibi://dataset/<id>@<n>/column/<table>.<column>`).
+aggregates available through every tool, also refuses the `ids` leaf (§7.2), and requires
+`min_cell_count` (§8.1). Descriptors are also exposed as MCP resources (`aibi://dataset/<id>@<n>/column/<table>.<column>`).
 
 ---
 
@@ -917,6 +948,13 @@ validators (the oncology pack's mirrors the cBioPortal validator).
 - **Overlap and row ids:** overlapping cohorts in a view are refused without `overlap: "allow"`;
   an `ids` leaf is refused when `allow_row_ids` is off.
 - **Quantifiers:** `quantifier: "all"` over zero children is UNKNOWN; `min_count` follows §6.3.
+- **Missing child values:** a participant whose only adverse-event row has a missing grade is
+  UNKNOWN for both *grade ≥3 AE* and its negation.
+- **Canonical order:** two documents that differ only in the names of referenced cohorts have
+  identical canonical forms; two identical cohorts in one view (with `overlap: "allow"`) keep
+  separate values.
+- **Coverage proposals:** a plain-CSV mutations table gets no proposed coverage; a samples table
+  does.
 - **Lifting:** a patient with one assessed wild-type tumour sample and one unassessed tumour
   sample is UNKNOWN by default and FALSE with `lift: "assessed"`; an unassessed sample outside
   `parent_scope` changes neither answer.
@@ -965,7 +1003,7 @@ dataset descriptors) ships with M1 so there is something to show without an agen
 
 ## 16. Decisions
 
-Decisions from the first full review (D1–D19) and the consistency review (D20–D32), 2026-09-24.
+Decisions from the first full review (D1–D19) and the consistency reviews (D20–D43), 2026-09-24.
 Each line records the choice and the reason;
 reopening one means changing this table.
 
@@ -996,10 +1034,21 @@ reopening one means changing this table.
 | D23 | Suppression | `min_cell_count` is part of the result derivation | A setting that changes outputs must change the id |
 | D24 | Row ids | With `allow_row_ids: false` the `ids` leaf is refused | A count over a chosen id reveals that unit's attributes |
 | D25 | Overlapping cohorts | Refused in a view unless `overlap: "allow"`, then `COHORTS_OVERLAP` (warn) | Tests assume independent groups |
-| D26 | Structural coverage | Importer proposes `parents: "all"` for every relationship; queue ranks these first | Otherwise every negative criterion over a child table is UNKNOWN on a fresh import |
+| D26 | Structural coverage | *(revised by D43)* Importer proposes `parents: "all"` for every relationship; queue ranks these first | Otherwise every negative criterion over a child table is UNKNOWN on a fresh import |
 | D27 | Record filters | Conjunctions of value lists on categorical columns; queries accepted only if provably inside; readbacks state the filter | Keeps the refusal rule decidable and the meaning of "any row" visible |
 | D28 | Empty quantifiers | `quantifier: "all"` over zero children is UNKNOWN; `min_count` is three-valued | Vacuous truth is surprising and would put units into cohorts on no evidence |
 | D29 | Coverage table without scope | FALSE if the parent is listed, else UNKNOWN | Closes a missing case in §6.4 |
 | D30 | Draft releases | Queries during a curation session use a draft release, carry `DRAFT_RELEASE`, and are neither cached nor citable | Keeps D4 compatible with P6 |
 | D31 | Entity concepts | Tables may `maps_to` an entity concept; required for cross-dataset units | §7.4 needed it and the table descriptor lacked it |
 | D32 | Caveat severities | Every caveat, core or pack, declares a severity | "Show warn and above" must be unambiguous |
+| D33 | Missing child values | Existence is Kleene logic over rows; a row with a missing value in the `where` clause makes the answer UNKNOWN, not FALSE | Otherwise a missing grade counts as "no grade ≥3 event": P2 violated one level down |
+| D34 | Canonicalisation order | Defaults and view lists written first, cohort references inlined next, sorting last | Sorting before inlining lets names into the id |
+| D35 | Result keys | Values keyed by position in the view, each carrying its cohort id | Two identical cohorts would otherwise collide |
+| D36 | View cohort lists | Default is every cohort in document order, written explicitly before order is dropped | The default reference group would otherwise be undefined |
+| D37 | `quantifier` vs `lift` | `quantifier` (any/all, per step) and `lift` (strict/assessed, unassessed children only) are separate | One parameter was doing two jobs |
+| D38 | Dependency upgrades | A library upgrade that changes a golden digest requires an analysis version bump | Keeps the id/digest invariant true across upgrades |
+| D39 | Record-filter wording | Unconstrained columns are accepted and implicitly restricted to the filter | Removes a contradiction |
+| D40 | Row ids and suppression | `allow_row_ids: false` requires `min_cell_count` | Narrow cohorts re-identify people without it |
+| D41 | Draft release ids | `<dataset>@draft-<content hash>`, valid in derivations, never citable | D30 needed an identifier |
+| D42 | Null foreign keys | Lookups through a null key are UNKNOWN, reason `NO_PARENT` | Closes a gap in §6.1 |
+| D43 | Coverage proposals (revises D26) | Proposed `parents: "all"` only for structural child tables; measurement and event tables stay undeclared until a person decides; `COVERAGE_PROPOSED` (warn) otherwise | Partial coverage hides in measurement tables; a plain-CSV panel import must not read unsequenced genes as wild-type |
