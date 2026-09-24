@@ -1143,8 +1143,10 @@ def test_a_release_withdrawn_while_the_erasure_loads_is_passed_over(
     load = store.load
 
     def loading(manifest: str) -> Any:
-        if manifest == imported:
-            store.withdraw("lib", 1, "operator:ada")
+        if manifest == imported:  # the store's own step: the slot keeps operations out (D236)
+            with store.db.transaction() as db:
+                store.record_withdrawal(db, "lib", imported, "operator:ada")
+            store.withdrawn([imported])
         return load(manifest)
 
     monkeypatch.setattr(store, "load", loading)

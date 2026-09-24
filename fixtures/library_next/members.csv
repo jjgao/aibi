@@ -1,0 +1,25 @@
+# export of 2026-01-01
+member_id,name,joined,age,interests,branch
+m01,Ada,2019-01-01,20,poetry;maths,south
+m02,Grace,2019-02-07,27,maths,north
+m03,Alan,2019-03-16,34,,south
+m04,Edsger,2019-04-22,NA,chess;maths,north
+m05,Barbara,2019-05-29,48,NA,south
+m06,Donald,2019-07-05,55,poetry,north
+m07,Frances,2019-08-11,62,chess,south
+m08,John,2019-09-17,refused,maths;poetry,north
+m09,Karen,2019-10-24,26,poetry;maths,south
+m10,Leslie,2019-11-30,33,maths,north
+m11,Margaret,2020-01-06,41.5,,south
+m12,Niklaus,2020-02-12,47,chess;maths,north
+m13,Ole,2020-03-20,54,NA,south
+m14,Peter,2020-04-26,61,poetry,north
+m15,Radia,2020-06-02,68,chess,south
+m16,Shafi,2020-07-09,25,maths;poetry,north
+m17,Tim,2020-08-15,32,poetry;maths,south
+m18,Ursula,2020-09-21,39,maths,north
+m19,Vint,2020-10-28,46,,south
+m20,Whitfield,2020-12-04,53,chess;maths,north
+m21,Xavier,2021-01-10,60,NA,south
+m22,Yukihiro,2021-02-16,67,poetry,north
+m23,Zhang,2021-03-25,24,chess,south
