@@ -6,8 +6,8 @@ objects, which consults only the packs a dataset or document lists. The core nev
 pack; the server hands the registry the packs it loads.
 
 The extension points are typed here. The core calls each from the milestone that delivers its
-feature (M1–M3), so the types some of them exchange (import results, proposals, analysis
-inputs) are placeholders until then. Raw snapshots and typed tables are the store's
+feature (M1–M3), so the types some of them exchange (proposals, analysis inputs) are
+placeholders until then. Raw snapshots and typed tables are the store's
 (``aibi.core.store.sources``) and the evaluator's (``aibi.core.engine.data``).
 """
 
@@ -39,13 +39,14 @@ from aibi.core.schema.ids import (
     is_pack_code,
 )
 from aibi.core.schema.jsonio import is_text
-from aibi.core.schema.limits import MAX_DEPTH
+from aibi.core.schema.limits import MAX_DEPTH, ImportLimits
 from aibi.core.schema.output import Output, Segment
 from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.results import Pep440
 
 if TYPE_CHECKING:
     from aibi.core.engine.data import Table
+    from aibi.core.store.build import Layout
     from aibi.core.store.sources import RawSource
 
 # --- The manifest ----------------------------------------------------------------------------
@@ -116,13 +117,83 @@ class ReleaseView(Protocol):
         ...
 
 
-class ImportOptions(Protocol):
-    """Options an operator gives an import. Defined with the importers (M1, #9)."""
+EntryKind = Literal["file", "directory", "symlink", "other", "unconfined"]
 
 
-class ImportResult(Protocol):
-    """What an importer returns: raw snapshots, parse settings, tables with roles,
-    relationships, coverage, descriptors and proposals. Defined with the importers (M1, #9)."""
+@dataclass(frozen=True)
+class DirectoryEntry:
+    """An entry directly inside a directory, by its own name, before any symlink is followed."""
+
+    name: str
+    kind: EntryKind
+    """A regular ``file``, confined; a ``directory``; a ``symlink``, never followed; an ``other``
+    kind (a FIFO, a socket, a device); or a regular file that could not be confined
+    (``unconfined``), which is moved or swapped while it is listed."""
+    path: ConfinedPath | None = None
+    """For a ``file``, its confined path."""
+
+
+class SourceReader(Protocol):
+    """The only way any importer, the core's or a pack's, reads a file (SPEC §14, D232).
+
+    Every path it takes or returns is confined to the upload area or an import directory, and
+    ``read`` reads the file it confined, whatever replaced it since, or refuses."""
+
+    def read(self, path: ConfinedPath, limit: int) -> bytes:
+        """The file's bytes, at most ``limit`` of them, or a ``LIMIT_EXCEEDED`` refusal."""
+        ...
+
+    def files(self, directory: ConfinedPath) -> Sequence[DirectoryEntry]:
+        """What is directly inside a directory, by name; each regular file confined in its
+        turn, and no symlink followed."""
+        ...
+
+    def location(self, path: ConfinedPath) -> str:
+        """The path relative to the root that holds it, as a dataset's ``source`` records it."""
+        ...
+
+
+@dataclass(frozen=True)
+class ImportOptions:
+    """What an operator gives an import (SPEC §11.2, §13.1)."""
+
+    dataset: str
+    """The dataset's id, which the operator names."""
+    reader: SourceReader
+    limits: ImportLimits
+    at: str
+    """RFC 3339: the ``at`` of every curation entry the import writes."""
+    name: str | None = None
+    """The dataset's name; the source's file name without its extension when not given."""
+    original_name: str | None = None
+    """An upload's file name, which its stored path does not keep (D234)."""
+
+
+NoteKind = Literal["skipped_source", "renamed", "not_proposed", "dropped", "unparsed", "gap"]
+
+
+@dataclass(frozen=True)
+class ImportNote:
+    """A line of the import report, for the curation queue (D231); it holds no cell values."""
+
+    kind: NoteKind
+    subject: str | None
+    """The descriptor id or the source name it is about."""
+    message: Sequence[Segment]
+    count: int | None = None
+    rows: Sequence[int] = ()
+    """References to rows (counted from 1), at most 5, where a count has them."""
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    """What an importer returns: the raw snapshots by source name, each table's layout on
+    them, the descriptors with their proposals, and notes for the curation queue."""
+
+    sources: Mapping[str, "RawSource"]
+    layouts: Mapping[str, "Layout"]
+    descriptors: Sequence[Descriptor]
+    notes: Sequence[ImportNote] = ()
 
 
 RawSnapshot = Mapping[str, "RawSource"]
@@ -133,7 +204,8 @@ Tables = Mapping[str, "Table"]
 
 
 class Proposal(Protocol):
-    """A proposed descriptor change with its rationale (SPEC §12.3). Defined in M1 (#9)."""
+    """A proposed descriptor change with its rationale (SPEC §12.3). Defined with the curation
+    queue (M1, #10); an importer's proposals are ``proposed`` fields of its descriptors."""
 
 
 class AnalysisInputs(Protocol):
@@ -659,12 +731,16 @@ __all__ = [
     "AnalysisInputs",
     "CaveatRule",
     "ConfinedPath",
+    "DirectoryEntry",
+    "EntryKind",
     "Facet",
+    "ImportNote",
     "ImportOptions",
     "ImportResult",
     "Importer",
     "JsonSchema",
     "LeafKind",
+    "NoteKind",
     "OntologyValidator",
     "Pack",
     "PackError",
@@ -677,6 +753,7 @@ __all__ = [
     "Refused",
     "ReleaseView",
     "RequirementPredicate",
+    "SourceReader",
     "Tables",
     "TranslationNote",
     "Translator",

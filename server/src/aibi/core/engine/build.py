@@ -102,6 +102,7 @@ def relationship(
     *,
     role: str | None = None,
     one_to_one: bool = False,
+    status: str = "asserted",
 ) -> Descriptor:
     """A relationship; the parent's key columns are named like the child's unless given."""
     fields: dict[str, Any] = {
@@ -113,7 +114,7 @@ def relationship(
     }
     if role is not None:
         fields["role"] = role
-    return descriptor("relationship", relationship_id(child, columns, role), fields)
+    return descriptor("relationship", relationship_id(child, columns, role), fields, status=status)
 
 
 def coverage(

@@ -50,6 +50,8 @@ from aibi.core.store.sources import ErrorCell, SourceValue, canonical_string
 
 MAX_LIST_TEXT = 1_000_000
 """Characters of a JSON or Python list cell that are parsed at most; a longer one is UNKNOWN."""
+UNPARSED_ROWS = 5
+"""Positions of unparsed cells a column keeps, for references without values (D231)."""
 
 _INT64 = 2**63
 _SPACE = " \t\r\n\f\v"
@@ -273,10 +275,19 @@ class ColumnCells:
         """For a list column, items by state."""
         self.unparsed: Counter[str] = Counter()
         """Tokens that are no value of the datatype, nor a declared code: UNKNOWN (§5.1)."""
+        self.unparsed_cells = 0
+        """How many cells ``unparsed`` counts, kept as they are typed."""
+        self.unparsed_rows: list[int] = []
+        """The positions of the first ``UNPARSED_ROWS`` cells whose token did not parse."""
+        self._position = 0
 
     def cell(self, value: SourceValue) -> Cell:
+        before = self.unparsed_cells
         cell = self._cell(value)
         self.states[cell.state] += 1
+        if self.unparsed_cells > before and len(self.unparsed_rows) < UNPARSED_ROWS:
+            self.unparsed_rows.append(self._position)
+        self._position += 1
         return cell
 
     def _cell(self, value: SourceValue) -> Cell:
@@ -289,21 +300,23 @@ class ColumnCells:
         if token == "":
             return EMPTY
         if isinstance(value, ErrorCell) or (isinstance(value, float) and not math.isfinite(value)):
-            self.unparsed[token] += 1
-            return EMPTY
+            return self._unparsed(token)
         if self.is_list:
             return self._list(token)
         converted = self._convert(value, token)
         if converted is None:
-            self.unparsed[token] += 1
-            return EMPTY
+            return self._unparsed(token)
         return Cell(PRESENT, converted)
+
+    def _unparsed(self, token: str) -> Cell:
+        self.unparsed[token] += 1
+        self.unparsed_cells += 1
+        return EMPTY
 
     def _list(self, token: str) -> Cell:
         items = _items(token, self.list_syntax)
         if items is None:
-            self.unparsed[token] += 1
-            return EMPTY
+            return self._unparsed(token)
         cells: list[Cell] = []
         for item in items:
             coded = None if item is None else self.codes.get(item)
@@ -318,4 +331,4 @@ class ColumnCells:
         return Cell(PRESENT, tuple(cells))
 
 
-__all__ = ["MAX_LIST_TEXT", "ColumnCells"]
+__all__ = ["MAX_LIST_TEXT", "UNPARSED_ROWS", "ColumnCells"]

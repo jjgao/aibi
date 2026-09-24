@@ -54,6 +54,7 @@ from aibi.core.engine.data import Release
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
 from aibi.core.schema.output import text
+from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store import build, redaction, tables
 from aibi.core.store.appdb import AppDB, Label
@@ -225,9 +226,14 @@ class Store:
         descriptors: Sequence[Descriptor],
         sources: Mapping[str, RawSource],
         layouts: Mapping[str, Layout],
+        *,
+        notes: Sequence[ImportNote] = (),
     ) -> Built:
-        """Build a release from new raw snapshots; its blobs stay pinned by ``pin``."""
-        return build.import_release(self.blobs, dataset, descriptors, sources, layouts, holder=pin)
+        """Build a release from new raw snapshots, through the validation gate, with the
+        importer's ``notes`` in its import report; its blobs stay pinned by ``pin``."""
+        return build.import_release(
+            self.blobs, dataset, descriptors, sources, layouts, holder=pin, notes=notes
+        )
 
     def change_release(
         self,
