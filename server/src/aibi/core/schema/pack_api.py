@@ -7,7 +7,8 @@ pack; the server hands the registry the packs it loads.
 
 The extension points are typed here. The core calls each from the milestone that delivers its
 feature (M1–M3), so the types some of them exchange (import results, proposals, analysis
-inputs) are placeholders until then.
+inputs) are placeholders until then. Raw snapshots and typed tables are the store's
+(``aibi.core.store.sources``) and the evaluator's (``aibi.core.engine.data``).
 """
 
 import math
@@ -16,7 +17,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Annotated, Literal, NewType, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Literal, NewType, Protocol, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
@@ -42,6 +43,10 @@ from aibi.core.schema.limits import MAX_DEPTH
 from aibi.core.schema.output import Output, Segment
 from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.results import Pep440
+
+if TYPE_CHECKING:
+    from aibi.core.engine.data import Table
+    from aibi.core.store.sources import RawSource
 
 # --- The manifest ----------------------------------------------------------------------------
 
@@ -112,20 +117,19 @@ class ReleaseView(Protocol):
 
 
 class ImportOptions(Protocol):
-    """Options an operator gives an import. Defined with the importers (M1, #8)."""
+    """Options an operator gives an import. Defined with the importers (M1, #9)."""
 
 
 class ImportResult(Protocol):
     """What an importer returns: raw snapshots, parse settings, tables with roles,
-    relationships, coverage, descriptors and proposals. Defined with the importers (M1, #8)."""
+    relationships, coverage, descriptors and proposals. Defined with the importers (M1, #9)."""
 
 
-class RawSnapshot(Protocol):
-    """A source table as imported, before parsing (SPEC §12.2). Defined in M1 (#8)."""
+RawSnapshot = Mapping[str, "RawSource"]
+"""A dataset's raw snapshots, by source name, before parsing (SPEC §12.2)."""
 
-
-class Tables(Protocol):
-    """Typed tables rebuilt from raw snapshots (SPEC §12.2). Defined in M1 (#8)."""
+Tables = Mapping[str, "Table"]
+"""Typed tables, by table id, rebuilt from raw snapshots (SPEC §12.2)."""
 
 
 class Proposal(Protocol):

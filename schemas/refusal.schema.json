@@ -1762,7 +1762,12 @@
         "ROW_IDS_NOT_ALLOWED",
         "INVALID_KEY",
         "MIXED_RELEASES",
-        "NOT_SUPPORTED"
+        "NOT_SUPPORTED",
+        "UNPARSEABLE_SOURCE",
+        "COLUMNS_CHANGED",
+        "UNKNOWN_RELEASE",
+        "RELEASE_WITHDRAWN",
+        "ERASURE_BLOCKED"
       ],
       "title": "RefusalCode",
       "type": "string"

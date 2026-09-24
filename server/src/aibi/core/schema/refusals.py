@@ -72,6 +72,17 @@ class RefusalCode(StrEnum):
     MIXED_RELEASES = "MIXED_RELEASES"
     NOT_SUPPORTED = "NOT_SUPPORTED"
     """Not supported until a later milestone, which the message names."""
+    # Building a release from its raw snapshots (§12.2, §13.2):
+    UNPARSEABLE_SOURCE = "UNPARSEABLE_SOURCE"
+    """A raw snapshot its parse settings cannot read; the message names the line."""
+    COLUMNS_CHANGED = "COLUMNS_CHANGED"
+    """A change to a table's source columns, which only a re-import makes (§12.2, §12.3)."""
+    UNKNOWN_RELEASE = "UNKNOWN_RELEASE"
+    """No release of the dataset has that label, hash or draft."""
+    RELEASE_WITHDRAWN = "RELEASE_WITHDRAWN"
+    """The release was withdrawn: it is never published or withdrawn again (§12.3)."""
+    ERASURE_BLOCKED = "ERASURE_BLOCKED"
+    """An erasure whose first step is missing: the latest release still holds the rows."""
 
 
 class Limit(Output):
