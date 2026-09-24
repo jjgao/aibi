@@ -271,15 +271,16 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                     alternatives=[data(cohort_name) for cohort_name in view.cohorts],
                 )
             )
+        # Cohorts whose datasets a null left unknown are left out: the others may still span
+        # datasets.
         spans = {
             span
             for c in view.cohorts or names
-            if c in document.cohorts and (span := _datasets(document.cohorts[c], document))
+            if c in document.cohorts
+            and c not in unknown.datasets
+            and (span := _datasets(document.cohorts[c], document))
         }
-        spans_known = index not in unknown.view_cohorts and not unknown.datasets & set(
-            view.cohorts or names
-        )
-        if len(spans) > 1 and not unit_is_concept and spans_known:
+        if len(spans) > 1 and not unit_is_concept and index not in unknown.view_cohorts:
             refusals.append(
                 Refusal(
                     code=RefusalCode.CONCEPT_REQUIRED,

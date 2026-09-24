@@ -8,9 +8,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 
+import jsonschema
 import pytest
 from annotated_types import MaxLen
-from pydantic import BaseModel, StringConstraints, ValidationError
+from pydantic import BaseModel, StringConstraints, TypeAdapter, ValidationError
 from pydantic.fields import FieldInfo
 
 from aibi.core.schema.document import (
@@ -22,19 +23,25 @@ from aibi.core.schema.document import (
     UnknownClause,
     ValueLeaf,
 )
+from aibi.core.schema.export import SCHEMAS
 from aibi.core.schema.limits import (
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
     MAX_LIST,
+    MAX_POINTER,
     MAX_REFUSALS,
     LimitName,
 )
 from aibi.core.schema.loading import (
     DocumentResult,
+    _finish,  # pyright: ignore[reportPrivateUsage]
+    _Found,  # pyright: ignore[reportPrivateUsage]
     _kept,  # pyright: ignore[reportPrivateUsage]
+    _Positions,  # pyright: ignore[reportPrivateUsage]
     load_document,
     refusal_from_error,
 )
+from aibi.core.schema.refusals import Refusal, RefusalCode
 
 DOCUMENTS = Path(__file__).parent / "documents"
 
@@ -993,7 +1000,8 @@ def test_models_built_in_python_hold_only_what_json_carries() -> None:
     document = with_clause({"kind": "value", "column": "t.c", "values": [2.0, 1.5]})
     leaf = Document.model_validate(document).cohorts["c"].all[0]
     assert isinstance(leaf, ValueLeaf)
-    assert leaf.values == [2, 1.5]
+    assert leaf.values is not None
+    assert [type(value) for value in leaf.values] == [int, float]
     for values in ([1e16], ["caf\udce9"]):
         with pytest.raises(ValidationError):
             Document.model_validate(
@@ -1001,3 +1009,289 @@ def test_models_built_in_python_hold_only_what_json_carries() -> None:
             )
     with pytest.raises(ValidationError):
         Document.model_validate({**with_clause({"all": []}), "params": {"p": [math.nan]}})
+
+
+# --- Round 5: substitution caps, namespaces, knock-ons and JSON safety ----------------------------
+
+
+def _limits(result: DocumentResult) -> set[str]:
+    return {refusal.limit.name for refusal in result.refusals if refusal.limit is not None}
+
+
+def test_substitution_keeps_the_paths_to_all_values_bounded() -> None:
+    leaf = {"kind": "value", "column": "t.c", "values": [[]] * 775}
+    document = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "t",
+        "params": {"leaf": leaf},
+        "cohorts": {"k" * 16_340: {"all": ["$leaf"] * 256}},
+    }
+    start = time.perf_counter()
+    result = load(document)
+    assert time.perf_counter() - start < 2.0
+    assert "all_pointer_characters" in _limits(result)
+
+
+def test_substitution_keeps_each_path_bounded() -> None:
+    # The pointer to "$v" is "/cohorts/c/all/0/" and the key, 17 + K characters; the value's own
+    # longest pointer is "/a", 2 more.
+    def document(key: int) -> dict[str, Any]:
+        document = with_clause({"kind": "p.leaf", "k" * key: "$v"})
+        return {**document, "params": {"v": {"a": 1}}}
+
+    assert "pointer_characters" not in _limits(load(document(MAX_POINTER - 19)))
+    assert "pointer_characters" in _limits(load(document(MAX_POINTER - 18)))
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"aibi": "1", "dataset": "d", "unit": "value", "cohorts": {"c": {"all": []}}},
+        {"aibi": "1", "dataset": "d", "unit": "summary", "cohorts": {"c": {"all": []}}},
+        with_clause(
+            {"kind": "exists", "table": "summary", "via": [{"rel": "rel:summary.t", "dir": "down"}]}
+        ),
+        with_clause({"kind": "value", "column": "cohort.value", "values": [1]}),
+    ],
+)
+def test_table_ids_may_equal_reserved_words(document: dict[str, Any]) -> None:
+    assert refusals(document) == []
+    for name in ("document.schema.json", "document.as-written.schema.json"):
+        assert jsonschema.Draft202012Validator(SCHEMAS[name]()).is_valid(document), name
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        (
+            {
+                **with_clause(
+                    {
+                        "kind": "$k",
+                        "table": "s",
+                        "where": [{"kind": "$nope", "column": "BAD"}],
+                    }
+                ),
+                "params": {"k": "exists"},
+            },
+            [("UNKNOWN_PARAMETER", "/cohorts/c/all/0/where/0/kind")],
+        ),
+        (
+            with_clause({"kind": None, "not": {"kind": "$nope", "column": "BAD"}}),
+            [
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/kind"),
+                ("UNKNOWN_PARAMETER", "/cohorts/c/all/0/not/kind"),
+            ],
+        ),
+    ],
+)
+def test_a_refused_kind_hides_its_clause_in_the_substituted_document(
+    document: dict[str, Any], expected: list[tuple[str, str]]
+) -> None:
+    assert refusals(document) == expected
+
+
+@pytest.mark.parametrize(
+    ("clause_or_cohort", "expected"),
+    [
+        (
+            {"kind": "value", "column": "t.c", "values": ["x"], "range": {"gt": 1}, "op": None},
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/op"),
+            ],
+        ),
+        (
+            {"kind": "value", "column": "t.c", "values": ["x"], "range": {"gt": 1}, "value": None},
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/value"),
+            ],
+        ),
+        (
+            {"kind": "value", "column": "t.c", "range": {"gt": 1, "gte": 2, "value": None}},
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0/range"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/range/value"),
+            ],
+        ),
+        (
+            {"kind": "exists", "table": "s", "min_count": 2, "quantifier": "every", "values": None},
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/values"),
+            ],
+        ),
+        # Controls: here the conflict follows only from the member left out.
+        (
+            {"kind": "value", "column": "t.c", "values": None},
+            [("NULL_NOT_ALLOWED", "/cohorts/c/all/0/values")],
+        ),
+        (
+            {"kind": "value", "column": "t.c", "op": "=", "value": None},
+            [("NULL_NOT_ALLOWED", "/cohorts/c/all/0/value")],
+        ),
+        (
+            {"kind": "value", "column": "t.c", "values": None, "range": {"gt": 1}, "op": "="},
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/values"),
+            ],
+        ),
+    ],
+)
+def test_conflicts_are_hidden_only_when_a_null_explains_them(
+    clause_or_cohort: dict[str, Any], expected: list[tuple[str, str]]
+) -> None:
+    assert refusals(with_clause(clause_or_cohort)) == expected
+
+
+def test_cohorts_with_dataset_and_datasets_conflict_beside_a_null() -> None:
+    document = {
+        "aibi": "1",
+        "unit": "core:person",
+        "cohorts": {"c": {"all": [], "dataset": "x", "datasets": ["x", "y"], "unmapped": None}},
+    }
+    assert ("CONFLICTING_MEMBERS", "/cohorts/c") in refusals(document)
+
+
+def test_known_cohorts_of_a_view_may_span_datasets_beside_an_unknown_one() -> None:
+    document = {
+        "aibi": "1",
+        "dataset": "w",
+        "unit": "t",
+        "cohorts": {
+            "a": {"all": [], "dataset": None},
+            "b": {"all": [], "dataset": "x"},
+            "c": {"all": [], "dataset": "y"},
+        },
+        "views": [{"analysis": "compare.x", "cohorts": ["a", "b", "c"]}],
+    }
+    assert refusals(document) == [
+        ("NULL_NOT_ALLOWED", "/cohorts/a/dataset"),
+        ("CONCEPT_REQUIRED", "/unit"),
+    ]
+    # The known cohorts share one dataset; a's is unknown, whatever the root's is.
+    document["cohorts"]["c"]["dataset"] = "x"
+    assert refusals(document) == [("NULL_NOT_ALLOWED", "/cohorts/a/dataset")]
+
+
+@pytest.mark.parametrize(
+    "cohorts",
+    [
+        # a's datasets are unknown: its reference cannot be compared, though the root's differ.
+        {
+            "a": {"all": [], "dataset": None},
+            "b": {"all": [{"kind": "cohort", "cohort": "a"}], "dataset": "y"},
+        },
+        # a's datasets are unknown: whether it is cross-dataset, and so may use via by dataset,
+        # is unknown too.
+        {
+            "a": {
+                "all": [
+                    {
+                        "kind": "value",
+                        "column": "core:age_years",
+                        "values": [1],
+                        "via": {"z": []},
+                    }
+                ],
+                "dataset": None,
+            }
+        },
+    ],
+)
+def test_checks_skip_cohorts_whose_datasets_a_null_left_unknown(cohorts: dict[str, Any]) -> None:
+    document = {"aibi": "1", "dataset": "x", "unit": "t", "cohorts": cohorts}
+    assert refusals(document) == [("NULL_NOT_ALLOWED", "/cohorts/a/dataset")]
+
+
+def test_a_cohorts_own_dataset_is_known_when_the_root_dataset_is_null() -> None:
+    clause = {"kind": "value", "column": "t.c", "values": [1], "via": {"z": []}}
+    document = {
+        "aibi": "1",
+        "dataset": None,
+        "unit": "t",
+        "cohorts": {"a": {"all": [clause], "dataset": "x"}},
+    }
+    assert refusals(document) == [
+        ("CROSS_DATASET_ONLY", "/cohorts/a/all/0/via"),
+        ("NULL_NOT_ALLOWED", "/dataset"),
+    ]
+
+
+def test_a_null_scope_value_is_refused_without_emptying_the_scope() -> None:
+    clause = {
+        "kind": "covered",
+        "table": "s",
+        "scope": {"c": None},
+        "via": [{"rel": "rel:s.t", "dir": "down"}],
+    }
+    assert refusals(with_clause(clause)) == [("NULL_NOT_ALLOWED", "/cohorts/c/all/0/scope/c")]
+
+
+def test_refusals_sort_as_their_pointers_do() -> None:
+    # "!" sorts before "/", so /cohorts! comes before anything under /cohorts.
+    document = {**with_clause({"kind": "value", "column": "t.c", "values": [1], "x": 1})}
+    document["cohorts!"] = 1
+    assert refusals(document) == [
+        ("UNKNOWN_MEMBER", "/cohorts!"),
+        ("UNKNOWN_MEMBER", "/cohorts/c/all/0/x"),
+    ]
+
+
+def test_refusals_at_one_path_are_merged_only_with_the_same_code() -> None:
+    document = {
+        **with_clause({"all": []}),
+        "views": [{"analysis": "compare.x", "cohorts": ["z", "z"]}],
+    }
+    found = refusals(document)
+    assert ("UNKNOWN_COHORT", "/views/0/cohorts/1") in found
+    assert ("DUPLICATE_ENTRY", "/views/0/cohorts/1") in found
+
+
+def test_a_refusal_without_a_path_is_kept_apart_from_one_at_the_root() -> None:
+    def refusal(path: str | None) -> Refusal:
+        return Refusal(code=RefusalCode.WRONG_TYPE, path=path, message=[])
+
+    found = [
+        _Found(None, RefusalCode.WRONG_TYPE, lambda at: refusal(at)),
+        _Found((), RefusalCode.WRONG_TYPE, lambda at: refusal(at)),
+    ]
+    assert [r.path for r in _finish(found, _Positions())] == [None, ""]
+
+
+def test_pack_leaves_hold_their_members_as_json_text_would() -> None:
+    document = Document.model_validate(with_clause({"kind": "p.leaf", "n": 2.0, "m": [1.5, 3.0]}))
+    leaf = document.cohorts["c"].all[0]
+    assert isinstance(leaf, PackLeaf)
+    assert json.dumps(leaf.model_dump()) == '{"kind": "p.leaf", "n": 2, "m": [1.5, 3]}'
+
+
+@pytest.mark.parametrize(
+    "drafted_by", ["agent:caf\udce9", "agent:x\ufffey", "operator:x\u0085y", "agent:x\u009by"]
+)
+def test_drafted_by_is_unicode_text_without_controls(drafted_by: str) -> None:
+    with pytest.raises(ValidationError):
+        Document.model_validate({**with_clause({"all": []}), "drafted_by": drafted_by})
+
+
+def test_view_parameter_keys_are_unicode_text() -> None:
+    view = {"analysis": "compare.x", "params": {"caf\udce9": 1}}
+    with pytest.raises(ValidationError):
+        Document.model_validate({**with_clause({"all": []}), "views": [view]})
+
+
+def test_infinite_constants_are_refused_as_not_finite() -> None:
+    with pytest.raises(ValidationError) as raised:
+        Document.model_validate(
+            with_clause({"kind": "value", "column": "t.c", "values": [math.inf]})
+        )
+    assert [error["type"] for error in raised.value.errors()] == ["non_finite_number"]
+
+
+@pytest.mark.parametrize("model", [Document, Refusal])
+def test_serialisation_schemas_are_typed_like_validation_schemas(model: type[BaseModel]) -> None:
+    adapter: Any = TypeAdapter(model)
+    assert adapter.json_schema(mode="serialization") == adapter.json_schema(mode="validation")

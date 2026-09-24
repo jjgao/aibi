@@ -1,3 +1,4 @@
+import json
 import math
 
 import pytest
@@ -101,7 +102,8 @@ def test_paths_are_bounded() -> None:
 
 
 def test_values_built_in_python_are_checked_as_json_reads_them() -> None:
-    assert json_value({"a": [2.0, 1.5, None, True]}) == {"a": [2, 1.5, None, True]}
+    # json.dumps tells 2 from 2.0, which == does not.
+    assert json.dumps(json_value({"a": [2.0, 1.5, None, True]})) == '{"a": [2, 1.5, null, true]}'
     for bad, code in [
         (math.nan, "NON_FINITE_NUMBER"),
         (2**60, "INTEGER_OUT_OF_RANGE"),
@@ -113,3 +115,49 @@ def test_values_built_in_python_are_checked_as_json_reads_them() -> None:
         with pytest.raises(JsonError) as raised:
             json_value({"a": [bad]} if not isinstance(bad, dict) else bad)
         assert raised.value.code == code
+
+
+def test_values_built_in_python_nest_as_deep_as_json_text_may() -> None:
+    def nested(depth: int) -> object:
+        value: object = 0
+        for _ in range(depth):
+            value = [value]
+        return value
+
+    assert json_value(nested(MAX_DEPTH)) == nested(MAX_DEPTH)
+    with pytest.raises(JsonError) as raised:
+        json_value(nested(MAX_DEPTH + 1))
+    assert raised.value.limit == ("nesting_depth", MAX_DEPTH)
+    parse_json(json.dumps(nested(MAX_DEPTH)))
+    with pytest.raises(JsonError):
+        parse_json(json.dumps(nested(MAX_DEPTH + 1)))
+
+
+@pytest.mark.parametrize(
+    ("key", "accepted"),
+    [
+        ("k" * (MAX_POINTER - 1), True),  # "/" + key is the pointer to its value
+        ("k" * MAX_POINTER, False),
+        ("~" * ((MAX_POINTER - 1) // 2), True),  # each "~" is written "~0"
+        ("~" * ((MAX_POINTER - 1) // 2 + 1), False),
+        ("/" * ((MAX_POINTER - 1) // 2 + 1), False),
+    ],
+    ids=["longest", "one more", "escaped tildes", "one tilde more", "slashes"],
+)
+def test_the_pointer_to_a_value_is_capped_exactly(key: str, accepted: bool) -> None:
+    source = json.dumps({key: 0})
+    if accepted:
+        assert parse_json(source) == {key: 0}
+    else:
+        with pytest.raises(JsonError) as raised:
+            parse_json(source)
+        assert raised.value.limit == ("pointer_characters", MAX_POINTER)
+
+
+def test_array_indices_count_in_the_pointer() -> None:
+    # "/" + key + "/" + index: an array of 10 items has indices of one digit, 11 of two.
+    key = "k" * (MAX_POINTER - 3)
+    assert parse_json(json.dumps({key: [0] * 10})) == {key: [0] * 10}
+    with pytest.raises(JsonError) as raised:
+        parse_json(json.dumps({key: [0] * 11}))
+    assert raised.value.limit == ("pointer_characters", MAX_POINTER)

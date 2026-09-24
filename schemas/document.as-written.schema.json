@@ -2316,6 +2316,9 @@
                   "$ref": "#/$defs/ParameterReference"
                 }
               },
+              "propertyNames": {
+                "maxLength": 4096
+              },
               "title": "Params",
               "type": "object"
             },
@@ -2472,7 +2475,7 @@
       "not": {
         "pattern": "^model:[a-z0-9_]*__"
       },
-      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f\\u2028\\u2029]{1,200})$",
+      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,200})$",
       "title": "Drafted By",
       "type": "string",
       "x-aibi-data": true

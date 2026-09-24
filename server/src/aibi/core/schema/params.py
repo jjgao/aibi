@@ -8,7 +8,8 @@ substituted, and substituted values are not scanned again.
 
 Substitution can multiply a document: a large value used in many places. The substituted
 document may be no larger than a document as written, in bytes and in JSON values, nor nest
-deeper; a reference that would cross a limit is refused.
+deeper, nor have longer paths to its values, one by one or together; a reference that would
+cross a limit is refused.
 
 Positions are tuples of JSON Pointer tokens, which share the document's strings; pointers are
 written only for the refusals returned, so that long keys above many references cost little.
@@ -24,11 +25,15 @@ from pydantic import JsonValue
 from aibi.core.schema.ids import NAME
 from aibi.core.schema.jsonio import pointer
 from aibi.core.schema.limits import (
+    ALL_POINTER_CHARACTERS,
     JSON_VALUES,
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
+    MAX_POINTER,
+    MAX_POINTERS,
     MAX_VALUES,
     NESTING_DEPTH,
+    POINTER_CHARACTERS,
     SUBSTITUTED_BYTES,
 )
 from aibi.core.schema.output import data, text
@@ -39,40 +44,59 @@ Position = tuple[str | int, ...]
 
 _REFERENCE = re.compile(rf"\$({NAME})")
 
-_TEXT_MEMBERS: tuple[tuple[str | None, ...], ...] = (
-    ("notes",),
-    ("drafted_by",),
-    ("cohorts", None, "notes"),
-    ("views", None, "note"),
-)
-"""Paths of plain-text members, where ``None`` stands for any cohort name or view index."""
-
 
 def _is_text_member(path: list[str | int]) -> bool:
-    return any(
-        len(path) == len(pattern)
-        and all(want is None or want == got for want, got in zip(pattern, path, strict=True))
-        for pattern in _TEXT_MEMBERS
-    )
+    """Whether ``path`` is a plain-text member: ``notes`` or ``drafted_by``, a cohort's
+    ``notes`` or a view's ``note``. It runs for every value, so it tests lengths first."""
+    if len(path) == 1:
+        return path[0] in ("notes", "drafted_by")
+    if len(path) == 3:
+        return (path[0], path[2]) in (("cohorts", "notes"), ("views", "note"))
+    return False
 
 
 def _size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
-def _shape(value: JsonValue) -> tuple[int, int]:
-    """A value's number of JSON values and its nesting depth."""
-    count = 0
-    depth = 0
-    pending: list[tuple[JsonValue, int]] = [(value, 0)]
+def _escaped(key: str) -> int:
+    """The length of a key as a JSON Pointer token."""
+    return len(key) + key.count("~") + key.count("/")
+
+
+@dataclass(frozen=True, slots=True)
+class _Shape:
+    values: int
+    """JSON values, the value itself included."""
+    depth: int
+    """Levels of arrays and objects: 0 for a scalar."""
+    pointers: int
+    """Characters in the pointers from the value to each value in it, together."""
+    longest: int
+    """Characters in the longest of those pointers."""
+
+
+def _shape(value: JsonValue) -> _Shape:
+    """What a value adds to a document, counted as ``parse_json`` counts it."""
+    values = depth = pointers = longest = 0
+    pending: list[tuple[JsonValue, int, int]] = [(value, 0, 0)]
     while pending:
-        current, level = pending.pop()
-        count += 1
-        if isinstance(current, dict | list):
+        current, level, length = pending.pop()
+        values += 1
+        pointers += length
+        longest = max(longest, length)
+        if isinstance(current, dict):
             depth = max(depth, level + 1)
-            members = current.values() if isinstance(current, dict) else current
-            pending.extend((member, level + 1) for member in members)
-    return count, depth
+            pending.extend(
+                (member, level + 1, length + 1 + _escaped(key)) for key, member in current.items()
+            )
+        elif isinstance(current, list):
+            depth = max(depth, level + 1)
+            pending.extend(
+                (item, level + 1, length + 1 + len(str(index)))
+                for index, item in enumerate(current)
+            )
+    return _Shape(values, depth, pointers, longest)
 
 
 @dataclass(frozen=True)
@@ -132,7 +156,10 @@ def _too_large(name: str, limit: Limit) -> Callable[[str | None], Refusal]:
         message=[
             text("Substituting parameter "),
             data(name),
-            text(" here makes the document larger or deeper than a document may be"),
+            text(
+                " here makes the document larger or deeper, or the paths to its values longer, "
+                "than a document may have them"
+            ),
         ],
         limit=limit,
     )
@@ -159,17 +186,19 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
             result.problems.append(Problem(("params",), RefusalCode.WRONG_TYPE, _not_an_object))
     params: dict[str, JsonValue] = params_value if isinstance(params_value, dict) else {}
     declared = sorted(params)
-    sizes: dict[str, tuple[int, int, int]] = {}
+    shapes: dict[str, tuple[int, _Shape]] = {}
     total = _size(document) if size is None else size
-    values = _shape(document)[0]
+    written = _shape(document)
+    values, pointers = written.values, written.pointers
 
     def refuse(where: Position, code: RefusalCode, build: Callable[[str | None], Refusal]) -> None:
         """Record a refusal; the reference stays in place, and nothing under it is reported."""
         result.failed.append(where)
         result.problems.append(Problem(where, code, build))
 
-    def reference(value: str, path: list[str | int]) -> JsonValue:
-        nonlocal total, values
+    def reference(value: str, path: list[str | int], length: int) -> JsonValue:
+        """``length`` is that of the pointer to the reference."""
+        nonlocal total, values, pointers
         where = tuple(path)
         if not usable:
             result.failed.append(where)
@@ -182,53 +211,61 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
         if name not in params:
             refuse(where, RefusalCode.UNKNOWN_PARAMETER, _unknown(name, declared))
             return value
-        if name not in sizes:
-            sizes[name] = (_size(params[name]), *_shape(params[name]))
-        value_bytes, value_count, value_depth = sizes[name]
+        if name not in shapes:
+            shapes[name] = (_size(params[name]), _shape(params[name]))
+        value_bytes, shape = shapes[name]
         grown = total + value_bytes - _size(value)
-        more = values + value_count - 1
+        more = values + shape.values - 1
+        # Each value substituted is reached through the reference's pointer; the string it
+        # replaces had that pointer too.
+        longer = pointers + shape.values * length + shape.pointers - length
         limit: Limit | None = None
         if grown > MAX_DOCUMENT_BYTES:
             limit = Limit(name=SUBSTITUTED_BYTES, max=MAX_DOCUMENT_BYTES)
         elif more > MAX_VALUES:
             limit = Limit(name=JSON_VALUES, max=MAX_VALUES)
-        elif len(path) + value_depth > MAX_DEPTH:
+        elif len(path) + shape.depth > MAX_DEPTH:
             limit = Limit(name=NESTING_DEPTH, max=MAX_DEPTH)
+        elif length + shape.longest > MAX_POINTER:
+            limit = Limit(name=POINTER_CHARACTERS, max=MAX_POINTER)
+        elif longer > MAX_POINTERS:
+            limit = Limit(name=ALL_POINTER_CHARACTERS, max=MAX_POINTERS)
         if limit is not None:
             refuse(where, RefusalCode.LIMIT_EXCEEDED, _too_large(name, limit))
             return value
-        total, values = grown, more
+        total, values, pointers = grown, more, longer
         result.used[name] = params[name]
         result.positions[where] = name
         return params[name]
 
-    def walk(value: JsonValue, path: list[str | int]) -> JsonValue:
-        """``path`` is shared and restored on return: tokens are copied only at references."""
+    def walk(value: JsonValue, path: list[str | int], length: int) -> JsonValue:
+        """``path`` is shared and restored on return: tokens are copied only at references.
+        ``length`` is that of the pointer to ``value``."""
         if _is_text_member(path):
             return value
         if isinstance(value, dict):
             members: dict[str, JsonValue] = {}
             for key, member in value.items():
                 path.append(key)
-                members[key] = walk(member, path)
+                members[key] = walk(member, path, length + 1 + _escaped(key))
                 path.pop()
             return members
         if isinstance(value, list):
             items: list[JsonValue] = []
             for index, item in enumerate(value):
                 path.append(index)
-                items.append(walk(item, path))
+                items.append(walk(item, path, length + 1 + len(str(index))))
                 path.pop()
             return items
         if isinstance(value, str) and value.startswith("$"):
             if value.startswith("$$"):
                 return value[1:]
-            return reference(value, path)
+            return reference(value, path, length)
         return value
 
     substituted: dict[str, JsonValue] = {}
     for key, member in document.items():
-        substituted[key] = member if key == "params" else walk(member, [key])
+        substituted[key] = member if key == "params" else walk(member, [key], 1 + _escaped(key))
     result.document = substituted
     result.unused = sorted(set(params) - set(result.used))
     return result

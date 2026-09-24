@@ -234,7 +234,7 @@ def json_value(value: object) -> JsonValue:
 
 
 def _checked(value: object, path: list[str | int]) -> JsonValue:
-    if len(path) > MAX_DEPTH:
+    if isinstance(value, dict | list) and len(path) >= MAX_DEPTH:
         raise JsonError(
             "LIMIT_EXCEEDED",
             pointer(path),

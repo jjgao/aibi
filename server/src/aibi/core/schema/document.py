@@ -23,6 +23,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     Tag,
+    ValidationInfo,
     WithJsonSchema,
     field_validator,
     model_serializer,
@@ -103,8 +104,10 @@ class DocModel(BaseModel):
             raise PydanticCustomError("null_not_allowed", "null is not allowed; omit the member")
         return value
 
+    # No return annotation: Pydantic would take it as the serialised type, and the document's
+    # serialisation schema would be an untyped object instead of the model's.
     @model_serializer(mode="wrap")
-    def _dump_given(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _dump_given(self, handler: SerializerFunctionWrapHandler):
         dumped: dict[str, Any] = handler(self)
         given: set[str] = set()
         for name, info in type(self).model_fields.items():
@@ -131,6 +134,8 @@ def _scalar(value: object) -> str | bool | int | float:
                 "invalid_text", "Text must be Unicode: no lone surrogates or noncharacters"
             )
         return value
+    if isinstance(value, float) and not math.isfinite(value):
+        raise PydanticCustomError("non_finite_number", "The number is not finite")
     if isinstance(value, int | float) and abs(value) > MAX_SAFE_INTEGER:
         raise PydanticCustomError(
             "integer_out_of_range",
@@ -139,8 +144,6 @@ def _scalar(value: object) -> str | bool | int | float:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise PydanticCustomError("non_finite_number", "The number is not finite")
         return int(value) if value.is_integer() else value
     raise PydanticCustomError("scalar_type", "Expected a string, a boolean or a number")
 
@@ -221,7 +224,17 @@ _JSON_PROBLEMS: dict[str, tuple[LiteralString, LiteralString]] = {
 }
 
 
-def _without_null(value: JsonValue) -> JsonValue:
+PARSED = "parsed"
+"""Validation context key: the document comes from ``parse_json``, so its values are JSON-safe
+already and are not copied again."""
+
+
+def _parsed(info: ValidationInfo | None) -> bool:
+    context = cast(object, None if info is None else info.context)
+    return isinstance(context, dict) and cast(dict[str, object], context).get(PARSED) is True
+
+
+def _without_null(value: JsonValue, info: ValidationInfo | None = None) -> JsonValue:
     """The value as JSON text carries it back; ``null`` is refused anywhere inside it."""
     pending: list[JsonValue] = [value]
     while pending:
@@ -232,6 +245,8 @@ def _without_null(value: JsonValue) -> JsonValue:
             pending.extend(current.values())
         elif isinstance(current, list):
             pending.extend(current)
+    if _parsed(info):
+        return value
     try:
         return json_value(value)
     except JsonError as error:
@@ -264,7 +279,7 @@ PackSpecifier = Annotated[
 ]
 
 _DRAFTED_BY = (
-    rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f\u2028\u2029]{{1,{MAX_NAME}}})$"
+    rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f-\x9f\u2028\u2029]{{1,{MAX_NAME}}})$"
 )
 _DRAFTED_BY_RE = re.compile(_DRAFTED_BY)
 
@@ -279,6 +294,10 @@ def _drafted_by(value: str) -> str:
             "string_too_long",
             "A self-declared name has at most {max_length} characters",
             {"max_length": MAX_NAME, "limit": NAME_CHARACTERS},
+        )
+    if not is_text(value):
+        raise PydanticCustomError(
+            "invalid_text", "Text must be Unicode: no lone surrogates or noncharacters"
         )
     if _DRAFTED_BY_RE.fullmatch(value) is None:
         raise PydanticCustomError(
@@ -434,6 +453,9 @@ ValueList = Annotated[
 ]
 
 
+_PREDICATES = ("values", "range", "op")
+
+
 class ValueLeaf(DocModel):
     """A value predicate (SPEC §6.4): exactly one of ``values``, ``range`` or ``op`` + ``value``."""
 
@@ -466,14 +488,17 @@ class ValueLeaf(DocModel):
 
     @model_validator(mode="after")
     def _check_predicate(self) -> Self:
-        given = [name for name in ("values", "range", "op") if getattr(self, name) is not None]
+        given = [name for name in _PREDICATES if getattr(self, name) is not None]
         if len(given) != 1:
             raise PydanticCustomError(
                 "conflicting_members",
                 "Give exactly one of values, range, or op with value",
+                {"exclusive": _PREDICATES},
             )
         if (self.op is None) != (self.value is None):
-            raise PydanticCustomError("conflicting_members", "op and value go together")
+            raise PydanticCustomError(
+                "conflicting_members", "op and value go together", {"together": ("op", "value")}
+            )
         return self
 
 
@@ -622,10 +647,13 @@ class PackLeaf(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def _check_pack(self) -> Self:
+    def _check_pack(self, info: ValidationInfo) -> Self:
         _pack_id(self.kind.split(".", 1)[0])
         no_double_underscore(self.kind)
-        _without_null(cast(JsonValue, self.model_extra or {}))
+        extra = self.__pydantic_extra__ or {}
+        for key, member in extra.items():
+            # Kept as JSON text would carry it back: 2.0 is the integer 2.
+            extra[key] = _without_null(cast(JsonValue, member), info)
         return self
 
 
@@ -772,6 +800,18 @@ class Cohort(DocModel):
         return self
 
 
+def _text_key(value: str) -> str:
+    if not is_text(value):
+        raise PydanticCustomError("invalid_text", "Keys must be Unicode text")
+    return value
+
+
+ParamKey = Annotated[
+    str, Field(max_length=MAX_STRING), LimitName(CONSTANT_CHARACTERS), AfterValidator(_text_key)
+]
+"""A key of a view's ``params``: fixed by the analysis's parameter schema (M3)."""
+
+
 class View(DocModel):
     """A view. Its cohorts and reference are checked by the document checks, with their paths."""
 
@@ -787,7 +827,7 @@ class View(DocModel):
     reference: Name | None = None
     overlap: Literal["allow"] | None = None
     unmapped: Literal["allow"] | None = None
-    params: dict[str, DocumentJson] | None = None
+    params: dict[ParamKey, DocumentJson] | None = None
     """Checked against the analysis's parameter schema once the registry exists (M3)."""
     note: Notes | None = None
 

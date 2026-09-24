@@ -32,8 +32,10 @@ class Output(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    # No return annotation: Pydantic would take it as the serialised type, and the output's
+    # serialisation schema would be an untyped object instead of the model's.
     @model_serializer(mode="wrap")
-    def _omit_absent(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _omit_absent(self, handler: SerializerFunctionWrapHandler):
         serialised: dict[str, Any] = handler(self)
         for name, info in type(self).model_fields.items():
             key = info.serialization_alias or info.alias or name

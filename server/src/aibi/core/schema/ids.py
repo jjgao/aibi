@@ -97,7 +97,9 @@ def _namespace(value: str, separator: str) -> str:
 
 
 def concept_namespace(value: str) -> str:
-    if _namespace(value, ":") in _NOT_CONCEPT_NAMESPACES:
+    """A concept's namespace is ``core`` or a pack id; a value without ``:`` names no concept."""
+    namespace, colon, _ = value.partition(":")
+    if colon and namespace in _NOT_CONCEPT_NAMESPACES:
         raise PydanticCustomError(
             "reserved_namespace", "A concept's namespace is core or a pack id"
         )
@@ -107,7 +109,9 @@ def concept_namespace(value: str) -> str:
 def analysis_family(value: str) -> str:
     if _namespace(value, ".") in _NOT_ANALYSIS_FAMILIES:
         raise PydanticCustomError(
-            "reserved_namespace", "An analysis's family is summary, compare, survival or a pack id"
+            "reserved_namespace",
+            "An analysis's family is {families} or a pack id",
+            {"families": ", ".join(sorted(CORE_ANALYSIS_FAMILIES))},
         )
     return value
 

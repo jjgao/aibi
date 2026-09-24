@@ -12,10 +12,12 @@ datasets, its ``unmapped`` or a view's cohorts skip what a null left unknown. Re
 de-duplicated by (path, code), sorted, and capped at ``MAX_REFUSALS``; a last refusal says how
 many were left out.
 
-Positions are tuples of JSON Pointer tokens, which share the document's strings: a pointer is
-written only for a refusal returned, so that long keys above many values cost little.
+Positions are tuples of JSON Pointer tokens, and a pointer is written only for a refusal
+returned. Pydantic copies the keys above a problem into its location, so the paths to values are
+capped (§14): at parse time, and again when parameters are substituted.
 """
 
+import heapq
 import json
 import types
 from collections.abc import Callable, Mapping, Sequence
@@ -27,7 +29,7 @@ from pydantic import BaseModel, Discriminator, JsonValue, Tag, ValidationError
 from pydantic_core import ErrorDetails
 
 from aibi.core.schema.checks import Unknown, check_document
-from aibi.core.schema.document import CORE_KINDS_TEXT, Document
+from aibi.core.schema.document import CORE_KINDS_TEXT, PARSED, Document
 from aibi.core.schema.jsonio import JsonError, escape_token, parse_json, pointer
 from aibi.core.schema.limits import (
     CONSTANT_CHARACTERS,
@@ -101,6 +103,10 @@ class _Positions:
     def covers(self, position: Position) -> bool:
         return self.above(position) is not None
 
+    def filled(self) -> bool:
+        """Whether any position was added."""
+        return bool(self._root)
+
 
 def load_document(source: str | bytes) -> DocumentResult:
     size = len(source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source)
@@ -162,13 +168,14 @@ def load_document(source: str | bytes) -> DocumentResult:
 
     document: Document | None = None
     try:
-        document = Document.model_validate(substitution.document)
+        # Parsed values are JSON-safe already, so validation need not copy them.
+        document = Document.model_validate(substitution.document, context={PARSED: True})
     except ValidationError as error:
         for details in error.errors(include_url=False, include_input=False):
             if details["type"] == "null_not_allowed" and nulls:
                 continue  # every null is already reported, at its own path
             position = _tokens(details["loc"])
-            if _CAUSES.get(details["type"], frozenset()) & knock_ons.lost.get(position, set()):
+            if _caused_by_nulls(details, position, knock_ons.lost, substitution.document):
                 continue  # the object lacks a member only because a null was left out
             if not refused.covers(position):
                 found.append(
@@ -299,11 +306,36 @@ def _is_map(path: list[str | int], in_leaf: bool) -> bool:
 _CAUSES: dict[str, frozenset[str]] = {
     "not_a_clause": frozenset({"kind", "all", "any", "not", "known", "unknown"}),
     "unknown_kind": frozenset({"kind"}),
-    "conflicting_members": frozenset({"values", "range", "op", "value"}),
     "empty_range": frozenset({"gt", "gte", "lt", "lte"}),
 }
 """Errors about an object as a whole, and the members whose absence can cause each: such an
-error is not reported for an object that lost one of them to a null."""
+error is not reported for an object that lost one of them to a null. Conflicting members say in
+their context which members they concern (``exclusive`` or ``together``); other conflicts never
+follow from a member left out."""
+
+
+def _caused_by_nulls(
+    details: ErrorDetails,
+    position: Position,
+    lost: Mapping[Position, set[str]],
+    document: JsonValue,
+) -> bool:
+    """Whether an error about the object at ``position`` follows only from members it lost."""
+    gone = lost.get(position)
+    if not gone:
+        return False
+    ctx = details.get("ctx") or {}
+    if "exclusive" in ctx:
+        # Exactly one of these is given: only a loss that leaves none of them explains it.
+        exclusive = frozenset(ctx["exclusive"])
+        present = _at(document, position)
+        remaining = isinstance(present, dict) and any(
+            present.get(member) is not None for member in exclusive
+        )
+        return bool(gone & exclusive) and not remaining
+    if "together" in ctx:
+        return bool(gone & frozenset(ctx["together"]))
+    return bool(_CAUSES.get(details["type"], frozenset()) & gone)
 
 
 @dataclass(frozen=True)
@@ -385,7 +417,7 @@ def _knock_ons(
     under.extend(
         position[:-1]
         for position in substitution.failed
-        if position and position[-1] == "kind" and _is_clause(written, position[:-1])
+        if position and position[-1] == "kind" and _is_clause(substitution.document, position[:-1])
     )
     return _KnockOns(under, lost, _unknown(written, dropped))
 
@@ -452,32 +484,46 @@ class _SortKeys:
         self._last: dict[str | int, str] = {}
 
     def of(self, position: Position) -> tuple[str, ...]:
+        """The key of a position. It runs once per refusal found, so it avoids loops in Python."""
         if not position:
             return ()
-        keys: list[str] = []
-        for token in position[:-1]:
-            key = self._inner.get(token)
-            if key is None:
-                key = self._inner[token] = escape_token(token) + "/"
-            keys.append(key)
-        last = self._last.get(position[-1])
-        if last is None:
-            last = self._last[position[-1]] = escape_token(position[-1])
-        keys.append(last)
+        inner = self._inner
+        # Every key is a non-empty string, so ``or`` falls back only for a token not seen yet.
+        keys = [inner.get(token) or self._inner_key(token) for token in position[:-1]]
+        keys.append(self._last.get(position[-1]) or self._last_key(position[-1]))
         return tuple(keys)
+
+    def _inner_key(self, token: str | int) -> str:
+        key = self._inner[token] = escape_token(token) + "/"
+        return key
+
+    def _last_key(self, token: str | int) -> str:
+        # The empty token's key is empty; it is recomputed each time, which costs nothing.
+        key = self._last[token] = escape_token(token)
+        return key
 
 
 def _finish(found: list[_Found], positions: _Positions) -> list[Refusal]:
+    """The refusals returned: one per (path, code), sorted, and at most ``MAX_REFUSALS``.
+
+    A refusal without a path sorts with the root's, as ``sort_refusals`` has it, but is kept
+    apart from one at the root.
+    """
     keys = _SortKeys()
-    kept: dict[tuple[tuple[str, ...], str], tuple[_Found, Position | None, str | None]] = {}
+    kept: dict[tuple[tuple[str, ...], str, bool], tuple[_Found, Position | None, str | None]] = {}
+    filled = positions.filled()
     for item in found:
         if item.position is None:
             written_at, parameter, key = None, None, ()
         else:
-            written_at, parameter = _as_written(item.position, positions)
+            written_at, parameter = (
+                _as_written(item.position, positions) if filled else (item.position, None)
+            )
             key = keys.of(written_at)
-        kept.setdefault((key, str(item.code)), (item, written_at, parameter))
-    order = sorted(kept)
+        kept.setdefault(
+            (key, str(item.code), written_at is not None), (item, written_at, parameter)
+        )
+    order = heapq.nsmallest(MAX_REFUSALS, kept) if len(kept) > MAX_REFUSALS else sorted(kept)
     refusals: list[Refusal] = []
     for key in order[:MAX_REFUSALS]:
         item, written_at, parameter = kept[key]
@@ -491,12 +537,12 @@ def _finish(found: list[_Found], positions: _Positions) -> list[Refusal]:
             ]
             refusal = refusal.model_copy(update={"message": message})
         refusals.append(refusal)
-    if len(order) > MAX_REFUSALS:
+    if len(kept) > MAX_REFUSALS:
         refusals.append(
             Refusal(
                 code=RefusalCode.LIMIT_EXCEEDED,
                 path=None,
-                message=[text(f"{len(order) - MAX_REFUSALS} more refusals were left out")],
+                message=[text(f"{len(kept) - MAX_REFUSALS} more refusals were left out")],
                 limit=Limit(name=REFUSALS, max=MAX_REFUSALS),
             )
         )
@@ -658,12 +704,15 @@ def _kept(shape: tuple[str | None, ...]) -> tuple[int, ...]:
 
 
 def _tokens(loc: tuple[int | str, ...]) -> Position:
+    """The path tokens of an error location. It runs once per error, so it avoids generators."""
     names = _structural_names()
     shape = tuple(
-        None if isinstance(element, int) else element if element in names else _OTHER
-        for element in loc
+        [
+            None if element.__class__ is int else element if element in names else _OTHER
+            for element in loc
+        ]
     )
-    return tuple(loc[index] for index in _kept(shape))
+    return tuple([loc[index] for index in _kept(shape)])
 
 
 def _members(model: object) -> list[str]:
