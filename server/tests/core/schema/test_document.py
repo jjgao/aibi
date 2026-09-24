@@ -24,12 +24,16 @@ from aibi.core.schema.document import (
     ValueLeaf,
 )
 from aibi.core.schema.export import SCHEMAS
+from aibi.core.schema.jsonio import escape_token
 from aibi.core.schema.limits import (
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
     MAX_LIST,
+    MAX_PARAMS,
     MAX_POINTER,
+    MAX_POINTERS,
     MAX_REFUSALS,
+    MAX_VALUES,
     LimitName,
 )
 from aibi.core.schema.loading import (
@@ -1277,8 +1281,9 @@ def test_drafted_by_is_unicode_text_without_controls(drafted_by: str) -> None:
         Document.model_validate({**with_clause({"all": []}), "drafted_by": drafted_by})
 
 
-def test_view_parameter_keys_are_unicode_text() -> None:
-    view = {"analysis": "compare.x", "params": {"caf\udce9": 1}}
+@pytest.mark.parametrize("key", ["caf\udce9", "a\ufffe", "a\ufdd0"])
+def test_view_parameter_keys_are_unicode_text(key: str) -> None:
+    view = {"analysis": "compare.x", "params": {key: 1}}
     with pytest.raises(ValidationError):
         Document.model_validate({**with_clause({"all": []}), "views": [view]})
 
@@ -1295,3 +1300,191 @@ def test_infinite_constants_are_refused_as_not_finite() -> None:
 def test_serialisation_schemas_are_typed_like_validation_schemas(model: type[BaseModel]) -> None:
     adapter: Any = TypeAdapter(model)
     assert adapter.json_schema(mode="serialization") == adapter.json_schema(mode="validation")
+
+
+# --- Round 6: the parameter cap, exact conflicts, text built in code, caps at their edge -------
+
+
+def _params(count: int) -> dict[str, Any]:
+    return {f"p{index}": index for index in range(count)}
+
+
+def test_too_many_parameters_are_refused_before_substitution() -> None:
+    leaf = {"kind": "value", "column": "t.c", "values": ["$zz"]}
+    document = {**with_clause({"all": [leaf] * 256}), "params": _params(20_000)}
+    start = time.perf_counter()
+    result = load(document)
+    assert time.perf_counter() - start < 3.0
+    [refusal] = result.refusals
+    assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/params")
+    assert refusal.limit is not None
+    assert (refusal.limit.name, refusal.limit.max) == ("parameters", MAX_PARAMS)
+    assert result.params_unused == []
+    at_cap = {**with_clause({"all": []}), "params": _params(MAX_PARAMS)}
+    assert [code for code, _ in refusals(at_cap)] == []
+
+
+def test_unknown_parameters_list_the_declared_names() -> None:
+    document = {**with_clause({"kind": "value", "column": "t.c", "values": ["$zz"]})}
+    document["params"] = _params(MAX_PARAMS)
+    [refusal] = load(document).refusals
+    assert refusal.code == "UNKNOWN_PARAMETER"
+    assert len(refusal.alternatives) == MAX_PARAMS
+
+
+_LEAF = {"kind": "value", "column": "t.c"}
+_CONFLICT = ("CONFLICTING_MEMBERS", "/cohorts/c/all/0")
+
+
+@pytest.mark.parametrize(
+    ("members", "conflict"),
+    [
+        # No way of giving or omitting the null member fixes these, so the conflict stands.
+        ({"values": [1], "value": 1, "op": None}, True),
+        ({"value": 1, "values": None}, True),
+        ({"op": None}, True),
+        ({"range": {"gt": 1}, "value": 1, "op": None}, True),
+        ({"values": [1], "op": "=", "value": None}, True),
+        ({"op": "=", "lift": None}, True),
+        ({"lift": None}, True),
+        # Giving the null member a value would fix these: only the null is reported.
+        ({"value": 1, "op": None}, False),
+        ({"values": None}, False),
+        ({"op": "=", "value": None}, False),
+        ({"range": None, "op": None, "value": None}, False),
+        ({"values": [1], "range": None}, False),
+    ],
+)
+def test_a_conflict_beside_a_null_is_reported_when_no_fix_of_the_null_removes_it(
+    members: dict[str, Any], conflict: bool
+) -> None:
+    found = refusals(with_clause({**_LEAF, **members}))
+    nulls = [path for code, path in found if code == "NULL_NOT_ALLOWED"]
+    assert nulls == sorted(f"/cohorts/c/all/0/{name}" for name, v in members.items() if v is None)
+    assert (_CONFLICT in found) is conflict
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {**with_clause({"all": []}), "notes": "a\ufffe"},
+        {**with_clause({"all": []}), "cohorts": {"c": {"all": [], "notes": "a\ufdd0"}}},
+        {**with_clause({"all": []}), "views": [{"analysis": "compare.x", "note": "\ufffe"}]},
+        with_clause({"kind": "ids", "ids": ["d:a\ufffe"]}),
+        with_clause({"kind": "p.leaf", "q\ufffe": 1}),
+        with_clause({"kind": "p.leaf", "q\ufdd0": 1}),
+    ],
+)
+def test_text_built_in_code_is_unicode_text(document: dict[str, Any]) -> None:
+    """What JSON text could not carry is refused in code too (§7.1)."""
+    with pytest.raises(ValidationError):
+        Document.model_validate(document)
+
+
+def test_the_parsed_context_skips_copies_of_parameter_values() -> None:
+    """A loaded document's JSON values are not copied again, but each position a parameter
+    fills has its own copy, distinct from the parameter's value."""
+    document = {
+        **with_clause({"kind": "p.leaf", "a": "$v", "b": "$v"}),
+        "params": {"v": {"x": [1]}},
+    }
+    result = load(document)
+    assert result.document is not None
+    leaf = result.document.cohorts["c"].all[0]
+    assert isinstance(leaf, PackLeaf)
+    extra = leaf.model_extra or {}
+    assert extra["a"] == extra["b"] == {"x": [1]}
+    assert extra["a"] is not extra["b"]
+    assert extra["a"] is not result.params_used["v"]
+
+
+def test_drafted_by_is_never_substituted() -> None:
+    document = {**with_clause({"all": []}), "params": {"x": "agent:someone"}, "drafted_by": "$x"}
+    result = load(document)
+    assert [(r.code, r.path) for r in result.refusals] == [("INVALID_VALUE", "/drafted_by")]
+    assert result.params_unused == ["x"]
+
+
+def test_a_long_view_parameter_key_names_its_limit() -> None:
+    view = {"analysis": "compare.x", "params": {"k" * 5_000: 1}}
+    result = load({**with_clause({"all": []}), "views": [view]})
+    assert _limits(result) == {"constant_characters"}
+
+
+def test_over_the_cap_the_first_refusals_by_path_are_returned() -> None:
+    leaves = [{"kind": "value", "column": "t.c", "values": [[]] * 600} for _ in range(2)]
+    result = load(with_clause({"all": leaves}))
+    paths = sorted(
+        f"/cohorts/c/all/0/all/{leaf}/values/{index}" for leaf in range(2) for index in range(600)
+    )
+    assert [r.path for r in result.refusals[:MAX_REFUSALS]] == paths[:MAX_REFUSALS]
+    assert result.refusals[MAX_REFUSALS].code == "LIMIT_EXCEEDED"
+
+
+def _counts(document: Any) -> tuple[int, int, int]:
+    """JSON values, their pointers' length together, and the longest, as parse_json counts."""
+    values = total = longest = 0
+    pending: list[tuple[Any, int]] = [(document, 0)]
+    while pending:
+        value, length = pending.pop()
+        values, total, longest = values + 1, total + length, max(longest, length)
+        if isinstance(value, dict):
+            pending.extend((m, length + 1 + len(escape_token(k))) for k, m in value.items())
+        elif isinstance(value, list):
+            pending.extend((m, length + 1 + len(str(i))) for i, m in enumerate(value))
+    return values, total, longest
+
+
+def _hit(document: dict[str, Any]) -> set[str]:
+    return _limits(load_document(json.dumps(document, separators=(",", ":"))))
+
+
+def test_the_paths_as_written_count_toward_the_substituted_total() -> None:
+    key = "k" * 16_000
+    document = {"params": {"v": [0] * 1_900}, "x": {key: [0] * 2_600}, "y": {key: ["$v"]}}
+    assert _counts(document)[1] < MAX_POINTERS
+    assert "all_pointer_characters" in _hit(document)
+
+
+def test_the_substituted_total_is_exact_at_the_cap() -> None:
+    key = "~/" * 2_000 + "k" * 8_000  # 12,000 characters, 16,000 as a pointer token
+
+    def total(n: int) -> int:
+        return _counts({"params": {"v": [0] * n}, key: [[0] * n]})[1]
+
+    low, high = 1, 10_000
+    while low < high:  # the most values that leave room for a filler member
+        middle = (low + high + 1) // 2
+        low, high = (middle, high) if total(middle) + 2 <= MAX_POINTERS else (low, middle - 1)
+    filler = MAX_POINTERS - total(low) - 1  # a member "F…": 0 adds 1 + its length
+    for extra in (0, 1):
+        document = {"params": {"v": [0] * low}, key: ["$v"], "F" * (filler + extra): 0}
+        assert ("all_pointer_characters" in _hit(document)) is bool(extra)
+
+
+def test_the_longest_substituted_path_is_exact_at_the_cap() -> None:
+    inner = "a~b/" * 10  # 40 characters, 60 as a token
+    value = {"z": 0, inner: list(range(12))}  # the longest inside: "/" + 60 + "/11", not the last
+    for extra in (0, 1):
+        # The pointer to "$v" is "/" + the outer key + "/0"; with 64 inside, 16,384 (+ extra).
+        outer = "~" * 100 + "x" * (MAX_POINTER - 64 - 3 + extra - 200)
+        document = {"params": {"v": value}, outer: ["$v"]}
+        assert ("pointer_characters" in _hit(document)) is bool(extra)
+
+
+def test_the_substituted_values_are_exact_at_the_cap() -> None:
+    value = [0] * 999  # 1,000 values
+    for extra in (0, 1):
+        document: dict[str, Any] = {"params": {"v": value}, "r": ["$v"] * 150}
+        values, _, _ = _counts({"params": {"v": value}, "r": [value] * 150})
+        document["pad"] = [0] * (MAX_VALUES - values - 1 + extra)
+        assert ("json_values" in _hit(document)) is bool(extra)
+
+
+def test_the_substituted_depth_is_exact_at_the_cap() -> None:
+    value: Any = 0
+    for _ in range(MAX_DEPTH - 2):  # as deep as a value in params may be
+        value = [value]
+    document = {**with_clause({"all": []}), "params": {"w": value}}
+    assert "nesting_depth" not in _hit({**document, "x": ["$w"]})
+    assert "nesting_depth" in _hit({**document, "x": [["$w"]]})

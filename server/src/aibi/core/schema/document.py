@@ -7,7 +7,8 @@ against a release (M2); checks that need only the document are in ``aibi.core.sc
 
 import math
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Literal, LiteralString, Self, cast
+from collections.abc import Set as AbstractSet
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, LiteralString, Self, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from pydantic import (
@@ -176,8 +177,20 @@ Bound = Annotated[
     WithJsonSchema({"anyOf": [_STRING_CONSTANT, _NUMBER]}),
 ]
 
+
+def _unicode(value: str) -> str:
+    if not is_text(value):
+        raise PydanticCustomError(
+            "invalid_text", "Text must be Unicode: no lone surrogates or noncharacters"
+        )
+    return value
+
+
 Notes = Annotated[
-    str, Field(max_length=MAX_TEXT, json_schema_extra=DATA_MARK), LimitName(NOTE_CHARACTERS)
+    str,
+    Field(max_length=MAX_TEXT, json_schema_extra=DATA_MARK),
+    LimitName(NOTE_CHARACTERS),
+    AfterValidator(_unicode),
 ]
 """Plain text, never compiled or interpreted (A6)."""
 
@@ -224,17 +237,24 @@ _JSON_PROBLEMS: dict[str, tuple[LiteralString, LiteralString]] = {
 }
 
 
-PARSED = "parsed"
-"""Validation context key: the document comes from ``parse_json``, so its values are JSON-safe
-already and are not copied again."""
+class _Parsed:
+    """The type of ``PARSED``, a key no caller writes by accident."""
+
+    def __repr__(self) -> str:
+        return "PARSED"
 
 
-def _parsed(info: ValidationInfo | None) -> bool:
-    context = cast(object, None if info is None else info.context)
-    return isinstance(context, dict) and cast(dict[str, object], context).get(PARSED) is True
+PARSED: Final = _Parsed()
+"""Validation context key, for the loader only: the document comes from ``parse_json``, so its
+values are JSON-safe already and are not copied again."""
 
 
-def _without_null(value: JsonValue, info: ValidationInfo | None = None) -> JsonValue:
+def _parsed(info: ValidationInfo) -> bool:
+    context = cast(object, info.context)
+    return isinstance(context, dict) and cast(dict[object, object], context).get(PARSED) is True
+
+
+def _without_null(value: JsonValue, info: ValidationInfo) -> JsonValue:
     """The value as JSON text carries it back; ``null`` is refused anywhere inside it."""
     pending: list[JsonValue] = [value]
     while pending:
@@ -454,6 +474,14 @@ ValueList = Annotated[
 
 
 _PREDICATES = ("values", "range", "op")
+PREDICATE_MEMBERS = ("values", "range", "op", "value")
+"""The members a value leaf's predicate is written with (§7.2)."""
+
+
+def predicate_holds(given: AbstractSet[str]) -> bool:
+    """Whether a value leaf given these members has one predicate: exactly one of ``values``,
+    ``range`` and ``op``, and ``value`` exactly when ``op`` is given."""
+    return sum(name in given for name in _PREDICATES) == 1 and ("op" in given) == ("value" in given)
 
 
 class ValueLeaf(DocModel):
@@ -488,16 +516,18 @@ class ValueLeaf(DocModel):
 
     @model_validator(mode="after")
     def _check_predicate(self) -> Self:
-        given = [name for name in _PREDICATES if getattr(self, name) is not None]
-        if len(given) != 1:
+        # The context names the rule, so the loader can tell whether members lost to nulls
+        # explain the conflict (predicate_holds).
+        given = {name for name in PREDICATE_MEMBERS if getattr(self, name) is not None}
+        if sum(name in given for name in _PREDICATES) != 1:
             raise PydanticCustomError(
                 "conflicting_members",
                 "Give exactly one of values, range, or op with value",
-                {"exclusive": _PREDICATES},
+                {"rule": "predicate"},
             )
-        if (self.op is None) != (self.value is None):
+        if not predicate_holds(given):
             raise PydanticCustomError(
-                "conflicting_members", "op and value go together", {"together": ("op", "value")}
+                "conflicting_members", "op and value go together", {"rule": "predicate"}
             )
         return self
 
@@ -567,9 +597,9 @@ def _ids_dataset(value: object) -> object:
 
 
 def _ids_text(value: str) -> str:
-    """The dataset part holds no ``__``, like any identifier."""
+    """The dataset part holds no ``__``, like any identifier, and the key is Unicode text."""
     no_double_underscore(value.partition(":")[0])
-    return value
+    return _unicode(value)
 
 
 def _ids_member_tag(value: object) -> str | None:
@@ -652,6 +682,8 @@ class PackLeaf(BaseModel):
         no_double_underscore(self.kind)
         extra = self.__pydantic_extra__ or {}
         for key, member in extra.items():
+            if not is_text(key):
+                raise PydanticCustomError("invalid_text", "Keys must be Unicode text")
             # Kept as JSON text would carry it back: 2.0 is the integer 2.
             extra[key] = _without_null(cast(JsonValue, member), info)
         return self

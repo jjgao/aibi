@@ -123,7 +123,8 @@ def _out_of_range(path: list[str | int]) -> JsonError:
     )
 
 
-def _escaped_length(key: str) -> int:
+def escaped_length(key: str) -> int:
+    """The length of a key as a JSON Pointer token: ``~`` and ``/`` take two characters."""
     return len(key) + key.count("~") + key.count("/")
 
 
@@ -165,7 +166,7 @@ def _build(value: object, path: list[str | int], count: list[int], length: int =
                     pointer(path),
                     "A key in this object is not Unicode text (a lone surrogate or a noncharacter)",
                 )
-            member_length = length + 1 + _escaped_length(key)
+            member_length = length + 1 + escaped_length(key)
             if member_length > MAX_POINTER:
                 raise JsonError(
                     "LIMIT_EXCEEDED",

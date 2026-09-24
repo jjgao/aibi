@@ -772,10 +772,12 @@ for copy number*), subject to §8.4.
   `"$name"` in any position of the document as written, and the substituted document is
   validated against the document schema. Parameter values are taken verbatim: nothing in them is
   substituted or unescaped. `notes`, `note` and `drafted_by` are plain text and never substituted.
-  The substituted document may be no larger than a document may be (§14), in bytes and in JSON
-  values, nor nest deeper; a reference that would cross a limit is refused. An unknown name is a refusal
-  naming its path; declared but unused parameters are reported; the parameters used are echoed
-  in results, outside the digest.
+  The substituted document, `params` included, may be no larger than a document may be (§14), in
+  bytes and in JSON values, nor nest deeper, nor have longer paths to its values, one by one or
+  together; a reference that would cross a limit is refused. A document that declares more
+  parameters than it may have is refused before any is substituted. An unknown name is a refusal
+  naming its path; declared but unused parameters are reported; the parameters used are echoed in
+  results, outside the digest.
 - **Parsing.** A document is UTF-8 without a byte order mark, and its strings and keys are
   Unicode text: lone surrogate escapes and noncharacters are refused (as in I-JSON, RFC 7493).
   Duplicate keys in a JSON object, `null` anywhere in a document (an absent member is omitted)
@@ -1837,10 +1839,11 @@ flags and counts.
   constant, 10,000 per note and 64 per identifier or name (also inside a compound reference,
   which has at most 256 characters, or 1,108 for a relationship or coverage id with 16 key
   columns); 16,384 characters per JSON Pointer to a value, and 67,108,864 (64 Mi) for the
-  pointers to all of a document's values together; 16 steps per path; 16 columns per unit key or
-  scope; 256 clauses per list; 256 parameters; 64 datasets per cohort; 16 packs; and 1,000
-  refusals returned. A structured unit key costs several JSON values, so long `ids` lists can
-  reach the value limit before the list limit. Imports have size and decompression-ratio limits.
+  pointers to all of a document's values together, both also after substitution; 16 steps per
+  path; 16 columns per unit key or scope; 256 clauses per list; 256 parameters; 64 datasets per
+  cohort; 16 packs; and 1,000 refusals returned. A structured unit key costs several JSON values,
+  so long `ids` lists can reach the value limit before the list limit. Imports have size and
+  decompression-ratio limits.
   Every tool call has a wall-clock limit that covers the analysis stage, enforced by running
   queries and analyses in worker processes that can be killed; each worker has a DuckDB memory
   limit. Categorical levels per analysis (at most 150) and resampling replicates are capped.

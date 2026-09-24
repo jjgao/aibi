@@ -7,9 +7,13 @@ A string that is exactly ``"$name"`` is replaced by that parameter's value, what
 substituted, and substituted values are not scanned again.
 
 Substitution can multiply a document: a large value used in many places. The substituted
-document may be no larger than a document as written, in bytes and in JSON values, nor nest
-deeper, nor have longer paths to its values, one by one or together; a reference that would
-cross a limit is refused.
+document, ``params`` included, may be no larger than a document as written, in bytes and in JSON
+values, nor nest deeper, nor have longer paths to its values, one by one or together; a
+reference that would cross a limit is refused. A document declaring more parameters than it may
+have is refused before any is substituted, so that nothing costs more with their number.
+
+Each position a parameter fills gets its own copy of the value, so that no two members of the
+substituted document are one object.
 
 Positions are tuples of JSON Pointer tokens, which share the document's strings; pointers are
 written only for the refusals returned, so that long keys above many references cost little.
@@ -23,16 +27,18 @@ from dataclasses import dataclass, field
 from pydantic import JsonValue
 
 from aibi.core.schema.ids import NAME
-from aibi.core.schema.jsonio import pointer
+from aibi.core.schema.jsonio import escaped_length, pointer
 from aibi.core.schema.limits import (
     ALL_POINTER_CHARACTERS,
     JSON_VALUES,
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
+    MAX_PARAMS,
     MAX_POINTER,
     MAX_POINTERS,
     MAX_VALUES,
     NESTING_DEPTH,
+    PARAMETERS,
     POINTER_CHARACTERS,
     SUBSTITUTED_BYTES,
 )
@@ -59,11 +65,6 @@ def _size(value: JsonValue) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
 
 
-def _escaped(key: str) -> int:
-    """The length of a key as a JSON Pointer token."""
-    return len(key) + key.count("~") + key.count("/")
-
-
 @dataclass(frozen=True, slots=True)
 class _Shape:
     values: int
@@ -88,7 +89,8 @@ def _shape(value: JsonValue) -> _Shape:
         if isinstance(current, dict):
             depth = max(depth, level + 1)
             pending.extend(
-                (member, level + 1, length + 1 + _escaped(key)) for key, member in current.items()
+                (member, level + 1, length + 1 + escaped_length(key))
+                for key, member in current.items()
             )
         elif isinstance(current, list):
             depth = max(depth, level + 1)
@@ -173,52 +175,105 @@ def _not_an_object(at: str | None) -> Refusal:
     )
 
 
+def _too_many(at: str | None) -> Refusal:
+    return Refusal(
+        code=RefusalCode.LIMIT_EXCEEDED,
+        path=at,
+        message=[text(f"A document may declare at most {MAX_PARAMS} parameters")],
+        limit=Limit(name=PARAMETERS, max=MAX_PARAMS),
+    )
+
+
+def _copied(value: JsonValue) -> JsonValue:
+    """A copy of a JSON value, down to its scalars; values nest at most ``MAX_DEPTH`` deep."""
+    if isinstance(value, dict):
+        return {key: _copied(member) for key, member in value.items()}
+    if isinstance(value, list):
+        return [_copied(item) for item in value]
+    return value
+
+
 def substitute(document: dict[str, JsonValue], size: int | None = None) -> Substitution:
     """Substitute parameters. ``size`` is the document's size in bytes as written, if known."""
-    params_value = document.get("params", {})
+    params = document.get("params", {})
     result = Substitution(document=None)
-    usable = isinstance(params_value, dict)
+    usable = isinstance(params, dict) and len(params) <= MAX_PARAMS
     if not usable:
         # Every reference fails with it; they are marked, but only params itself is refused (a
         # null params by the loader, which refuses every null).
         result.failed.append(("params",))
-        if params_value is not None:
+        if isinstance(params, dict):
+            result.problems.append(Problem(("params",), RefusalCode.LIMIT_EXCEEDED, _too_many))
+        elif params is not None:
             result.problems.append(Problem(("params",), RefusalCode.WRONG_TYPE, _not_an_object))
-    params: dict[str, JsonValue] = params_value if isinstance(params_value, dict) else {}
-    declared = sorted(params)
-    shapes: dict[str, tuple[int, _Shape]] = {}
-    total = _size(document) if size is None else size
-    written = _shape(document)
-    values, pointers = written.values, written.pointers
+    walker = _Walker(
+        params if isinstance(params, dict) and usable else {},
+        usable,
+        result,
+        _size(document) if size is None else size,
+        _shape(document),
+    )
+    substituted: dict[str, JsonValue] = {}
+    for key, member in document.items():
+        substituted[key] = (
+            member if key == "params" else walker.walk(member, [key], 1 + escaped_length(key))
+        )
+    result.document = substituted
+    result.unused = sorted(set(walker.params) - set(result.used))
+    return result
 
-    def refuse(where: Position, code: RefusalCode, build: Callable[[str | None], Refusal]) -> None:
+
+class _Walker:
+    """One substitution, with the budgets it has left. A class rather than nested functions, which
+    would refer to themselves and so keep the document in a reference cycle after a load."""
+
+    def __init__(
+        self,
+        params: dict[str, JsonValue],
+        usable: bool,
+        result: Substitution,
+        total: int,
+        written: _Shape,
+    ) -> None:
+        self.params = params
+        self.usable = usable
+        self.result = result
+        self.declared = sorted(params)
+        self.shapes: dict[str, tuple[int, _Shape]] = {}
+        self.total = total
+        """Bytes, as written so far and with each reference substituted."""
+        self.values = written.values
+        self.pointers = written.pointers
+
+    def refuse(
+        self, where: Position, code: RefusalCode, build: Callable[[str | None], Refusal]
+    ) -> None:
         """Record a refusal; the reference stays in place, and nothing under it is reported."""
-        result.failed.append(where)
-        result.problems.append(Problem(where, code, build))
+        self.result.failed.append(where)
+        self.result.problems.append(Problem(where, code, build))
 
-    def reference(value: str, path: list[str | int], length: int) -> JsonValue:
+    def reference(self, value: str, path: list[str | int], length: int) -> JsonValue:
         """``length`` is that of the pointer to the reference."""
-        nonlocal total, values, pointers
         where = tuple(path)
-        if not usable:
-            result.failed.append(where)
+        if not self.usable:
+            self.result.failed.append(where)
             return value
         match = _REFERENCE.fullmatch(value)
         if match is None:
-            refuse(where, RefusalCode.INVALID_PARAMETER_REFERENCE, _not_a_reference(value))
+            self.refuse(where, RefusalCode.INVALID_PARAMETER_REFERENCE, _not_a_reference(value))
             return value
         name = match.group(1)
-        if name not in params:
-            refuse(where, RefusalCode.UNKNOWN_PARAMETER, _unknown(name, declared))
+        if name not in self.params:
+            self.refuse(where, RefusalCode.UNKNOWN_PARAMETER, _unknown(name, self.declared))
             return value
-        if name not in shapes:
-            shapes[name] = (_size(params[name]), _shape(params[name]))
-        value_bytes, shape = shapes[name]
-        grown = total + value_bytes - _size(value)
-        more = values + shape.values - 1
+        if name not in self.shapes:
+            self.shapes[name] = (_size(self.params[name]), _shape(self.params[name]))
+        value_bytes, shape = self.shapes[name]
+        grown = self.total + value_bytes - _size(value)
+        more = self.values + shape.values - 1
         # Each value substituted is reached through the reference's pointer; the string it
         # replaces had that pointer too.
-        longer = pointers + shape.values * length + shape.pointers - length
+        longer = self.pointers + shape.values * length + shape.pointers - length
         limit: Limit | None = None
         if grown > MAX_DOCUMENT_BYTES:
             limit = Limit(name=SUBSTITUTED_BYTES, max=MAX_DOCUMENT_BYTES)
@@ -231,14 +286,14 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
         elif longer > MAX_POINTERS:
             limit = Limit(name=ALL_POINTER_CHARACTERS, max=MAX_POINTERS)
         if limit is not None:
-            refuse(where, RefusalCode.LIMIT_EXCEEDED, _too_large(name, limit))
+            self.refuse(where, RefusalCode.LIMIT_EXCEEDED, _too_large(name, limit))
             return value
-        total, values, pointers = grown, more, longer
-        result.used[name] = params[name]
-        result.positions[where] = name
-        return params[name]
+        self.total, self.values, self.pointers = grown, more, longer
+        self.result.used[name] = self.params[name]
+        self.result.positions[where] = name
+        return _copied(self.params[name])
 
-    def walk(value: JsonValue, path: list[str | int], length: int) -> JsonValue:
+    def walk(self, value: JsonValue, path: list[str | int], length: int) -> JsonValue:
         """``path`` is shared and restored on return: tokens are copied only at references.
         ``length`` is that of the pointer to ``value``."""
         if _is_text_member(path):
@@ -247,28 +302,21 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
             members: dict[str, JsonValue] = {}
             for key, member in value.items():
                 path.append(key)
-                members[key] = walk(member, path, length + 1 + _escaped(key))
+                members[key] = self.walk(member, path, length + 1 + escaped_length(key))
                 path.pop()
             return members
         if isinstance(value, list):
             items: list[JsonValue] = []
             for index, item in enumerate(value):
                 path.append(index)
-                items.append(walk(item, path, length + 1 + len(str(index))))
+                items.append(self.walk(item, path, length + 1 + len(str(index))))
                 path.pop()
             return items
         if isinstance(value, str) and value.startswith("$"):
             if value.startswith("$$"):
                 return value[1:]
-            return reference(value, path, length)
+            return self.reference(value, path, length)
         return value
-
-    substituted: dict[str, JsonValue] = {}
-    for key, member in document.items():
-        substituted[key] = member if key == "params" else walk(member, [key], 1 + _escaped(key))
-    result.document = substituted
-    result.unused = sorted(set(params) - set(result.used))
-    return result
 
 
 __all__ = ["Position", "Problem", "Substitution", "substitute"]

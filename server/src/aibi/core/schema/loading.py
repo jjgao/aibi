@@ -21,15 +21,23 @@ import heapq
 import json
 import types
 from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import combinations
 from typing import Annotated, Any, Literal, Union, cast, get_args, get_origin
 
 from pydantic import BaseModel, Discriminator, JsonValue, Tag, ValidationError
 from pydantic_core import ErrorDetails
 
 from aibi.core.schema.checks import Unknown, check_document
-from aibi.core.schema.document import CORE_KINDS_TEXT, PARSED, Document
+from aibi.core.schema.document import (
+    CORE_KINDS_TEXT,
+    PARSED,
+    PREDICATE_MEMBERS,
+    Document,
+    predicate_holds,
+)
 from aibi.core.schema.jsonio import JsonError, escape_token, parse_json, pointer
 from aibi.core.schema.limits import (
     CONSTANT_CHARACTERS,
@@ -309,8 +317,13 @@ _CAUSES: dict[str, frozenset[str]] = {
     "empty_range": frozenset({"gt", "gte", "lt", "lte"}),
 }
 """Errors about an object as a whole, and the members whose absence can cause each: such an
-error is not reported for an object that lost one of them to a null. Conflicting members say in
-their context which members they concern (``exclusive`` or ``together``); other conflicts never
+error is not reported for an object that lost one of them to a null."""
+
+_RULES: dict[str, tuple[tuple[str, ...], Callable[[AbstractSet[str]], bool]]] = {
+    "predicate": (PREDICATE_MEMBERS, predicate_holds),
+}
+"""Rules on which members an object gives, by the name a conflict's context gives them: the
+members each concerns, and whether a set of given members satisfies it. Other conflicts never
 follow from a member left out."""
 
 
@@ -320,21 +333,25 @@ def _caused_by_nulls(
     lost: Mapping[Position, set[str]],
     document: JsonValue,
 ) -> bool:
-    """Whether an error about the object at ``position`` follows only from members it lost."""
+    """Whether an error about the object at ``position`` follows only from members it lost.
+
+    A conflict does when giving some of the lost members would satisfy its rule: how the nulls
+    are fixed decides it. Otherwise it stands whatever is done about them, and is reported.
+    """
     gone = lost.get(position)
     if not gone:
         return False
-    ctx = details.get("ctx") or {}
-    if "exclusive" in ctx:
-        # Exactly one of these is given: only a loss that leaves none of them explains it.
-        exclusive = frozenset(ctx["exclusive"])
+    rule = _RULES.get(str((details.get("ctx") or {}).get("rule")))
+    if rule is not None:
+        members, holds = rule
         present = _at(document, position)
-        remaining = isinstance(present, dict) and any(
-            present.get(member) is not None for member in exclusive
+        given = {m for m in members if isinstance(present, dict) and present.get(m) is not None}
+        open_ = sorted(gone.intersection(members))
+        return any(
+            holds(given.union(chosen))
+            for size in range(len(open_) + 1)
+            for chosen in combinations(open_, size)
         )
-        return bool(gone & exclusive) and not remaining
-    if "together" in ctx:
-        return bool(gone & frozenset(ctx["together"]))
     return bool(_CAUSES.get(details["type"], frozenset()) & gone)
 
 
@@ -484,11 +501,12 @@ class _SortKeys:
         self._last: dict[str | int, str] = {}
 
     def of(self, position: Position) -> tuple[str, ...]:
-        """The key of a position. It runs once per refusal found, so it avoids loops in Python."""
+        """The key of a position. It runs once per refusal found, so it is one comprehension."""
         if not position:
             return ()
         inner = self._inner
-        # Every key is a non-empty string, so ``or`` falls back only for a token not seen yet.
+        # Inner keys end with "/", so ``or`` falls back only for a token not seen yet; the last
+        # key of the empty token is empty, and is recomputed each time.
         keys = [inner.get(token) or self._inner_key(token) for token in position[:-1]]
         keys.append(self._last.get(position[-1]) or self._last_key(position[-1]))
         return tuple(keys)
@@ -525,7 +543,7 @@ def _finish(found: list[_Found], positions: _Positions) -> list[Refusal]:
         )
     order = heapq.nsmallest(MAX_REFUSALS, kept) if len(kept) > MAX_REFUSALS else sorted(kept)
     refusals: list[Refusal] = []
-    for key in order[:MAX_REFUSALS]:
+    for key in order:
         item, written_at, parameter = kept[key]
         refusal = item.build(None if written_at is None else pointer(written_at))
         if parameter is not None:
