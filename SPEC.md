@@ -643,8 +643,8 @@ For each `r`:
    - `some` with `min_count` *k*: TRUE if *t* ≥ *k*. Otherwise UNKNOWN if *t* + *u* ≥ *k* (the
      reasons of the UNKNOWN children). Otherwise, for a final question, FALSE if `r` is closed,
      else UNKNOWN; for an intermediate question, FALSE if `r` is closed and some child in *K* has
-     conditions that are TRUE, else UNKNOWN, with reason `NOT_COVERED` and the reasons of the
-     children's UNKNOWN conditions.
+     conditions that are TRUE, else UNKNOWN, adding `NOT_COVERED` and the reasons of the
+     children's UNKNOWN conditions when no child in *K* has conditions that are TRUE.
    - `every`: FALSE if *f* ≥ 1. Otherwise UNKNOWN if *K* is empty (reason `NOT_COVERED` for an
      intermediate question, `NO_ROWS` for a final one), or if *u* ≥ 1 (the reasons of the UNKNOWN
      children). Otherwise TRUE if `r` is closed, else UNKNOWN.
@@ -1114,21 +1114,22 @@ an answer.
 - With *k* set, a disclosure pass runs on every output after it is computed. A suppressed value
   becomes `null` with `not_estimable` reason `suppressed` (in `population`, its pointer is listed
   in `suppressed`), and the output carries `SUPPRESSED`. The pass applies these rules:
-  - **Linked counts.** In each linked set, a count from 1 to *k* − 1 is suppressed, and if
-    exactly one count of the set is suppressed, the smallest non-zero other count (the first in the
-    set's listed order on a tie) is suppressed too. The linked sets are: `n_true`, `n_false` and `n_unknown` (with the size of the unit table
-    shown); `analysed.n` and `excluded_units` (with `n_true`), and likewise each entry of
-    `analysed.variables`; a proportion's numerator and its complement (denominator minus
-    numerator); the cells of each row and each column of a cohort × category table; a column's
-    observation-state counts (with `n_true`, or with `n_rows` in catalogue statistics); a column's
-    histogram bins or category counts (with its PRESENT count); and `lift_differs` alone. A count
-    of 0 is shown. The pass runs after categories are pooled (below), covers the whole output and
-    repeats until nothing changes: a count suppressed in one place is suppressed wherever the same
-    count appears (e.g. `n_true` and `size.numerator`); a suppressed total of a linked set counts
-    as a suppressed member of that set; and a breakdown is `null` whenever its total is suppressed
-    (`unknown_by_reason` and `unknown_by_leaf` with `n_unknown`, `analysed.excluded` with
-    `excluded_units`, observation-state counts with `n_true` or `n_rows`). A value that is not
-    estimable keeps its reason: the pass suppresses only values that were computed.
+  - **Linked counts.** In each linked set, a count from 1 to *k* − 1 is suppressed, and if exactly
+    one count of the set is suppressed, the smallest non-zero other count (the first in the set's
+    listed order on a tie) is suppressed too. The linked sets are: `n_true`, `n_false` and
+    `n_unknown` (with the size of the unit table shown); `analysed.n` and `excluded_units` (with
+    `n_true`), and likewise each entry of `analysed.variables`; a proportion's numerator and its
+    complement (denominator minus numerator); the cells of each row and each column of a cohort ×
+    category table; a column's observation-state counts (with `n_true`, or with `n_rows` in
+    catalogue statistics); a column's histogram bins or category counts (with its PRESENT count);
+    and `lift_differs` alone. A count of 0 is shown. The pass runs after categories are pooled and
+    histogram bins are merged (below), covers the whole output and repeats until nothing changes: a
+    count suppressed in one place is suppressed wherever the same count appears (e.g. `n_true` and
+    `size.numerator`); a suppressed total of a linked set counts as a suppressed member of that set;
+    and a breakdown is `null` whenever its total is suppressed (`unknown_by_reason` and
+    `unknown_by_leaf` with `n_unknown`, `analysed.excluded` with `excluded_units`, observation-state
+    counts with `n_true` or `n_rows`). A value that is not estimable keeps its reason: the pass
+    suppresses only values that were computed.
   - **Breakdowns.** A per-reason or per-leaf map with any count from 1 to *k* − 1 is replaced by
     `null` as a whole. Categories with any cell from 1 to *k* − 1 are pooled into one
     *suppressed categories* row per cohort; if that row still has such a cell, the table is
@@ -1323,7 +1324,7 @@ Mann–Whitney or Fisher's 2×2 test for two):
 | A fit that does not converge | every value of the fit (`not_converged`) |
 | A survival curve that never falls below 0.5 and does not end at exactly 0.5 | its median and the differences that use it (`not_reached`) |
 | A survival curve at 0 | its pointwise log-log bounds from that time on (`zero_denominator`), which the median's interval rule skips, as R's `survfit` does; bounds where the curve is 1 equal 1 |
-| A landmark time after the cohort's last follow-up | that landmark (`beyond_follow_up`) |
+| A landmark time or grid time after the cohort's last follow-up | that cohort's landmark estimate, or curve value, and its bounds there (`beyond_follow_up`) |
 | A bootstrap bound whose order statistic is infinite | that bound (`not_reached`) |
 
 **Other rules.** NOT_APPLICABLE cells are excluded from the column comparisons of
@@ -1700,7 +1701,7 @@ flags and counts.
   patients with no samples, step conditions under `assessed`, participants with no enrolments,
   `every` over no rows, `every` with scope columns, `min_count`, UNKNOWN parent scopes under
   coverage `all`, scope columns mentioned inside `any` (refused), deeper paths under `assessed`,
-  no relevant child under step conditions, two nested questions in one `where`, record filters
+  no remaining child whose conditions are TRUE, two nested questions in one `where`, record filters
   under `every`, flags carried through nested questions, `covered` in each of its cases.
 - **Canonical form:** no user-chosen name survives phase 1; random renames, reordered top-level
   cohorts, reordered object keys and equivalent syntax (`!=` versus `not` on single-valued
