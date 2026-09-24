@@ -106,6 +106,13 @@
     },
     "Cohort": {
       "additionalProperties": false,
+      "description": "A cohort. Duplicate datasets are refused by the document checks, with their paths.",
+      "not": {
+        "required": [
+          "dataset",
+          "datasets"
+        ]
+      },
       "properties": {
         "all": {
           "items": {
@@ -150,19 +157,22 @@
           "type": "array"
         },
         "dataset": {
+          "maxLength": 136,
           "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
           "title": "Dataset",
           "type": "string"
         },
         "datasets": {
           "items": {
+            "maxLength": 136,
             "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
             "type": "string"
           },
-          "maxItems": 10000,
+          "maxItems": 64,
           "minItems": 2,
           "title": "Datasets",
-          "type": "array"
+          "type": "array",
+          "uniqueItems": true
         },
         "notes": {
           "maxLength": 10000,
@@ -187,6 +197,7 @@
       "description": "Another cohort of the same document (SPEC §7.2).",
       "properties": {
         "cohort": {
+          "maxLength": 64,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "title": "Cohort",
           "type": "string"
@@ -222,14 +233,23 @@
           "type": "string"
         },
         "scope": {
+          "additionalProperties": false,
+          "maxProperties": 16,
           "minProperties": 1,
           "patternProperties": {
             "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
               "items": {
-                "type": [
-                  "string",
-                  "boolean",
-                  "number"
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  {
+                    "type": [
+                      "boolean",
+                      "number"
+                    ]
+                  }
                 ]
               },
               "maxItems": 10000,
@@ -237,10 +257,14 @@
               "type": "array"
             }
           },
+          "propertyNames": {
+            "maxLength": 64
+          },
           "title": "Scope",
           "type": "object"
         },
         "table": {
+          "maxLength": 256,
           "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
           "title": "Table",
           "type": "string"
@@ -255,6 +279,8 @@
               "type": "array"
             },
             {
+              "additionalProperties": false,
+              "maxProperties": 64,
               "patternProperties": {
                 "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                   "items": {
@@ -263,6 +289,9 @@
                   "maxItems": 16,
                   "type": "array"
                 }
+              },
+              "propertyNames": {
+                "maxLength": 64
               },
               "type": "object"
             }
@@ -277,9 +306,38 @@
       "title": "CoveredLeaf",
       "type": "object"
     },
+    "DocumentJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/DocumentJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DocumentJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value but null"
+    },
     "ExistsLeaf": {
       "additionalProperties": false,
       "description": "An existence question (SPEC §6.5); ``where`` clauses are ANDed per row of ``table``.",
+      "if": {
+        "required": [
+          "min_count"
+        ]
+      },
       "properties": {
         "exclude_self": {
           "default": false,
@@ -336,6 +394,7 @@
                   }
                 ]
               },
+              "maxItems": 16,
               "minItems": 1,
               "type": "array"
             }
@@ -343,6 +402,7 @@
           "title": "Quantifier"
         },
         "table": {
+          "maxLength": 256,
           "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
           "title": "Table",
           "type": "string"
@@ -357,6 +417,8 @@
               "type": "array"
             },
             {
+              "additionalProperties": false,
+              "maxProperties": 64,
               "patternProperties": {
                 "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                   "items": {
@@ -365,6 +427,9 @@
                   "maxItems": 16,
                   "type": "array"
                 }
+              },
+              "propertyNames": {
+                "maxLength": 64
               },
               "type": "object"
             }
@@ -418,6 +483,13 @@
         "kind",
         "table"
       ],
+      "then": {
+        "properties": {
+          "quantifier": {
+            "const": "some"
+          }
+        }
+      },
       "title": "ExistsLeaf",
       "type": "object"
     },
@@ -430,7 +502,7 @@
             "oneOf": [
               {
                 "maxLength": 4096,
-                "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:.+$",
+                "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
                 "type": "string"
               },
               {
@@ -456,7 +528,6 @@
       "title": "IdsLeaf",
       "type": "object"
     },
-    "JsonValue": {},
     "KnownClause": {
       "additionalProperties": false,
       "properties": {
@@ -558,6 +629,10 @@
       "description": "A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema.",
       "properties": {
         "kind": {
+          "maxLength": 129,
+          "not": {
+            "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+          },
           "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
           "title": "Kind",
           "type": "string"
@@ -571,34 +646,71 @@
     },
     "Range": {
       "additionalProperties": false,
+      "minProperties": 1,
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "gt",
+              "gte"
+            ]
+          },
+          {
+            "required": [
+              "lt",
+              "lte"
+            ]
+          }
+        ]
+      },
       "properties": {
         "gt": {
-          "title": "Gt",
-          "type": [
-            "string",
-            "number"
-          ]
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Gt"
         },
         "gte": {
-          "title": "Gte",
-          "type": [
-            "string",
-            "number"
-          ]
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Gte"
         },
         "lt": {
-          "title": "Lt",
-          "type": [
-            "string",
-            "number"
-          ]
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Lt"
         },
         "lte": {
-          "title": "Lte",
-          "type": [
-            "string",
-            "number"
-          ]
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Lte"
         }
       },
       "title": "Range",
@@ -633,6 +745,7 @@
           "type": "string"
         },
         "rel": {
+          "maxLength": 512,
           "pattern": "^rel:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\+[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*$",
           "title": "Rel",
           "type": "string"
@@ -649,18 +762,27 @@
       "additionalProperties": false,
       "properties": {
         "dataset": {
+          "maxLength": 64,
           "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
           "title": "Dataset",
           "type": "string"
         },
         "key": {
           "items": {
-            "type": [
-              "string",
-              "boolean",
-              "number"
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": [
+                  "boolean",
+                  "number"
+                ]
+              }
             ]
           },
+          "maxItems": 16,
           "minItems": 1,
           "title": "Key",
           "type": "array"
@@ -723,9 +845,57 @@
     },
     "ValueLeaf": {
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "values"
+          ]
+        },
+        {
+          "required": [
+            "range"
+          ]
+        },
+        {
+          "required": [
+            "op"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "op": [
+          "value"
+        ],
+        "value": [
+          "op"
+        ]
+      },
       "description": "A value predicate (SPEC §6.4): exactly one of ``values``, ``range`` or ``op`` + ``value``.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "values",
+              "range"
+            ]
+          },
+          {
+            "required": [
+              "values",
+              "op"
+            ]
+          },
+          {
+            "required": [
+              "range",
+              "op"
+            ]
+          }
+        ]
+      },
       "properties": {
         "column": {
+          "maxLength": 256,
           "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
           "title": "Column",
           "type": "string"
@@ -799,6 +969,7 @@
                   }
                 ]
               },
+              "maxItems": 16,
               "minItems": 1,
               "type": "array"
             }
@@ -814,19 +985,33 @@
           "type": "string"
         },
         "value": {
-          "title": "Value",
-          "type": [
-            "string",
-            "boolean",
-            "number"
-          ]
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": [
+                "boolean",
+                "number"
+              ]
+            }
+          ],
+          "title": "Value"
         },
         "values": {
           "items": {
-            "type": [
-              "string",
-              "boolean",
-              "number"
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": [
+                  "boolean",
+                  "number"
+                ]
+              }
             ]
           },
           "maxItems": 10000,
@@ -844,6 +1029,8 @@
               "type": "array"
             },
             {
+              "additionalProperties": false,
+              "maxProperties": 64,
               "patternProperties": {
                 "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                   "items": {
@@ -852,6 +1039,9 @@
                   "maxItems": 16,
                   "type": "array"
                 }
+              },
+              "propertyNames": {
+                "maxLength": 64
               },
               "type": "object"
             }
@@ -868,21 +1058,25 @@
     },
     "View": {
       "additionalProperties": false,
+      "description": "A view. Its cohorts and reference are checked by the document checks, with their paths.",
       "properties": {
         "analysis": {
+          "maxLength": 129,
           "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
           "title": "Analysis",
           "type": "string"
         },
         "cohorts": {
           "items": {
+            "maxLength": 64,
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
           "maxItems": 6,
           "minItems": 1,
           "title": "Cohorts",
-          "type": "array"
+          "type": "array",
+          "uniqueItems": true
         },
         "note": {
           "maxLength": 10000,
@@ -897,12 +1091,13 @@
         },
         "params": {
           "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
+            "$ref": "#/$defs/DocumentJson"
           },
           "title": "Params",
           "type": "object"
         },
         "reference": {
+          "maxLength": 64,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "title": "Reference",
           "type": "string"
@@ -931,6 +1126,7 @@
       "type": "string"
     },
     "cohorts": {
+      "additionalProperties": false,
       "maxProperties": 6,
       "minProperties": 1,
       "patternProperties": {
@@ -938,10 +1134,14 @@
           "$ref": "#/$defs/Cohort"
         }
       },
+      "propertyNames": {
+        "maxLength": 64
+      },
       "title": "Cohorts",
       "type": "object"
     },
     "dataset": {
+      "maxLength": 136,
       "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
       "title": "Dataset",
       "type": "string"
@@ -959,26 +1159,48 @@
       "x-aibi-data": true
     },
     "packs": {
+      "additionalProperties": false,
+      "maxProperties": 16,
       "patternProperties": {
         "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
-          "maxLength": 200,
+          "maxLength": 4096,
           "type": "string"
+        }
+      },
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "cohort",
+            "compare",
+            "core",
+            "covered",
+            "exists",
+            "ids",
+            "summary",
+            "survival",
+            "value"
+          ]
         }
       },
       "title": "Packs",
       "type": "object"
     },
     "params": {
+      "additionalProperties": false,
       "maxProperties": 256,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
-          "$ref": "#/$defs/JsonValue"
+          "$ref": "#/$defs/DocumentJson"
         }
+      },
+      "propertyNames": {
+        "maxLength": 64
       },
       "title": "Params",
       "type": "object"
     },
     "unit": {
+      "maxLength": 256,
       "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
       "title": "Unit",
       "type": "string"

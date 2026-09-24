@@ -1,19 +1,19 @@
 {
   "aibi": "1",
   "packs": {
-    "onco": ">=1.2,<2"
+    "testpack": ">=1.2,<2"
   },
-  "dataset": "gbm",
-  "unit": "patients",
+  "dataset": "lending",
+  "unit": "members",
   "cohorts": {
-    "tp53": {
+    "late_readers": {
       "all": [
         {
           "kind": "value",
-          "column": "mutations.gene",
-          "values": [
-            "TP53"
-          ],
+          "column": "returns.days_late",
+          "range": {
+            "gt": 14
+          },
           "quantifier": [
             "some",
             "some"
@@ -21,11 +21,11 @@
           "lift": "assessed",
           "via": [
             {
-              "rel": "rel:samples.patient_id",
+              "rel": "rel:loans.member_id",
               "dir": "down"
             },
             {
-              "rel": "rel:mutations.sample_id",
+              "rel": "rel:returns.loan_id",
               "dir": "down"
             }
           ]
@@ -33,18 +33,18 @@
         {
           "known": {
             "kind": "covered",
-            "table": "mutations",
+            "table": "returns",
             "scope": {
-              "gene": [
-                "TP53"
+              "branch": [
+                "central"
               ]
             }
           }
         },
         {
           "unknown": {
-            "kind": "onco.genomic",
-            "q": "EGFR: AMP"
+            "kind": "testpack.flag",
+            "q": "fines: UNPAID"
           }
         },
         {
@@ -52,11 +52,11 @@
             {
               "kind": "ids",
               "ids": [
-                "gbm:P1",
+                "lending:M1",
                 {
-                  "dataset": "gbm",
+                  "dataset": "lending",
                   "key": [
-                    "P2"
+                    "M2"
                   ]
                 }
               ]

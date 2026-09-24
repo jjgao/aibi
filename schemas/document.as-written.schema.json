@@ -9,7 +9,7 @@
               "items": {
                 "anyOf": [
                   {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/$defs/ValueLeaf"
                       },
@@ -48,7 +48,14 @@
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 256,
               "title": "All",
@@ -57,7 +64,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -75,7 +89,7 @@
               "items": {
                 "anyOf": [
                   {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/$defs/ValueLeaf"
                       },
@@ -114,7 +128,14 @@
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 256,
               "title": "Any",
@@ -123,7 +144,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -134,6 +162,13 @@
     },
     "Cohort": {
       "additionalProperties": false,
+      "description": "A cohort. Duplicate datasets are refused by the document checks, with their paths.",
+      "not": {
+        "required": [
+          "dataset",
+          "datasets"
+        ]
+      },
       "properties": {
         "all": {
           "anyOf": [
@@ -141,7 +176,7 @@
               "items": {
                 "anyOf": [
                   {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/$defs/ValueLeaf"
                       },
@@ -180,7 +215,14 @@
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 256,
               "title": "All",
@@ -189,11 +231,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "dataset": {
           "anyOf": [
             {
+              "maxLength": 136,
               "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
               "title": "Dataset",
               "type": "string"
@@ -201,7 +251,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "datasets": {
           "anyOf": [
@@ -209,36 +266,45 @@
               "items": {
                 "anyOf": [
                   {
+                    "maxLength": 136,
                     "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
                     "type": "string"
                   },
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
-              "maxItems": 10000,
+              "maxItems": 64,
               "minItems": 2,
               "title": "Datasets",
-              "type": "array"
+              "type": "array",
+              "uniqueItems": true
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "notes": {
-          "anyOf": [
-            {
-              "maxLength": 10000,
-              "title": "Notes",
-              "type": "string",
-              "x-aibi-data": true
-            },
-            {
-              "$ref": "#/$defs/ParameterReference"
-            }
-          ]
+          "maxLength": 10000,
+          "title": "Notes",
+          "type": "string",
+          "x-aibi-data": true
         },
         "unmapped": {
           "anyOf": [
@@ -250,7 +316,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -266,6 +339,7 @@
         "cohort": {
           "anyOf": [
             {
+              "maxLength": 64,
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
               "title": "Cohort",
               "type": "string"
@@ -273,7 +347,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "kind": {
           "anyOf": [
@@ -285,7 +366,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -309,7 +397,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "lift": {
           "anyOf": [
@@ -324,11 +419,20 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "scope": {
           "anyOf": [
             {
+              "additionalProperties": false,
+              "maxProperties": 16,
               "minProperties": 1,
               "patternProperties": {
                 "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
@@ -337,16 +441,30 @@
                       "items": {
                         "anyOf": [
                           {
-                            "type": [
-                              "string",
-                              "boolean",
-                              "number"
+                            "anyOf": [
+                              {
+                                "maxLength": 4096,
+                                "type": "string"
+                              },
+                              {
+                                "type": [
+                                  "boolean",
+                                  "number"
+                                ]
+                              }
                             ]
                           },
                           {
                             "$ref": "#/$defs/ParameterReference"
                           }
-                        ]
+                        ],
+                        "if": {
+                          "pattern": "^\\$",
+                          "type": "string"
+                        },
+                        "then": {
+                          "$ref": "#/$defs/ParameterReference"
+                        }
                       },
                       "maxItems": 10000,
                       "minItems": 1,
@@ -355,8 +473,18 @@
                     {
                       "$ref": "#/$defs/ParameterReference"
                     }
-                  ]
+                  ],
+                  "if": {
+                    "pattern": "^\\$",
+                    "type": "string"
+                  },
+                  "then": {
+                    "$ref": "#/$defs/ParameterReference"
+                  }
                 }
+              },
+              "propertyNames": {
+                "maxLength": 64
               },
               "title": "Scope",
               "type": "object"
@@ -364,11 +492,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "table": {
           "anyOf": [
             {
+              "maxLength": 256,
               "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
               "title": "Table",
               "type": "string"
@@ -376,12 +512,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "via": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "items": {
                     "anyOf": [
@@ -391,12 +534,21 @@
                       {
                         "$ref": "#/$defs/ParameterReference"
                       }
-                    ]
+                    ],
+                    "if": {
+                      "pattern": "^\\$",
+                      "type": "string"
+                    },
+                    "then": {
+                      "$ref": "#/$defs/ParameterReference"
+                    }
                   },
                   "maxItems": 16,
                   "type": "array"
                 },
                 {
+                  "additionalProperties": false,
+                  "maxProperties": 64,
                   "patternProperties": {
                     "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                       "anyOf": [
@@ -409,7 +561,14 @@
                               {
                                 "$ref": "#/$defs/ParameterReference"
                               }
-                            ]
+                            ],
+                            "if": {
+                              "pattern": "^\\$",
+                              "type": "string"
+                            },
+                            "then": {
+                              "$ref": "#/$defs/ParameterReference"
+                            }
                           },
                           "maxItems": 16,
                           "type": "array"
@@ -417,8 +576,18 @@
                         {
                           "$ref": "#/$defs/ParameterReference"
                         }
-                      ]
+                      ],
+                      "if": {
+                        "pattern": "^\\$",
+                        "type": "string"
+                      },
+                      "then": {
+                        "$ref": "#/$defs/ParameterReference"
+                      }
                     }
+                  },
+                  "propertyNames": {
+                    "maxLength": 64
                   },
                   "type": "object"
                 }
@@ -428,7 +597,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -438,9 +614,66 @@
       "title": "CoveredLeaf",
       "type": "object"
     },
+    "DocumentJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DocumentJson"
+              },
+              {
+                "$ref": "#/$defs/ParameterReference"
+              }
+            ],
+            "if": {
+              "pattern": "^\\$",
+              "type": "string"
+            },
+            "then": {
+              "$ref": "#/$defs/ParameterReference"
+            }
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DocumentJson"
+              },
+              {
+                "$ref": "#/$defs/ParameterReference"
+              }
+            ],
+            "if": {
+              "pattern": "^\\$",
+              "type": "string"
+            },
+            "then": {
+              "$ref": "#/$defs/ParameterReference"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value but null"
+    },
     "ExistsLeaf": {
       "additionalProperties": false,
       "description": "An existence question (SPEC §6.5); ``where`` clauses are ANDed per row of ``table``.",
+      "if": {
+        "required": [
+          "min_count"
+        ]
+      },
       "properties": {
         "exclude_self": {
           "anyOf": [
@@ -452,7 +685,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "kind": {
           "anyOf": [
@@ -464,7 +704,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "lift": {
           "anyOf": [
@@ -479,7 +726,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "min_count": {
           "anyOf": [
@@ -492,14 +746,21 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "quantifier": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "enum": [
                         "some",
@@ -516,7 +777,7 @@
                   "items": {
                     "anyOf": [
                       {
-                        "oneOf": [
+                        "anyOf": [
                           {
                             "enum": [
                               "some",
@@ -532,8 +793,16 @@
                       {
                         "$ref": "#/$defs/ParameterReference"
                       }
-                    ]
+                    ],
+                    "if": {
+                      "pattern": "^\\$",
+                      "type": "string"
+                    },
+                    "then": {
+                      "$ref": "#/$defs/ParameterReference"
+                    }
                   },
+                  "maxItems": 16,
                   "minItems": 1,
                   "type": "array"
                 }
@@ -543,11 +812,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "table": {
           "anyOf": [
             {
+              "maxLength": 256,
               "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
               "title": "Table",
               "type": "string"
@@ -555,12 +832,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "via": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "items": {
                     "anyOf": [
@@ -570,12 +854,21 @@
                       {
                         "$ref": "#/$defs/ParameterReference"
                       }
-                    ]
+                    ],
+                    "if": {
+                      "pattern": "^\\$",
+                      "type": "string"
+                    },
+                    "then": {
+                      "$ref": "#/$defs/ParameterReference"
+                    }
                   },
                   "maxItems": 16,
                   "type": "array"
                 },
                 {
+                  "additionalProperties": false,
+                  "maxProperties": 64,
                   "patternProperties": {
                     "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                       "anyOf": [
@@ -588,7 +881,14 @@
                               {
                                 "$ref": "#/$defs/ParameterReference"
                               }
-                            ]
+                            ],
+                            "if": {
+                              "pattern": "^\\$",
+                              "type": "string"
+                            },
+                            "then": {
+                              "$ref": "#/$defs/ParameterReference"
+                            }
                           },
                           "maxItems": 16,
                           "type": "array"
@@ -596,8 +896,18 @@
                         {
                           "$ref": "#/$defs/ParameterReference"
                         }
-                      ]
+                      ],
+                      "if": {
+                        "pattern": "^\\$",
+                        "type": "string"
+                      },
+                      "then": {
+                        "$ref": "#/$defs/ParameterReference"
+                      }
                     }
+                  },
+                  "propertyNames": {
+                    "maxLength": 64
                   },
                   "type": "object"
                 }
@@ -607,7 +917,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "where": {
           "anyOf": [
@@ -615,7 +932,7 @@
               "items": {
                 "anyOf": [
                   {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/$defs/ValueLeaf"
                       },
@@ -654,7 +971,14 @@
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 256,
               "title": "Where",
@@ -663,13 +987,41 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
         "kind",
         "table"
       ],
+      "then": {
+        "properties": {
+          "quantifier": {
+            "anyOf": [
+              {
+                "const": "some"
+              },
+              {
+                "$ref": "#/$defs/ParameterReference"
+              }
+            ],
+            "if": {
+              "pattern": "^\\$",
+              "type": "string"
+            },
+            "then": {
+              "$ref": "#/$defs/ParameterReference"
+            }
+          }
+        }
+      },
       "title": "ExistsLeaf",
       "type": "object"
     },
@@ -683,10 +1035,10 @@
               "items": {
                 "anyOf": [
                   {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "maxLength": 4096,
-                        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:.+$",
+                        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
                         "type": "string"
                       },
                       {
@@ -697,7 +1049,14 @@
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 10000,
               "minItems": 1,
@@ -707,7 +1066,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "kind": {
           "anyOf": [
@@ -719,7 +1085,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -729,14 +1102,13 @@
       "title": "IdsLeaf",
       "type": "object"
     },
-    "JsonValue": {},
     "KnownClause": {
       "additionalProperties": false,
       "properties": {
         "known": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "$ref": "#/$defs/ValueLeaf"
                 },
@@ -776,7 +1148,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -791,7 +1170,7 @@
         "not": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "$ref": "#/$defs/ValueLeaf"
                 },
@@ -831,7 +1210,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -847,6 +1233,10 @@
         "kind": {
           "anyOf": [
             {
+              "maxLength": 129,
+              "not": {
+                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+              },
               "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
               "title": "Kind",
               "type": "string"
@@ -854,7 +1244,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -865,67 +1262,132 @@
     },
     "ParameterReference": {
       "description": "A parameter reference, \"$name\", or a literal string written \"$$…\"",
-      "pattern": "^\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\$.*)$",
+      "pattern": "^\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\$[\\s\\S]*)$",
       "type": "string"
     },
     "Range": {
       "additionalProperties": false,
+      "minProperties": 1,
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "gt",
+              "gte"
+            ]
+          },
+          {
+            "required": [
+              "lt",
+              "lte"
+            ]
+          }
+        ]
+      },
       "properties": {
         "gt": {
           "anyOf": [
             {
-              "title": "Gt",
-              "type": [
-                "string",
-                "number"
-              ]
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Gt"
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "gte": {
           "anyOf": [
             {
-              "title": "Gte",
-              "type": [
-                "string",
-                "number"
-              ]
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Gte"
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "lt": {
           "anyOf": [
             {
-              "title": "Lt",
-              "type": [
-                "string",
-                "number"
-              ]
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Lt"
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "lte": {
           "anyOf": [
             {
-              "title": "Lte",
-              "type": [
-                "string",
-                "number"
-              ]
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Lte"
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "title": "Range",
@@ -946,7 +1408,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -971,11 +1440,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "rel": {
           "anyOf": [
             {
+              "maxLength": 512,
               "pattern": "^rel:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\+[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*$",
               "title": "Rel",
               "type": "string"
@@ -983,7 +1460,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -999,6 +1483,7 @@
         "dataset": {
           "anyOf": [
             {
+              "maxLength": 64,
               "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
               "title": "Dataset",
               "type": "string"
@@ -1006,7 +1491,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "key": {
           "anyOf": [
@@ -1014,17 +1506,32 @@
               "items": {
                 "anyOf": [
                   {
-                    "type": [
-                      "string",
-                      "boolean",
-                      "number"
+                    "anyOf": [
+                      {
+                        "maxLength": 4096,
+                        "type": "string"
+                      },
+                      {
+                        "type": [
+                          "boolean",
+                          "number"
+                        ]
+                      }
                     ]
                   },
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
+              "maxItems": 16,
               "minItems": 1,
               "title": "Key",
               "type": "array"
@@ -1032,7 +1539,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -1048,7 +1562,7 @@
         "unknown": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "$ref": "#/$defs/ValueLeaf"
                 },
@@ -1088,7 +1602,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -1099,11 +1620,59 @@
     },
     "ValueLeaf": {
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "values"
+          ]
+        },
+        {
+          "required": [
+            "range"
+          ]
+        },
+        {
+          "required": [
+            "op"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "op": [
+          "value"
+        ],
+        "value": [
+          "op"
+        ]
+      },
       "description": "A value predicate (SPEC §6.4): exactly one of ``values``, ``range`` or ``op`` + ``value``.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "values",
+              "range"
+            ]
+          },
+          {
+            "required": [
+              "values",
+              "op"
+            ]
+          },
+          {
+            "required": [
+              "range",
+              "op"
+            ]
+          }
+        ]
+      },
       "properties": {
         "column": {
           "anyOf": [
             {
+              "maxLength": 256,
               "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
               "title": "Column",
               "type": "string"
@@ -1111,7 +1680,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "kind": {
           "anyOf": [
@@ -1123,7 +1699,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "lift": {
           "anyOf": [
@@ -1138,7 +1721,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "match": {
           "anyOf": [
@@ -1153,7 +1743,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "negate": {
           "anyOf": [
@@ -1165,7 +1762,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "op": {
           "anyOf": [
@@ -1184,14 +1788,21 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "quantifier": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "enum": [
                         "some",
@@ -1208,7 +1819,7 @@
                   "items": {
                     "anyOf": [
                       {
-                        "oneOf": [
+                        "anyOf": [
                           {
                             "enum": [
                               "some",
@@ -1224,8 +1835,16 @@
                       {
                         "$ref": "#/$defs/ParameterReference"
                       }
-                    ]
+                    ],
+                    "if": {
+                      "pattern": "^\\$",
+                      "type": "string"
+                    },
+                    "then": {
+                      "$ref": "#/$defs/ParameterReference"
+                    }
                   },
+                  "maxItems": 16,
                   "minItems": 1,
                   "type": "array"
                 }
@@ -1235,7 +1854,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "range": {
           "anyOf": [
@@ -1245,7 +1871,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "units": {
           "anyOf": [
@@ -1257,22 +1890,43 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "value": {
           "anyOf": [
             {
-              "title": "Value",
-              "type": [
-                "string",
-                "boolean",
-                "number"
-              ]
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": [
+                    "boolean",
+                    "number"
+                  ]
+                }
+              ],
+              "title": "Value"
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "values": {
           "anyOf": [
@@ -1280,16 +1934,30 @@
               "items": {
                 "anyOf": [
                   {
-                    "type": [
-                      "string",
-                      "boolean",
-                      "number"
+                    "anyOf": [
+                      {
+                        "maxLength": 4096,
+                        "type": "string"
+                      },
+                      {
+                        "type": [
+                          "boolean",
+                          "number"
+                        ]
+                      }
                     ]
                   },
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 10000,
               "minItems": 1,
@@ -1299,12 +1967,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "via": {
           "anyOf": [
             {
-              "oneOf": [
+              "anyOf": [
                 {
                   "items": {
                     "anyOf": [
@@ -1314,12 +1989,21 @@
                       {
                         "$ref": "#/$defs/ParameterReference"
                       }
-                    ]
+                    ],
+                    "if": {
+                      "pattern": "^\\$",
+                      "type": "string"
+                    },
+                    "then": {
+                      "$ref": "#/$defs/ParameterReference"
+                    }
                   },
                   "maxItems": 16,
                   "type": "array"
                 },
                 {
+                  "additionalProperties": false,
+                  "maxProperties": 64,
                   "patternProperties": {
                     "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
                       "anyOf": [
@@ -1332,7 +2016,14 @@
                               {
                                 "$ref": "#/$defs/ParameterReference"
                               }
-                            ]
+                            ],
+                            "if": {
+                              "pattern": "^\\$",
+                              "type": "string"
+                            },
+                            "then": {
+                              "$ref": "#/$defs/ParameterReference"
+                            }
                           },
                           "maxItems": 16,
                           "type": "array"
@@ -1340,8 +2031,18 @@
                         {
                           "$ref": "#/$defs/ParameterReference"
                         }
-                      ]
+                      ],
+                      "if": {
+                        "pattern": "^\\$",
+                        "type": "string"
+                      },
+                      "then": {
+                        "$ref": "#/$defs/ParameterReference"
+                      }
                     }
+                  },
+                  "propertyNames": {
+                    "maxLength": 64
                   },
                   "type": "object"
                 }
@@ -1351,7 +2052,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -1363,10 +2071,12 @@
     },
     "View": {
       "additionalProperties": false,
+      "description": "A view. Its cohorts and reference are checked by the document checks, with their paths.",
       "properties": {
         "analysis": {
           "anyOf": [
             {
+              "maxLength": 129,
               "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$",
               "title": "Analysis",
               "type": "string"
@@ -1374,7 +2084,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "cohorts": {
           "anyOf": [
@@ -1382,36 +2099,45 @@
               "items": {
                 "anyOf": [
                   {
+                    "maxLength": 64,
                     "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                     "type": "string"
                   },
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "maxItems": 6,
               "minItems": 1,
               "title": "Cohorts",
-              "type": "array"
+              "type": "array",
+              "uniqueItems": true
             },
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "note": {
-          "anyOf": [
-            {
-              "maxLength": 10000,
-              "title": "Note",
-              "type": "string",
-              "x-aibi-data": true
-            },
-            {
-              "$ref": "#/$defs/ParameterReference"
-            }
-          ]
+          "maxLength": 10000,
+          "title": "Note",
+          "type": "string",
+          "x-aibi-data": true
         },
         "overlap": {
           "anyOf": [
@@ -1423,7 +2149,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "params": {
           "anyOf": [
@@ -1431,12 +2164,19 @@
               "additionalProperties": {
                 "anyOf": [
                   {
-                    "$ref": "#/$defs/JsonValue"
+                    "$ref": "#/$defs/DocumentJson"
                   },
                   {
                     "$ref": "#/$defs/ParameterReference"
                   }
-                ]
+                ],
+                "if": {
+                  "pattern": "^\\$",
+                  "type": "string"
+                },
+                "then": {
+                  "$ref": "#/$defs/ParameterReference"
+                }
               },
               "title": "Params",
               "type": "object"
@@ -1444,11 +2184,19 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "reference": {
           "anyOf": [
             {
+              "maxLength": 64,
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
               "title": "Reference",
               "type": "string"
@@ -1456,7 +2204,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         },
         "unmapped": {
           "anyOf": [
@@ -1468,7 +2223,14 @@
             {
               "$ref": "#/$defs/ParameterReference"
             }
-          ]
+          ],
+          "if": {
+            "pattern": "^\\$",
+            "type": "string"
+          },
+          "then": {
+            "$ref": "#/$defs/ParameterReference"
+          }
         }
       },
       "required": [
@@ -1493,11 +2255,19 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     },
     "cohorts": {
       "anyOf": [
         {
+          "additionalProperties": false,
           "maxProperties": 6,
           "minProperties": 1,
           "patternProperties": {
@@ -1509,8 +2279,18 @@
                 {
                   "$ref": "#/$defs/ParameterReference"
                 }
-              ]
+              ],
+              "if": {
+                "pattern": "^\\$",
+                "type": "string"
+              },
+              "then": {
+                "$ref": "#/$defs/ParameterReference"
+              }
             }
+          },
+          "propertyNames": {
+            "maxLength": 64
           },
           "title": "Cohorts",
           "type": "object"
@@ -1518,11 +2298,19 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     },
     "dataset": {
       "anyOf": [
         {
+          "maxLength": 136,
           "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{64}|draft))?$",
           "title": "Dataset",
           "type": "string"
@@ -1530,47 +2318,64 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     },
     "drafted_by": {
-      "anyOf": [
-        {
-          "pattern": "^(?:model:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
-          "title": "Drafted By",
-          "type": "string",
-          "x-aibi-data": true
-        },
-        {
-          "$ref": "#/$defs/ParameterReference"
-        }
-      ]
+      "pattern": "^(?:model:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
+      "title": "Drafted By",
+      "type": "string",
+      "x-aibi-data": true
     },
     "notes": {
-      "anyOf": [
-        {
-          "maxLength": 10000,
-          "title": "Notes",
-          "type": "string",
-          "x-aibi-data": true
-        },
-        {
-          "$ref": "#/$defs/ParameterReference"
-        }
-      ]
+      "maxLength": 10000,
+      "title": "Notes",
+      "type": "string",
+      "x-aibi-data": true
     },
     "packs": {
       "anyOf": [
         {
+          "additionalProperties": false,
+          "maxProperties": 16,
           "patternProperties": {
             "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$": {
               "anyOf": [
                 {
-                  "maxLength": 200,
+                  "maxLength": 4096,
                   "type": "string"
                 },
                 {
                   "$ref": "#/$defs/ParameterReference"
                 }
+              ],
+              "if": {
+                "pattern": "^\\$",
+                "type": "string"
+              },
+              "then": {
+                "$ref": "#/$defs/ParameterReference"
+              }
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "cohort",
+                "compare",
+                "core",
+                "covered",
+                "exists",
+                "ids",
+                "summary",
+                "survival",
+                "value"
               ]
             }
           },
@@ -1580,14 +2385,25 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     },
     "params": {
+      "additionalProperties": false,
       "maxProperties": 256,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
-          "$ref": "#/$defs/JsonValue"
+          "$ref": "#/$defs/DocumentJson"
         }
+      },
+      "propertyNames": {
+        "maxLength": 64
       },
       "title": "Params",
       "type": "object"
@@ -1595,6 +2411,7 @@
     "unit": {
       "anyOf": [
         {
+          "maxLength": 256,
           "pattern": "^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?|[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?(?:\\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?)*)$",
           "title": "Unit",
           "type": "string"
@@ -1602,7 +2419,14 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     },
     "views": {
       "anyOf": [
@@ -1615,7 +2439,14 @@
               {
                 "$ref": "#/$defs/ParameterReference"
               }
-            ]
+            ],
+            "if": {
+              "pattern": "^\\$",
+              "type": "string"
+            },
+            "then": {
+              "$ref": "#/$defs/ParameterReference"
+            }
           },
           "maxItems": 8,
           "title": "Views",
@@ -1624,7 +2455,14 @@
         {
           "$ref": "#/$defs/ParameterReference"
         }
-      ]
+      ],
+      "if": {
+        "pattern": "^\\$",
+        "type": "string"
+      },
+      "then": {
+        "$ref": "#/$defs/ParameterReference"
+      }
     }
   },
   "required": [

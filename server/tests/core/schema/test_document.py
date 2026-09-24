@@ -2,33 +2,38 @@
 
 import copy
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, get_args, get_origin
 
 import pytest
+from annotated_types import MaxLen
+from pydantic import BaseModel, StringConstraints, ValidationError
+from pydantic.fields import FieldInfo
 
 from aibi.core.schema.document import (
     AllClause,
+    Document,
     ExistsLeaf,
     NotClause,
     PackLeaf,
     UnknownClause,
     ValueLeaf,
 )
-from aibi.core.schema.limits import MAX_DOCUMENT_BYTES, MAX_LIST
+from aibi.core.schema.limits import MAX_DOCUMENT_BYTES, MAX_LIST, MAX_REFUSALS, LimitName
 from aibi.core.schema.loading import DocumentResult, load_document
 
 DOCUMENTS = Path(__file__).parent / "documents"
 
 
 def example(name: str) -> dict[str, Any]:
-    """An example document: ``sites`` is non-biomedical (SPEC P8), ``trial`` uses a pack leaf."""
+    """An example document: ``sites`` uses parameters, ``library`` uses a test pack's leaf."""
     loaded: dict[str, Any] = json.loads((DOCUMENTS / f"{name}.json").read_text(encoding="utf-8"))
     return loaded
 
 
 SITES = example("sites")
-TRIAL = example("trial")
+LIBRARY = example("library")
 
 
 def load(document: dict[str, Any]) -> DocumentResult:
@@ -61,16 +66,16 @@ def test_sites_document_loads_with_parameters() -> None:
     assert second.not_.values == ["north", "east"]
 
 
-def test_trial_document_loads() -> None:
-    result = load(TRIAL)
+def test_library_document_loads() -> None:
+    result = load(LIBRARY)
     assert result.refusals == []
     assert result.document is not None
-    clauses = result.document.cohorts["tp53"].all
+    clauses = result.document.cohorts["late_readers"].all
     assert isinstance(clauses[0], ValueLeaf)
     assert isinstance(clauses[3], AllClause) is False
     unknown = clauses[2]
     assert unknown.model_dump(by_alias=True) == {
-        "unknown": {"kind": "onco.genomic", "q": "EGFR: AMP"}
+        "unknown": {"kind": "testpack.flag", "q": "fines: UNPAID"}
     }
     assert isinstance(unknown, UnknownClause)
     assert isinstance(unknown.unknown, PackLeaf)
@@ -145,7 +150,7 @@ def test_empty_cohort_selects_every_row() -> None:
                 "kind": "value",
                 "column": "t.c",
                 "values": [1],
-                "via": [{"rel": "samples", "dir": "down"}],
+                "via": [{"rel": "loans", "dir": "down"}],
             },
             [("INVALID_VALUE", "/cohorts/c/all/0/via/0/rel")],
         ),
@@ -180,7 +185,17 @@ def test_empty_cohort_selects_every_row() -> None:
         ({"kind": 3}, [("UNKNOWN_KIND", "/cohorts/c/all/0")]),
         ({"kind": "survival.km"}, [("INVALID_VALUE", "/cohorts/c/all/0")]),
         ({"all": [], "any": []}, [("WRONG_TYPE", "/cohorts/c/all/0")]),
-        ("TP53", [("WRONG_TYPE", "/cohorts/c/all/0")]),
+        ("overdue", [("WRONG_TYPE", "/cohorts/c/all/0")]),
+        (
+            {"not": {"kind": "value", "column": "t.c", "values": [1]}, "extra": 1},
+            [("UNKNOWN_MEMBER", "/cohorts/c/all/0/extra")],
+        ),
+        (
+            {"kind": "value", "column": "t.c", "values": ["$$x\n", "d:a\rb"], "quantifier": 5},
+            [("WRONG_TYPE", "/cohorts/c/all/0/quantifier")],
+        ),
+        ({"kind": "testpack.x\n"}, [("UNKNOWN_KIND", "/cohorts/c/all/0")]),
+        ({"kind": "ids", "ids": ["d:a\rb"]}, [("INVALID_VALUE", "/cohorts/c/all/0/ids/0")]),
         (
             {"not": {"kind": "value", "column": "t.c", "values": [1], "extra": 1}},
             [("UNKNOWN_MEMBER", "/cohorts/c/all/0/not/extra")],
@@ -220,12 +235,12 @@ def test_literal_refusals_list_the_allowed_values() -> None:
 
 def test_pack_leaves_keep_their_members_for_the_pack_to_check() -> None:
     result = load(
-        with_clause({"kind": "onco.genomic", "q": "TP53: MUT", "anything": [1, {"x": True}]})
+        with_clause({"kind": "testpack.flag", "q": "fines: UNPAID", "anything": [1, {"x": True}]})
     )
     assert result.document is not None
     leaf = result.document.cohorts["c"].all[0]
     assert isinstance(leaf, PackLeaf)
-    assert leaf.model_extra == {"q": "TP53: MUT", "anything": [1, {"x": True}]}
+    assert leaf.model_extra == {"q": "fines: UNPAID", "anything": [1, {"x": True}]}
 
 
 def test_nulls_are_refused_everywhere() -> None:
@@ -268,8 +283,11 @@ def test_document_level_members() -> None:
     assert refusals({**base, "cohorts": {"bad-name": {"all": []}}}) == [
         ("INVALID_VALUE", "/cohorts/bad-name")
     ]
-    assert refusals({**base, "packs": {"onco": "not a specifier"}}) == [
-        ("INVALID_VALUE", "/packs/onco")
+    assert refusals({**base, "packs": {"testpack": "not a specifier"}}) == [
+        ("INVALID_VALUE", "/packs/testpack")
+    ]
+    assert refusals({**base, "cohorts": {"leaf:value": {"all": []}}}) == [
+        ("INVALID_VALUE", "/cohorts/leaf:value")
     ]
     assert refusals({**base, "packs": {"core": ">=1"}}) == [("INVALID_VALUE", "/packs/core")]
     assert refusals({**base, "drafted_by": "someone"}) == [("INVALID_VALUE", "/drafted_by")]
@@ -284,7 +302,7 @@ def test_cohort_datasets() -> None:
         {**base, "cohorts": {"c": {"all": [], "dataset": "a", "datasets": ["a", "b"]}}}
     ) == [("CONFLICTING_MEMBERS", "/cohorts/c")]
     assert refusals({**base, "cohorts": {"c": {"all": [], "datasets": ["a@1", "a@2"]}}}) == [
-        ("INVALID_VALUE", "/cohorts/c")
+        ("DUPLICATE_ENTRY", "/cohorts/c/datasets/1")
     ]
     assert load({**base, "cohorts": {"c": {"all": [], "datasets": ["a", "b@2"]}}}).document
 
@@ -338,10 +356,10 @@ def test_views() -> None:
     ]
     assert refusals(
         {**base, "views": [{"analysis": "compare.columns", "cohorts": ["a"], "reference": "b"}]}
-    ) == [("INVALID_VALUE", "/views/0")]
+    ) == [("REFERENCE_NOT_IN_VIEW", "/views/0/reference")]
     assert refusals(
         {**base, "views": [{"analysis": "compare.columns", "cohorts": ["a", "a"]}]}
-    ) == [("INVALID_VALUE", "/views/0")]
+    ) == [("DUPLICATE_ENTRY", "/views/0/cohorts/1")]
     assert refusals({**base, "views": [{"analysis": "km"}]}) == [
         ("INVALID_VALUE", "/views/0/analysis")
     ]
@@ -375,3 +393,221 @@ def test_cohort_references_compare_datasets_without_pins() -> None:
         },
     }
     assert refusals(document) == []
+
+
+# --- Loading goes on, merges and caps its refusals ---------------------------------------------
+
+
+def test_loading_goes_on_past_refused_references() -> None:
+    document = with_clause({"kind": "value", "column": "t.c", "values": ["$nope"], "extra": 1})
+    document["params"] = {"spare": 1}
+    result = load(document)
+    assert [(r.code, r.path) for r in result.refusals] == [
+        ("UNKNOWN_MEMBER", "/cohorts/c/all/0/extra"),
+        ("UNKNOWN_PARAMETER", "/cohorts/c/all/0/values/0"),
+    ]
+    assert result.params_unused == ["spare"]
+
+
+def test_nothing_is_reported_under_a_refused_position() -> None:
+    document = with_clause({"kind": "value", "column": "t.c", "values": "$nope"})
+    assert refusals(document) == [("UNKNOWN_PARAMETER", "/cohorts/c/all/0/values")]
+    document = with_clause({"kind": "value", "column": "t.c", "values": [None]})
+    document["notes"] = None
+    assert refusals(document) == [
+        ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/values/0"),
+        ("NULL_NOT_ALLOWED", "/notes"),
+    ]
+
+
+def test_repeated_problems_in_a_parameter_value_are_reported_once() -> None:
+    document = with_clause({"kind": "value", "column": "t.c", "values": "$v"})
+    document["params"] = {"v": [[], [], []]}
+    assert refusals(document) == [("WRONG_TYPE", "/cohorts/c/all/0/values")]
+
+
+def test_refusals_are_capped() -> None:
+    result = load(with_clause({"kind": "value", "column": "t.c", "values": [[]] * 1200}))
+    assert len(result.refusals) == MAX_REFUSALS + 1
+    *kept, last = result.refusals
+    assert {refusal.code for refusal in kept} == {"WRONG_TYPE"}
+    assert (last.code, last.path) == ("LIMIT_EXCEEDED", None)
+    assert last.limit is not None
+    assert (last.limit.name, last.limit.max) == ("refusals", MAX_REFUSALS)
+    assert last.message[0].model_dump() == {"text": "200 more refusals were left out"}
+
+
+def test_positions_filled_by_parameters_are_reported() -> None:
+    assert load(SITES).positions == {
+        "/cohorts/failed/all/1/where/0/range/lt": "min_score",
+        "/cohorts/failed/all/1/where/1/not/values": "regions",
+    }
+
+
+# --- Limits ------------------------------------------------------------------------------------
+
+
+def _long_cohorts(count: int) -> dict[str, Any]:
+    return {f"c{index}": {"all": []} for index in range(count)}
+
+
+LIMITED: list[tuple[dict[str, Any], str, str, int]] = [
+    ({"cohorts": _long_cohorts(7)}, "/cohorts", "cohorts", 6),
+    ({"views": [{"analysis": "compare.columns"}] * 9}, "/views", "views", 8),
+    ({"params": {f"p{index}": 1 for index in range(257)}}, "/params", "parameters", 256),
+    ({"notes": "x" * 10_001}, "/notes", "note_characters", 10_000),
+    ({"drafted_by": "agent:" + "x" * 201}, "/drafted_by", "name_characters", 200),
+    ({"packs": {f"p{index}": ">=1" for index in range(17)}}, "/packs", "packs", 16),
+    ({"cohorts": {"c" * 65: {"all": []}}}, "/cohorts/" + "c" * 65, "identifier_characters", 64),
+    ({"unit": "t" * 257}, "/unit", "identifier_characters", 256),
+    (
+        {"cohorts": {"c": {"all": [], "datasets": [f"d{index}" for index in range(65)]}}},
+        "/cohorts/c/datasets",
+        "datasets",
+        64,
+    ),
+]
+
+LIMITED_LEAVES: list[tuple[dict[str, Any], str, str, int]] = [
+    ({"values": list(range(10_001))}, "/values", "list_members", 10_000),
+    ({"values": ["x" * 4097]}, "/values/0", "constant_characters", 4096),
+    ({"values": [1], "via": [{"rel": "rel:a.b", "dir": "up"}] * 17}, "/via", "path_steps", 16),
+    ({"values": [1], "quantifier": ["some"] * 17}, "/quantifier", "path_steps", 16),
+    ({"values": [1], "via": {f"d{i}": [] for i in range(65)}}, "/via", "datasets", 64),
+]
+
+
+@pytest.mark.parametrize(("members", "path", "name", "maximum"), LIMITED)
+def test_document_limits_are_named(
+    members: dict[str, Any], path: str, name: str, maximum: int
+) -> None:
+    base: dict[str, Any] = {"aibi": "1", "dataset": "d", "unit": "t", "cohorts": {"c": {"all": []}}}
+    [refusal] = [r for r in load({**base, **members}).refusals if r.code == "LIMIT_EXCEEDED"]
+    assert refusal.path == path
+    assert refusal.limit is not None
+    assert (refusal.limit.name, refusal.limit.max) == (name, maximum)
+
+
+@pytest.mark.parametrize(("members", "path", "name", "maximum"), LIMITED_LEAVES)
+def test_leaf_limits_are_named(members: dict[str, Any], path: str, name: str, maximum: int) -> None:
+    [refusal] = load(with_clause({"kind": "value", "column": "t.c", **members})).refusals
+    assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/cohorts/c/all/0" + path)
+    assert refusal.limit is not None
+    assert (refusal.limit.name, refusal.limit.max) == (name, maximum)
+
+
+def test_other_leaf_limits_are_named() -> None:
+    covered = {"kind": "covered", "table": "m", "scope": {f"s{i}": ["x"] for i in range(17)}}
+    ids = {"kind": "ids", "ids": [{"dataset": "d", "key": list(range(17))}]}
+    for clause, path, name in [
+        (covered, "/scope", "scope_columns"),
+        (ids, "/ids/0/key", "key_columns"),
+    ]:
+        [refusal] = load(with_clause(clause)).refusals
+        assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/cohorts/c/all/0" + path)
+        assert refusal.limit is not None
+        assert refusal.limit.name == name
+
+
+def _annotations(root: type[BaseModel]) -> Iterator[tuple[str, list[object]]]:
+    """Every annotation reachable from a model, with its Annotated metadata."""
+    seen: set[int] = set()
+    pending: list[tuple[str, object, list[object]]] = [(root.__name__, root, [])]
+    while pending:
+        where, annotation, metadata = pending.pop()
+        if id(annotation) in seen and not metadata:
+            continue
+        seen.add(id(annotation))
+        origin = get_origin(annotation)
+        if origin is Annotated:
+            inner, *extra = get_args(annotation)
+            pending.append((where, inner, [*metadata, *extra]))
+            continue
+        yield where, metadata
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            for name, info in annotation.model_fields.items():
+                pending.append((f"{annotation.__name__}.{name}", info.annotation, info.metadata))
+        else:
+            pending.extend((where, arg, []) for arg in get_args(annotation))
+
+
+def _caps_length(extra: object) -> bool:
+    if isinstance(extra, MaxLen):
+        return True
+    if isinstance(extra, StringConstraints):
+        return extra.max_length is not None
+    if isinstance(extra, FieldInfo):
+        return any(_caps_length(inner) for inner in extra.metadata)
+    return False
+
+
+def test_every_length_cap_names_its_limit() -> None:
+    capped = [
+        (where, any(isinstance(extra, LimitName) for extra in metadata))
+        for where, metadata in _annotations(Document)
+        if any(_caps_length(extra) for extra in metadata)
+    ]
+    assert len(capped) > 25
+    assert sorted(where for where, named in capped if not named) == []
+
+
+# --- Models on their own -----------------------------------------------------------------------
+
+
+def test_a_dumped_document_loads_unchanged() -> None:
+    for original in (SITES, LIBRARY):
+        document = load(original).document
+        assert document is not None
+        dumped = document.model_dump(mode="json")
+        assert "negate" not in json.dumps(dumped)
+        again = load(dumped).document
+        assert again == document
+
+
+def test_models_refuse_null() -> None:
+    with pytest.raises(ValidationError) as raised:
+        Document.model_validate(
+            {"aibi": "1", "dataset": None, "unit": "t", "cohorts": {"c": {"all": []}}}
+        )
+    assert raised.value.errors()[0]["type"] == "null_not_allowed"
+
+
+# --- Cross-dataset rules (SPEC §7.5) -----------------------------------------------------------
+
+
+def test_cross_dataset_cohorts_need_concepts() -> None:
+    leaf = {"kind": "value", "column": "t.c", "values": [1]}
+    base: dict[str, Any] = {"aibi": "1", "unit": "core:person"}
+    cohort: dict[str, Any] = {"all": [leaf], "datasets": ["a", "b"]}
+    assert refusals({**base, "cohorts": {"c": cohort}}) == [
+        ("CONCEPT_REQUIRED", "/cohorts/c/all/0/column")
+    ]
+    assert refusals({**base, "cohorts": {"c": {**cohort, "unmapped": "allow"}}}) == []
+    concept_leaf = {**leaf, "column": "core:age_years"}
+    assert refusals({**base, "cohorts": {"c": {**cohort, "all": [concept_leaf]}}}) == []
+    assert refusals({**base, "unit": "t", "cohorts": {"c": {**cohort, "unmapped": "allow"}}}) == [
+        ("CONCEPT_REQUIRED", "/unit")
+    ]
+
+
+def test_via_by_dataset_is_for_cross_dataset_cohorts() -> None:
+    leaf = {"kind": "value", "column": "core:age_years", "values": [1], "via": {"a": []}}
+    single = with_clause(leaf)
+    assert refusals(single) == [("CROSS_DATASET_ONLY", "/cohorts/c/all/0/via")]
+    cross: dict[str, Any] = {
+        "aibi": "1",
+        "unit": "core:person",
+        "cohorts": {"c": {"all": [{**leaf, "via": {"x": []}}], "datasets": ["a", "b@2"]}},
+    }
+    assert refusals(cross) == [("UNKNOWN_DATASET", "/cohorts/c/all/0/via/x")]
+
+
+def test_views_over_several_datasets_need_a_concept_unit() -> None:
+    document: dict[str, Any] = {
+        "aibi": "1",
+        "unit": "t",
+        "cohorts": {"a": {"all": [], "dataset": "d1"}, "b": {"all": [], "dataset": "d2"}},
+        "views": [{"analysis": "compare.columns"}],
+    }
+    assert refusals(document) == [("CONCEPT_REQUIRED", "/unit")]
+    assert refusals({**document, "unit": "core:person"}) == []

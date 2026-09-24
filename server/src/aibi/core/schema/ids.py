@@ -1,20 +1,24 @@
-"""Identifiers (SPEC §5.1).
+"""Identifiers, hashes and other string forms (SPEC §5.1, §7.6, §8.1).
 
-Patterns are written without look-around so that the same expressions work in Pydantic (Rust
-regex), in Python's ``re`` and in JSON Schema validators (ECMA-262).
+Patterns are written without look-around, and without ``.``, so that the same expressions work in
+Pydantic (Rust regex), in Python's ``re`` and in JSON Schema validators (ECMA-262). Python code
+matches them with ``fullmatch``: with ``match``, ``$`` would also accept a trailing newline.
 """
 
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Sequence
 from typing import Annotated, Literal
 
 from pydantic import StringConstraints
+
+from aibi.core.schema.limits import IDENTIFIER_CHARACTERS, MAX_IDENTIFIER, LimitName
 
 # An identifier: ``[a-z][a-z0-9_]*`` without ``__``. The trailing ``_?`` keeps a single final
 # underscore legal, as the grammar allows, while ``(?:_[a-z0-9]+)*`` forbids ``__``.
 IDENT = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?"
 NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+HEX64 = r"[0-9a-f]{64}"
 _COLUMNS = rf"{IDENT}(?:\+{IDENT})*"
 
 IDENTIFIER_RE = re.compile(rf"^{IDENT}$")
@@ -26,9 +30,16 @@ ENDPOINT_ID_RE = re.compile(rf"^ep:{IDENT}$")
 ANALYSIS_ID_RE = re.compile(rf"^{IDENT}\.{IDENT}$")
 MODEL_CARD_ID_RE = re.compile(rf"^model:{IDENT}$")
 PACK_LEAF_KIND_RE = re.compile(rf"^{IDENT}\.{IDENT}$")
-DATASET_REF_RE = re.compile(rf"^{IDENT}(?:@(?:[1-9][0-9]*|sha256:[0-9a-f]{{64}}|draft))?$")
+DATASET_REF_RE = re.compile(rf"^{IDENT}(?:@(?:[1-9][0-9]*|sha256:{HEX64}|draft))?$")
 NAME_RE = re.compile(rf"^{NAME}$")
 JSON_POINTER_RE = re.compile(r"^(?:/(?:[^~/]|~[01])*)*$")
+SHA256_RE = re.compile(rf"^sha256:{HEX64}$")
+"""A manifest hash or a digest: ``sha256:`` and lowercase hexadecimal."""
+DERIVATION_ID_RE = re.compile(rf"^drv:{HEX64}$")
+LEAF_KEY_RE = re.compile(rf"^leaf:{HEX64}$")
+ISSUANCE_ID_RE = re.compile(r"^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+"""``iss:`` and a ULID in Crockford's base 32; never hashed."""
+DECIMAL_INTEGER_RE = re.compile(r"^(?:0|-?[1-9][0-9]*)$")
 
 MAX_SAFE_INTEGER = 2**53 - 1
 """Integers beyond ±(2^53 - 1) are carried as decimal strings (SPEC §5.1)."""
@@ -41,74 +52,111 @@ RESERVED_PACK_IDS = CORE_ANALYSIS_FAMILIES | CORE_LEAF_KINDS | {"core"}
 DATASET_DESCRIPTOR_ID = "dataset"
 """The dataset descriptor's id, which no table may take (SPEC §5.1)."""
 
-
-def _pattern(regex: re.Pattern[str]) -> StringConstraints:
-    return StringConstraints(pattern=regex.pattern)
+_LIMIT = LimitName(IDENTIFIER_CHARACTERS)
 
 
-Identifier = Annotated[str, _pattern(IDENTIFIER_RE)]
+def _form(regex: re.Pattern[str], max_length: int) -> StringConstraints:
+    return StringConstraints(pattern=regex.pattern, max_length=max_length)
+
+
+_COMPOUND = 2 * MAX_IDENTIFIER + 1
+"""``<identifier>.<identifier>``."""
+
+Identifier = Annotated[str, _form(IDENTIFIER_RE, MAX_IDENTIFIER), _LIMIT]
 DatasetId = Identifier
 TableId = Identifier
 ColumnId = Identifier
 PackId = Identifier
-ColumnRef = Annotated[str, _pattern(COLUMN_REF_RE)]
+ColumnRef = Annotated[str, _form(COLUMN_REF_RE, _COMPOUND), _LIMIT]
 """``<table>.<column>``: a column's descriptor id."""
-ConceptId = Annotated[str, _pattern(CONCEPT_ID_RE)]
-RelationshipId = Annotated[str, _pattern(RELATIONSHIP_ID_RE)]
-CoverageId = Annotated[str, _pattern(COVERAGE_ID_RE)]
-EndpointId = Annotated[str, _pattern(ENDPOINT_ID_RE)]
-AnalysisId = Annotated[str, _pattern(ANALYSIS_ID_RE)]
-ModelCardId = Annotated[str, _pattern(MODEL_CARD_ID_RE)]
-DatasetRef = Annotated[str, _pattern(DATASET_REF_RE)]
+ConceptId = Annotated[str, _form(CONCEPT_ID_RE, 4 * MAX_IDENTIFIER), _LIMIT]
+RelationshipId = Annotated[str, _form(RELATIONSHIP_ID_RE, 8 * MAX_IDENTIFIER), _LIMIT]
+CoverageId = Annotated[str, _form(COVERAGE_ID_RE, 8 * MAX_IDENTIFIER), _LIMIT]
+EndpointId = Annotated[str, _form(ENDPOINT_ID_RE, MAX_IDENTIFIER + 3), _LIMIT]
+AnalysisId = Annotated[str, _form(ANALYSIS_ID_RE, _COMPOUND), _LIMIT]
+ModelCardId = Annotated[str, _form(MODEL_CARD_ID_RE, MAX_IDENTIFIER + 6), _LIMIT]
+DatasetRef = Annotated[str, _form(DATASET_REF_RE, MAX_IDENTIFIER + 72), _LIMIT]
 """A dataset id, optionally pinned: ``x``, ``x@3``, ``x@sha256:<hex>`` or ``x@draft``."""
-Name = Annotated[str, _pattern(NAME_RE)]
+Name = Annotated[str, _form(NAME_RE, MAX_IDENTIFIER), _LIMIT]
 """A cohort or parameter name."""
-JsonPointer = Annotated[str, _pattern(JSON_POINTER_RE)]
+JsonPointer = Annotated[str, StringConstraints(pattern=JSON_POINTER_RE.pattern)]
+Sha256 = Annotated[str, StringConstraints(pattern=SHA256_RE.pattern)]
+DerivationId = Annotated[str, StringConstraints(pattern=DERIVATION_ID_RE.pattern)]
+LeafKey = Annotated[str, StringConstraints(pattern=LEAF_KEY_RE.pattern)]
+IssuanceId = Annotated[str, StringConstraints(pattern=ISSUANCE_ID_RE.pattern)]
 
 
 def is_pack_id(value: str) -> bool:
-    return IDENTIFIER_RE.match(value) is not None and value not in RESERVED_PACK_IDS
+    return (
+        len(value) <= MAX_IDENTIFIER
+        and IDENTIFIER_RE.fullmatch(value) is not None
+        and value not in RESERVED_PACK_IDS
+    )
+
+
+def integer_value(value: int) -> int | str:
+    """An integer as documents, canonical forms and results carry it (SPEC §5.1)."""
+    return value if abs(value) <= MAX_SAFE_INTEGER else str(value)
 
 
 def normalise(name: str) -> str:
     """Normalise one source name, before prefixes and collisions (SPEC §5.1)."""
     lowered = unicodedata.normalize("NFKC", name).lower()
-    return re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+    return _cut(re.sub(r"[^a-z0-9]+", "_", lowered).strip("_"), MAX_IDENTIFIER)
+
+
+def _cut(value: str, length: int) -> str:
+    """At most ``length`` characters, without a trailing ``_``."""
+    return value[:length].rstrip("_")
 
 
 def normalise_names(
     names: Iterable[str],
     kind: Literal["table", "column"],
-    previous: Mapping[str, str] | None = None,
+    previous: Sequence[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Derive unique ids from source names, in source order (SPEC §5.1).
 
     Empty results become ``t_<position>`` or ``c_<position>`` (1-based); results starting with a
-    digit get the ``t_`` or ``c_`` prefix. An id already assigned, or the table id ``dataset``, is
-    a collision, resolved by the smallest suffix ``_<n>``, n ≥ 2, that gives an unassigned id.
+    digit get the ``t_`` or ``c_`` prefix. Ids have at most ``MAX_IDENTIFIER`` characters: longer
+    results are cut, and a collision suffix replaces final characters when it has to. An id
+    already assigned, or the table id ``dataset``, is a collision, resolved by the smallest
+    suffix ``_<n>``, n ≥ 2, that gives an unassigned id.
 
-    On re-import, ``previous`` maps the original names of the previous release to their ids: a
-    name found there keeps its id, and the other names are assigned around the kept ids.
+    On re-import, ``previous`` holds the previous release's (original name, id) pairs in source
+    order. The k-th occurrence of a name keeps the id of its k-th occurrence there, so duplicate
+    and empty names keep their ids too; the other names are assigned around the kept ids.
     """
     names = list(names)
-    kept = dict(previous or {})
+    earlier: dict[str, list[str]] = {}
+    for name, assigned in previous or ():
+        earlier.setdefault(name, []).append(assigned)
+    occurrence: dict[str, int] = {}
+    kept: list[str | None] = []
+    for name in names:
+        index = occurrence.get(name, 0)
+        occurrence[name] = index + 1
+        ids_of_name = earlier.get(name, [])
+        kept.append(ids_of_name[index] if index < len(ids_of_name) else None)
+
     prefix = "t_" if kind == "table" else "c_"
     taken: set[str] = {DATASET_DESCRIPTOR_ID} if kind == "table" else set()
-    taken.update(kept[name] for name in names if name in kept)
+    taken.update(assigned for assigned in kept if assigned is not None)
     ids: list[str] = []
-    for position, name in enumerate(names, start=1):
-        if name in kept:
-            ids.append(kept.pop(name))
+    for position, (name, assigned) in enumerate(zip(names, kept, strict=True), start=1):
+        if assigned is not None:
+            ids.append(assigned)
             continue
         base = normalise(name)
         if not base:
             base = f"{prefix}{position}"
         elif base[0].isdigit():
-            base = prefix + base
+            base = _cut(prefix + base, MAX_IDENTIFIER)
         candidate = base
         n = 2
         while candidate in taken:
-            candidate = f"{base}_{n}"
+            suffix = f"_{n}"
+            candidate = _cut(base, MAX_IDENTIFIER - len(suffix)) + suffix
             n += 1
         taken.add(candidate)
         ids.append(candidate)

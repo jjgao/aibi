@@ -7,7 +7,7 @@ against a release (M2); checks that need only the document are in ``aibi.core.sc
 
 import math
 import re
-from typing import TYPE_CHECKING, Annotated, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from pydantic import (
@@ -18,10 +18,12 @@ from pydantic import (
     Field,
     JsonValue,
     PlainValidator,
+    SerializerFunctionWrapHandler,
     StrictBool,
     StrictInt,
     Tag,
     WithJsonSchema,
+    model_serializer,
     model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
@@ -42,25 +44,71 @@ from aibi.core.schema.ids import (
     RelationshipId,
 )
 from aibi.core.schema.limits import (
+    CLAUSES,
+    COHORTS,
+    CONSTANT_CHARACTERS,
+    DATASETS,
+    IDENTIFIER_CHARACTERS,
+    KEY_COLUMNS,
+    LIST_MEMBERS,
     MAX_CLAUSES,
     MAX_COHORTS,
+    MAX_COLUMNS,
+    MAX_DATASETS,
+    MAX_IDENTIFIER,
     MAX_LIST,
     MAX_NAME,
+    MAX_PACKS,
     MAX_PARAMS,
     MAX_PATH_STEPS,
     MAX_STRING,
     MAX_TEXT,
     MAX_VIEWS,
+    NAME_CHARACTERS,
+    NOTE_CHARACTERS,
+    PACKS,
+    PARAMETERS,
+    PATH_STEPS,
+    SCOPE_COLUMNS,
+    VIEWS,
+    LimitName,
 )
-from aibi.core.schema.refusals import DATA_MARK
+from aibi.core.schema.output import DATA_MARK
 
 CORE_KINDS_TEXT = "value, exists, covered, ids or cohort"
 
 
 class DocModel(BaseModel):
-    """Base for document parts: strict (no coercion), closed and immutable."""
+    """Base for document parts: strict (no coercion), closed and immutable.
+
+    ``null`` is never a value in a document (SPEC §7.1): an absent member is omitted, and a dump
+    writes only the members that were given, so a dumped document loads again unchanged.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True, serialize_by_alias=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_null(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        members = cast(dict[str, object], data)
+        for key, value in members.items():
+            if value is None:
+                raise PydanticCustomError(
+                    "null_not_allowed", "{member} is null; omit it instead", {"member": key}
+                )
+        return members
+
+    @model_serializer(mode="wrap")
+    def _dump_given(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        dumped: dict[str, Any] = handler(self)
+        given = {
+            info.serialization_alias or info.alias or name
+            for name, info in type(self).model_fields.items()
+            if name in self.model_fields_set or info.is_required()
+        }
+        return {key: value for key, value in dumped.items() if key in given}
 
 
 # --- Scalars -------------------------------------------------------------------------------
@@ -74,7 +122,7 @@ def _scalar(value: object) -> str | bool | int | float:
             raise PydanticCustomError(
                 "string_too_long",
                 "String should have at most {max_length} characters",
-                {"max_length": MAX_STRING},
+                {"max_length": MAX_STRING, "limit": CONSTANT_CHARACTERS},
             )
         return value
     if isinstance(value, int):
@@ -99,29 +147,47 @@ def _bound(value: object) -> str | int | float:
     return checked
 
 
+_STRING_CONSTANT: dict[str, JsonValue] = {"type": "string", "maxLength": MAX_STRING}
+
 Scalar = Annotated[
     str | bool | int | float,
     PlainValidator(_scalar),
-    WithJsonSchema({"type": ["string", "boolean", "number"]}),
+    WithJsonSchema({"anyOf": [_STRING_CONSTANT, {"type": ["boolean", "number"]}]}),
 ]
 """A constant: typed against its column when the document is resolved (SPEC §6.4)."""
 
 Bound = Annotated[
     str | int | float,
     PlainValidator(_bound),
-    WithJsonSchema({"type": ["string", "number"]}),
+    WithJsonSchema({"anyOf": [_STRING_CONSTANT, {"type": "number"}]}),
 ]
 
-Notes = Annotated[str, Field(max_length=MAX_TEXT, json_schema_extra=DATA_MARK)]
+Notes = Annotated[
+    str, Field(max_length=MAX_TEXT, json_schema_extra=DATA_MARK), LimitName(NOTE_CHARACTERS)
+]
 """Plain text, never compiled or interpreted (A6)."""
 
+_REFERENCE_LENGTH = 4 * MAX_IDENTIFIER
 ColumnOrConcept = Annotated[
-    str, Field(pattern=rf"^(?:{IDENT}\.{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$")
+    str,
+    Field(
+        pattern=rf"^(?:{IDENT}\.{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$",
+        max_length=_REFERENCE_LENGTH,
+    ),
+    LimitName(IDENTIFIER_CHARACTERS),
 ]
-TableOrConcept = Annotated[str, Field(pattern=rf"^(?:{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$")]
+TableOrConcept = Annotated[
+    str,
+    Field(pattern=rf"^(?:{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$", max_length=_REFERENCE_LENGTH),
+    LimitName(IDENTIFIER_CHARACTERS),
+]
 Units = Annotated[str, Field(pattern=r"^[!-~]{1,64}$")]
 """A UCUM code, checked against the pinned UCUM tables on resolution (SPEC §6.4)."""
 Lift = Literal["strict", "assessed"]
+
+DOCUMENT_JSON_MARK = "x-aibi-document-json"
+DocumentJson = Annotated[JsonValue, WithJsonSchema({DOCUMENT_JSON_MARK: True})]
+"""Any JSON value but ``null``. The schema export replaces the mark with a definition."""
 Count = Annotated[StrictInt, Field(ge=1, le=MAX_SAFE_INTEGER)]
 
 
@@ -135,14 +201,38 @@ def _pack_specifier(value: str) -> str:
     return value
 
 
-PackSpecifier = Annotated[str, Field(max_length=MAX_NAME), AfterValidator(_pack_specifier)]
+PackSpecifier = Annotated[
+    str,
+    Field(max_length=MAX_STRING),
+    LimitName(CONSTANT_CHARACTERS),
+    AfterValidator(_pack_specifier),
+]
+
+_DRAFTED_BY = rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f]{{1,{MAX_NAME}}})$"
+_DRAFTED_BY_RE = re.compile(_DRAFTED_BY)
+
+
+def _drafted_by(value: str) -> str:
+    kind, _, name = value.partition(":")
+    if kind in ("agent", "operator") and len(name) > MAX_NAME:
+        raise PydanticCustomError(
+            "string_too_long",
+            "A self-declared name has at most {max_length} characters",
+            {"max_length": MAX_NAME, "limit": NAME_CHARACTERS},
+        )
+    if _DRAFTED_BY_RE.fullmatch(value) is None:
+        raise PydanticCustomError(
+            "drafted_by",
+            'Expected "model:<id>", "agent:<name>" or "operator:<name>", the name without '
+            "control characters",
+        )
+    return value
+
 
 DraftedBy = Annotated[
     str,
-    Field(
-        pattern=rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f]{{1,{MAX_NAME}}})$",
-        json_schema_extra=DATA_MARK,
-    ),
+    AfterValidator(_drafted_by),
+    WithJsonSchema({"type": "string", "pattern": _DRAFTED_BY, **DATA_MARK}),
 ]
 
 
@@ -165,7 +255,7 @@ class Step(DocModel):
     dir: Literal["up", "down"]
 
 
-Path = Annotated[list[Step], Field(max_length=MAX_PATH_STEPS)]
+Path = Annotated[list[Step], Field(max_length=MAX_PATH_STEPS), LimitName(PATH_STEPS)]
 
 
 def _via_tag(value: object) -> str | None:
@@ -177,7 +267,11 @@ def _via_tag(value: object) -> str | None:
 
 
 Via = Annotated[
-    Annotated[Path, Tag("via:path")] | Annotated[dict[DatasetId, Path], Tag("via:datasets")],
+    Annotated[Path, Tag("via:path")]
+    | Annotated[
+        Annotated[dict[DatasetId, Path], Field(max_length=MAX_DATASETS), LimitName(DATASETS)],
+        Tag("via:datasets"),
+    ],
     Discriminator(
         _via_tag,
         custom_error_type="via_type",
@@ -206,7 +300,7 @@ QuantifierItem = Annotated[
     Discriminator(
         _quantifier_item_tag,
         custom_error_type="quantifier_type",
-        custom_error_message='Expected "some", "every" or {{"some": k}}',
+        custom_error_message='Expected "some", "every" or {"some": k}',
     ),
 ]
 
@@ -217,7 +311,14 @@ def _quantifier_tag(value: object) -> str | None:
 
 Quantifier = Annotated[
     Annotated[QuantifierItem, Tag("q:single")]
-    | Annotated[Annotated[list[QuantifierItem], Field(min_length=1)], Tag("q:list")],
+    | Annotated[
+        Annotated[
+            list[QuantifierItem],
+            Field(min_length=1, max_length=MAX_PATH_STEPS),
+            LimitName(PATH_STEPS),
+        ],
+        Tag("q:list"),
+    ],
     Discriminator(_quantifier_tag),
 ]
 """One quantifier for every down step, or one per down step in path order (SPEC §7.2)."""
@@ -225,8 +326,17 @@ Quantifier = Annotated[
 
 # --- Leaves (SPEC §7.2, §7.3) ----------------------------------------------------------------
 
+ClauseList = Annotated[list["Clause"], Field(max_length=MAX_CLAUSES), LimitName(CLAUSES)]
+
 
 class Range(DocModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "minProperties": 1,
+            "not": {"anyOf": [{"required": ["gt", "gte"]}, {"required": ["lt", "lte"]}]},
+        }
+    )
+
     gt: Bound | None = None
     gte: Bound | None = None
     lt: Bound | None = None
@@ -243,11 +353,27 @@ class Range(DocModel):
         return self
 
 
-ValueList = Annotated[list[Scalar], Field(min_length=1, max_length=MAX_LIST)]
+ValueList = Annotated[
+    list[Scalar], Field(min_length=1, max_length=MAX_LIST), LimitName(LIST_MEMBERS)
+]
 
 
 class ValueLeaf(DocModel):
     """A value predicate (SPEC §6.4): exactly one of ``values``, ``range`` or ``op`` + ``value``."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "anyOf": [{"required": ["values"]}, {"required": ["range"]}, {"required": ["op"]}],
+            "not": {
+                "anyOf": [
+                    {"required": ["values", "range"]},
+                    {"required": ["values", "op"]},
+                    {"required": ["range", "op"]},
+                ]
+            },
+            "dependentRequired": {"op": ["value"], "value": ["op"]},
+        }
+    )
 
     kind: Literal["value"]
     column: ColumnOrConcept
@@ -286,9 +412,16 @@ def _check_min_count(quantifier: object, min_count: int | None) -> None:
 class ExistsLeaf(DocModel):
     """An existence question (SPEC §6.5); ``where`` clauses are ANDed per row of ``table``."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "if": {"required": ["min_count"]},
+            "then": {"properties": {"quantifier": {"const": "some"}}},
+        }
+    )
+
     kind: Literal["exists"]
     table: TableOrConcept
-    where: Annotated[list["Clause"], Field(max_length=MAX_CLAUSES)] | None = None
+    where: ClauseList | None = None
     quantifier: Quantifier | None = None
     min_count: Count | None = None
     lift: Lift | None = None
@@ -306,14 +439,23 @@ class CoveredLeaf(DocModel):
 
     kind: Literal["covered"]
     table: TableOrConcept
-    scope: Annotated[dict[ColumnId, ValueList], Field(min_length=1)] | None = None
+    scope: (
+        Annotated[
+            dict[ColumnId, ValueList],
+            Field(min_length=1, max_length=MAX_COLUMNS),
+            LimitName(SCOPE_COLUMNS),
+        ]
+        | None
+    ) = None
     lift: Lift | None = None
     via: Via | None = None
 
 
 class UnitKey(DocModel):
     dataset: DatasetId
-    key: Annotated[list[Scalar], Field(min_length=1)]
+    key: Annotated[
+        list[Scalar], Field(min_length=1, max_length=MAX_COLUMNS), LimitName(KEY_COLUMNS)
+    ]
 
 
 def _ids_member_tag(value: object) -> str | None:
@@ -326,13 +468,18 @@ def _ids_member_tag(value: object) -> str | None:
 
 IdsMember = Annotated[
     Annotated[
-        Annotated[str, Field(pattern=rf"^{IDENT}:.+$", max_length=MAX_STRING)], Tag("ids:text")
+        Annotated[
+            str,
+            Field(pattern=rf"^{IDENT}:[^\x00-\x1f\x7f\u2028\u2029]+$", max_length=MAX_STRING),
+            LimitName(CONSTANT_CHARACTERS),
+        ],
+        Tag("ids:text"),
     ]
     | Annotated[UnitKey, Tag("ids:key")],
     Discriminator(
         _ids_member_tag,
         custom_error_type="ids_member_type",
-        custom_error_message='Expected "<dataset>:<key>" or {{"dataset": ..., "key": [...]}}',
+        custom_error_message='Expected "<dataset>:<key>" or {"dataset": ..., "key": [...]}',
     ),
 ]
 
@@ -341,7 +488,9 @@ class IdsLeaf(DocModel):
     """An explicit list of unit keys; not allowed inside any ``where`` (SPEC §7.2)."""
 
     kind: Literal["ids"]
-    ids: Annotated[list[IdsMember], Field(min_length=1, max_length=MAX_LIST)]
+    ids: Annotated[
+        list[IdsMember], Field(min_length=1, max_length=MAX_LIST), LimitName(LIST_MEMBERS)
+    ]
 
 
 class CohortLeaf(DocModel):
@@ -351,12 +500,25 @@ class CohortLeaf(DocModel):
     cohort: Name
 
 
+_RESERVED_NAMESPACE: dict[str, JsonValue] = {
+    "pattern": "^(?:" + "|".join(sorted(RESERVED_PACK_IDS)) + r")\."
+}
+
+
 class PackLeaf(BaseModel):
     """A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema."""
 
     model_config = ConfigDict(strict=True, extra="allow", frozen=True)
 
-    kind: Annotated[str, Field(pattern=PACK_LEAF_KIND_RE.pattern)]
+    kind: Annotated[
+        str,
+        Field(
+            pattern=PACK_LEAF_KIND_RE.pattern,
+            max_length=2 * MAX_IDENTIFIER + 1,
+            json_schema_extra={"not": _RESERVED_NAMESPACE},
+        ),
+        LimitName(IDENTIFIER_CHARACTERS),
+    ]
 
     @model_validator(mode="after")
     def _check_pack(self) -> Self:
@@ -368,11 +530,11 @@ class PackLeaf(BaseModel):
 
 
 class AllClause(DocModel):
-    all: Annotated[list["Clause"], Field(max_length=MAX_CLAUSES)]
+    all: ClauseList
 
 
 class AnyClause(DocModel):
-    any: Annotated[list["Clause"], Field(max_length=MAX_CLAUSES)]
+    any: ClauseList
 
 
 class NotClause(DocModel):
@@ -421,11 +583,11 @@ def _clause_tag(value: object) -> str:
                 return "bad:kind"
             if kind in _LEAF_TAGS:
                 return _LEAF_TAGS[kind]
-            return "leaf:pack" if _PACK_KIND.match(kind) else "bad:kind"
-        if len(value) == 1:
-            (key,) = value
-            if key in _COMBINATORS:
-                return f"clause:{key}"
+            return "leaf:pack" if _PACK_KIND.fullmatch(kind) else "bad:kind"
+        combinators = [key for key in value if key in _COMBINATORS]
+        if len(combinators) == 1:
+            # Other members are then reported as unknown members of that combinator.
+            return f"clause:{combinators[0]}"
         return "bad:shape"
     for tag, model in _TAG_MODELS.items():
         if isinstance(value, model):
@@ -480,10 +642,21 @@ else:
 
 
 class Cohort(DocModel):
-    all: Annotated[list[Clause], Field(max_length=MAX_CLAUSES)]
+    """A cohort. Duplicate datasets are refused by the document checks, with their paths."""
+
+    model_config = ConfigDict(json_schema_extra={"not": {"required": ["dataset", "datasets"]}})
+
+    all: ClauseList
     """``[]`` selects every row of the unit table."""
     dataset: DatasetRef | None = None
-    datasets: Annotated[list[DatasetRef], Field(min_length=2, max_length=MAX_LIST)] | None = None
+    datasets: (
+        Annotated[
+            list[DatasetRef],
+            Field(min_length=2, max_length=MAX_DATASETS, json_schema_extra={"uniqueItems": True}),
+            LimitName(DATASETS),
+        ]
+        | None
+    ) = None
     unmapped: Literal["allow"] | None = None
     notes: Notes | None = None
 
@@ -491,49 +664,56 @@ class Cohort(DocModel):
     def _check_datasets(self) -> Self:
         if self.dataset is not None and self.datasets is not None:
             raise PydanticCustomError("conflicting_members", "Give dataset or datasets, not both")
-        if self.datasets is not None:
-            ids = [ref.split("@", 1)[0] for ref in self.datasets]
-            if len(set(ids)) != len(ids):
-                raise PydanticCustomError(
-                    "duplicate_dataset", "Each dataset may appear once in datasets"
-                )
         return self
 
 
 class View(DocModel):
+    """A view. Its cohorts and reference are checked by the document checks, with their paths."""
+
     analysis: AnalysisId
-    cohorts: Annotated[list[Name], Field(min_length=1, max_length=MAX_COHORTS)] | None = None
+    cohorts: (
+        Annotated[
+            list[Name],
+            Field(min_length=1, max_length=MAX_COHORTS, json_schema_extra={"uniqueItems": True}),
+            LimitName(COHORTS),
+        ]
+        | None
+    ) = None
     reference: Name | None = None
     overlap: Literal["allow"] | None = None
     unmapped: Literal["allow"] | None = None
-    params: dict[str, JsonValue] | None = None
+    params: dict[str, DocumentJson] | None = None
     """Checked against the analysis's parameter schema once the registry exists (M3)."""
     note: Notes | None = None
 
-    @model_validator(mode="after")
-    def _check_cohorts(self) -> Self:
-        if self.cohorts is not None:
-            if len(set(self.cohorts)) != len(self.cohorts):
-                raise PydanticCustomError(
-                    "duplicate_cohort", "Each cohort may appear once in a view"
-                )
-            if self.reference is not None and self.reference not in self.cohorts:
-                raise PydanticCustomError(
-                    "reference_not_in_view", "The reference must be one of the view's cohorts"
-                )
-        return self
+
+_PACK_NAMES: dict[str, JsonValue] = {
+    "propertyNames": {"not": {"enum": [*sorted(RESERVED_PACK_IDS)]}}
+}
 
 
 class Document(DocModel):
     """An analysis document after ``params`` substitution (SPEC §7.1)."""
 
     aibi: Literal["1"]
-    packs: dict[PackKey, PackSpecifier] | None = None
-    params: Annotated[dict[Name, JsonValue], Field(max_length=MAX_PARAMS)] | None = None
+    packs: (
+        Annotated[
+            dict[PackKey, PackSpecifier],
+            Field(max_length=MAX_PACKS, json_schema_extra=_PACK_NAMES),
+            LimitName(PACKS),
+        ]
+        | None
+    ) = None
+    params: (
+        Annotated[dict[Name, DocumentJson], Field(max_length=MAX_PARAMS), LimitName(PARAMETERS)]
+        | None
+    ) = None
     dataset: DatasetRef | None = None
     unit: TableOrConcept
-    cohorts: Annotated[dict[Name, Cohort], Field(min_length=1, max_length=MAX_COHORTS)]
-    views: Annotated[list[View], Field(max_length=MAX_VIEWS)] | None = None
+    cohorts: Annotated[
+        dict[Name, Cohort], Field(min_length=1, max_length=MAX_COHORTS), LimitName(COHORTS)
+    ]
+    views: Annotated[list[View], Field(max_length=MAX_VIEWS), LimitName(VIEWS)] | None = None
     notes: Notes | None = None
     drafted_by: DraftedBy | None = None
     """The client's claim, recorded and never hashed."""
