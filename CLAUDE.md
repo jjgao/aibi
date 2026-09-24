@@ -78,8 +78,10 @@ OpenAPI schema, not written by hand.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
 - Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
-  parent merges, change the child's base to `main` (GitHub retargets it only if the parent's
-  branch is deleted), then rebase it onto `main` and push; retargeting alone doesn't re-run CI.
+  parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
+  parent's branch is deleted), replay only the child's own commits onto `main` with
+  `git rebase --onto main <parent branch> <child branch>` (the parent's branch still holds the
+  commits the squash replaced), and push; retargeting alone doesn't re-run CI.
 
 ## Conventions
 

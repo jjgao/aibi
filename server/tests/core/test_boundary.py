@@ -9,8 +9,9 @@ Two checks enforce the boundary, and each covers what the other misses:
   ``__init__`` included, but not an import inside a function that never ran.
 
 import-linter does not look inside a directory without an ``__init__.py``, or below one, so
-every directory on the way to a module must be a regular package; ruff's INP rule and the tests
-below enforce that. The runtime check finds modules on disk and imports them either way.
+every directory on the way to a module must be a regular package. The tests below enforce that;
+ruff's INP rule catches only directories that hold modules themselves. The runtime check finds
+modules on disk and imports them either way.
 """
 
 import subprocess
