@@ -1,0 +1,270 @@
+{
+  "$defs": {
+    "Accept": {
+      "additionalProperties": false,
+      "description": "Apply an open proposal to the draft (D248).",
+      "properties": {
+        "op": {
+          "const": "accept",
+          "title": "Op",
+          "type": "string"
+        },
+        "proposal": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Proposal",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "proposal"
+      ],
+      "title": "Accept",
+      "type": "object"
+    },
+    "Confirm": {
+      "additionalProperties": false,
+      "description": "Assert the current values of the fields named, or of every field.",
+      "properties": {
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "evidence": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "op": {
+          "const": "confirm",
+          "title": "Op",
+          "type": "string"
+        },
+        "pointers": {
+          "items": {
+            "maxLength": 4096,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Pointers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "descriptor"
+      ],
+      "title": "Confirm",
+      "type": "object"
+    },
+    "DescriptorJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "PutDescriptor": {
+      "additionalProperties": false,
+      "description": "Write a whole descriptor, without ``version`` or ``curation``.",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/DescriptorJson",
+          "x-aibi-data": true
+        },
+        "evidence": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "op": {
+          "const": "put",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "descriptor"
+      ],
+      "title": "PutDescriptor",
+      "type": "object"
+    },
+    "RemoveDescriptor": {
+      "additionalProperties": false,
+      "description": "Remove a relationship, coverage, endpoint or derived column (D245).",
+      "properties": {
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "op": {
+          "const": "remove_descriptor",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "descriptor"
+      ],
+      "title": "RemoveDescriptor",
+      "type": "object"
+    },
+    "RemoveField": {
+      "additionalProperties": false,
+      "description": "Remove a curated field; one with an inference leaves a tombstone (D240).",
+      "properties": {
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "op": {
+          "const": "remove",
+          "title": "Op",
+          "type": "string"
+        },
+        "pointer": {
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "descriptor",
+        "pointer"
+      ],
+      "title": "RemoveField",
+      "type": "object"
+    },
+    "SetField": {
+      "additionalProperties": false,
+      "description": "Set a curated field's value; its entry becomes ``asserted`` by the operator.",
+      "properties": {
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "evidence": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "op": {
+          "const": "set",
+          "title": "Op",
+          "type": "string"
+        },
+        "pointer": {
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/DescriptorJson",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "op",
+        "descriptor",
+        "pointer",
+        "value"
+      ],
+      "title": "SetField",
+      "type": "object"
+    }
+  },
+  "$id": "change-request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "edits": {
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SetField"
+          },
+          {
+            "$ref": "#/$defs/RemoveField"
+          },
+          {
+            "$ref": "#/$defs/Confirm"
+          },
+          {
+            "$ref": "#/$defs/PutDescriptor"
+          },
+          {
+            "$ref": "#/$defs/RemoveDescriptor"
+          },
+          {
+            "$ref": "#/$defs/Accept"
+          }
+        ]
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Edits",
+      "type": "array"
+    }
+  },
+  "required": [
+    "edits"
+  ],
+  "title": "ChangeRequest",
+  "type": "object"
+}

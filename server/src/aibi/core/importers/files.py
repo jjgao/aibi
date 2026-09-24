@@ -11,22 +11,23 @@ per worksheet with cells (``sheets``); ``.parquet`` files are Parquet. A single 
 other kind is refused, with the kinds read as alternatives, and so is an ``.xls`` workbook
 (D225).
 
-A table's original name is the file's name without its extension (an upload's original name,
-which its stored path does not keep, D234); a worksheet's is the sheet's name when the source is
-that one workbook, and the file's then the sheet's, joined by a space, when there are other
-files. Table and column ids are normalised from original names (§5.1), the table id ``dataset``
-avoided; each one that differs from its original name is noted. Each table is laid out on a raw
-snapshot named by its id: a text file's bytes, or a sheet's or Parquet file's typed rows
-(§12.2). Workbooks and Parquet files are read in the import's one worker process (``worker``),
-under ``reader_memory``, ``reader_seconds`` and ``decoded_bytes``, never in the server's.
-The limits on tables, columns and cells apply as the files are read: a text file's cells are
-counted while it is parsed, a sheet's extent before its cells become values, and a Parquet
+A table's original name is the file's name without its extension (an upload's original name, which
+its stored path does not keep, D234); a worksheet's is the sheet's name when the source is that one
+workbook, and the file's then the sheet's, joined by a space, when there are other files. Table and
+column ids are normalised from original names (§5.1), the table id ``dataset`` avoided; each one
+that differs from its original name is noted. On a re-import, the *k*-th occurrence of a name keeps
+the id of its *k*-th occurrence in the previous release (``ImportOptions.previous``, D238). Each
+table is laid out on a raw snapshot named by its id: a text file's bytes, or a sheet's or Parquet
+file's typed rows (§12.2). Workbooks and Parquet files are read in the import's one worker process
+(``worker``), under ``reader_memory``, ``reader_seconds`` and ``decoded_bytes``, never in the
+server's. The limits on tables, columns and cells apply as the files are read: a text file's cells
+are counted while it is parsed, a sheet's extent before its cells become values, and a Parquet
 file's cells from its metadata. Every name that becomes a label or an original name (a header, a
 Parquet column's name, a sheet's name, a file's or an archive member's, the dataset's name) is a
-descriptor's string, so one over ``MAX_STRING`` characters is refused (``LIMIT_EXCEEDED``)
-before anything is described. What stays in memory until the release is built is bounded by
-``import_bytes``, the archive limits, ``import_cells`` and ``decoded_bytes``: a text file's
-bytes, which are its raw snapshot, and every table's rows.
+descriptor's string, so one over ``MAX_STRING`` characters is refused (``LIMIT_EXCEEDED``) before
+anything is described. What stays in memory until the release is built is bounded by
+``import_bytes``, the archive limits, ``import_cells`` and ``decoded_bytes``: a text file's bytes,
+which are its raw snapshot, and every table's rows.
 """
 
 import os
@@ -292,7 +293,9 @@ class FileImporter:
             raise refused(RefusalCode.EMPTY_SOURCE, "The source holds no table")
         units = reading.units
         notes = reading.notes
-        table_ids = normalise_names([unit.label for unit in units], "table")
+        previous = options.previous
+        tables_before = previous.tables if previous is not None else None
+        table_ids = normalise_names([unit.label for unit in units], "table", tables_before)
         sources: dict[str, RawSource] = {}
         layouts: dict[str, Layout] = {}
         origins: dict[str, TableOrigin] = {}
@@ -300,7 +303,8 @@ class FileImporter:
         for table, unit in zip(table_ids, units, strict=True):
             if table != unit.label:
                 notes.append(_renamed(table, unit.label))
-            columns = normalise_names(unit.names, "column")
+            columns_before = previous.columns.get(table) if previous is not None else None
+            columns = normalise_names(unit.names, "column", columns_before)
             for column, original in zip(columns, unit.names, strict=True):
                 if column != original:
                     notes.append(_renamed(f"{table}.{column}", original))

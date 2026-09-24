@@ -1779,7 +1779,14 @@
         "PATH_NOT_CONFINED",
         "ARCHIVE_REFUSED",
         "UNSUPPORTED_FORMAT",
-        "EMPTY_SOURCE"
+        "EMPTY_SOURCE",
+        "DATASET_BUSY",
+        "DATASET_EXISTS",
+        "CONFLICT",
+        "NO_SESSION",
+        "NO_CHANGE",
+        "UNKNOWN_PROPOSAL",
+        "INVALID_EXTENSION"
       ],
       "title": "RefusalCode",
       "type": "string"

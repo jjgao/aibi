@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "DescriptorJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    }
+  },
+  "$id": "proposal.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A proposal: ``value`` for the field at ``pointer`` (a whole descriptor at ``\"\"``), or\n``remove``; exactly one of them is given.",
+  "properties": {
+    "descriptor": {
+      "maxLength": 1109,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+      "title": "Descriptor",
+      "type": "string"
+    },
+    "evidence": {
+      "maxLength": 10000,
+      "minLength": 1,
+      "title": "Evidence",
+      "type": "string",
+      "x-aibi-data": true
+    },
+    "pointer": {
+      "maxLength": 4096,
+      "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+      "title": "Pointer",
+      "type": "string"
+    },
+    "remove": {
+      "default": false,
+      "title": "Remove",
+      "type": "boolean"
+    },
+    "value": {
+      "$ref": "#/$defs/DescriptorJson",
+      "x-aibi-data": true
+    }
+  },
+  "required": [
+    "descriptor",
+    "pointer"
+  ],
+  "title": "ProposalInput",
+  "type": "object"
+}
