@@ -1,6 +1,6 @@
 # aibi — Specification
 
-**Status:** Draft v0.7 · 2026-09-24
+**Status:** Draft v0.8 · 2026-09-24
 **Scope:** product goals, principles, data model, query semantics, result contract, analysis
 registry, domain packs, tool and operator surfaces, security, architecture and milestones. The
 text is normative where it says MUST, MUST NOT or SHOULD (RFC 2119); everything else is
@@ -232,6 +232,8 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
   followed by the 1-based source position if empty. Ids are then assigned in source order; an
   id already assigned, or the table id `dataset` (the dataset descriptor's, below), is a
   collision, resolved by appending the smallest suffix `_<n>`, n ≥ 2, that gives an id not yet
+  assigned. On re-import (§12.3), a table or column whose original name was in the previous
+  release keeps its id, and the other names are assigned in source order, treating kept ids as
   assigned. The original names are kept in `source`. Names containing `__` are reserved for the
   system (§12.2).
 - Descriptor ids are stable across releases:
@@ -616,8 +618,8 @@ For each `r`:
    value is UNKNOWN with every reason in the lift rule's drop set: `strict` drops `OUT_OF_SCOPE`;
    `assessed` drops `OUT_OF_SCOPE` and `NOT_COVERED`. A final question drops nothing. Let *K* be
    the remaining children, and *t*, *f*, *u* the numbers of them that are TRUE, FALSE and
-   UNKNOWN. A child is **relevant** unless the conjunction of the top-level `where` clauses that
-   contain no nested question is FALSE for it (with no such clauses, every child is relevant).
+   UNKNOWN. A child's **conditions** are the conjunction of the top-level `where` clauses that
+   contain no nested question (TRUE when there are none).
 4. **Closedness.** `r` is *closed* when it is known that `r` has no unrecorded children that
    matter to the question; when it is not closed, the question records a **closedness reason**.
    - Coverage `all`: closed. If `r`'s parent scope is UNKNOWN, not closed, with the scope
@@ -638,16 +640,18 @@ For each `r`:
    - Coverage `undeclared`: not closed, reason `NO_INFORMATION`.
 5. **Answer.** Whenever the answer is UNKNOWN and `r` is not closed, the closedness reason is
    added to its reasons.
-   - `some` with `min_count` *k*: TRUE if *t* ≥ *k*. Otherwise UNKNOWN if the question is
-     intermediate and no child in *K* is relevant (reason `NOT_COVERED`), or if *t* + *u* ≥ *k*
-     (the reasons of the UNKNOWN children). Otherwise FALSE if `r` is closed, else UNKNOWN.
+   - `some` with `min_count` *k*: TRUE if *t* ≥ *k*. Otherwise UNKNOWN if *t* + *u* ≥ *k* (the
+     reasons of the UNKNOWN children). Otherwise, for a final question, FALSE if `r` is closed,
+     else UNKNOWN; for an intermediate question, FALSE if `r` is closed and some child in *K* has
+     conditions that are TRUE, else UNKNOWN, with reason `NOT_COVERED` and the reasons of the
+     children's UNKNOWN conditions.
    - `every`: FALSE if *f* ≥ 1. Otherwise UNKNOWN if *K* is empty (reason `NOT_COVERED` for an
      intermediate question, `NO_ROWS` for a final one), or if *u* ≥ 1 (the reasons of the UNKNOWN
      children). Otherwise TRUE if `r` is closed, else UNKNOWN.
 6. **Evidence.** A matching child is evidence even where the coverage does not list `r`: step 5
    makes the answer TRUE regardless (the importer flags such rows, §13.2).
-7. **Flags.** A FALSE from `some` and a TRUE from `every` carry the flags of every child in *K*,
-   plus `SCOPE_PARTIAL` when step 4 restricted the answer to listed tuples and
+7. **Flags.** A FALSE from `some` and a TRUE from `every` carry the flags of every child,
+   remaining or dropped, plus `SCOPE_PARTIAL` when step 4 restricted the answer to listed tuples and
    `COVERAGE_PROPOSED` when ρ's coverage is `proposed`. A TRUE from `some` carries the flags of
    its TRUE children, and a FALSE from `every` those of its FALSE children. An UNKNOWN answer
    carries the flags of its UNKNOWN children and of the dropped children, plus
@@ -664,8 +668,8 @@ applies steps 2–4 to its own relationship and drops children as in step 3; it 
 `every` over the remaining children (steps 5 and 7). Under `assessed`, it gives TRUE if some
 remaining child is TRUE and `r` is closed, FALSE if `r` is closed and every remaining child is
 FALSE, and otherwise UNKNOWN (with the children's reasons and the closedness reason); TRUE
-carries the flags of the TRUE children and FALSE those of every remaining child, both plus the
-flags step 7 adds for ρ, and UNKNOWN follows step 7.
+carries the flags of the TRUE children and FALSE those of every child, remaining or dropped, both
+plus the flags step 7 adds for ρ, and UNKNOWN follows step 7.
 
 Consequences, which the reference evaluator's scenario tests encode:
 
@@ -683,7 +687,8 @@ Consequences, which the reference evaluator's scenario tests encode:
 - *A TP53 mutation in some primary sample, counting only assessed samples* is `exists samples
   where [sample_type = primary, exists mutations where gene = TP53]` with `lift: "assessed"`. A
   patient whose primary samples are all unassessed, or who has no primary sample, is UNKNOWN
-  (`NOT_COVERED`) under both lift rules, whatever its other samples.
+  (`NOT_COVERED`) under both lift rules, whatever its other samples; so is a patient whose only
+  assessed wild-type sample has a missing type.
 - *Some sample with both a TP53 mutation and an EGFR amplification* is one intermediate question
   over samples: a patient with no samples is UNKNOWN (`NOT_COVERED`), and a blood normal changes
   nothing.
@@ -777,7 +782,7 @@ for copy number*), subject to §8.4.
 | Kind | Shape | Meaning |
 |---|---|---|
 | `value` | `{kind: "value", column: "<table>.<column>" \| "<concept>", values? \| range? \| op? + value?, negate?, units?, match?, quantifier?, lift?, via?}` | A value predicate (§6.4) on a column of the current table or any table reachable from it (§6.1) |
-| `exists` | `{kind: "exists", table, where?: [Clause], quantifier?, min_count?, lift?, via?, exclude_self?}` | An existence question (§6.5); `where` clauses are ANDed and evaluated per row of `table`. The path MUST have at least one down step |
+| `exists` | `{kind: "exists", table, where?: [Clause], quantifier?, min_count?, lift?, via?, exclude_self?}` | An existence question (§6.5); `where` clauses are ANDed and evaluated per row of `table`. The path MUST have at least one down step, and a path that ends with an up step needs a non-empty `where` (canonicalisation moves those lookups into it, §7.6) |
 | `covered` | `{kind: "covered", table, scope?: {<child scope column>: [values]}, lift?, via?}` | Coverage as a predicate (§6.5); `scope` keys MUST be scope columns of the relationship's coverage. The path MUST have at least one down step and end with one |
 | `ids` | `{kind: "ids", ids: ["<dataset>:<key>" \| {"dataset": "<id>", "key": [<values in key order>]}, …]}` | An explicit list of unit keys. Not allowed inside any `where`; refused on datasets with `allow_row_ids: false` (§8.4) |
 | `cohort` | `{kind: "cohort", cohort: "<name>"}` | Another cohort of the same document, with the same unit and dataset(s). Not allowed inside any `where`; cycles are refused. `{"all": [{"kind": "cohort", "cohort": "base"}, {"not": X}]}` is the correct *rest of the base* under three-valued logic, which is why references exist |
@@ -893,11 +898,15 @@ Canonicalisation has two phases. `params` are substituted once, before both (§7
    inside `all`, `any` and every `where`.
 9. Drop names, `notes`, `note` and `drafted_by`.
 
+Steps 4 to 8 are repeated until the form no longer changes, so canonicalising a canonical form
+changes nothing, and a cohort reached through a `cohort` leaf gets the same form as the same
+clauses written inline.
+
 | Leaf | Canonical members |
 |---|---|
 | `value` | `kind`, `column`, `concept` (for concept references), `values` or `range`, `negate` (only if true), `units` (numeric columns only), `match` (list columns only), `via` (only if not empty; up steps only) |
-| `exists` | `kind`, `table`, `via` (ending with its one down step), `quantifier` (`"some"` or `"every"`), `min_count` (with `"some"`), `where` (possibly empty), `lift` (only if the question is intermediate, §6.5; default `strict`), `exclude_self` (only if true) |
-| `covered` | `kind`, `table`, `via`, `scope` (if given), `lift` (only if the path has more than one down step; default `strict`) |
+| `exists` | `kind`, `table`, `via` (ending with its one down step), `quantifier` (`"some"` or `"every"`), `min_count` (with `"some"`), `where` (possibly empty), `lift` (on every intermediate question, §6.5, and on no other: `"strict"` unless `"assessed"`), `exclude_self` (only if true) |
+| `covered` | `kind`, `table`, `via`, `scope` (if given), `lift` (exactly when the path has more than one down step: `"strict"` unless `"assessed"`) |
 | `ids` | `kind`, `ids` |
 
 A cohort's canonical form is a map from each of its datasets' manifest hashes to that dataset's
@@ -977,7 +986,7 @@ every figure.
     "packs": { "onco": { "version": "1.2.0", "results_version": 3 } },
     "semantics_version": 1,
     "disclosure": { "min_cell_count": 5 },       // effective setting (§8.4)
-    "engine": "aibi 0.7.0"
+    "engine": "aibi 0.8.0"
   },
   "issuance": { "id": "iss:…", "cache_hit": false, "values_from": "iss:…" },
   "source": { "document": { /* as written */ },
@@ -1106,17 +1115,20 @@ an answer.
   becomes `null` with `not_estimable` reason `suppressed` (in `population`, its pointer is listed
   in `suppressed`), and the output carries `SUPPRESSED`. The pass applies these rules:
   - **Linked counts.** In each linked set, a count from 1 to *k* − 1 is suppressed, and if
-    exactly one count of the set is suppressed, the smallest non-zero other count is suppressed
-    too. The linked sets are: `n_true`, `n_false` and `n_unknown` (with the size of the unit table
+    exactly one count of the set is suppressed, the smallest non-zero other count (the first in the
+    set's listed order on a tie) is suppressed too. The linked sets are: `n_true`, `n_false` and `n_unknown` (with the size of the unit table
     shown); `analysed.n` and `excluded_units` (with `n_true`), and likewise each entry of
     `analysed.variables`; a proportion's numerator and its complement (denominator minus
     numerator); the cells of each row and each column of a cohort × category table; a column's
-    observation-state counts (with `n_true`, or with `n_rows` in catalogue statistics); and
-    `lift_differs` alone. A count of 0 is shown. The pass covers the whole output and repeats until
-    nothing changes: a count suppressed in one place is suppressed wherever the same count appears
-    (e.g. `n_true` and `size.numerator`), and a breakdown is `null` whenever its total is
-    suppressed (`unknown_by_reason` and `unknown_by_leaf` with `n_unknown`, `analysed.excluded`
-    with `excluded_units`, observation-state counts with the PRESENT count).
+    observation-state counts (with `n_true`, or with `n_rows` in catalogue statistics); a column's
+    histogram bins or category counts (with its PRESENT count); and `lift_differs` alone. A count
+    of 0 is shown. The pass runs after categories are pooled (below), covers the whole output and
+    repeats until nothing changes: a count suppressed in one place is suppressed wherever the same
+    count appears (e.g. `n_true` and `size.numerator`); a suppressed total of a linked set counts
+    as a suppressed member of that set; and a breakdown is `null` whenever its total is suppressed
+    (`unknown_by_reason` and `unknown_by_leaf` with `n_unknown`, `analysed.excluded` with
+    `excluded_units`, observation-state counts with `n_true` or `n_rows`). A value that is not
+    estimable keeps its reason: the pass suppresses only values that were computed.
   - **Breakdowns.** A per-reason or per-leaf map with any count from 1 to *k* − 1 is replaced by
     `null` as a whole. Categories with any cell from 1 to *k* − 1 are pooled into one
     *suppressed categories* row per cohort; if that row still has such a cell, the table is
@@ -1129,24 +1141,25 @@ an answer.
     version; 10 in catalogue statistics); never from the data. Without either they are refused.
     Bins are [eᵢ, eᵢ₊₁), the last closed on the right; values outside the edges fall into open
     *below* and *above* bins. Repeatedly, the bin with the fewest units among those with 1 to
-    *k* − 1 units (the leftmost on a tie) is merged with its neighbour holding fewer units (the
-    left one on a tie), until no bin has 1 to *k* − 1 units or one bin remains; empty bins are
-    kept. Minima and maxima are not reported; medians and quartiles are reported as the merged bin
+    *k* − 1 units (the leftmost on a tie) is merged, together with any empty bins between them,
+    with the nearest non-empty bin on the side where that bin holds fewer units (the left on a
+    tie), until no bin has 1 to *k* − 1 units or one non-empty bin remains; empty bins are
+    otherwise kept. Minima and maxima are not reported; medians and quartiles are reported as the merged bin
     that contains them. Catalogue statistics follow the same rules, and pool categories with fewer
     than *k* units.
   - **Survival curves** are reported only at grid times given by the analysis parameters (a grid
     is required under *k*, and landmark times must be grid times). The grid intervals are (0,
     g₁], (g₁, g₂], …; repeatedly, the leftmost interval in which some cohort has 1 to *k* − 1
     events is merged with the following interval (the last interval with the preceding one);
-    intervals without events are kept. A remaining grid time is reported only if every cohort has
-    at least *k* units at risk there. Curve values, pointwise bounds, and landmark estimates with
+    intervals without events are kept. A remaining grid time is reported only if no cohort has 1 to
+    *k* − 1 units at risk there. Curve values, pointwise bounds, and landmark estimates with
     their bounds are reported only at reported grid times. Medians and their bounds are reported
     as the reported grid interval that contains them, and suppressed outside the reported range;
-    the difference in medians and its bounds are suppressed. The log-rank test is suppressed when
-    any cohort has fewer than *k* units or *k* events. Censoring marks, and at-risk counts below
+    the difference in medians and its bounds are suppressed. The log-rank test is suppressed when a
+    cohort it uses has 1 to *k* − 1 units or 1 to *k* − 1 events. Censoring marks, and at-risk counts below
     *k*, are not reported.
-  - **Models** (Cox fits) are reported only if every cohort and every covariate level has at
-    least *k* units and *k* events; otherwise they are not estimable (reason `suppressed`).
+  - **Models** (Cox fits) are reported only if no cohort or covariate level in the fit has 1 to
+    *k* − 1 units or 1 to *k* − 1 events; otherwise their values are suppressed.
   - Caveat messages that carry counts (`LIFT_DIFFERS`) follow the count rules.
 - Identifier columns (§5.4) never have value distributions in catalogue statistics, whatever the
   settings.
@@ -1291,19 +1304,21 @@ exists (M1–M2), they show an empty list.
 ### 9.5 Core analyses (v1)
 
 **Estimability.** Before computing, each analysis checks its inputs and marks values not
-estimable (§8.2) instead of computing them:
+estimable (§8.2) instead of computing them. Where several rows apply to one value, the first of
+them gives its reason. A test is chosen by the number of cohorts it uses (Welch's *t*,
+Mann–Whitney or Fisher's 2×2 test for two):
 
 | Condition | Values not estimable |
 |---|---|
 | A cohort with no units, or no units for which the variable is known | its estimates and every pairwise contrast with it (`no_units`); omnibus tests (chi-squared, Fisher, Welch's ANOVA, Kruskal–Wallis, log-rank) use the other cohorts and record the positions they used, and are not estimable (`no_units`) if fewer than two remain |
-| A cohort with no events (survival) | its difference in medians, and its hazard ratio, whose term is dropped before fitting (`no_events`); if it is the reference, every value of the Cox fit (`no_events`). Its curve remains, and so does the log-rank test unless the next row applies |
+| A cohort with no events (survival) | its difference in medians and its hazard ratio (`no_events`): its units are left out of the Cox fit (the limit of the full fit as its coefficient tends to −∞) but stay in `analysed`, its curve and the log-rank test (unless the next row applies); if it is the reference, every value of the Cox fit (`no_events`) |
 | A log-rank test whose variance is 0 (e.g. all units censored, or no event time at which two of its cohorts are at risk) | that test (`zero_variance`) |
 | Fewer than two values, or zero variance, in a group (numeric) | its standard deviation, every *t*-test or ANOVA that includes it, and the Welch–Satterthwaite interval of every mean difference that includes it (`zero_variance`) |
 | Every analysed value tied (numeric) | the Mann–Whitney and Kruskal–Wallis tests over them (`zero_variance`) |
 | A zero denominator | the proportion and every contrast built on it (`zero_denominator`) |
 | A numerator of 0 in either proportion of a risk ratio | the ratio and its interval (`no_events`) |
-| A contingency table that, after removing cohorts with no known units and dropping all-zero category columns (done before choosing Fisher or chi-squared), has fewer than two rows or columns | its test (`degenerate_table`) |
-| A covariate level with no events in a Cox fit | that term, dropped before fitting (`separation`) |
+| A contingency table that, after removing cohorts with no known units and dropping all-zero category columns (done before choosing Fisher or chi-squared), has fewer than two columns | its test (`degenerate_table`) |
+| A covariate level with no events in a Cox fit | that level's term (`separation`): its units are left out of the fit but stay in `analysed` |
 | A Cox term whose estimate is infinite, detected after fitting as R's `coxph` does (at convergence, \|(U·I⁻¹)ⱼ\| > ε and > √ε·\|βⱼ\|, with ε the convergence tolerance) | that term's estimate and interval (`separation`) |
 | A fit that does not converge | every value of the fit (`not_converged`) |
 | A survival curve that never falls below 0.5 and does not end at exactly 0.5 | its median and the differences that use it (`not_reached`) |
@@ -1487,8 +1502,8 @@ access that can read the token: such an agent acts as an operator.
 - **Blobs.** Every piece of release content is an immutable blob stored at
   `data/blobs/<sha256>`: the raw snapshot of each source table, the typed table data, the
   definitional descriptors, the computed statistics and the manifest itself.
-- **Releases.** A release is a manifest: the list of its blobs, by role and hash, serialised with
-  RFC 8785; the manifest's hash identifies the release. Labels and their statuses live in the app
+- **Releases.** A release is a manifest: the dataset id and the list of its blobs, by role and
+  hash, serialised with RFC 8785; the manifest's hash identifies the release. Labels and their statuses live in the app
   DB (§12.3). Releases are never modified.
 - **Raw snapshots.** For text files, the raw snapshot is the original bytes; the parse settings
   (§5.3) are descriptor fields. For typed sources (XLSX, XLS, ODS, Parquet, databases), it is the
@@ -1498,8 +1513,8 @@ access that can read the token: such an agent acts as an operator.
   `-Infinity`, booleans as `true`/`false`, dates as RFC 3339 full dates, datetimes in RFC 3339
   with the source's offset or, when the source has none, in ISO 8601 without one, and spreadsheet
   error cells as their error text (e.g. `#N/A`). A non-finite number or an error cell is never
-  PRESENT: without a missing code it is UNKNOWN. A datetime without an offset is read as UTC, and
-  the column's `datatype` is then `imported_default`.
+  PRESENT: without a missing code it is UNKNOWN. A datetime without an offset is read as UTC; an
+  importer that infers such a column records its `datatype` as `imported_default`.
 - **Rebuilds.** Typed values and observation states are a deterministic function of the raw
   snapshot and the descriptors. A draft change to a field that affects parsing (missing codes,
   datatypes, list syntax, derived columns, and parse settings that keep the same set of columns)
@@ -1515,19 +1530,20 @@ access that can read the token: such an agent acts as an operator.
   every blob that no live manifest references is deleted, except the manifests of withdrawn
   releases, which are kept alone so that their ids still resolve (to *withdrawn*). Withdrawal
   also purges the release's cached results. Blobs that an import, re-import, rebuild or draft
-  change has written are pinned until it commits or fails, and a query or analysis pins the
-  manifests it resolved until it finishes; the sweep skips pinned blobs and deletes them once they
-  are released if nothing live references them. An output whose manifest stopped being live while
-  it ran is not cached.
+  change writes or reuses, and those of the release it starts from, are pinned until it commits or
+  fails, and a query or analysis pins the manifests it resolved until it finishes; the sweep skips
+  pinned blobs and deletes them once they are released if nothing live references them. An output
+  whose manifest stopped being live while it ran is not cached.
 - **Erasure.** Honouring an erasure request means re-importing from a source without the
   person's rows (a curation session cannot remove rows), then withdrawing every earlier release
   that holds them, deleting their source files from the upload area, and redacting the person's
   keys and values from the app DB: saved documents, proposals and their evidence, the audit
   trail, cached results and issuances. A derivation whose hashed object contains an erased value
-  loses its whole canonical document and keeps only its id, which resolves to *erased*, because a
-  partial redaction next to a hash can be reversed by enumerating keys; its cached results and
-  issuances are deleted. Redaction and the pruning below are the only mutations the append-only
-  log permits.
+  (a key of the person, or a value of theirs in an identifier column, §5.4) loses its whole
+  canonical document and keeps only its id, which resolves to *erased*, because a partial
+  redaction next to a hash can be reversed by enumerating keys; its cached results and issuances
+  are deleted. Redaction runs once no operation pins a withdrawn manifest. Redaction and the
+  pruning below are the only mutations the append-only log permits.
 - **Derivation log.** Two tables. *Derivations*, keyed by derivation id, hold the canonical
   document, the releases and the versions hashed into the id; they are kept permanently.
   *Issuances*, keyed by issuance id, record each time `run_analysis` or `count_cohort` produced
@@ -1572,8 +1588,8 @@ access that can read the token: such an agent acts as an operator.
   invalidates the old one. Changes are applied one at a time; each re-runs the structural checks of
   §13.2 and is refused, with counts, if they fail. A session records the release it was opened
   from, and publishing is refused, as a conflict, if that is no longer the latest published
-  release. Withdrawal is refused while a session is open on the dataset, and a session cannot be
-  opened while an import, re-import or withdrawal of the dataset is running.
+  release. Imports, re-imports, withdrawals and sessions of one dataset exclude each other: each
+  is refused while another is running or open.
 - **Queries against drafts.** Only documents that pin `@draft` read the draft. Their outputs carry
   `DRAFT_RELEASE` and are not cached.
 - **End of a session.** **Publish** turns the draft into the next label, and is refused when the
@@ -1677,8 +1693,9 @@ flags and counts.
 
 - **Three-valued logic:** for any cohort predicate `C`, `n_true(C) + n_false(C) + n_unknown(C)`
   equals the size of the unit table; `not(not C) ≡ C`; `C` and `not C` never share a unit;
-  `known(C)` equals `C ∪ not C`, in truth values, reasons and flags; a direct reference below the
-  unit, the multi-step `exists` over its path and the nested form have one canonical form (§6.1).
+  `known(C)` selects the same units as `C ∪ not C`, with the same flags (where `C` is UNKNOWN,
+  `known(C)` is FALSE and `any(C, not C)` is UNKNOWN); a direct reference below the unit, the
+  multi-step `exists` over its path and the nested form have one canonical form (§6.1).
 - **Scenarios of §6.5**, each as a test: unassessed samples, missing grades, blood normals,
   patients with no samples, step conditions under `assessed`, participants with no enrolments,
   `every` over no rows, `every` with scope columns, `min_count`, UNKNOWN parent scopes under
@@ -1716,9 +1733,10 @@ flags and counts.
   running operation references; after an erasure, no blob or app-DB row contains the erased key,
   and the erased derivations' ids resolve to *erased*.
 - **Lifecycle:** re-import carries every descriptor forward, and a removed proposal stays removed;
-  a second session is refused while one is open; a stale session handle is refused; publishing is
+  a second session is refused while one is open, and imports, re-imports, withdrawals and
+  sessions of one dataset exclude each other; a stale session handle is refused; publishing is
   refused when the session's base is no longer the latest release; labels are never reused; a
-  withdrawn manifest is never published again.
+  withdrawn manifest is never published again; ids of known source names survive re-import.
 - **Disclosure:** each rule of §8.4, on results, cohort counts and catalogue statistics.
 - **Security:** path confinement, archive entry checks, refusal of views in database files,
   request protection on every router (Host and Origin checks, CORS off, the token on operator
@@ -1816,7 +1834,7 @@ milestone delivers the extension points (§10.1) its features call, and the disc
 
 ## Appendix A. Decisions
 
-Decisions from the walkthrough (D1–D19) and the review rounds (D20–D175), all 2026-09-24. Each
+Decisions from the walkthrough (D1–D19) and the review rounds (D20–D187), all 2026-09-24. Each
 line records the choice and the reason; reopening one means changing this table. Later decisions
 that revise or refine earlier ones say so.
 
@@ -1970,38 +1988,55 @@ that revise or refine earlier ones say so.
 | D146 | Linked-set suppression (refines D94; refined by D161) | Complementary suppression within each linked set of counts | A single suppressed count can be recovered from its total |
 | D147 | Survival curves under disclosure (refines D94; revised by D157) | Curves on a parameter grid with minimum numbers at risk and events; medians, landmarks and bounds as grid intervals | Step curves reveal individual event times |
 | D148 | Caveat table | The caveat table matches the rules that raise each code; `INVALID_EXCLUDED` added; registry entries list their caveats exhaustively | Some rules raised codes the table did not list |
-| D149 | Canonical chains (revises D123; refines D60, D122, D127) | Canonicalisation splits every multi-step existence question, and every `value` reference below the current table, into a chain of `exists` leaves with one down step each; nothing is merged. `negate` is written only when true | Merging depended on the order of normalisation and on conflicting settings (lift, quantifiers, `exclude_self`), so equivalent documents got different ids and different answers |
-| D150 | Intermediate questions (refines D44, D128) | A question is intermediate when its `where` contains a nested question at any depth; an intermediate `some` with no relevant remaining child is UNKNOWN (`NOT_COVERED`) | Children that fail a step's own conditions, and nesting that could not be merged, counted patients with no assessed relevant sample as negative |
-| D151 | Flags through nested questions (refines D129) | A FALSE from `some` and a TRUE from `every` carry the flags of every remaining child; UNKNOWN answers carry their children's flags, and `COVERAGE_PROPOSED` when a closedness reason was added | Flags from deeper steps were lost, so cohorts resting on proposed coverage raised no caveat |
+| D149 | Canonical chains (revises D123; refines D60, D122, D127; refined by D176, D187) | Canonicalisation splits every multi-step existence question, and every `value` reference below the current table, into a chain of `exists` leaves with one down step each; nothing is merged. `negate` is written only when true | Merging depended on the order of normalisation and on conflicting settings (lift, quantifiers, `exclude_self`), so equivalent documents got different ids and different answers |
+| D150 | Intermediate questions (refines D44, D128; refined by D177) | A question is intermediate when its `where` contains a nested question at any depth; an intermediate `some` with no relevant remaining child is UNKNOWN (`NOT_COVERED`) | Children that fail a step's own conditions, and nesting that could not be merged, counted patients with no assessed relevant sample as negative |
+| D151 | Flags through nested questions (refines D129; refined by D178) | A FALSE from `some` and a TRUE from `every` carry the flags of every remaining child; UNKNOWN answers carry their children's flags, and `COVERAGE_PROPOSED` when a closedness reason was added | Flags from deeper steps were lost, so cohorts resting on proposed coverage raised no caveat |
 | D152 | Lifted `covered` without children (refines D128) | UNKNOWN (`NOT_COVERED`) under both lift rules | The two rules disagreed although nothing had been dropped |
 | D153 | Record filters under `every` (refines D136) | `(not filter) ∨ W` under `every`; the filter applies at every question; NOT_APPLICABLE cells in filtered columns are structural errors | Rows outside the filter became counter-examples |
 | D154 | Every tuple (refines D100) | Only a group covering every scope value lists a parent for every tuple | "Every tuple" had no defined set of values for direct coverage tables |
 | D155 | Trailing lookups and `exclude_self` (refines D109) | Up steps after the last down step are lookups from its child row; `exclude_self` requires the path's first down step to enter the starting row's table | Conditions and `exclude_self` were rooted at different rows under different readings |
 | D156 | Caps on the canonical form (refines D85) | Depth 8 and 64 leaves per cohort, counted on the canonical form | Chains lengthen canonical forms, and the old depth count was ambiguous |
-| D157 | Survival curves under disclosure (revises D147) | Landmarks on the grid; leftmost-first merging of intervals in which some cohort has 1 to *k* − 1 events; values only at reported grid times; medians as grid intervals; median differences suppressed; the log-rank test gated by units and events | Probabilities were to be reported as time intervals, and the merging was undefined |
-| D158 | Cox estimability (refines D141) | Cohorts without events are `no_events` (the whole fit when the reference has none); covariate levels without events are dropped; infinite estimates are detected as R's `coxph` does | "Every unit has the event" is not separation, and monotone likelihoods passed unnoticed |
+| D157 | Survival curves under disclosure (revises D147; refined by D181) | Landmarks on the grid; leftmost-first merging of intervals in which some cohort has 1 to *k* − 1 events; values only at reported grid times; medians as grid intervals; median differences suppressed; the log-rank test gated by units and events | Probabilities were to be reported as time intervals, and the merging was undefined |
+| D158 | Cox estimability (refines D141; refined by D179) | Cohorts without events are `no_events` (the whole fit when the reference has none); covariate levels without events are dropped; infinite estimates are detected as R's `coxph` does | "Every unit has the event" is not separation, and monotone likelihoods passed unnoticed |
 | D159 | Median at exactly 0.5 (refines D143) | A curve that ends at exactly 0.5 has a median, as in R's `quantile.survfit` | The estimability table contradicted the median rule |
-| D160 | Cohorts without known values (refines D141) | Pairwise contrasts with them are not estimable; omnibus tests use the other cohorts and record which | Two rows of the estimability table contradicted each other |
-| D161 | Suppression across the output (refines D146) | Suppression reaches every copy of a count and the breakdowns of a suppressed total, and repeats until stable; the complement is the smallest non-zero count | Suppressed counts could be recovered from other fields of the same output |
+| D160 | Cohorts without known values (refines D141; refined by D182) | Pairwise contrasts with them are not estimable; omnibus tests use the other cohorts and record which | Two rows of the estimability table contradicted each other |
+| D161 | Suppression across the output (refines D146; refined by D180) | Suppression reaches every copy of a count and the breakdowns of a suppressed total, and repeats until stable; the complement is the smallest non-zero count | Suppressed counts could be recovered from other fields of the same output |
 | D162 | Rows with time at entry (refines D139) | An entry at or after the time is invalid; with entry at the origin, events at time 0 are at risk at 0 | Such rows were in no risk set |
 | D163 | Degenerate inputs (refines D141) | Log-rank tests with zero variance, rank tests over tied values, log-log bounds at a curve of 0, risk ratios with a zero numerator and Welch intervals with zero variance are not estimable, with reasons | They produced NaN or infinite values |
-| D164 | Histogram bins (refines D145) | Half-open bins, *below* and *above* bins, *B* bins over a declared range, smallest-first merging, empty bins kept | Merge order, bin closure and bin count changed digests |
+| D164 | Histogram bins (refines D145; refined by D183) | Half-open bins, *below* and *above* bins, *B* bins over a declared range, smallest-first merging, empty bins kept | Merge order, bin closure and bin count changed digests |
 | D165 | `analysed` per variable | Units analysed for at least one variable, plus per-variable counts | Views over several columns could not report their exclusions per column |
 | D166 | Cross-dataset hazard ratio (refines D140) | Stratified by dataset, like the log-rank test; curves and medians pooled | A pooled hazard ratio could contradict the stratified test beside it |
 | D167 | Covariate coding | Predicates and boolean columns as 0/1; categories dummy-coded over the levels present | The same data gave reciprocal hazard ratios under different labels |
-| D168 | Withdrawal per manifest (refines D114) | Withdrawal applies to manifests; a withdrawn manifest is never published again; withdrawals, imports and sessions exclude each other; publishing requires the session's base to be the latest release | A manifest could be withdrawn and published at once, and a session could silently revert a re-import |
-| D169 | Canonical string forms (refines D111) | Numbers as RFC 8785 writes them; non-finite numbers and error cells never PRESENT; datetimes without an offset read as UTC and flagged | Integral floats, NaN and naive datetimes matched missing codes differently across implementations |
+| D168 | Withdrawal per manifest (refines D114; refined by D185) | Withdrawal applies to manifests; a withdrawn manifest is never published again; withdrawals, imports and sessions exclude each other; publishing requires the session's base to be the latest release | A manifest could be withdrawn and published at once, and a session could silently revert a re-import |
+| D169 | Canonical string forms (refines D111; refined by D187) | Numbers as RFC 8785 writes them; non-finite numbers and error cells never PRESENT; datetimes without an offset read as UTC and flagged | Integral floats, NaN and naive datetimes matched missing codes differently across implementations |
 | D170 | Tombstones (refines D112) | Removing an importer proposal leaves a tombstone that re-import respects | Re-import brought back proposals an operator had removed |
-| D171 | Erasure (refines D113) | Erasure by re-import; source files deleted; affected derivations keep only their ids, which resolve to *erased* | Curation cannot remove rows, and a partial redaction next to a hash can be reversed |
+| D171 | Erasure (refines D113; refined by D187) | Erasure by re-import; source files deleted; affected derivations keep only their ids, which resolve to *erased* | Curation cannot remove rows, and a partial redaction next to a hash can be reversed |
 | D172 | Database snapshots under hardened DuckDB | Postgres and MySQL snapshots run in a separate importer worker; the query engine's configuration never changes | Hardened DuckDB cannot attach them, and enabling access lifts all file confinement |
-| D173 | Pins during deletion (refines D113) | Running writes and reads pin their blobs; outputs over manifests that stopped being live are not cached | The sweep could delete uncommitted blobs and blobs in use |
+| D173 | Pins during deletion (refines D113; refined by D185) | Running writes and reads pin their blobs; outputs over manifests that stopped being live are not cached | The sweep could delete uncommitted blobs and blobs in use |
 | D174 | `COVERAGE_PROPOSED` only as a flag (refines D129) | Proposed coverage raises no `UNCONFIRMED_SEMANTICS`, only the data-dependent flag | §5.1 and §6.6 disagreed, which changed digests |
-| D175 | Identifier collisions (refines D132) | `dataset` is reserved as a table id; collisions take the smallest free suffix; roles differ from column ids | Derived ids could collide |
+| D175 | Identifier collisions (refines D132; refined by D186) | `dataset` is reserved as a table id; collisions take the smallest free suffix; roles differ from column ids | Derived ids could collide |
+| D176 | Canonical fixpoint (refines D149) | Steps 4 to 8 of phase 1 repeat until the form stops changing | Folding and deduplication ran before and after unwrapping, so equivalent documents, and clauses reached through a `cohort` leaf, got different ids |
+| D177 | Conditions decide FALSE (refines D150) | An intermediate `some` is FALSE only if some remaining child's conditions are TRUE; otherwise UNKNOWN (`NOT_COVERED`) | A child whose conditions were unknown could make a patient negative |
+| D178 | Flags of dropped children (refines D151) | A FALSE from `some` and a TRUE from `every` also carry the flags of the children dropped under the lift rule | Answers that relied on dropping children under proposed coverage carried no caveat |
+| D179 | Event-free units in Cox fits (refines D158) | Left out of the fit, as the limit of the full fit, and kept in `analysed`, curves and the log-rank test | Dropping only the term compared the other cohorts against a reference that included those units |
+| D180 | Totals and pooling under suppression (refines D161) | A suppressed total counts as a suppressed member of its set; histogram bins and category counts are linked with the PRESENT count; categories are pooled before the linked-count pass; ties go to the first listed count; values that are not estimable keep their reasons | Counts that summed to a suppressed total revealed it, and the order of pooling changed results |
+| D181 | Gates on small counts (refines D157) | Grid times, log-rank tests and models are withheld only for 1 to *k* − 1 units or events, among the cohorts they use | Zero counts suppressed the values the estimability rows keep |
+| D182 | Estimability precedence (refines D160) | The first applicable row gives the reason; a test is chosen by the number of cohorts it uses | Overlapping rows gave one value several digested reasons |
+| D183 | Merging past empty bins (refines D164) | A small bin merges with the nearest non-empty bin, absorbing the empty bins between them | Empty neighbours conflicted with keeping empty bins |
+| D184 | Small exclusion counts under disclosure | Accepted: under *k*, 1 to *k* − 1 excluded units for a variable suppress its `n` and so its derived statistics | With exact counts no weaker rule hides the small count; `min_cell_count` is off by default |
+| D185 | Pins and exclusion (refines D168, D173) | Pins cover the blobs an operation writes or reuses and its base release; imports, re-imports, withdrawals and sessions of a dataset exclude each other; erasure's redaction waits for pins | Reused blobs were unpinned, and a withdrawal could land in the middle of a re-import |
+| D186 | Ids across re-imports (refines D175) | Source names seen before keep their ids; other names are assigned around them | Suffixes shifted when colliding names were added or reordered, moving curation to other columns |
+| D187 | Consistency rules from the fourth review (refines D149, D169, D171) | An `exists` path that ends with an up step needs conditions; the canonical `lift` is written on every intermediate question; erasure covers the person's keys and identifier values; only an importer's inference flags naive datetimes; manifests record their dataset | Each closed a gap in rules added in v0.7 |
 
 ---
 
 ## Appendix B. Change log
 
+- **v0.8** — Fourth review round, verifying v0.7 (D176–D187): canonicalisation to a fixpoint;
+  conditions that must be TRUE for an intermediate FALSE; flags of dropped children; event-free
+  units left out of Cox fits; totals, pooling order, small-count gates and empty bins under
+  disclosure; precedence of estimability rows; pins for reused blobs and mutual exclusion of
+  imports, withdrawals and sessions; ids kept across re-imports.
 - **v0.7** — Third review round (D149–D175): existence questions canonicalised as chains of
   single-step questions instead of merged; intermediate questions, relevance and flags through
   nested questions in §6.5; record filters under `every`; every tuple defined; survival curves,
