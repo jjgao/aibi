@@ -4,12 +4,16 @@ version = "0.0.1"
 description = "AI-native cohort exploration over related tables"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-dependencies = []
+dependencies = [
+    "packaging>=24",
+    "pydantic>=2.11",
+]
 
 [dependency-groups]
 dev = [
     "hypothesis>=6.116",  # its built-in "ci" profile loads when CI is set
     "import-linter>=2.1",
+    "jsonschema>=4.23",
     "pyright>=1.1.390",
     "pytest>=8.3",
     "ruff>=0.8",
@@ -30,6 +34,8 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # INP: a directory of modules without __init__.py is invisible to import-linter and pkgutil.
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "C4", "PT", "TID", "INP"]
+# The spec's typography (section ranges, minus signs) appears in docstrings.
+allowed-confusables = ["–", "−"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["INP001"]  # tests are collected in importlib mode, without packages

@@ -1,6 +1,6 @@
 # aibi — Specification
 
-**Status:** Draft v0.8 · 2026-09-24
+**Status:** Draft v0.8.1 · 2026-09-24
 **Scope:** product goals, principles, data model, query semantics, result contract, analysis
 registry, domain packs, tool and operator surfaces, security, architecture and milestones. The
 text is normative where it says MUST, MUST NOT or SHOULD (RFC 2119); everything else is
@@ -232,10 +232,12 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
   followed by the 1-based source position if empty. Ids are then assigned in source order; an
   id already assigned, or the table id `dataset` (the dataset descriptor's, below), is a
   collision, resolved by appending the smallest suffix `_<n>`, n ≥ 2, that gives an id not yet
-  assigned. On re-import (§12.3), a table or column whose original name was in the previous
-  release keeps its id, and the other names are assigned in source order, treating kept ids as
-  assigned. The original names are kept in `source`. Names containing `__` are reserved for the
-  system (§12.2).
+  assigned. Ids have at most 64 characters: a longer result is cut to 64 characters and any
+  trailing `_` removed, and a suffix replaces as many final characters as it needs. On re-import
+  (§12.3), the *k*-th occurrence of an original name keeps the id of its *k*-th occurrence in the
+  previous release, so repeated and empty names keep their ids too; the other names are assigned
+  in source order, treating kept ids as assigned. The original names are kept in `source`.
+  Names containing `__` are reserved for the system (§12.2).
 - Descriptor ids are stable across releases:
 
   | Kind | Id |
@@ -251,11 +253,13 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
   | model card | `model:<identifier>` |
 
 - Pack ids are identifiers that equal no core analysis family and no core leaf kind.
-- Cohort and parameter names in documents match `[A-Za-z_][A-Za-z0-9_]*`.
+- Cohort and parameter names in documents match `[A-Za-z_][A-Za-z0-9_]*` and have at most 64
+  characters.
 - Field paths are JSON Pointers (RFC 6901) relative to the descriptor's root and name whole
   fields (e.g. `/fields/units`, `/extensions/onco/assay`).
-- Hashes are written as lowercase hexadecimal. Issuance ids are `iss:` followed by a ULID and are
-  never hashed.
+- Hashes are written as lowercase hexadecimal: manifest hashes and digests as `sha256:<hex>`,
+  derivation ids as `drv:<hex>` and leaf keys as `leaf:<hex>` (§7.6). Issuance ids are `iss:`
+  followed by a ULID and are never hashed.
 - Integers outside ±(2^53 − 1) are carried as decimal strings wherever they appear in documents,
   canonical forms and results (§7.6).
 
@@ -574,9 +578,10 @@ to `values` and `range`, each with `negate` (§7.6).
   applies per row or item, inside the quantifier: *some mutation whose gene is not TP53*. A
   clause-level `not` around the leaf negates the quantified answer: *no TP53 mutation*.
 - **Constants** have the column's type: numbers for numeric columns (integers for integer
-  columns), strings for categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with
-  an explicit offset for datetimes (compared in UTC), numbers in the column's units for time
-  offsets. Anything else is refused.
+  columns; numbers beyond ±(2^53 − 1) are written as decimal strings, §5.1), strings for
+  categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with an explicit offset for
+  datetimes (compared in UTC), numbers in the column's units for time offsets. Anything else is
+  refused.
 - **Ranges** apply to numbers, dates, datetimes, time offsets and ordered categories (by their
   listed order); they are refused on strings, booleans and unordered categories.
 - **Units.** A numeric predicate carries `units`: by default the column's units, or the
@@ -761,12 +766,29 @@ for copy number*), subject to §8.4.
   refused, naming the status. A document resolves each dataset to exactly one release; mixing
   releases of one dataset in one document is refused.
 - **Params.** A value that is exactly `"$name"` is replaced by that parameter, whatever its
-  type; `"$$…"` stands for a literal string starting with `$`; there is no interpolation inside
-  longer strings. Substitution happens before validation, so tools accept `"$name"` in any
-  scalar position of the document as written, and the substituted document is validated against
-  the document schema. An unknown name is a refusal naming its path; declared but unused
-  parameters are reported; the parameters used are echoed in results, outside the digest.
-- **Parsing.** Duplicate keys in a JSON object are refused. Size limits are in §14.
+  type; `"$$…"` stands for a literal string starting with `$`; any other string that starts with
+  a single `$` is refused, so a mistyped reference is never taken literally; there is no
+  interpolation inside longer strings. Substitution happens before validation, so tools accept
+  `"$name"` in any position of the document as written, and the substituted document is
+  validated against the document schema. Parameter values are taken verbatim: nothing in them is
+  substituted or unescaped. `notes`, `note` and `drafted_by` are plain text and never substituted.
+  The substituted document, `params` included, may be no larger than a document may be (§14), in
+  bytes and in JSON values, nor nest deeper, nor have longer paths to its values, one by one or
+  together; a reference that would cross a limit is refused. A document that declares more
+  parameters than it may have is refused before any is substituted. An unknown name is a refusal
+  naming its path, whose alternatives are the declared names, or the 16 nearest it in sorted
+  order when more are declared; declared but unused parameters are reported; the parameters used
+  are echoed in results, outside the digest.
+- **Parsing.** A document is UTF-8 without a byte order mark, and its strings and keys are
+  Unicode text: lone surrogate escapes and noncharacters are refused (as in I-JSON, RFC 7493).
+  Duplicate keys in a JSON object, `null` anywhere in a document (an absent member is omitted)
+  and non-finite numbers are refused. A number is a value, not a spelling: `2.0` is the integer
+  2, as RFC 8785 writes it. Every double beyond ±(2^53 − 1) is an integer, so any number beyond
+  that range is refused, however it is written; such integers are written as decimal strings
+  (§5.1). Arrays and objects nest at most 64 deep, and the JSON Pointer to any value has at most
+  16,384 characters. A document built in code holds only values that JSON text carries
+  unchanged; the limits on size, nesting and paths apply to its JSON text, as written and after
+  substitution, and are checked when it is loaded. Size limits are in §14.
 - **Caps**, applied to the canonical form (§7.6): depth 8, counted as the number of clause
   objects on the longest chain from a member of a cohort's top-level `all` to a leaf, both
   included, through combinators and `where`; 64 leaves per cohort, counting the leaves inside
@@ -786,6 +808,15 @@ for copy number*), subject to §8.4.
 | `covered` | `{kind: "covered", table, scope?: {<child scope column>: [values]}, lift?, via?}` | Coverage as a predicate (§6.5); `scope` keys MUST be scope columns of the relationship's coverage. The path MUST have at least one down step and end with one |
 | `ids` | `{kind: "ids", ids: ["<dataset>:<key>" \| {"dataset": "<id>", "key": [<values in key order>]}, …]}` | An explicit list of unit keys. Not allowed inside any `where`; refused on datasets with `allow_row_ids: false` (§8.4) |
 | `cohort` | `{kind: "cohort", cohort: "<name>"}` | Another cohort of the same document, with the same unit and dataset(s). Not allowed inside any `where`; cycles are refused. `{"all": [{"kind": "cohort", "cohort": "base"}, {"not": X}]}` is the correct *rest of the base* under three-valued logic, which is why references exist |
+
+A `values` list has at least one member, and a `range` at least one bound and at most one lower
+and one upper bound (`gt` or `gte`, `lt` or `lte`). Empty `all` and `any` lists are allowed:
+`{"all": []}` is TRUE and `{"any": []}` is FALSE for every row. `datasets` has at least two
+entries and names each dataset once; `ids` has at least one member; `scope` has at least one
+column and each of its lists at least one value; a quantifier list has at least one entry; a
+document has at least one cohort; a view's `cohorts` has at least one entry, none repeated, and
+its `reference` is one of them; *k* is at most 2^53 − 1. `drafted_by` names have 1 to 200
+characters and no control characters, and `units` 1 to 64 printable ASCII characters.
 
 **Quantifiers.** `quantifier` is `Q` or a list of `Q`, where `Q` is `"some"`, `"every"` or
 `{"some": k}`. A single `Q` applies to every down step of the leaf's own resolved path. A list has
@@ -861,6 +892,9 @@ datasets. In one:
   `POOLED_ACROSS_DATASETS`.
 - `unmapped: "allow"`, on the cohort or view, replaces the refusal: references are then matched
   by name, and every affected result carries `UNMAPPED_COMPARISON`.
+- `via` by dataset is allowed only in a cross-dataset cohort, and names only its datasets. The
+  rules of this section that need no release (a concept as the unit, concept references in a
+  cross-dataset cohort, `via` by dataset) are checked when the document is loaded.
 - The same individual appearing in two datasets cannot be detected; units from different
   datasets are always distinct.
 
@@ -1181,12 +1215,24 @@ them with a CSP-safe interpreter and a loader that makes no network requests (§
 ### 8.6 Refusals
 
 A refusal is `{code, path, message: [Segment, …], alternatives: [Segment, …], limit?: {name,
-max}, counts?: [cohort counts]}`. `code` is a stable enum (pack codes namespaced); `path` is a
-JSON Pointer into the document as written, or `null`; `alternatives` lists what *is* available
-(A3); `limit` names the limit hit (§14); `counts` carries cohort counts with their ids where a
-refusal reports numbers (e.g. the overlap of §7.4). `validate_document` returns every refusal,
-sorted by (`path`, `code`). The other tools fail with the first refusal (HTTP 422, or an MCP tool
-error).
+max}, counts?: [cohort counts]}`. `code` is a stable enum of `UPPER_SNAKE_CASE` codes, defined
+with the schemas (pack codes are namespaced, `<pack id>.<CODE>`); `path` is a JSON Pointer into
+the document as written, or `null` (where a problem lies inside a value a parameter supplied, the
+pointer is that of the `"$name"` string, and the message names the parameter; where a key cannot
+be written in a pointer because it is not Unicode text, the pointer is that of its object);
+`alternatives` lists what *is* available (A3); `limit` names the limit hit (§14); `counts`
+carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
+`validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
+refusals with the same `path` and `code` are merged; a `null` and a refused parameter
+reference are reported wherever they are, except inside a `params` refused as a whole; no
+reference is looked up while `params` is refused or is not an object, but a malformed reference
+is refused wherever references are substituted, whatever `params` is; the other checks report
+nothing inside a value already refused (a `null`, a refused parameter reference, `params`
+refused as a whole, or an array or object with more members than it may have) or in a clause
+whose `kind` was refused, and nothing that follows only from a `null` (an object lacking that
+member, or a cohort's datasets or `unmapped`, or a view's cohorts, being unknown); and after the
+first 1,000, one `LIMIT_EXCEEDED` refusal with `path` `null` says how many more were found. The other tools fail
+with the first refusal (HTTP 422, or an MCP tool error).
 
 ---
 
@@ -1635,6 +1681,7 @@ aibi/
       packs/onco/
   web/
   fixtures/          # small public datasets: at least one non-biomedical, one spreadsheet, one cBioPortal study
+  schemas/           # JSON Schemas generated from core/schema and checked in; a test fails when they are stale
 ```
 
 ---
@@ -1792,11 +1839,20 @@ flags and counts.
     releases, logs or results; provenance records host, database and schema only.
   - Storage paths are built only from hashes and validated identifiers (§5.1).
 - **Resource limits.** Request bodies, strings, lists (at most 10,000 members in a `values` or
-  `ids` list), notes and parameters have size limits. Imports have size and decompression-ratio
-  limits. Every tool call has a wall-clock limit that covers the analysis stage, enforced by
-  running queries and analyses in worker processes that can be killed; each worker has a DuckDB
-  memory limit. Categorical levels per analysis (at most 150) and resampling replicates are
-  capped. Clients of every router are rate-limited, and the number of open proposals is capped.
+  `ids` list), notes and parameters have size limits. The defaults for a document are 2 MiB and
+  200,000 JSON values, as written and after substitution; nesting 64 deep; 4,096 characters per
+  constant, 10,000 per note and 64 per identifier or name (also inside a compound reference,
+  which has at most 256 characters, or 1,108 for a relationship or coverage id with 16 key
+  columns); 16,384 characters per JSON Pointer to a value, and 67,108,864 (64 Mi) for the
+  pointers to all of a document's values together, both also after substitution; 16 steps per
+  path; 16 columns per unit key or scope; 256 clauses per list; 256 parameters; 64 datasets per
+  cohort; 16 packs; and 1,000 refusals returned. A structured unit key costs several JSON values,
+  so long `ids` lists can reach the value limit before the list limit. Imports have size and
+  decompression-ratio limits.
+  Every tool call has a wall-clock limit that covers the analysis stage, enforced by running
+  queries and analyses in worker processes that can be killed; each worker has a DuckDB memory
+  limit. Categorical levels per analysis (at most 150) and resampling replicates are capped.
+  Clients of every router are rate-limited, and the number of open proposals is capped.
   Every refusal names the limit it hit (§8.6).
 - **Disclosure.** §8.4, including its limits.
 
@@ -2028,11 +2084,19 @@ that revise or refine earlier ones say so.
 | D185 | Pins and exclusion (refines D168, D173) | Pins cover the blobs an operation writes or reuses and its base release; imports, re-imports, withdrawals and sessions of a dataset exclude each other; erasure's redaction waits for pins | Reused blobs were unpinned, and a withdrawal could land in the middle of a re-import |
 | D186 | Ids across re-imports (refines D175) | Source names seen before keep their ids; other names are assigned around them | Suffixes shifted when colliding names were added or reordered, moving curation to other columns |
 | D187 | Consistency rules from the fourth review (refines D149, D169, D171) | An `exists` path that ends with an up step needs conditions; the canonical `lift` is written on every intermediate question; erasure covers the person's keys and identifier values; only an importer's inference flags naive datetimes; manifests record their dataset | Each closed a gap in rules added in v0.7 |
+| D188 | Numbers are values (M0) | An integral number is an integer however it is written (`2.0` is 2), and one beyond ±(2^53 − 1) is refused | RFC 8785 writes them alike, so accepting both spellings with different meanings would give one canonical form two meanings |
+| D189 | Text and parameter values are verbatim (M0) | `notes`, `note` and `drafted_by` are never substituted, and parameter values are neither substituted nor unescaped | Notes are never interpreted (A6); scanning values that were substituted would make substitution recursive |
+| D190 | Bounded validation (M0) | Documents are capped in nesting depth, JSON values and the length of the paths to them, one by one and together, as written and after substitution; refusals are merged by (path, code); schema problems are not reported inside refused values or where they only follow from one, while nulls and refused references are reported where they are, except inside a refused `params`; and refusals are capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
+| D191 | Ids across re-imports by occurrence (refines D186) | The *k*-th occurrence of a name keeps its *k*-th previous id; ids have at most 64 characters | Spreadsheets repeat and omit headers, and one id per name moved ids between columns |
+| D192 | Cross-dataset rules checked on load (M0) | The unit, concept references and `via` by dataset are checked without a release | They depend only on the document, so waiting for resolution would only delay the refusal |
 
 ---
 
 ## Appendix B. Change log
 
+- **v0.8.1** — Encodings settled by the M0 document schemas (D188–D192): parsing rules for text,
+  numbers and nesting; verbatim notes and parameter values; bounds on substitution and on the
+  refusals returned; id lengths and re-import by occurrence; the static cross-dataset checks.
 - **v0.8** — Fourth review round, verifying v0.7 (D176–D187): canonicalisation to a fixpoint;
   conditions that must be TRUE for an intermediate FALSE; flags of dropped children; event-free
   units left out of Cox fits; totals, pooling order, small-count gates and empty bins under

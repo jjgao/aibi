@@ -1,0 +1,67 @@
+{
+  "aibi": "1",
+  "dataset": "facilities@3",
+  "unit": "sites",
+  "params": {
+    "min_score": 80,
+    "regions": [
+      "north",
+      "east"
+    ]
+  },
+  "cohorts": {
+    "large": {
+      "all": [
+        {
+          "kind": "value",
+          "column": "sites.floor_area",
+          "op": ">=",
+          "value": 500
+        }
+      ]
+    },
+    "failed": {
+      "all": [
+        {
+          "kind": "cohort",
+          "cohort": "large"
+        },
+        {
+          "kind": "exists",
+          "table": "inspections",
+          "quantifier": {
+            "some": 2
+          },
+          "where": [
+            {
+              "kind": "value",
+              "column": "inspections.score",
+              "range": {
+                "lt": "$min_score"
+              }
+            },
+            {
+              "not": {
+                "kind": "value",
+                "column": "inspections.region",
+                "values": "$regions"
+              }
+            }
+          ]
+        }
+      ],
+      "notes": "Two failed inspections"
+    }
+  },
+  "views": [
+    {
+      "analysis": "compare.existence",
+      "cohorts": [
+        "large",
+        "failed"
+      ],
+      "reference": "large"
+    }
+  ],
+  "drafted_by": "agent:inspector bot"
+}
