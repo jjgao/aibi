@@ -35,6 +35,14 @@ MAX_ENTRIES = 64
 """Members of the other short lists and maps in descriptors (metadata, event codes, caveats)."""
 MAX_CLAUSES = 256
 """Clauses in one ``all``, ``any`` or ``where`` list, before the canonical caps of M2."""
+MAX_CLAUSE_DEPTH = 8
+"""Clause objects on the longest chain of a cohort's canonical form, from a member of its
+top-level ``all`` to a leaf, both included (SPEC §7.1)."""
+MAX_LEAVES = 64
+"""Leaves of a cohort's canonical form, those inside every ``where`` included (SPEC §7.1)."""
+MAX_COHORT_REFERENCES = 256
+"""``cohort`` leaves in one cohort as written (SPEC §7.1): each inlines the cohort it names, so
+they bound the work of resolving a cohort before its canonical form is measured."""
 MAX_COHORTS = 6
 MAX_DATASETS = 64
 """Datasets in one cross-dataset cohort, and entries in a ``via`` map by dataset."""
@@ -69,9 +77,14 @@ REFERENCE_CHARACTERS = "reference_characters"
 """A compound id or reference, such as ``<table>.<column>``, as a whole; each identifier in it is
 bounded by ``identifier_characters``."""
 PATH_STEPS = "path_steps"
+PATH_SEARCH = "path_search"
+"""Steps an implicit path search takes before it gives up (the engine's ``PATH_SEARCH``)."""
 KEY_COLUMNS = "key_columns"
 SCOPE_COLUMNS = "scope_columns"
 CLAUSES = "clauses_per_list"
+CLAUSE_DEPTH = "clause_depth"
+LEAVES = "leaves_per_cohort"
+COHORT_REFERENCES = "cohort_references"
 COHORTS = "cohorts"
 DATASETS = "datasets"
 PACKS = "packs"
@@ -115,7 +128,9 @@ def _entries(value: object) -> int:
 __all__ = [
     "ALL_POINTER_CHARACTERS",
     "CLAUSES",
+    "CLAUSE_DEPTH",
     "COHORTS",
+    "COHORT_REFERENCES",
     "CONSTANT_CHARACTERS",
     "DATASETS",
     "DESCRIPTOR_BYTES",
@@ -124,15 +139,19 @@ __all__ = [
     "IDENTIFIER_CHARACTERS",
     "JSON_VALUES",
     "KEY_COLUMNS",
+    "LEAVES",
     "LIST_MEMBERS",
     "MAX_CLAUSES",
+    "MAX_CLAUSE_DEPTH",
     "MAX_COHORTS",
+    "MAX_COHORT_REFERENCES",
     "MAX_COLUMNS",
     "MAX_DATASETS",
     "MAX_DEPTH",
     "MAX_DOCUMENT_BYTES",
     "MAX_ENTRIES",
     "MAX_IDENTIFIER",
+    "MAX_LEAVES",
     "MAX_LIST",
     "MAX_NAME",
     "MAX_PACKS",
@@ -150,6 +169,7 @@ __all__ = [
     "NOTE_CHARACTERS",
     "PACKS",
     "PARAMETERS",
+    "PATH_SEARCH",
     "PATH_STEPS",
     "POINTER_CHARACTERS",
     "REFERENCE_CHARACTERS",
