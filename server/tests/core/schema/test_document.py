@@ -2,6 +2,8 @@
 
 import copy
 import json
+import math
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
@@ -450,8 +452,8 @@ def test_refusals_are_capped() -> None:
 
 def test_positions_filled_by_parameters_are_reported() -> None:
     assert load(SITES).positions == {
-        "/cohorts/failed/all/1/where/0/range/lt": "min_score",
-        "/cohorts/failed/all/1/where/1/not/values": "regions",
+        ("cohorts", "failed", "all", 1, "where", 0, "range", "lt"): "min_score",
+        ("cohorts", "failed", "all", 1, "where", 1, "not", "values"): "regions",
     }
 
 
@@ -824,3 +826,178 @@ def test_column_references_are_bounded_per_identifier() -> None:
     for column in ("t" * 65 + ".c", "t.c__state", "t__x.c"):
         clause = {"kind": "value", "column": column, "values": [1]}
         assert refusals(with_clause(clause)) != [], column
+
+
+# --- Knock-ons are exactly those that follow from a null (review round 4) -----------------------
+
+_V = {"kind": "value", "column": "t.c", "values": [1]}
+_VIA = {**_V, "via": {"d": []}}
+_BASE: dict[str, Any] = {"aibi": "1", "dataset": "d", "unit": "t"}
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        (
+            with_clause({**_V, "range": {"gt": 1}, "lift": None}),
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/lift"),
+            ],
+        ),
+        (
+            with_clause({"kind": "valeu", "column": "t.c", "values": [1], "units": None}),
+            [("UNKNOWN_KIND", "/cohorts/c/all/0"), ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/units")],
+        ),
+        (
+            with_clause({"all": [], "any": [], "x": None}),
+            [("WRONG_TYPE", "/cohorts/c/all/0"), ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/x")],
+        ),
+        (
+            with_clause(
+                {"kind": "value", "column": "t.c", "range": {"gt": 1, "gte": 2, "lt": None}}
+            ),
+            [
+                ("CONFLICTING_MEMBERS", "/cohorts/c/all/0/range"),
+                ("NULL_NOT_ALLOWED", "/cohorts/c/all/0/range/lt"),
+            ],
+        ),
+        (
+            {
+                **_BASE,
+                "cohorts": {
+                    "a": {"all": [], "dataset": None},
+                    "b": {"all": [_VIA], "dataset": "x"},
+                },
+            },
+            [
+                ("NULL_NOT_ALLOWED", "/cohorts/a/dataset"),
+                ("CROSS_DATASET_ONLY", "/cohorts/b/all/0/via"),
+            ],
+        ),
+        (
+            {
+                "aibi": "1",
+                "unit": "t",
+                "cohorts": {"a": {"all": [], "dataset": None}, "b": {"all": []}},
+            },
+            [("NULL_NOT_ALLOWED", "/cohorts/a/dataset"), ("DATASET_MISSING", "/cohorts/b")],
+        ),
+        (
+            {**_BASE, "dataset": None, "cohorts": {"b": {"all": [_V], "datasets": ["x", "y"]}}},
+            [
+                ("CONCEPT_REQUIRED", "/cohorts/b/all/0/column"),
+                ("NULL_NOT_ALLOWED", "/dataset"),
+                ("CONCEPT_REQUIRED", "/unit"),
+            ],
+        ),
+        (
+            {
+                **_BASE,
+                "cohorts": {
+                    "a": {"all": [], "dataset": None},
+                    "b": {"all": [{"kind": "cohort", "cohort": "c"}], "dataset": "x"},
+                    "c": {"all": [], "dataset": "y"},
+                },
+            },
+            [
+                ("NULL_NOT_ALLOWED", "/cohorts/a/dataset"),
+                ("COHORT_MISMATCH", "/cohorts/b/all/0/cohort"),
+            ],
+        ),
+        (
+            {
+                **_BASE,
+                "cohorts": {
+                    "a": {"all": [], "dataset": None},
+                    "b": {"all": [], "dataset": "x"},
+                    "c": {"all": [], "dataset": "y"},
+                },
+                "views": [{"analysis": "compare.x", "cohorts": ["b", "c"]}],
+            },
+            [("NULL_NOT_ALLOWED", "/cohorts/a/dataset"), ("CONCEPT_REQUIRED", "/unit")],
+        ),
+        (
+            {
+                **_BASE,
+                "unit": "core:person",
+                "cohorts": {"b": {"all": [_V], "datasets": ["x", "y"], "unmapped": None}},
+            },
+            [("NULL_NOT_ALLOWED", "/cohorts/b/unmapped")],
+        ),
+        (
+            {
+                **_BASE,
+                "cohorts": {"b": {"all": [], "dataset": "x"}, "c": {"all": [], "dataset": "y"}},
+                "views": [{"analysis": "compare.x", "cohorts": None}],
+            },
+            [("NULL_NOT_ALLOWED", "/views/0/cohorts")],
+        ),
+    ],
+)
+def test_a_null_hides_only_what_follows_from_it(
+    document: dict[str, Any], expected: list[tuple[str, str]]
+) -> None:
+    assert refusals(document) == expected
+
+
+def test_combinator_names_below_a_leaf_are_not_clauses() -> None:
+    leaf = {**_V, "not": {"kind": "$nope"}}
+    assert refusals(with_clause(leaf)) == [
+        ("UNKNOWN_MEMBER", "/cohorts/c/all/0/not"),
+        ("UNKNOWN_PARAMETER", "/cohorts/c/all/0/not/kind"),
+    ]
+    where = {**_V, "where": [{"kind": "$nope"}]}
+    assert ("UNKNOWN_MEMBER", "/cohorts/c/all/0/where") in refusals(with_clause(where))
+
+
+@pytest.mark.parametrize("name", ["via", "scope", "packs", "params", "cohorts"])
+def test_a_cohort_named_like_a_map_still_drops_its_nulls(name: str) -> None:
+    document = {
+        **_BASE,
+        "cohorts": {
+            name: {"all": [], "notes": None},
+            "b": {"all": [{"kind": "cohort", "cohort": "x"}]},
+        },
+    }
+    assert refusals(document) == [
+        ("UNKNOWN_COHORT", "/cohorts/b/all/0/cohort"),
+        ("NULL_NOT_ALLOWED", f"/cohorts/{name}/notes"),
+    ]
+
+
+def test_long_keys_above_many_values_are_refused_cheaply() -> None:
+    document = {**with_clause({"all": []}), "k" * 1_000_000: [0] * 3000}
+    started = time.perf_counter()
+    [refusal] = load(document).refusals
+    assert time.perf_counter() - started < 5
+    assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "")
+    assert refusal.limit is not None
+    assert refusal.limit.name == "pointer_characters"
+    wide = {**with_clause({"all": []}), "k" * 16_000: {f"a{i}": 1 for i in range(30_000)}}
+    [refusal] = load(wide).refusals
+    assert refusal.limit is not None
+    assert refusal.limit.name == "all_pointer_characters"
+
+
+def test_concepts_are_in_the_core_or_a_pack_namespace() -> None:
+    for unit in ("summary:x", "value:x"):
+        assert refusals({**with_clause({"all": []}), "unit": unit}) == [("INVALID_VALUE", "/unit")]
+    view = {"analysis": "core.x"}
+    assert refusals({**with_clause({"all": []}), "views": [view]}) == [
+        ("INVALID_VALUE", "/views/0/analysis")
+    ]
+
+
+def test_models_built_in_python_hold_only_what_json_carries() -> None:
+    document = with_clause({"kind": "value", "column": "t.c", "values": [2.0, 1.5]})
+    leaf = Document.model_validate(document).cohorts["c"].all[0]
+    assert isinstance(leaf, ValueLeaf)
+    assert leaf.values == [2, 1.5]
+    for values in ([1e16], ["caf\udce9"]):
+        with pytest.raises(ValidationError):
+            Document.model_validate(
+                with_clause({"kind": "value", "column": "t.c", "values": values})
+            )
+    with pytest.raises(ValidationError):
+        Document.model_validate({**with_clause({"all": []}), "params": {"p": [math.nan]}})

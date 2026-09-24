@@ -16,7 +16,7 @@ reference limit.
 import re
 import unicodedata
 from collections.abc import Iterable, Sequence
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints
 from pydantic_core import PydanticCustomError
@@ -34,7 +34,7 @@ IDENT = rf"[a-z][a-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
 NAME = rf"[A-Za-z_][A-Za-z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
 HEX64 = r"[0-9a-f]{64}"
 CODE = rf"[A-Z][A-Z0-9_]{{0,{MAX_IDENTIFIER - 1}}}"
-"""A code, in upper snake case: bounded like an identifier, and never holding ``__`` either."""
+"""A code, in upper snake case, bounded like an identifier; ``PackCode`` refuses ``__`` in it."""
 _COLUMNS = rf"{IDENT}(?:\+{IDENT})*"
 
 IDENTIFIER_RE = re.compile(rf"^{IDENT}$")
@@ -85,6 +85,54 @@ def no_double_underscore(value: str) -> str:
 NO_DOUBLE_UNDERSCORE = AfterValidator(no_double_underscore)
 """Refuses ``__`` in a string made of identifiers."""
 NO_DOUBLE_UNDERSCORE_SCHEMA = Field(json_schema_extra={"not": {"pattern": "__"}})
+
+_NOT_CONCEPT_NAMESPACES = RESERVED_PACK_IDS - {"core"}
+"""A concept's namespace is ``core`` or a pack id (SPEC §5.1)."""
+_NOT_ANALYSIS_FAMILIES = RESERVED_PACK_IDS - CORE_ANALYSIS_FAMILIES
+"""An analysis's family is a core family or a pack id (SPEC §5.1)."""
+
+
+def _namespace(value: str, separator: str) -> str:
+    return value.partition(separator)[0]
+
+
+def concept_namespace(value: str) -> str:
+    if _namespace(value, ":") in _NOT_CONCEPT_NAMESPACES:
+        raise PydanticCustomError(
+            "reserved_namespace", "A concept's namespace is core or a pack id"
+        )
+    return value
+
+
+def analysis_family(value: str) -> str:
+    if _namespace(value, ".") in _NOT_ANALYSIS_FAMILIES:
+        raise PydanticCustomError(
+            "reserved_namespace", "An analysis's family is summary, compare, survival or a pack id"
+        )
+    return value
+
+
+def pack_namespace(value: str) -> str:
+    if _namespace(value, ".") in RESERVED_PACK_IDS:
+        raise PydanticCustomError("reserved_namespace", "The namespace is a pack id")
+    return value
+
+
+def _refused(*patterns: str) -> Any:
+    """JSON Schema: refuse ``__``, and strings matching ``patterns``."""
+    return Field(
+        json_schema_extra={
+            "not": {"anyOf": [{"pattern": "__"}, *({"pattern": p} for p in patterns)]}
+        }
+    )
+
+
+def _prefixes(names: frozenset[str], separator: str) -> str:
+    return "^(?:" + "|".join(sorted(names)) + ")" + re.escape(separator)
+
+
+CONCEPT_NAMESPACE_SCHEMA = _prefixes(_NOT_CONCEPT_NAMESPACES, ":")
+"""A pattern matching concept ids in a namespace that is neither ``core`` nor a pack id."""
 
 
 def identifier_parts(value: object) -> object:
@@ -144,7 +192,8 @@ ConceptId = Annotated[
     _REFERENCE_LIMIT,
     IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
+    AfterValidator(concept_namespace),
+    _refused(CONCEPT_NAMESPACE_SCHEMA),
 ]
 RelationshipId = Annotated[
     str,
@@ -176,7 +225,8 @@ AnalysisId = Annotated[
     _REFERENCE_LIMIT,
     IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
+    AfterValidator(analysis_family),
+    _refused(_prefixes(_NOT_ANALYSIS_FAMILIES, ".")),
 ]
 ModelCardId = Annotated[
     str,
@@ -201,7 +251,8 @@ PackCode = Annotated[
     _REFERENCE_LIMIT,
     IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
+    AfterValidator(pack_namespace),
+    _refused(_prefixes(RESERVED_PACK_IDS, ".")),
 ]
 """A pack's refusal or caveat code: ``<pack id>.<CODE>``."""
 Name = Annotated[str, _form(NAME_RE, MAX_IDENTIFIER), _LIMIT]

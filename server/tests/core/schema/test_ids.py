@@ -1,6 +1,7 @@
 import re
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from aibi.core.schema.ids import (
     COLUMN_REF_RE,
@@ -14,6 +15,10 @@ from aibi.core.schema.ids import (
     MAX_SAFE_INTEGER,
     RELATIONSHIP_ID_RE,
     SHA256_RE,
+    AnalysisId,
+    ConceptId,
+    DatasetRef,
+    PackCode,
     integer_value,
     is_identifier,
     is_pack_id,
@@ -167,3 +172,29 @@ def test_hash_and_id_forms(regex: re.Pattern[str], good: str, bad: str) -> None:
 def test_integers_beyond_the_safe_range_become_decimal_strings() -> None:
     assert integer_value(MAX_SAFE_INTEGER) == MAX_SAFE_INTEGER
     assert integer_value(-MAX_SAFE_INTEGER - 1) == "-9007199254740992"
+
+
+def _refused(alias: object, value: str) -> list[str]:
+    with pytest.raises(ValidationError) as raised:
+        TypeAdapter(alias).validate_python(value)
+    return [str(error["type"]) for error in raised.value.errors()]
+
+
+def test_namespaces_are_core_or_pack_ids() -> None:
+    assert TypeAdapter(ConceptId).validate_python("core:person") == "core:person"
+    assert TypeAdapter(ConceptId).validate_python("testpack:thing") == "testpack:thing"
+    for namespace in ("summary", "value", "cohort"):
+        assert _refused(ConceptId, f"{namespace}:x") == ["reserved_namespace"]
+    assert TypeAdapter(AnalysisId).validate_python("survival.km") == "survival.km"
+    assert TypeAdapter(AnalysisId).validate_python("testpack.enrichment") == "testpack.enrichment"
+    for family in ("core", "value", "ids"):
+        assert _refused(AnalysisId, f"{family}.x") == ["reserved_namespace"]
+    assert TypeAdapter(PackCode).validate_python("testpack.EDITION_PIN") == "testpack.EDITION_PIN"
+    assert _refused(PackCode, "summary.X") == ["reserved_namespace"]
+    assert _refused(PackCode, "a__b.X") == ["reserved_name"]
+    assert _refused(PackCode, "testpack." + "X" * 65) == ["string_too_long"]
+
+
+def test_only_the_part_before_a_pin_is_made_of_identifiers() -> None:
+    assert TypeAdapter(DatasetRef).validate_python("x@" + "9" * 100) == "x@" + "9" * 100
+    assert _refused(DatasetRef, "x" * 65 + "@3") == ["string_too_long"]

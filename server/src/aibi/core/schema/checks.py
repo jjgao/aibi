@@ -5,6 +5,7 @@ pointers back to the document as written.
 """
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import cast
 
 from aibi.core.schema.document import (
@@ -28,6 +29,18 @@ from aibi.core.schema.refusals import Refusal, RefusalCode
 
 Path = list[str | int]
 _ARTICLE = {"ids": "An ids", "cohort": "A cohort"}
+
+
+@dataclass(frozen=True)
+class Unknown:
+    """What a document leaves unknown because a member was null, and so is not checked."""
+
+    datasets: frozenset[str] = frozenset()
+    """Cohorts whose datasets are unknown: a ``dataset`` or ``datasets`` member was null."""
+    unmapped: frozenset[str] = frozenset()
+    """Cohorts whose ``unmapped`` was null."""
+    view_cohorts: frozenset[int] = frozenset()
+    """Views whose ``cohorts`` was null."""
 
 
 def _children(clause: ClauseModel, path: Path) -> Iterator[tuple[ClauseModel, Path, bool]]:
@@ -158,7 +171,9 @@ def _via_maps(name: str, cohort: Cohort, datasets: tuple[str, ...], path: Path) 
     return refusals
 
 
-def check_document(document: Document) -> list[Refusal]:
+def check_document(document: Document, unknown: Unknown | None = None) -> list[Refusal]:
+    """The document checks; ``unknown`` names what a null left unknown, which they skip."""
+    unknown = unknown or Unknown()
     refusals: list[Refusal] = []
     names = sorted(document.cohorts)
     references: dict[str, set[str]] = {name: set() for name in names}
@@ -170,7 +185,8 @@ def check_document(document: Document) -> list[Refusal]:
         if cohort.datasets is not None:
             ids = [ref.split("@", 1)[0] for ref in cohort.datasets]
             refusals.extend(_duplicates(ids, [*cohort_path, "datasets"], "A dataset"))
-            refusals.extend(_cross_dataset(name, cohort, cohort_path))
+            if name not in unknown.unmapped:
+                refusals.extend(_cross_dataset(name, cohort, cohort_path))
             if not unit_is_concept:
                 refusals.append(
                     Refusal(
@@ -182,8 +198,9 @@ def check_document(document: Document) -> list[Refusal]:
                         ],
                     )
                 )
-        refusals.extend(_via_maps(name, cohort, datasets or (), cohort_path))
-        if datasets is None:
+        if name not in unknown.datasets:
+            refusals.extend(_via_maps(name, cohort, datasets or (), cohort_path))
+        if datasets is None and name not in unknown.datasets:
             refusals.append(
                 Refusal(
                     code=RefusalCode.DATASET_MISSING,
@@ -219,6 +236,8 @@ def check_document(document: Document) -> list[Refusal]:
                     )
                     continue
                 references[name].add(clause.cohort)
+                if unknown.datasets & {name, clause.cohort}:
+                    continue
                 if _datasets(target, document) != _datasets(cohort, document):
                     refusals.append(
                         Refusal(
@@ -257,7 +276,10 @@ def check_document(document: Document) -> list[Refusal]:
             for c in view.cohorts or names
             if c in document.cohorts and (span := _datasets(document.cohorts[c], document))
         }
-        if len(spans) > 1 and not unit_is_concept:
+        spans_known = index not in unknown.view_cohorts and not unknown.datasets & set(
+            view.cohorts or names
+        )
+        if len(spans) > 1 and not unit_is_concept and spans_known:
             refusals.append(
                 Refusal(
                     code=RefusalCode.CONCEPT_REQUIRED,

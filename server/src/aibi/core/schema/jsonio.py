@@ -10,19 +10,32 @@ refused with a path:
 - non-finite numbers;
 - numbers beyond ±(2^53 - 1), however they are written: every such double is an integer, and
   integers beyond that range are written as decimal strings instead (§5.1);
-- arrays and objects nested more than ``MAX_DEPTH`` deep, and more than ``MAX_VALUES`` values.
+- arrays and objects nested more than ``MAX_DEPTH`` deep, more than ``MAX_VALUES`` values, and
+  keys that make the JSON Pointer to a value longer than ``MAX_POINTER`` characters, or those to
+  all values longer than ``MAX_POINTERS`` together.
 
 A number is a value, not a spelling: an integral number such as ``2.0`` is read as the integer
 2, which is how RFC 8785 writes it.
 """
 
 import json
+import math
 from collections.abc import Sequence
+from typing import cast
 
 from pydantic import JsonValue
 
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
-from aibi.core.schema.limits import JSON_VALUES, MAX_DEPTH, MAX_VALUES, NESTING_DEPTH
+from aibi.core.schema.limits import (
+    ALL_POINTER_CHARACTERS,
+    JSON_VALUES,
+    MAX_DEPTH,
+    MAX_POINTER,
+    MAX_POINTERS,
+    MAX_VALUES,
+    NESTING_DEPTH,
+    POINTER_CHARACTERS,
+)
 
 _MAX_INTEGER_DIGITS = len(str(MAX_SAFE_INTEGER))
 
@@ -91,7 +104,7 @@ def _is_noncharacter(character: str) -> bool:
     return 0xFDD0 <= point <= 0xFDEF or point & 0xFFFE == 0xFFFE
 
 
-def _is_text(value: str) -> bool:
+def is_text(value: str) -> bool:
     """Unicode text: no lone surrogates and no noncharacters (RFC 7493 §2.1)."""
     if value.isascii():
         return True
@@ -110,8 +123,25 @@ def _out_of_range(path: list[str | int]) -> JsonError:
     )
 
 
-def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
+def _escaped_length(key: str) -> int:
+    return len(key) + key.count("~") + key.count("/")
+
+
+def _build(value: object, path: list[str | int], count: list[int], length: int = 0) -> JsonValue:
+    """The value as JSON reads it; ``length`` is that of the pointer to it, ``pointer(path)``.
+
+    ``count`` holds the values read so far and the length of their pointers together.
+    """
     count[0] += 1
+    count[1] += length
+    if count[1] > MAX_POINTERS:
+        raise JsonError(
+            "LIMIT_EXCEEDED",
+            pointer(path),
+            f"The paths to a document's values may have at most {MAX_POINTERS} characters "
+            "together; shorten the long keys above many values",
+            (ALL_POINTER_CHARACTERS, MAX_POINTERS),
+        )
     if count[0] > MAX_VALUES:
         raise JsonError(
             "LIMIT_EXCEEDED",
@@ -129,23 +159,42 @@ def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
     if isinstance(value, _Pairs):
         result: dict[str, JsonValue] = {}
         for key, member in value:
-            if not _is_text(key):
+            if not is_text(key):
                 raise JsonError(
                     "INVALID_JSON",
                     pointer(path),
                     "A key in this object is not Unicode text (a lone surrogate or a noncharacter)",
                 )
+            member_length = length + 1 + _escaped_length(key)
+            if member_length > MAX_POINTER:
+                raise JsonError(
+                    "LIMIT_EXCEEDED",
+                    pointer(path),
+                    f"A key in this object makes the path to a value longer than {MAX_POINTER} "
+                    "characters",
+                    (POINTER_CHARACTERS, MAX_POINTER),
+                )
             if key in result:
                 raise JsonError(
                     "DUPLICATE_KEY", pointer([*path, key]), "Duplicate key in a JSON object"
                 )
-            result[key] = _build(member, [*path, key], count)
+            result[key] = _build(member, [*path, key], count, member_length)
         return result
     if isinstance(value, list):
         items: list[object] = value  # pyright: ignore[reportUnknownVariableType]
-        return [_build(item, [*path, index], count) for index, item in enumerate(items)]
+        if items and length + 1 + len(str(len(items) - 1)) > MAX_POINTER:
+            raise JsonError(
+                "LIMIT_EXCEEDED",
+                pointer(path),
+                f"The path to a value in this array is longer than {MAX_POINTER} characters",
+                (POINTER_CHARACTERS, MAX_POINTER),
+            )
+        return [
+            _build(item, [*path, index], count, length + 1 + len(str(index)))
+            for index, item in enumerate(items)
+        ]
     if isinstance(value, str):
-        if not _is_text(value):
+        if not is_text(value):
             raise JsonError(
                 "INVALID_JSON",
                 pointer(path),
@@ -171,6 +220,55 @@ def _build(value: object, path: list[str | int], count: list[int]) -> JsonValue:
     if isinstance(value, _Constant):
         raise JsonError("NON_FINITE_NUMBER", pointer(path), f"{value.name} is not a JSON number")
     raise TypeError(f"unexpected JSON value {value!r}")  # pragma: no cover
+
+
+def json_value(value: object) -> JsonValue:
+    """A Python value as JSON reads it back: integral floats become integers (SPEC §5.1).
+
+    Raises ``JsonError``, with a pointer into the value, for what JSON cannot carry unchanged:
+    a non-finite number, a number beyond ±(2^53 - 1), a string or key that is not Unicode text,
+    nesting deeper than ``MAX_DEPTH``, or a value of another type. Values from ``parse_json``
+    pass unchanged.
+    """
+    return _checked(value, [])
+
+
+def _checked(value: object, path: list[str | int]) -> JsonValue:
+    if len(path) > MAX_DEPTH:
+        raise JsonError(
+            "LIMIT_EXCEEDED",
+            pointer(path),
+            f"Arrays and objects may be nested at most {MAX_DEPTH} deep",
+            (NESTING_DEPTH, MAX_DEPTH),
+        )
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if not is_text(value):
+            raise JsonError("INVALID_VALUE", pointer(path), "Strings must be Unicode text")
+        return value
+    if isinstance(value, int):
+        if abs(value) > MAX_SAFE_INTEGER:
+            raise _out_of_range(path)
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise JsonError("NON_FINITE_NUMBER", pointer(path), "The number is not finite")
+        if abs(value) > MAX_SAFE_INTEGER:
+            raise _out_of_range(path)
+        return int(value) if value.is_integer() else value
+    if isinstance(value, list):
+        items = cast(list[object], value)
+        return [_checked(item, [*path, index]) for index, item in enumerate(items)]
+    if isinstance(value, dict):
+        members = cast(dict[object, object], value)
+        result: dict[str, JsonValue] = {}
+        for key, member in members.items():
+            if not isinstance(key, str) or not is_text(key):
+                raise JsonError("INVALID_VALUE", pointer(path), "Keys must be Unicode text")
+            result[key] = _checked(member, [*path, key])
+        return result
+    raise JsonError("WRONG_TYPE", pointer(path), "Not a JSON value")
 
 
 def parse_json(source: str | bytes) -> JsonValue:
@@ -200,4 +298,4 @@ def parse_json(source: str | bytes) -> JsonValue:
         ) from None
     except ValueError as error:
         raise JsonError("INVALID_JSON", None, f"Not valid JSON: {error}") from error
-    return _build(raw, [], [0])
+    return _build(raw, [], [0, 0])

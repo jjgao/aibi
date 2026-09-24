@@ -517,7 +517,14 @@
             {
               "maxLength": 256,
               "not": {
-                "pattern": "__"
+                "anyOf": [
+                  {
+                    "pattern": "__"
+                  },
+                  {
+                    "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                  }
+                ]
               },
               "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Table",
@@ -847,7 +854,14 @@
             {
               "maxLength": 256,
               "not": {
-                "pattern": "__"
+                "anyOf": [
+                  {
+                    "pattern": "__"
+                  },
+                  {
+                    "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                  }
+                ]
               },
               "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Table",
@@ -1771,7 +1785,14 @@
             {
               "maxLength": 256,
               "not": {
-                "pattern": "__"
+                "anyOf": [
+                  {
+                    "pattern": "__"
+                  },
+                  {
+                    "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                  }
+                ]
               },
               "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
               "title": "Column",
@@ -2185,7 +2206,14 @@
             {
               "maxLength": 129,
               "not": {
-                "pattern": "__"
+                "anyOf": [
+                  {
+                    "pattern": "__"
+                  },
+                  {
+                    "pattern": "^(?:cohort|core|covered|exists|ids|value)\\."
+                  }
+                ]
               },
               "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
               "title": "Analysis",
@@ -2441,7 +2469,10 @@
       }
     },
     "drafted_by": {
-      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f]{1,200})$",
+      "not": {
+        "pattern": "^model:[a-z0-9_]*__"
+      },
+      "pattern": "^(?:model:[a-z][a-z0-9_]{0,63}|(?:agent|operator):[^\\x00-\\x1f\\x7f\\u2028\\u2029]{1,200})$",
       "title": "Drafted By",
       "type": "string",
       "x-aibi-data": true
@@ -2534,7 +2565,14 @@
         {
           "maxLength": 256,
           "not": {
-            "pattern": "__"
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
           },
           "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
           "title": "Unit",

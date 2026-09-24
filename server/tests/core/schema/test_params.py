@@ -20,7 +20,11 @@ def test_exact_references_take_any_type() -> None:
         "b": [3, {"range": {"gte": 3}}],
     }
     assert result.used == {"branches": ["north", "east"], "days": 3, "rule": {"gte": 3}}
-    assert result.positions == {"/a": "branches", "/b/0": "days", "/b/1/range": "rule"}
+    assert result.positions == {
+        ("a",): "branches",
+        ("b", 0): "days",
+        ("b", 1, "range"): "rule",
+    }
 
 
 def test_no_interpolation_escapes_and_keys() -> None:
@@ -54,7 +58,7 @@ def test_unknown_and_invalid_references_are_refused_with_paths() -> None:
         ("INVALID_PARAMETER_REFERENCE", "/a/1"),
         ("INVALID_PARAMETER_REFERENCE", "/a/3"),
     ]
-    assert result.failed == ["/a/0", "/a/1", "/a/3"]
+    assert result.failed == [("a", 0), ("a", 1), ("a", 3)]
     assert result.refusals[0].alternatives[0].model_dump() == {"data": "known"}
     assert result.document == {"params": {"known": 1}, "a": ["$unknown", "$5.00", 1, "$known\n"]}
 

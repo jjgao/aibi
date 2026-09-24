@@ -143,6 +143,10 @@ INVALID = [
     {**BASE, "packs": {"a__b": ">=1"}, "cohorts": {"c": {"all": []}}},
     _with_clause({"kind": "ids", "ids": ["d__x:1"]}),
     _with_clause({"kind": "p." + "x" * 65}),
+    {**BASE, "drafted_by": "model:a__b", "cohorts": {"c": {"all": []}}},
+    {**BASE, "unit": "summary:x", "cohorts": {"c": {"all": []}}},
+    {**BASE, "cohorts": {"c": {"all": []}}, "views": [{"analysis": "core.x"}]},
+    _with_clause({"kind": "value", "column": "value:x", "values": [1]}),
 ]
 
 
@@ -161,6 +165,8 @@ VALID = [
     {**BASE, "params": {"p": ["$5"], "q": {"k": "$5"}}, "cohorts": {"c": {"all": []}}},
     _with_clause({"kind": "testpack.flag", "q": "$$5", "n": [1, {"x": True}]}),
     _with_clause({"kind": "ids", "ids": ["d:x__y", "d:a:b"]}),
+    {**BASE, "unit": "testpack:member", "cohorts": {"c": {"all": []}}},
+    {**BASE, "cohorts": {"c": {"all": []}}, "views": [{"analysis": "testpack.enrichment"}]},
     _with_clause(
         {
             "kind": "value",

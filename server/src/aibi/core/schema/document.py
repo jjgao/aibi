@@ -7,7 +7,7 @@ against a release (M2); checks that need only the document are in ``aibi.core.sc
 
 import math
 import re
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, LiteralString, Self, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from pydantic import (
@@ -33,11 +33,11 @@ from pydantic_core import PydanticCustomError
 
 from aibi.core.schema.ids import (
     CONCEPT_ID_RE,
+    CONCEPT_NAMESPACE_SCHEMA,
     IDENT,
     IDENTIFIER_PARTS,
     MAX_SAFE_INTEGER,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
     PACK_LEAF_KIND_RE,
     RESERVED_PACK_IDS,
     AnalysisId,
@@ -47,9 +47,11 @@ from aibi.core.schema.ids import (
     Name,
     PackId,
     RelationshipId,
+    concept_namespace,
     identifier_parts,
     no_double_underscore,
 )
+from aibi.core.schema.jsonio import JsonError, is_text, json_value
 from aibi.core.schema.limits import (
     CLAUSES,
     COHORTS,
@@ -124,18 +126,22 @@ def _scalar(value: object) -> str | bool | int | float:
                 "String should have at most {max_length} characters",
                 {"max_length": MAX_STRING, "limit": CONSTANT_CHARACTERS},
             )
-        return value
-    if isinstance(value, int):
-        if abs(value) > MAX_SAFE_INTEGER:
+        if not is_text(value):
             raise PydanticCustomError(
-                "integer_out_of_range",
-                "Integers beyond ±(2^53 - 1) must be written as decimal strings",
+                "invalid_text", "Text must be Unicode: no lone surrogates or noncharacters"
             )
+        return value
+    if isinstance(value, int | float) and abs(value) > MAX_SAFE_INTEGER:
+        raise PydanticCustomError(
+            "integer_out_of_range",
+            "Numbers beyond ±(2^53 - 1) are refused; write such an integer as a decimal string",
+        )
+    if isinstance(value, int):
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise PydanticCustomError("non_finite_number", "The number is not finite")
-        return value
+        return int(value) if value.is_integer() else value
     raise PydanticCustomError("scalar_type", "Expected a string, a boolean or a number")
 
 
@@ -173,6 +179,9 @@ Notes = Annotated[
 """Plain text, never compiled or interpreted (A6)."""
 
 _REFERENCE_LENGTH = 4 * MAX_IDENTIFIER
+_CONCEPT_REFERENCE_SCHEMA = Field(
+    json_schema_extra={"not": {"anyOf": [{"pattern": "__"}, {"pattern": CONCEPT_NAMESPACE_SCHEMA}]}}
+)
 ColumnOrConcept = Annotated[
     str,
     Field(
@@ -182,16 +191,20 @@ ColumnOrConcept = Annotated[
     LimitName(REFERENCE_CHARACTERS),
     IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
+    AfterValidator(concept_namespace),
+    _CONCEPT_REFERENCE_SCHEMA,
 ]
+"""A column, ``<table>.<column>``, or a value concept (§7.5)."""
 TableOrConcept = Annotated[
     str,
     Field(pattern=rf"^(?:{IDENT}|{CONCEPT_ID_RE.pattern[1:-1]})$", max_length=_REFERENCE_LENGTH),
     LimitName(REFERENCE_CHARACTERS),
     IDENTIFIER_PARTS,
     NO_DOUBLE_UNDERSCORE,
-    NO_DOUBLE_UNDERSCORE_SCHEMA,
+    AfterValidator(concept_namespace),
+    _CONCEPT_REFERENCE_SCHEMA,
 ]
+"""A table, or a table concept (§7.5)."""
 Units = Annotated[str, Field(pattern=r"^[!-~]{1,64}$")]
 """A UCUM code, checked against the pinned UCUM tables on resolution (SPEC §6.4)."""
 Lift = Literal["strict", "assessed"]
@@ -199,7 +212,17 @@ Lift = Literal["strict", "assessed"]
 DOCUMENT_JSON_MARK = "x-aibi-document-json"
 
 
+_JSON_PROBLEMS: dict[str, tuple[LiteralString, LiteralString]] = {
+    "NON_FINITE_NUMBER": ("non_finite_number", "The number is not finite"),
+    "INTEGER_OUT_OF_RANGE": ("integer_out_of_range", "Numbers beyond ±(2^53 - 1) are refused"),
+    "INVALID_VALUE": ("invalid_text", "Strings and keys must be Unicode text"),
+    "WRONG_TYPE": ("json_type", "Not a JSON value"),
+    "LIMIT_EXCEEDED": ("recursion_loop", "Arrays and objects are nested too deep"),
+}
+
+
 def _without_null(value: JsonValue) -> JsonValue:
+    """The value as JSON text carries it back; ``null`` is refused anywhere inside it."""
     pending: list[JsonValue] = [value]
     while pending:
         current = pending.pop()
@@ -209,13 +232,17 @@ def _without_null(value: JsonValue) -> JsonValue:
             pending.extend(current.values())
         elif isinstance(current, list):
             pending.extend(current)
-    return value
+    try:
+        return json_value(value)
+    except JsonError as error:
+        raise PydanticCustomError(*_JSON_PROBLEMS[error.code]) from None
 
 
 DocumentJson = Annotated[
     JsonValue, AfterValidator(_without_null), WithJsonSchema({DOCUMENT_JSON_MARK: True})
 ]
-"""Any JSON value but ``null``. The schema export replaces the mark with a definition."""
+"""Any JSON value but ``null``, as JSON text carries it: finite numbers within ±(2^53 - 1) and
+Unicode text. The schema export replaces the mark with a definition."""
 Count = Annotated[StrictInt, Field(ge=1, le=MAX_SAFE_INTEGER)]
 
 
@@ -236,7 +263,9 @@ PackSpecifier = Annotated[
     AfterValidator(_pack_specifier),
 ]
 
-_DRAFTED_BY = rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f]{{1,{MAX_NAME}}})$"
+_DRAFTED_BY = (
+    rf"^(?:model:{IDENT}|(?:agent|operator):[^\x00-\x1f\x7f\u2028\u2029]{{1,{MAX_NAME}}})$"
+)
 _DRAFTED_BY_RE = re.compile(_DRAFTED_BY)
 
 
@@ -255,7 +284,7 @@ def _drafted_by(value: str) -> str:
         raise PydanticCustomError(
             "drafted_by",
             'Expected "model:<id>", "agent:<name>" or "operator:<name>", the name without '
-            "control characters",
+            "control characters or line breaks",
         )
     return value
 
@@ -263,7 +292,14 @@ def _drafted_by(value: str) -> str:
 DraftedBy = Annotated[
     str,
     AfterValidator(_drafted_by),
-    WithJsonSchema({"type": "string", "pattern": _DRAFTED_BY, **DATA_MARK}),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "pattern": _DRAFTED_BY,
+            "not": {"pattern": "^model:[a-z0-9_]*__"},
+            **DATA_MARK,
+        }
+    ),
 ]
 
 
@@ -275,7 +311,16 @@ def _pack_id(value: str) -> str:
     return value
 
 
-PackKey = Annotated[PackId, AfterValidator(_pack_id)]
+PackKey = Annotated[
+    PackId,
+    AfterValidator(_pack_id),
+    Field(
+        json_schema_extra={
+            "not": {"anyOf": [{"pattern": "__"}, {"enum": [*sorted(RESERVED_PACK_IDS)]}]}
+        }
+    ),
+]
+"""A pack id, which is never a reserved id (§5.1)."""
 
 
 # --- Paths and quantifiers (SPEC §6.1, §7.2) ---------------------------------------------------
@@ -497,6 +542,7 @@ def _ids_dataset(value: object) -> object:
 
 
 def _ids_text(value: str) -> str:
+    """The dataset part holds no ``__``, like any identifier."""
     no_double_underscore(value.partition(":")[0])
     return value
 
@@ -746,15 +792,6 @@ class View(DocModel):
     note: Notes | None = None
 
 
-_PACK_NAMES: dict[str, JsonValue] = {
-    "propertyNames": {
-        "maxLength": MAX_IDENTIFIER,
-        "not": {"anyOf": [{"pattern": "__"}, {"enum": [*sorted(RESERVED_PACK_IDS)]}]},
-    }
-}
-"""Replaces the key schema Pydantic generates for ``packs``, so it restates that schema."""
-
-
 class Document(DocModel):
     """An analysis document after ``params`` substitution (SPEC §7.1)."""
 
@@ -762,7 +799,7 @@ class Document(DocModel):
     packs: (
         Annotated[
             dict[PackKey, PackSpecifier],
-            Field(max_length=MAX_PACKS, json_schema_extra=_PACK_NAMES),
+            Field(max_length=MAX_PACKS),
             LimitName(PACKS),
         ]
         | None

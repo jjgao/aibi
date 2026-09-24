@@ -9,10 +9,14 @@ substituted, and substituted values are not scanned again.
 Substitution can multiply a document: a large value used in many places. The substituted
 document may be no larger than a document as written, in bytes and in JSON values, nor nest
 deeper; a reference that would cross a limit is refused.
+
+Positions are tuples of JSON Pointer tokens, which share the document's strings; pointers are
+written only for the refusals returned, so that long keys above many references cost little.
 """
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pydantic import JsonValue
@@ -29,6 +33,9 @@ from aibi.core.schema.limits import (
 )
 from aibi.core.schema.output import data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
+
+Position = tuple[str | int, ...]
+"""The JSON Pointer tokens of a position in the document."""
 
 _REFERENCE = re.compile(rf"\$({NAME})")
 
@@ -68,6 +75,16 @@ def _shape(value: JsonValue) -> tuple[int, int]:
     return count, depth
 
 
+@dataclass(frozen=True)
+class Problem:
+    """A refusal found at ``position``, built only if it is among those returned."""
+
+    position: Position
+    code: RefusalCode
+    build: Callable[[str | None], Refusal]
+    """Builds the refusal, given the pointer it is reported at."""
+
+
 @dataclass
 class Substitution:
     """The substituted document, the parameters used and the positions they filled."""
@@ -75,11 +92,58 @@ class Substitution:
     document: JsonValue
     used: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     unused: list[str] = field(default_factory=list[str])
-    positions: dict[str, str] = field(default_factory=dict[str, str])
-    """JSON Pointer of each substituted position -> parameter name."""
-    failed: list[str] = field(default_factory=list[str])
-    """JSON Pointers of the references that were refused and left in place."""
-    refusals: list[Refusal] = field(default_factory=list[Refusal])
+    positions: dict[Position, str] = field(default_factory=dict[Position, str])
+    """Each substituted position -> the parameter's name."""
+    failed: list[Position] = field(default_factory=list[Position])
+    """The references that were refused and left in place."""
+    problems: list[Problem] = field(default_factory=list[Problem])
+
+    @property
+    def refusals(self) -> list[Refusal]:
+        """Every refusal, with its pointer. The loader builds only those it returns."""
+        return [found.build(pointer(found.position)) for found in self.problems]
+
+
+def _unknown(name: str, declared: list[str]) -> Callable[[str | None], Refusal]:
+    return lambda at: Refusal(
+        code=RefusalCode.UNKNOWN_PARAMETER,
+        path=at,
+        message=[text("Unknown parameter "), data(name)],
+        alternatives=[data(known) for known in declared],
+    )
+
+
+def _not_a_reference(value: str) -> Callable[[str | None], Refusal]:
+    return lambda at: Refusal(
+        code=RefusalCode.INVALID_PARAMETER_REFERENCE,
+        path=at,
+        message=[
+            text("Not a parameter reference: "),
+            data(value),
+            text('. Write "$name" for a parameter or "$$…" for a literal $'),
+        ],
+    )
+
+
+def _too_large(name: str, limit: Limit) -> Callable[[str | None], Refusal]:
+    return lambda at: Refusal(
+        code=RefusalCode.LIMIT_EXCEEDED,
+        path=at,
+        message=[
+            text("Substituting parameter "),
+            data(name),
+            text(" here makes the document larger or deeper than a document may be"),
+        ],
+        limit=limit,
+    )
+
+
+def _not_an_object(at: str | None) -> Refusal:
+    return Refusal(
+        code=RefusalCode.WRONG_TYPE,
+        path=at,
+        message=[text("params must be an object mapping names to values")],
+    )
 
 
 def substitute(document: dict[str, JsonValue], size: int | None = None) -> Substitution:
@@ -90,57 +154,34 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
     if not usable:
         # Every reference fails with it; they are marked, but only params itself is refused (a
         # null params by the loader, which refuses every null).
-        result.failed.append("/params")
+        result.failed.append(("params",))
         if params_value is not None:
-            result.refusals.append(
-                Refusal(
-                    code=RefusalCode.WRONG_TYPE,
-                    path="/params",
-                    message=[text("params must be an object mapping names to values")],
-                )
-            )
+            result.problems.append(Problem(("params",), RefusalCode.WRONG_TYPE, _not_an_object))
     params: dict[str, JsonValue] = params_value if isinstance(params_value, dict) else {}
+    declared = sorted(params)
     sizes: dict[str, tuple[int, int, int]] = {}
-    pointer_value: dict[str, JsonValue] = {}
     total = _size(document) if size is None else size
     values = _shape(document)[0]
 
-    def refuse(refusal: Refusal) -> JsonValue:
+    def refuse(where: Position, code: RefusalCode, build: Callable[[str | None], Refusal]) -> None:
         """Record a refusal; the reference stays in place, and nothing under it is reported."""
-        assert refusal.path is not None
-        result.failed.append(refusal.path)
-        result.refusals.append(refusal)
-        return pointer_value[refusal.path]
+        result.failed.append(where)
+        result.problems.append(Problem(where, code, build))
 
-    def reference(value: str, where: str, level: int) -> JsonValue:
+    def reference(value: str, path: list[str | int]) -> JsonValue:
         nonlocal total, values
-        pointer_value[where] = value
+        where = tuple(path)
         if not usable:
             result.failed.append(where)
             return value
         match = _REFERENCE.fullmatch(value)
         if match is None:
-            return refuse(
-                Refusal(
-                    code=RefusalCode.INVALID_PARAMETER_REFERENCE,
-                    path=where,
-                    message=[
-                        text("Not a parameter reference: "),
-                        data(value),
-                        text('. Write "$name" for a parameter or "$$…" for a literal $'),
-                    ],
-                )
-            )
+            refuse(where, RefusalCode.INVALID_PARAMETER_REFERENCE, _not_a_reference(value))
+            return value
         name = match.group(1)
         if name not in params:
-            return refuse(
-                Refusal(
-                    code=RefusalCode.UNKNOWN_PARAMETER,
-                    path=where,
-                    message=[text("Unknown parameter "), data(name)],
-                    alternatives=[data(declared) for declared in sorted(params)],
-                )
-            )
+            refuse(where, RefusalCode.UNKNOWN_PARAMETER, _unknown(name, declared))
+            return value
         if name not in sizes:
             sizes[name] = (_size(params[name]), *_shape(params[name]))
         value_bytes, value_count, value_depth = sizes[name]
@@ -151,37 +192,38 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
             limit = Limit(name=SUBSTITUTED_BYTES, max=MAX_DOCUMENT_BYTES)
         elif more > MAX_VALUES:
             limit = Limit(name=JSON_VALUES, max=MAX_VALUES)
-        elif level + value_depth > MAX_DEPTH:
+        elif len(path) + value_depth > MAX_DEPTH:
             limit = Limit(name=NESTING_DEPTH, max=MAX_DEPTH)
         if limit is not None:
-            return refuse(
-                Refusal(
-                    code=RefusalCode.LIMIT_EXCEEDED,
-                    path=where,
-                    message=[
-                        text("Substituting parameter "),
-                        data(name),
-                        text(" here makes the document larger or deeper than a document may be"),
-                    ],
-                    limit=limit,
-                )
-            )
+            refuse(where, RefusalCode.LIMIT_EXCEEDED, _too_large(name, limit))
+            return value
         total, values = grown, more
         result.used[name] = params[name]
         result.positions[where] = name
         return params[name]
 
     def walk(value: JsonValue, path: list[str | int]) -> JsonValue:
+        """``path`` is shared and restored on return: tokens are copied only at references."""
         if _is_text_member(path):
             return value
         if isinstance(value, dict):
-            return {key: walk(member, [*path, key]) for key, member in value.items()}
+            members: dict[str, JsonValue] = {}
+            for key, member in value.items():
+                path.append(key)
+                members[key] = walk(member, path)
+                path.pop()
+            return members
         if isinstance(value, list):
-            return [walk(item, [*path, index]) for index, item in enumerate(value)]
+            items: list[JsonValue] = []
+            for index, item in enumerate(value):
+                path.append(index)
+                items.append(walk(item, path))
+                path.pop()
+            return items
         if isinstance(value, str) and value.startswith("$"):
             if value.startswith("$$"):
                 return value[1:]
-            return reference(value, pointer(path), len(path))
+            return reference(value, path)
         return value
 
     substituted: dict[str, JsonValue] = {}
@@ -190,3 +232,6 @@ def substitute(document: dict[str, JsonValue], size: int | None = None) -> Subst
     result.document = substituted
     result.unused = sorted(set(params) - set(result.used))
     return result
+
+
+__all__ = ["Position", "Problem", "Substitution", "substitute"]

@@ -1,7 +1,9 @@
+import math
+
 import pytest
 
-from aibi.core.schema.jsonio import JsonError, parse_json, pointer
-from aibi.core.schema.limits import MAX_DEPTH, MAX_VALUES
+from aibi.core.schema.jsonio import JsonError, json_value, parse_json, pointer
+from aibi.core.schema.limits import MAX_DEPTH, MAX_POINTER, MAX_POINTERS, MAX_VALUES
 
 
 def test_parses_json() -> None:
@@ -83,3 +85,31 @@ def test_the_number_of_values_is_capped() -> None:
 def test_pointer_escapes() -> None:
     assert pointer([]) == ""
     assert pointer(["a/b", "c~d", 0]) == "/a~1b/c~0d/0"
+
+
+def test_paths_are_bounded() -> None:
+    long_key = '{"' + "k" * (MAX_POINTER + 1) + '": 1}'
+    with pytest.raises(JsonError) as raised:
+        parse_json(long_key)
+    assert (raised.value.code, raised.value.pointer) == ("LIMIT_EXCEEDED", "")
+    assert raised.value.limit == ("pointer_characters", MAX_POINTER)
+    wide = '{"a": {"' + "k" * 4000 + '": [' + ",".join(["0"] * 20_000) + "]}}"
+    with pytest.raises(JsonError) as raised:
+        parse_json(wide)
+    assert raised.value.limit == ("all_pointer_characters", MAX_POINTERS)
+    assert parse_json('{"' + "k" * 4000 + '": [0, 1]}') == {"k" * 4000: [0, 1]}
+
+
+def test_values_built_in_python_are_checked_as_json_reads_them() -> None:
+    assert json_value({"a": [2.0, 1.5, None, True]}) == {"a": [2, 1.5, None, True]}
+    for bad, code in [
+        (math.nan, "NON_FINITE_NUMBER"),
+        (2**60, "INTEGER_OUT_OF_RANGE"),
+        (1e16, "INTEGER_OUT_OF_RANGE"),
+        ("caf\udce9", "INVALID_VALUE"),
+        ({1: "x"}, "INVALID_VALUE"),
+        ({"a": (1, 2)}, "WRONG_TYPE"),
+    ]:
+        with pytest.raises(JsonError) as raised:
+            json_value({"a": [bad]} if not isinstance(bad, dict) else bad)
+        assert raised.value.code == code

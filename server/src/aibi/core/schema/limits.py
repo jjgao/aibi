@@ -38,6 +38,12 @@ MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
 
+MAX_POINTER = 16_384
+"""Characters in the JSON Pointer to any value."""
+MAX_POINTERS = 64 * 2**20
+"""Characters in the JSON Pointers to all of a document's values, together: long keys above
+many values would otherwise make validation errors, which each carry their path, large."""
+
 DOCUMENT_BYTES = "document_bytes"
 SUBSTITUTED_BYTES = "substituted_document_bytes"
 NESTING_DEPTH = "nesting_depth"
@@ -48,8 +54,8 @@ NOTE_CHARACTERS = "note_characters"
 NAME_CHARACTERS = "name_characters"
 IDENTIFIER_CHARACTERS = "identifier_characters"
 REFERENCE_CHARACTERS = "reference_characters"
-"""A compound id or reference, such as ``<table>.<column>``, is at most as long as its parts
-allow; each identifier in it is bounded by ``identifier_characters``."""
+"""A compound id or reference, such as ``<table>.<column>``, as a whole; each identifier in it is
+bounded by ``identifier_characters``."""
 PATH_STEPS = "path_steps"
 KEY_COLUMNS = "key_columns"
 SCOPE_COLUMNS = "scope_columns"
@@ -60,6 +66,8 @@ PACKS = "packs"
 VIEWS = "views"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
+POINTER_CHARACTERS = "pointer_characters"
+ALL_POINTER_CHARACTERS = "all_pointer_characters"
 
 
 @dataclass(frozen=True)
@@ -70,6 +78,7 @@ class LimitName:
 
 
 __all__ = [
+    "ALL_POINTER_CHARACTERS",
     "CLAUSES",
     "COHORTS",
     "CONSTANT_CHARACTERS",
@@ -91,6 +100,8 @@ __all__ = [
     "MAX_PACKS",
     "MAX_PARAMS",
     "MAX_PATH_STEPS",
+    "MAX_POINTER",
+    "MAX_POINTERS",
     "MAX_REFUSALS",
     "MAX_STRING",
     "MAX_TEXT",
@@ -102,6 +113,7 @@ __all__ = [
     "PACKS",
     "PARAMETERS",
     "PATH_STEPS",
+    "POINTER_CHARACTERS",
     "REFERENCE_CHARACTERS",
     "REFUSALS",
     "SCOPE_COLUMNS",

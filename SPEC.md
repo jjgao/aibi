@@ -782,7 +782,9 @@ for copy number*), subject to §8.4.
   and non-finite numbers are refused. A number is a value, not a spelling: `2.0` is the integer
   2, as RFC 8785 writes it. Every double beyond ±(2^53 − 1) is an integer, so any number beyond
   that range is refused, however it is written; such integers are written as decimal strings
-  (§5.1). Arrays and objects nest at most 64 deep. Size limits are in §14.
+  (§5.1). Arrays and objects nest at most 64 deep, and the JSON Pointer to any value has at most
+  16,384 characters. A document built in code holds only what its JSON text would. Size limits
+  are in §14.
 - **Caps**, applied to the canonical form (§7.6): depth 8, counted as the number of clause
   objects on the longest chain from a member of a cohort's top-level `all` to a leaf, both
   included, through combinators and `where`; 64 leaves per cohort, counting the leaves inside
@@ -1219,10 +1221,10 @@ carries cohort counts with their ids where a refusal reports numbers (e.g. the o
 `validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
 refusals with the same `path` and `code` are merged; nothing is reported inside a value already
 refused (a `null`, or a refused parameter reference) or in a clause whose `kind` was refused, and
-nothing that follows only from a `null` (an object lacking the member, or a cohort's datasets
-being unknown); and after the first 1,000, one `LIMIT_EXCEEDED` refusal with `path` `null` says
-how many more were found. The other tools fail with the first refusal (HTTP 422, or an MCP tool
-error).
+nothing that follows only from a `null` (an object lacking that member, or a cohort's datasets or
+`unmapped`, or a view's cohorts, being unknown); and after the first 1,000, one `LIMIT_EXCEEDED`
+refusal with `path` `null` says how many more were found. The other tools fail with the first
+refusal (HTTP 422, or an MCP tool error).
 
 ---
 
@@ -1831,10 +1833,13 @@ flags and counts.
 - **Resource limits.** Request bodies, strings, lists (at most 10,000 members in a `values` or
   `ids` list), notes and parameters have size limits. The defaults for a document are 2 MiB and
   200,000 JSON values, as written and after substitution; nesting 64 deep; 4,096 characters per
-  constant, 10,000 per note and 64 per identifier or name; 16 steps per path; 16 columns per unit
-  key or scope; 256 clauses per list; 256 parameters; 64 datasets per cohort; 16 packs; and
-  1,000 refusals returned. A structured unit key costs several JSON values, so long `ids` lists
-  can reach the value limit before the list limit. Imports have size and decompression-ratio
+  constant, 10,000 per note and 64 per identifier or name (also inside a compound reference,
+  which has at most 256 characters, or 1,108 for a relationship or coverage id with 16 key
+  columns); 16,384 characters per JSON Pointer to a value, and 64 Mi for the pointers to all of a
+  document's values together; 16 steps per path; 16 columns per unit key or scope; 256 clauses
+  per list; 256 parameters; 64 datasets per cohort; 16 packs; and 1,000 refusals returned. A
+  structured unit key costs several JSON values, so long `ids` lists can reach the value limit
+  before the list limit. Imports have size and decompression-ratio
   limits. Every tool call has a wall-clock limit that covers the analysis stage, enforced by
   running queries and analyses in worker processes that can be killed; each worker has a DuckDB
   memory limit. Categorical levels per analysis (at most 150) and resampling replicates are
@@ -2072,7 +2077,7 @@ that revise or refine earlier ones say so.
 | D187 | Consistency rules from the fourth review (refines D149, D169, D171) | An `exists` path that ends with an up step needs conditions; the canonical `lift` is written on every intermediate question; erasure covers the person's keys and identifier values; only an importer's inference flags naive datetimes; manifests record their dataset | Each closed a gap in rules added in v0.7 |
 | D188 | Numbers are values (M0) | An integral number is an integer however it is written (`2.0` is 2), and one beyond ±(2^53 − 1) is refused | RFC 8785 writes them alike, so accepting both spellings with different meanings would give one canonical form two meanings |
 | D189 | Text and parameter values are verbatim (M0) | `notes`, `note` and `drafted_by` are never substituted, and parameter values are neither substituted nor unescaped | Notes are never interpreted (A6); scanning values that were substituted would make substitution recursive |
-| D190 | Bounded validation (M0) | Documents are capped in nesting depth and JSON values, as written and after substitution; refusals are merged by (path, code), not reported inside refused values or where they only follow from one, and capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
+| D190 | Bounded validation (M0) | Documents are capped in nesting depth, JSON values and the length of the paths to them, as written and after substitution; refusals are merged by (path, code), not reported inside refused values or where they only follow from one, and capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
 | D191 | Ids across re-imports by occurrence (refines D186) | The *k*-th occurrence of a name keeps its *k*-th previous id; ids have at most 64 characters | Spreadsheets repeat and omit headers, and one id per name moved ids between columns |
 | D192 | Cross-dataset rules checked on load (M0) | The unit, concept references and `via` by dataset are checked without a release | They depend only on the document, so waiting for resolution would only delay the refusal |
 
