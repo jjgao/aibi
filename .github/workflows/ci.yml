@@ -1,0 +1,53 @@
+name: CI
+
+# A stacked PR is not checked again when GitHub retargets it after its parent merges: an
+# `edited` trigger would also fire on every title or description edit, and that run would cancel
+# or shadow the real one. Rebase the child onto its new base and push instead; the push re-runs CI.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to a PR cancels its superseded run. Every push to main gets a group of its own, so
+  # no commit on main goes unchecked.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run pyright
+      - name: Import boundary
+        run: uv run lint-imports
+      - name: Core tests, which must load no pack (SPEC P8)
+        run: uv run pytest tests/core
+      - name: Other tests
+        # pytest exits with 5 when it collects no tests, as before the first pack has any.
+        run: uv run pytest --ignore=tests/core || test $? -eq 5
