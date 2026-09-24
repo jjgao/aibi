@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from pydantic import JsonValue
 
-from aibi.core.schema.ids import NAME
+from aibi.core.schema.ids import NAME, NAME_RE
 from aibi.core.schema.jsonio import escaped_length, pointer
 from aibi.core.schema.limits import (
     ALL_POINTER_CHARACTERS,
@@ -261,7 +261,8 @@ class _Walker:
         self.params = params
         self.usable = usable
         self.result = result
-        self.declared = sorted(params)
+        self.declared = sorted(name for name in params if NAME_RE.fullmatch(name))
+        """The names a reference can take (A3), sorted for ``nearest``."""
         self.shapes: dict[str, tuple[int, _Shape]] = {}
         self.total = total
         """Bytes, as written so far and with each reference substituted."""

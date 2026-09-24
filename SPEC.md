@@ -1223,13 +1223,15 @@ be written in a pointer because it is not Unicode text, the pointer is that of i
 `alternatives` lists what *is* available (A3); `limit` names the limit hit (§14); `counts`
 carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
 `validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
-refusals with the same `path` and `code` are merged; nothing is reported inside a value already
-refused (a `null`, a refused parameter reference, `params` refused as a whole, or an array or
-object with more members than it may have) or in a clause whose `kind` was refused, and nothing
-that follows only from a `null` (an object lacking that member, or a cohort's datasets or
-`unmapped`, or a view's cohorts, being unknown), but a malformed reference is refused wherever
-references are substituted, whatever `params` is; and after the first 1,000, one
-`LIMIT_EXCEEDED` refusal with `path` `null` says how many more were found. The other tools fail
+refusals with the same `path` and `code` are merged; a `null` and a refused parameter
+reference are reported wherever they are, except inside a `params` refused as a whole; no
+reference is looked up while `params` is refused or is not an object, but a malformed reference
+is refused wherever references are substituted, whatever `params` is; the other checks report
+nothing inside a value already refused (a `null`, a refused parameter reference, `params`
+refused as a whole, or an array or object with more members than it may have) or in a clause
+whose `kind` was refused, and nothing that follows only from a `null` (an object lacking that
+member, or a cohort's datasets or `unmapped`, or a view's cohorts, being unknown); and after the
+first 1,000, one `LIMIT_EXCEEDED` refusal with `path` `null` says how many more were found. The other tools fail
 with the first refusal (HTTP 422, or an MCP tool error).
 
 ---
@@ -2084,7 +2086,7 @@ that revise or refine earlier ones say so.
 | D187 | Consistency rules from the fourth review (refines D149, D169, D171) | An `exists` path that ends with an up step needs conditions; the canonical `lift` is written on every intermediate question; erasure covers the person's keys and identifier values; only an importer's inference flags naive datetimes; manifests record their dataset | Each closed a gap in rules added in v0.7 |
 | D188 | Numbers are values (M0) | An integral number is an integer however it is written (`2.0` is 2), and one beyond ±(2^53 − 1) is refused | RFC 8785 writes them alike, so accepting both spellings with different meanings would give one canonical form two meanings |
 | D189 | Text and parameter values are verbatim (M0) | `notes`, `note` and `drafted_by` are never substituted, and parameter values are neither substituted nor unescaped | Notes are never interpreted (A6); scanning values that were substituted would make substitution recursive |
-| D190 | Bounded validation (M0) | Documents are capped in nesting depth, JSON values and the length of the paths to them, one by one and together, as written and after substitution; refusals are merged by (path, code), not reported inside refused values or where they only follow from one, and capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
+| D190 | Bounded validation (M0) | Documents are capped in nesting depth, JSON values and the length of the paths to them, one by one and together, as written and after substitution; refusals are merged by (path, code); schema problems are not reported inside refused values or where they only follow from one, while nulls and refused references are reported where they are, except inside a refused `params`; and refusals are capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
 | D191 | Ids across re-imports by occurrence (refines D186) | The *k*-th occurrence of a name keeps its *k*-th previous id; ids have at most 64 characters | Spreadsheets repeat and omit headers, and one id per name moved ids between columns |
 | D192 | Cross-dataset rules checked on load (M0) | The unit, concept references and `via` by dataset are checked without a release | They depend only on the document, so waiting for resolution would only delay the refusal |
 

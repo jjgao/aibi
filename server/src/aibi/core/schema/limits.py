@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from pydantic import BeforeValidator
-from pydantic_core import PydanticKnownError
+from pydantic_core import PydanticCustomError
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 """Bytes in a document as written, and in the document after ``params`` substitution."""
@@ -90,8 +90,9 @@ def map_cap(maximum: int) -> BeforeValidator:
     def check(value: object) -> object:
         size = _entries(value)
         if size > maximum:
-            raise PydanticKnownError(
+            raise PydanticCustomError(
                 "too_long",
+                "{field_type} should have at most {max_length} items, not {actual_length}",
                 {"field_type": "Dictionary", "max_length": maximum, "actual_length": size},
             )
         return value

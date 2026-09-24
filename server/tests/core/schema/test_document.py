@@ -1702,3 +1702,121 @@ def test_a_load_leaves_no_reference_cycles(document: dict[str, Any]) -> None:
     finally:
         gc.enable()
     assert found == 0
+
+
+# --- Round 8: nulls and references inside maps over their cap, the segments of messages -------
+
+
+def _segments(segments: Any) -> list[dict[str, Any]]:
+    return [segment.model_dump() for segment in segments]
+
+
+def _entries_over_cap(where: str) -> tuple[dict[str, Any], str, str]:
+    """A map one valid entry over its cap, with a null entry and a reference to an unknown
+    parameter beside them; the map's pointer and the reference's."""
+    if where == "cohorts":
+        cohorts: dict[str, Any] = {f"c{index}": {"all": []} for index in range(MAX_COHORTS + 1)}
+        cohorts.update(n=None, u={"all": ["$zz"]})
+        return {**with_clause({"all": []}), "cohorts": cohorts}, "/cohorts", "/cohorts/u/all/0"
+    if where == "packs":
+        packs: dict[str, Any] = {f"p{index}": ">=1" for index in range(MAX_PACKS + 1)}
+        packs.update(n=None, u="$zz")
+        return {**with_clause({"all": []}), "packs": packs}, "/packs", "/packs/u"
+    if where == "scope":
+        scope: dict[str, Any] = {f"t.c{index}": ["a"] for index in range(MAX_COLUMNS + 1)}
+        scope.update({"t.n": None, "t.u": ["$zz"]})
+        at = "/cohorts/c/all/0/scope"
+        return with_clause({"kind": "covered", "table": "t2", "scope": scope}), at, f"{at}/t.u/0"
+    via: dict[str, Any] = {f"d{index}": [] for index in range(MAX_DATASETS + 1)}
+    via.update(n=None, u="$zz")
+    leaf = {"kind": "value", "column": "t.c", "values": [1], "via": via}
+    at = "/cohorts/c/all/0/via"
+    return with_clause(leaf), at, f"{at}/u"
+
+
+@pytest.mark.parametrize("where", ["cohorts", "packs", "scope", "via"])
+def test_nulls_and_references_inside_a_map_over_its_cap_are_reported(where: str) -> None:
+    """They are problems of their own, found before the schema is checked (§8.6)."""
+    document, at, reference = _entries_over_cap(where)
+    null = at + ("/t.n" if where == "scope" else "/n")
+    assert refusals({**document, "params": {"a": 1}}) == [
+        ("LIMIT_EXCEEDED", at),
+        ("NULL_NOT_ALLOWED", null),
+        ("UNKNOWN_PARAMETER", reference),
+    ]
+
+
+def test_a_map_over_its_cap_says_how_many_entries_it_has() -> None:
+    cohorts = {f"c{index}": {"all": []} for index in range(MAX_COHORTS + 1)}
+    [refusal] = load({**with_clause({"all": []}), "cohorts": cohorts}).refusals
+    message = f"Dictionary should have at most {MAX_COHORTS} items, not {MAX_COHORTS + 1}"
+    assert _segments(refusal.message) == [{"text": message}]
+
+
+@pytest.mark.parametrize(("where", "cap"), [("cohorts", MAX_COHORTS), ("packs", MAX_PACKS)])
+def test_a_null_entry_counts_toward_a_root_map_s_cap(where: str, cap: int) -> None:
+    """Root maps keep their null members, so the map is refused for its size as written."""
+    entries: dict[str, Any] = (
+        {f"c{index}": {"all": []} for index in range(cap)}
+        if where == "cohorts"
+        else {f"p{index}": ">=1" for index in range(cap)}
+    )
+    document = {**with_clause({"all": []}), where: {**entries, "n": None}}
+    assert refusals(document) == [
+        ("LIMIT_EXCEEDED", f"/{where}"),
+        ("NULL_NOT_ALLOWED", f"/{where}/n"),
+    ]
+
+
+def test_a_null_cohort_is_neither_a_bad_map_nor_an_unknown_cohort() -> None:
+    cohorts = {"c": {"all": []}, "n": None}
+    document = {**with_clause({"all": []}), "cohorts": cohorts}
+    assert refusals(document) == [("NULL_NOT_ALLOWED", "/cohorts/n")]
+    views = [{"analysis": "compare.x", "cohorts": ["n"]}]
+    assert refusals({**document, "views": views}) == [("NULL_NOT_ALLOWED", "/cohorts/n")]
+
+
+def test_params_over_the_cap_are_refused_in_code_before_their_entries() -> None:
+    params = {**_params(MAX_PARAMS), "bad": None}
+    with pytest.raises(ValidationError) as raised:
+        Document.model_validate({**with_clause({"all": []}), "params": params})
+    assert [(error["type"], error["loc"]) for error in raised.value.errors()] == [
+        ("too_long", ("params",))
+    ]
+
+
+def test_an_unknown_parameter_is_named_as_data_and_the_note_is_text() -> None:
+    """A6: the name comes from the document; the note is the server's."""
+    leaf = {"kind": "value", "column": "t.c", "values": ["$zz"]}
+    params = {f"p{index:02d}": index for index in range(NEAREST + 1)}
+    [refusal] = load({**with_clause(leaf), "params": params}).refusals
+    assert _segments(refusal.message) == [
+        {"text": "Unknown parameter "},
+        {"data": "zz"},
+        {"text": f"; {NEAREST + 1} are declared, and the {NEAREST} nearest are listed"},
+    ]
+    assert len(refusal.alternatives) == NEAREST
+
+
+def test_a_malformed_reference_is_quoted_as_data() -> None:
+    leaf = {"kind": "value", "column": "t.c", "values": ["$1bad"]}
+    [refusal] = load(with_clause(leaf)).refusals
+    assert _segments(refusal.message)[:2] == [
+        {"text": "Not a parameter reference: "},
+        {"data": "$1bad"},
+    ]
+
+
+def test_an_unknown_parameter_lists_only_names_a_reference_can_take() -> None:
+    """Names that are no parameter names are refused themselves, and never listed."""
+    params = {**{f"p{index}": index for index in range(10)}, **{f"p-{i}": i for i in range(20)}}
+    leaf = {"kind": "value", "column": "t.c", "values": ["$p"]}
+    result = load({**with_clause(leaf), "params": params})
+    [unknown] = [r for r in result.refusals if r.code == "UNKNOWN_PARAMETER"]
+    assert [segment["data"] for segment in _segments(unknown.alternatives)] == [
+        f"p{index}" for index in range(10)
+    ]
+    assert "declared" not in json.dumps(_segments(unknown.message))
+    assert {r.path for r in result.refusals if r.code == "INVALID_VALUE"} == {
+        f"/params/p-{index}" for index in range(20)
+    }
