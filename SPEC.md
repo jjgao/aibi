@@ -761,12 +761,15 @@ for copy number*), subject to §8.4.
   refused, naming the status. A document resolves each dataset to exactly one release; mixing
   releases of one dataset in one document is refused.
 - **Params.** A value that is exactly `"$name"` is replaced by that parameter, whatever its
-  type; `"$$…"` stands for a literal string starting with `$`; there is no interpolation inside
-  longer strings. Substitution happens before validation, so tools accept `"$name"` in any
+  type; `"$$…"` stands for a literal string starting with `$`; any other string that starts with
+  a single `$` is refused, so a mistyped reference is never taken literally; there is no
+  interpolation inside longer strings. Substitution happens before validation, so tools accept `"$name"` in any
   scalar position of the document as written, and the substituted document is validated against
   the document schema. An unknown name is a refusal naming its path; declared but unused
   parameters are reported; the parameters used are echoed in results, outside the digest.
-- **Parsing.** Duplicate keys in a JSON object are refused. Size limits are in §14.
+- **Parsing.** Duplicate keys in a JSON object, `null` anywhere in a document (an absent member
+  is omitted), non-finite numbers, and integers beyond ±(2^53 − 1) (written instead as decimal
+  strings, §5.1) are refused. Size limits are in §14.
 - **Caps**, applied to the canonical form (§7.6): depth 8, counted as the number of clause
   objects on the longest chain from a member of a cohort's top-level `all` to a leaf, both
   included, through combinators and `where`; 64 leaves per cohort, counting the leaves inside
@@ -786,6 +789,10 @@ for copy number*), subject to §8.4.
 | `covered` | `{kind: "covered", table, scope?: {<child scope column>: [values]}, lift?, via?}` | Coverage as a predicate (§6.5); `scope` keys MUST be scope columns of the relationship's coverage. The path MUST have at least one down step and end with one |
 | `ids` | `{kind: "ids", ids: ["<dataset>:<key>" \| {"dataset": "<id>", "key": [<values in key order>]}, …]}` | An explicit list of unit keys. Not allowed inside any `where`; refused on datasets with `allow_row_ids: false` (§8.4) |
 | `cohort` | `{kind: "cohort", cohort: "<name>"}` | Another cohort of the same document, with the same unit and dataset(s). Not allowed inside any `where`; cycles are refused. `{"all": [{"kind": "cohort", "cohort": "base"}, {"not": X}]}` is the correct *rest of the base* under three-valued logic, which is why references exist |
+
+A `values` list has at least one member, and a `range` at least one bound and at most one lower
+and one upper bound (`gt` or `gte`, `lt` or `lte`). Empty `all` and `any` lists are allowed:
+`{"all": []}` is TRUE and `{"any": []}` is FALSE for every row.
 
 **Quantifiers.** `quantifier` is `Q` or a list of `Q`, where `Q` is `"some"`, `"every"` or
 `{"some": k}`. A single `Q` applies to every down step of the leaf's own resolved path. A list has
@@ -1181,8 +1188,10 @@ them with a CSP-safe interpreter and a loader that makes no network requests (§
 ### 8.6 Refusals
 
 A refusal is `{code, path, message: [Segment, …], alternatives: [Segment, …], limit?: {name,
-max}, counts?: [cohort counts]}`. `code` is a stable enum (pack codes namespaced); `path` is a
-JSON Pointer into the document as written, or `null`; `alternatives` lists what *is* available
+max}, counts?: [cohort counts]}`. `code` is a stable enum of `UPPER_SNAKE_CASE` codes, defined
+with the schemas (pack codes are namespaced, `<pack id>.<CODE>`); `path` is a JSON Pointer into
+the document as written, or `null` (where a problem lies inside a value a parameter supplied, the
+pointer is that of the `"$name"` string, and the message names the parameter); `alternatives` lists what *is* available
 (A3); `limit` names the limit hit (§14); `counts` carries cohort counts with their ids where a
 refusal reports numbers (e.g. the overlap of §7.4). `validate_document` returns every refusal,
 sorted by (`path`, `code`). The other tools fail with the first refusal (HTTP 422, or an MCP tool
@@ -1635,6 +1644,7 @@ aibi/
       packs/onco/
   web/
   fixtures/          # small public datasets: at least one non-biomedical, one spreadsheet, one cBioPortal study
+  schemas/           # JSON Schemas generated from core/schema and checked in; a test fails when they are stale
 ```
 
 ---
@@ -1792,7 +1802,9 @@ flags and counts.
     releases, logs or results; provenance records host, database and schema only.
   - Storage paths are built only from hashes and validated identifiers (§5.1).
 - **Resource limits.** Request bodies, strings, lists (at most 10,000 members in a `values` or
-  `ids` list), notes and parameters have size limits. Imports have size and decompression-ratio
+  `ids` list), notes and parameters have size limits; the defaults are 2 MiB per document,
+  4,096 characters per constant, 10,000 characters per note, 16 steps per path, 256 clauses per
+  list and 256 parameters. Imports have size and decompression-ratio
   limits. Every tool call has a wall-clock limit that covers the analysis stage, enforced by
   running queries and analyses in worker processes that can be killed; each worker has a DuckDB
   memory limit. Categorical levels per analysis (at most 150) and resampling replicates are

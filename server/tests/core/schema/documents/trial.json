@@ -1,0 +1,69 @@
+{
+  "aibi": "1",
+  "packs": {
+    "onco": ">=1.2,<2"
+  },
+  "dataset": "gbm",
+  "unit": "patients",
+  "cohorts": {
+    "tp53": {
+      "all": [
+        {
+          "kind": "value",
+          "column": "mutations.gene",
+          "values": [
+            "TP53"
+          ],
+          "quantifier": [
+            "some",
+            "some"
+          ],
+          "lift": "assessed",
+          "via": [
+            {
+              "rel": "rel:samples.patient_id",
+              "dir": "down"
+            },
+            {
+              "rel": "rel:mutations.sample_id",
+              "dir": "down"
+            }
+          ]
+        },
+        {
+          "known": {
+            "kind": "covered",
+            "table": "mutations",
+            "scope": {
+              "gene": [
+                "TP53"
+              ]
+            }
+          }
+        },
+        {
+          "unknown": {
+            "kind": "onco.genomic",
+            "q": "EGFR: AMP"
+          }
+        },
+        {
+          "any": [
+            {
+              "kind": "ids",
+              "ids": [
+                "gbm:P1",
+                {
+                  "dataset": "gbm",
+                  "key": [
+                    "P2"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
