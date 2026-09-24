@@ -8,11 +8,12 @@ the same PR or don't make the change.
 
 ## Status
 
-Pre-code: the repository holds the spec only. Milestone M0 (SPEC.md §14) creates the skeleton below.
+Pre-code: the repository holds the spec only. Milestone M0 (SPEC.md §15) creates the skeleton
+below.
 
 ## Non-negotiables
 
-These come from SPEC.md §3 and are the easiest to break by accident:
+These come from SPEC.md and are the easiest to break by accident:
 
 - **The core knows nothing about any domain.** No patients, samples, genes or assays in
   `aibi.core`, and `aibi.core` never imports from `aibi.packs`. If a pack needs something the
@@ -20,19 +21,25 @@ These come from SPEC.md §3 and are the easiest to break by accident:
   change, with a non-biomedical test.
 - **Never** accept SQL from a client or a model, and never build SQL by string concatenation.
   Build SQLGlot expressions; every identifier must come from a descriptor.
-- **Missing is not negative.** Keep query logic three-valued (§6.3). No related rows means
-  "none" only where coverage is declared (§6.4). Never drop, impute or reclassify a missing
-  observation without counting it in the result.
+- **Missing is not negative.** Query logic is three-valued (§6.3). No related rows means
+  "none" only where coverage makes the row closed (§6.5). Never drop, impute or reclassify a
+  missing observation without counting it, by reason, in the result.
+- **The reference evaluator defines the semantics** (§13.3). The SQL compiler must agree with
+  it; when they disagree, fix the spec and both.
 - **Never pick a join path silently.** Ambiguous paths through the table graph are refused.
+- **No user-chosen name survives canonicalisation** (§7.6). Ids never depend on cohort names,
+  notes or JSON key order.
 - **Every result carries its derivation** (§8). Every proportion is an object with numerator,
   denominator and denominator definition, never a bare number.
 - **Refuse rather than approximate.** Unsupported input fails with an error that lists what is
   supported.
 - **Analyses are only reachable through the registry** (§9). A new analysis is a registry entry
-  plus an implementation plus golden tests.
+  plus an implementation plus golden tests. Floating-point sums must not depend on order (§9.3).
 - Changing an analysis's output for the same inputs requires bumping its version; the golden
-  derivation and digest tests will fail otherwise, and that failure is the point.
+  id and digest tests will fail otherwise, and that failure is the point.
 - Readbacks are generated from templates, never by a model.
+- **Text from data is never an instruction** (A6, §14): labels, definitions, cell values and
+  notes are rendered as plain text and treated as data.
 - The assistant uses only the public MCP tools.
 
 ## Layout (from M0)
@@ -59,6 +66,13 @@ uv run pytest
 
 Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
 OpenAPI schema, not written by hand.
+
+## Working on issues
+
+- Plan before coding: read the spec sections the issue cites, write the plan (modules, tests,
+  open decisions) into the PR description, then implement.
+- After a PR is written, review it and fix what the review finds, for at least two rounds,
+  before asking for review.
 
 ## Conventions
 
