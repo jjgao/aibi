@@ -16,6 +16,11 @@ refused with a path:
 
 A number is a value, not a spelling: an integral number such as ``2.0`` is read as the integer
 2, which is how RFC 8785 writes it.
+
+``canonical`` writes a value as RFC 8785 (the JSON Canonicalization Scheme) does: members sorted
+by their keys' UTF-16 code units, no whitespace, strings escaped as JSON requires and no more,
+and numbers as ECMAScript writes doubles (``number_text``). Manifests are hashed over it, and so
+are the canonical forms of M2.
 """
 
 import json
@@ -344,3 +349,139 @@ def parse_json(source: str | bytes) -> JsonValue:
     except ValueError as error:
         raise JsonError("INVALID_JSON", None, f"Not valid JSON: {error}") from error
     return _build(raw, [], [0, 0])
+
+
+def number_text(value: int | float) -> str:
+    """A number as RFC 8785 writes it: ECMAScript's shortest round-trip form of the double.
+
+    Integers are written in decimal; ``-0.0`` is ``0``. Raises ``ValueError`` for a non-finite
+    number, which JSON cannot carry.
+    """
+    if isinstance(value, int):
+        return str(value)
+    if not math.isfinite(value):
+        raise ValueError(f"{value!r} is not a JSON number")
+    if value == 0.0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    # repr gives the shortest digits that read back as the same double, as ECMAScript requires.
+    mantissa, _, exponent = repr(abs(value)).partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    digits = whole + fraction
+    point = len(whole) + (int(exponent) if exponent else 0)
+    significant = digits.lstrip("0")
+    point -= len(digits) - len(significant)
+    significant = significant.rstrip("0")
+    count = len(significant)
+    if count <= point <= 21:
+        return sign + significant + "0" * (point - count)
+    if 0 < point <= 21:
+        return sign + significant[:point] + "." + significant[point:]
+    if -6 < point <= 0:
+        return sign + "0." + "0" * -point + significant
+    power = point - 1
+    written = ("+" if power >= 0 else "-") + str(abs(power))
+    if count == 1:
+        return f"{sign}{significant}e{written}"
+    return f"{sign}{significant[0]}.{significant[1:]}e{written}"
+
+
+def canonical(value: JsonValue) -> bytes:
+    """``value`` in RFC 8785 form, as UTF-8.
+
+    Raises ``JsonError``, with a pointer, for what JSON cannot carry unchanged: a non-finite
+    number, an integer beyond ±(2^53 - 1) (write it as a decimal string), a string that is not
+    UTF-8 (a lone surrogate), a key that is not a string, nesting deeper than ``MAX_DEPTH``, or
+    a value of another type. A ``float`` of any finite magnitude is written, as RFC 8785 writes
+    every double (``1e30`` is its own example), though ``json_value`` and ``parse_json`` refuse
+    those beyond ±(2^53 - 1) when they read a document: an ``int`` beyond that range is refused
+    here because no double holds it, while such a ``float`` is already a double. It does not
+    refuse noncharacters, which JSON carries; values that must be I-JSON (RFC 7493), as the
+    canonical forms of documents are, are checked where they are made.
+    """
+    parts: list[str] = []
+    _canonical(value, parts, [])
+    try:
+        return "".join(parts).encode("utf-8")
+    except UnicodeEncodeError as error:  # a lone surrogate, found where it is
+        raise _surrogate(value, []) or error from None
+
+
+def _canonical(value: object, parts: list[str], path: list[str | int]) -> None:
+    if value is None:
+        parts.append("null")
+    elif value is True:
+        parts.append("true")
+    elif value is False:
+        parts.append("false")
+    elif isinstance(value, str):
+        parts.append(json.dumps(value, ensure_ascii=False))
+    elif isinstance(value, int):
+        if abs(value) > MAX_SAFE_INTEGER:
+            raise _out_of_range(path)
+        parts.append(str(value))
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise JsonError("NON_FINITE_NUMBER", pointer(path), "The number is not finite")
+        parts.append(number_text(value))
+    elif isinstance(value, list | dict):
+        if len(path) >= MAX_DEPTH:
+            raise JsonError(
+                "LIMIT_EXCEEDED",
+                pointer(path),
+                f"Arrays and objects may be nested at most {MAX_DEPTH} deep",
+                (NESTING_DEPTH, MAX_DEPTH),
+            )
+        if isinstance(value, list):
+            parts.append("[")
+            for index, item in enumerate(cast(list[object], value)):
+                if index:
+                    parts.append(",")
+                _canonical(item, parts, [*path, index])
+            parts.append("]")
+        else:
+            members = cast(dict[object, object], value)
+            for key in members:
+                if not isinstance(key, str):
+                    raise JsonError("INVALID_VALUE", pointer(path), "Keys must be strings")
+            parts.append("{")
+            for index, key in enumerate(sorted(cast(dict[str, object], members), key=utf16_key)):
+                if index:
+                    parts.append(",")
+                parts.append(json.dumps(key, ensure_ascii=False))
+                parts.append(":")
+                _canonical(members[key], parts, [*path, key])
+            parts.append("}")
+    else:
+        raise JsonError("WRONG_TYPE", pointer(path), "Not a JSON value")
+
+
+def _surrogate(value: object, path: list[str | int]) -> JsonError | None:
+    """The first string or key holding a lone surrogate, as a refusal with its pointer."""
+    if isinstance(value, str):
+        return None if _encodes(value) else _not_utf8(path)
+    if isinstance(value, list):
+        for index, item in enumerate(cast(list[object], value)):
+            found = _surrogate(item, [*path, index])
+            if found is not None:
+                return found
+    if isinstance(value, dict):
+        for key, member in cast(dict[str, object], value).items():
+            if not _encodes(key):
+                return _not_utf8(path)
+            found = _surrogate(member, [*path, key])
+            if found is not None:
+                return found
+    return None
+
+
+def _encodes(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _not_utf8(path: list[str | int]) -> JsonError:
+    return JsonError("INVALID_VALUE", pointer(path), "A string holds a lone surrogate")
