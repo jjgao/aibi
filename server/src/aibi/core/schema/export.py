@@ -6,7 +6,9 @@ contain ``null``, so the ``null`` alternatives Pydantic adds for optional member
 Objects whose keys follow a pattern are closed to other keys, as the models are.
 
 The loader is the authority: the schemas describe what it accepts as closely as JSON Schema can,
-and a test checks that they agree on a set of documents.
+and a test checks that they agree on a set of documents. The descriptor schema does not say which
+clauses a coverage's ``parent_scope`` may hold (no pack, ids or cohort leaves, and no ``via`` by
+dataset); the loader refuses the others.
 """
 
 import json
@@ -14,8 +16,9 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
+from aibi.core.schema.descriptors import DESCRIPTOR_JSON_MARK, DescModel, Descriptor
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
 from aibi.core.schema.ids import MAX_SAFE_INTEGER, NAME
 
@@ -27,12 +30,15 @@ PARAMETER_REFERENCE: dict[str, JsonValue] = {
 }
 
 
-def _json_value(name: str) -> dict[str, JsonValue]:
-    """A definition of any JSON value but null, named ``name`` for its recursion."""
+def _json_value(name: str, *, null: bool = False) -> dict[str, JsonValue]:
+    """A definition of any JSON value, ``null`` only if asked, named ``name`` for its recursion.
+
+    Numbers are bounded as the models bound them (SPEC §7.1).
+    """
     return {
-        "description": "Any JSON value but null",
+        "description": "Any JSON value" if null else "Any JSON value but null",
         "anyOf": [
-            {"type": ["string", "boolean"]},
+            {"type": ["string", "boolean", "null"] if null else ["string", "boolean"]},
             {"type": "number", "minimum": -MAX_SAFE_INTEGER, "maximum": MAX_SAFE_INTEGER},
             {"type": "array", "items": {"$ref": f"#/$defs/{name}"}},
             {"type": "object", "additionalProperties": {"$ref": f"#/$defs/{name}"}},
@@ -41,6 +47,7 @@ def _json_value(name: str) -> dict[str, JsonValue]:
 
 
 DOCUMENT_JSON = _json_value("DocumentJson")
+DESCRIPTOR_JSON = _json_value("DescriptorJson", null=True)
 TEXT_MEMBERS = frozenset({"notes", "note", "drafted_by"})
 """Plain-text members, never substituted (SPEC §7.1)."""
 
@@ -75,6 +82,9 @@ def _closed(node: JsonValue) -> JsonValue:
         return node
     if node == {DOCUMENT_JSON_MARK: True}:
         return {"$ref": "#/$defs/DocumentJson"}
+    if node.get(DESCRIPTOR_JSON_MARK) is True:
+        rest = {key: _closed(value) for key, value in node.items() if key != DESCRIPTOR_JSON_MARK}
+        return {"$ref": "#/$defs/DescriptorJson", **rest}
     result: JsonObject = {key: _closed(value) for key, value in node.items()}
     if "patternProperties" in result and "additionalProperties" not in result:
         result["additionalProperties"] = False
@@ -158,9 +168,51 @@ def document_as_written_schema() -> JsonObject:
     return transformed
 
 
+def _descriptor_models() -> dict[str, type[DescModel]]:
+    models: dict[str, type[DescModel]] = {}
+    pending: list[type[DescModel]] = [DescModel]
+    while pending:
+        model = pending.pop()
+        models[model.__name__] = model
+        pending.extend(model.__subclasses__())
+    return models
+
+
+def _declared_nulls(schema: JsonObject) -> JsonObject:
+    """Keep ``null`` only for the members of models that declare it (SPEC §5.1, §7.1).
+
+    Absent and ``null`` differ for those members, so none of them has a default.
+    """
+    models = _descriptor_models()
+    for name, definition in cast(JsonObject, schema.get("$defs", {})).items():
+        properties = definition.get("properties") if isinstance(definition, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        # Other models are those of documents (a coverage's parent_scope), which never hold null.
+        nullable = models[name].nullable() if name in models else frozenset[str]()
+        for member, value in list(properties.items()):
+            if member not in nullable:
+                properties[member] = _without_null(value)
+            elif isinstance(value, dict) and value.get("default", 0) is None:
+                del value["default"]
+    return schema
+
+
+def descriptor_schema() -> JsonObject:
+    """Any descriptor, chosen by ``kind`` (SPEC §5). ``null`` appears only where it is declared."""
+    generated = cast(JsonObject, TypeAdapter(Descriptor).json_schema())
+    schema = cast(JsonObject, _closed(cast(JsonValue, _declared_nulls(generated))))
+    defs = cast(JsonObject, schema.setdefault("$defs", {}))
+    defs["DescriptorJson"] = DESCRIPTOR_JSON
+    if '"#/$defs/DocumentJson"' in json.dumps(schema):
+        defs["DocumentJson"] = DOCUMENT_JSON
+    return {"$schema": SCHEMA_DIALECT, "$id": "descriptor.schema.json", **schema}
+
+
 SCHEMAS = {
     "document.schema.json": document_schema,
     "document.as-written.schema.json": document_as_written_schema,
+    "descriptor.schema.json": descriptor_schema,
 }
 
 

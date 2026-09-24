@@ -1,4 +1,4 @@
-"""Loading a document as written: parse, substitute ``params``, validate, check (SPEC §7.1).
+"""Loading documents and descriptors: parse, substitute ``params``, validate, check (SPEC §7.1).
 
 Every problem becomes a refusal whose path points into the document as written (§8.6). Where a
 problem lies inside a value that a parameter supplied, the path points at the ``"$name"`` string
@@ -17,32 +17,44 @@ returned. Pydantic copies the keys above a problem into its location, so the pat
 capped (§14): at parse time, and again when parameters are substituted.
 """
 
+import gc
 import heapq
 import json
+import os
+import threading
 import types
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import combinations
 from typing import Annotated, Any, Literal, Union, cast, get_args, get_origin
 
-from pydantic import BaseModel, Discriminator, JsonValue, Tag, ValidationError
+from pydantic import BaseModel, Discriminator, JsonValue, Tag, TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from aibi.core.schema.checks import Unknown, check_document
+from aibi.core.schema.descriptors import (
+    PARENT_SCOPE_KINDS,
+    DescModel,
+    Descriptor,
+    parent_scope_kind,
+)
 from aibi.core.schema.document import (
     CORE_KINDS_TEXT,
     PARSED,
     PREDICATE_MEMBERS,
     Document,
+    clause_tag,
     predicate_holds,
 )
 from aibi.core.schema.jsonio import JsonError, escape_token, parse_json, pointer
 from aibi.core.schema.limits import (
     CONSTANT_CHARACTERS,
+    DESCRIPTOR_BYTES,
     DOCUMENT_BYTES,
     LIST_MEMBERS,
+    MAX_CLAUSES,
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
     MAX_REFUSALS,
@@ -176,22 +188,8 @@ def load_document(source: str | bytes) -> DocumentResult:
     for position in knock_ons.under:
         refused.add(position)
 
-    document: Document | None = None
-    try:
-        # Parsed values are JSON-safe already, so validation need not copy them.
-        document = Document.model_validate(substitution.document, context={PARSED: True})
-    except ValidationError as error:
-        for details in error.errors(include_url=False, include_input=False):
-            if details["type"] == "null_not_allowed" and nulls:
-                continue  # every null is already reported, at its own path
-            position = _tokens(details["loc"])
-            if _caused_by_nulls(details, position, knock_ons.lost, substitution.document):
-                continue  # the object lacks a member only because a null was left out
-            if not refused.covers(position):
-                found.append(
-                    _Found(position, _code(details["type"]), _error_refusal(details, position))
-                )
-    else:
+    document = _paused(_validated, substitution, nulls, knock_ons, refused, found)
+    if document is not None:
         for refusal in check_document(document, knock_ons.unknown):
             position = None if refusal.path is None else _position(refusal.path)
             if position is None or not refused.covers(position):
@@ -200,7 +198,7 @@ def load_document(source: str | bytes) -> DocumentResult:
     positions = _Positions()
     for position, name in substitution.positions.items():
         positions.add(position, name)
-    refusals = _finish(found, positions)
+    refusals = _paused(_finish, found, positions)
     return DocumentResult(
         document if not refusals else None,
         refusals,
@@ -209,6 +207,124 @@ def load_document(source: str | bytes) -> DocumentResult:
         substitution.unused,
         substitution.positions,
     )
+
+
+class _Pause:
+    """The loads that have paused the cyclic garbage collector, in every thread."""
+
+    def __init__(self) -> None:
+        self.generation = 0
+        self.reset()
+
+    def reset(self) -> None:
+        # Reentrant: a signal handler may load while its thread holds the lock.
+        self.lock = threading.RLock()
+        self.depth = 0
+        self.resume = False
+        """Whether the collector was enabled when the first of them paused it; ``False`` once
+        the last has ended, so that a pause cut short before it reads the collector enables
+        nothing."""
+        self.generation += 1
+        """Pauses begun before a fork end nothing in its child, which starts a generation."""
+
+
+_PAUSE = _Pause()
+
+
+def _after_fork_in_child() -> None:
+    """A forked child runs one thread. The loads other threads were running do not run in it;
+    one the forking thread was running (a signal handler's fork) returns into it, but it began in
+    the parent's generation, so its end is ignored. The child starts with no pause, a new lock,
+    and the collector as it was before the loads began."""
+    if _PAUSE.depth and _PAUSE.resume:
+        gc.enable()
+    _PAUSE.reset()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+def _paused[**P, T](function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+    """``function(*args, **kwargs)`` with the cyclic garbage collector paused, for work that
+    allocates without cycles.
+
+    Pydantic can report hundreds of thousands of errors, and each becomes a few small objects.
+    None of them is in a cycle, so reference counting frees them all, but the collector would scan
+    them again and again as they accumulate, which more than doubles the time.
+
+    The collector's state belongs to the process, so loads in several threads share one pause:
+    the first to start records whether the collector was enabled, and the last to finish enables
+    it again if it was, so a load never enables a collector that was disabled when the pause
+    began. What another thread does to the collector while loads run is not kept.
+
+    The pause begins inside the ``try`` whose ``finally`` ends it, in this frame, so that an
+    exception raised anywhere in between (a signal handler's) still ends it; a context manager
+    would leave a gap between entering and registering its exit. The pause is counted before the
+    collector is disabled for the same reason, and ending it waits for the lock again if the wait
+    is interrupted, then raises the interruption.
+    """
+    paused = False
+    generation = 0
+    try:
+        with _PAUSE.lock:
+            _PAUSE.depth += 1
+            paused = True
+            generation = _PAUSE.generation
+            if _PAUSE.depth == 1:
+                _PAUSE.resume = gc.isenabled()
+                gc.disable()
+        return function(*args, **kwargs)
+    finally:
+        if paused:
+            _end_pause(generation)
+
+
+def _end_pause(generation: int) -> None:
+    interrupted: BaseException | None = None
+    while True:
+        try:
+            _PAUSE.lock.acquire()
+            break
+        except BaseException as error:  # a signal handler's, while waiting: wait again
+            interrupted = error
+    try:
+        if generation == _PAUSE.generation:
+            _PAUSE.depth -= 1
+            if not _PAUSE.depth:
+                if _PAUSE.resume:
+                    gc.enable()
+                _PAUSE.resume = False
+    finally:
+        _PAUSE.lock.release()
+    if interrupted is not None:
+        raise interrupted
+
+
+def _validated(
+    substitution: Substitution,
+    nulls: list[Position],
+    knock_ons: "_KnockOns",
+    refused: _Positions,
+    found: list[_Found],
+) -> Document | None:
+    """The document, or ``None`` with its validation errors added to ``found``."""
+    try:
+        # Parsed values are JSON-safe already, so validation need not copy them.
+        return Document.model_validate(substitution.document, context={PARSED: True})
+    except ValidationError as error:
+        # No inputs: nulls are refused before validation, and no union of a document is chosen
+        # by a member's value.
+        for details in error.errors(include_url=False, include_input=False):
+            if details["type"] == "null_not_allowed" and nulls:
+                continue  # every null is already reported, at its own path
+            tokens = _tokens(details["loc"])
+            located, code = _classified(details, tokens)
+            if _caused_by_nulls(details, located, knock_ons.lost, substitution.document):
+                continue  # the object lacks a member only because a null was left out
+            if not refused.covers(located):
+                found.append(_Found(located, code, _error_refusal(details, tokens)))
+        return None
 
 
 def _null_refusal(at: str | None) -> Refusal:
@@ -578,9 +694,13 @@ def _finish(found: list[_Found], positions: _Positions) -> list[Refusal]:
 
 _CODES: dict[str, RefusalCode] = {
     "missing": RefusalCode.MISSING_MEMBER,
+    "required_member": RefusalCode.MISSING_MEMBER,
+    "curation_missing": RefusalCode.MISSING_MEMBER,
     "extra_forbidden": RefusalCode.UNKNOWN_MEMBER,
     "unknown_kind": RefusalCode.UNKNOWN_KIND,
+    "cross_dataset_only": RefusalCode.CROSS_DATASET_ONLY,
     "conflicting_members": RefusalCode.CONFLICTING_MEMBERS,
+    "duplicate_entry": RefusalCode.DUPLICATE_ENTRY,
     "integer_out_of_range": RefusalCode.INTEGER_OUT_OF_RANGE,
     "non_finite_number": RefusalCode.NON_FINITE_NUMBER,
     "null_not_allowed": RefusalCode.NULL_NOT_ALLOWED,
@@ -590,12 +710,51 @@ _CODES: dict[str, RefusalCode] = {
 }
 
 
+_NULL_MESSAGE = "null is not allowed here: give a value, or omit the member if it is optional"
+
+
+class _Absent:
+    """No input, or no member in it."""
+
+
+_ABSENT = _Absent()
+
+
 def _code(error_type: str) -> RefusalCode:
     if error_type in _CODES:
         return _CODES[error_type]
     if error_type.endswith("_type") or error_type in ("not_a_clause", "model_attributes_type"):
         return RefusalCode.WRONG_TYPE
     return RefusalCode.INVALID_VALUE
+
+
+def _tag_value(details: ErrorDetails, member: str) -> object:
+    given = details.get("input", _ABSENT)
+    if isinstance(given, dict):
+        return cast(dict[str, object], given).get(member, _ABSENT)
+    return _ABSENT
+
+
+def _classified(details: ErrorDetails, tokens: Position) -> tuple[Position, RefusalCode]:
+    """An error's path and code, found without building its refusal.
+
+    An error whose input is ``null`` is a null refused, unless the member is unknown. Every union
+    is chosen by a function, which returns one of its tags, a member that refuses the value when
+    no other fits, or ``None`` with the union's own ``custom_error_type``; so Pydantic's own tag
+    errors never arise.
+    """
+    error_type = details["type"]
+    if error_type == "unknown_kind":
+        # A clause's kind that is null or not a string is refused at the kind. Only descriptors'
+        # errors carry their input; a document's nulls are refused before validation.
+        kind = _tag_value(details, "kind")
+        if kind is None:
+            return (*tokens, "kind"), RefusalCode.NULL_NOT_ALLOWED
+        if not isinstance(kind, str | _Absent):
+            return (*tokens, "kind"), RefusalCode.WRONG_TYPE
+    if details.get("input", _ABSENT) is None and error_type not in ("missing", "extra_forbidden"):
+        return tokens, RefusalCode.NULL_NOT_ALLOWED
+    return tokens, _code(error_type)
 
 
 @dataclass(frozen=True)
@@ -628,19 +787,32 @@ def _unwrap(annotation: object) -> tuple[object, list[object]]:
             return annotation, metadata
 
 
+def _discriminated(metadata: list[object]) -> bool:
+    """Whether the metadata makes a union discriminated (always by a function, with tags)."""
+    return any(isinstance(extra, Discriminator) for extra in metadata)
+
+
+_TAGS: dict[int, tuple[object, dict[str, object]]] = {}
+"""Tags by union, computed once: the unions are those of the models, which live as long."""
+
+
 def _tags(union: object) -> dict[str, object]:
-    """The members of a tagged union, by tag."""
+    """The members of a discriminated union, by their ``Tag``."""
+    cached = _TAGS.get(id(union))
+    if cached is not None and cached[0] is union:
+        return cached[1]
     tags: dict[str, object] = {}
     for member in get_args(union):
         if get_origin(member) is Annotated:
             for extra in get_args(member)[1:]:
                 if isinstance(extra, Tag):
                     tags[extra.tag] = member
+    _TAGS[id(union)] = (union, tags)
     return tags
 
 
-def resolve(loc: tuple[int | str, ...], root: type[BaseModel]) -> Resolved:
-    """Follow a Pydantic error location through the model types from ``root``.
+def resolve(loc: tuple[int | str, ...], root: object) -> Resolved:
+    """Follow a Pydantic error location through the types from ``root``, a model or annotation.
 
     Union tags and Pydantic's labels are left out of the path by their position, so a member
     name that happens to look like a tag is kept. Where the types cannot be followed, the rest
@@ -655,7 +827,7 @@ def resolve(loc: tuple[int | str, ...], root: type[BaseModel]) -> Resolved:
         current, metadata = _unwrap(current)
         metadata = carried + metadata
         carried = []
-        if any(isinstance(extra, Discriminator) for extra in metadata):
+        if _discriminated(metadata):
             tags = _tags(current)
             if isinstance(element, str) and element in tags:
                 current = tags[element]
@@ -692,12 +864,19 @@ _OTHER = "\x00"
 """Stands for any string in a location's shape that is not a member name, tag or label."""
 
 
-@lru_cache(maxsize=1)
-def _structural_names() -> frozenset[str]:
-    """The member names, aliases and union tags of the document models, and Pydantic's label."""
+def _root(name: str) -> object:
+    return Descriptor if name == "descriptor" else Document
+
+
+@lru_cache(maxsize=2)
+def _structural_names(root: str) -> frozenset[str]:
+    """The member names, aliases and union tags of a root's models, and Pydantic's label.
+
+    Tags are the ``Tag`` values of the unions' members.
+    """
     names = {_KEY_LABEL}
     seen: set[int] = set()
-    pending: list[object] = [Document]
+    pending: list[object] = [_root(root)]
     while pending:
         annotation = pending.pop()
         if id(annotation) in seen:
@@ -716,28 +895,35 @@ def _structural_names() -> frozenset[str]:
 
 
 @lru_cache(maxsize=4096)
-def _kept(shape: tuple[str | None, ...]) -> tuple[int, ...]:
-    """Which elements of a document error location are path tokens.
+def _kept(root: str, shape: tuple[str | None, ...]) -> tuple[int, ...]:
+    """Which elements of an error location are path tokens, for a document or a descriptor.
 
     The answer depends only on the location's structure, so it is cached by its shape: list
     indices become ``None`` and strings that are not member names, tags or labels (dict keys,
-    unknown members) become one placeholder. The cache therefore holds no document text, and
+    unknown members) become one placeholder. The cache therefore holds no input text, and
     many similar errors cost little.
     """
     loc = tuple(0 if element is None else element for element in shape)
-    return tuple(resolve(loc, Document).positions)
+    return tuple(resolve(loc, _root(root)).positions)
 
 
-def _tokens(loc: tuple[int | str, ...]) -> Position:
+def _tokens(loc: tuple[int | str, ...], root: str = "document") -> Position:
     """The path tokens of an error location. It runs once per error, so it avoids generators."""
-    names = _structural_names()
+    names = _structural_names(root)
     shape = tuple(
         [
             None if element.__class__ is int else element if element in names else _OTHER
             for element in loc
         ]
     )
-    return tuple([loc[index] for index in _kept(shape)])
+    return tuple([loc[index] for index in _kept(root, shape)])
+
+
+def _reserved(model: object) -> Mapping[str, str]:
+    """A descriptor model's reserved members, with why each is refused."""
+    if isinstance(model, type) and issubclass(model, DescModel):
+        return model.reserved()
+    return {}
 
 
 def _members(model: object) -> list[str]:
@@ -747,29 +933,48 @@ def _members(model: object) -> list[str]:
     return []
 
 
-def refusal_from_error(details: ErrorDetails, root: type[BaseModel]) -> Refusal:
-    """The refusal for one Pydantic error in a model validated from ``root``."""
-    tokens = resolve(details["loc"], root).tokens
-    return _refusal(details, root, tokens, pointer(tokens))
+def refusal_from_error(details: ErrorDetails, root: object) -> Refusal:
+    """The refusal for one Pydantic error in a value validated as ``root``."""
+    tokens = tuple(resolve(details["loc"], root).tokens)
+    return _refusal(details, root, tokens, pointer(_classified(details, tokens)[0]))
 
 
-def _refusal(
-    details: ErrorDetails, root: type[BaseModel], tokens: Sequence[str | int], at: str | None
-) -> Refusal:
-    """The refusal for an error whose location names ``tokens``, reported at ``at``."""
+def _refusal(details: ErrorDetails, root: object, tokens: Position, at: str | None) -> Refusal:
+    """The refusal for an error whose location names ``tokens``, reported at ``at``.
+
+    Messages are the server's own text; a value from the input appears only as a data token.
+    """
     loc = details["loc"]
     resolved = resolve(loc, root)
+    path, code = _classified(details, tokens)
     error_type = details["type"]
-    code = _code(error_type)
     message: list[Segment] = [text(details["msg"])]
     alternatives: list[Segment] = []
     limit: Limit | None = None
     ctx: dict[str, Any] = dict(details.get("ctx") or {})
-    if code is RefusalCode.UNKNOWN_MEMBER and tokens:
-        message = [text("Unknown member "), data(str(tokens[-1]))]
-        alternatives = [text(member) for member in _members(resolve(loc[:-1], root).annotation)]
-    elif code is RefusalCode.MISSING_MEMBER and tokens:
-        message = [text("Missing member "), text(str(tokens[-1]))]
+    if code is RefusalCode.NULL_NOT_ALLOWED:
+        message = [text(_NULL_MESSAGE)]
+    elif code is RefusalCode.UNKNOWN_MEMBER and path:
+        parent: object = resolve(loc[:-1], root).annotation
+        reason = _reserved(parent).get(str(path[-1]))
+        if reason is not None:
+            message = [text(f"{path[-1]} {reason}")]
+        else:
+            message = [text("Unknown member "), data(str(path[-1]))]
+        alternatives = [text(member) for member in _members(parent)]
+    elif error_type == "missing" and path:
+        message = [text("Missing member "), text(str(path[-1]))]
+    elif "alternatives" in ctx:
+        alternatives = [text(str(choice)) for choice in ctx["alternatives"]]
+    elif error_type == "unknown_kind" and code is RefusalCode.WRONG_TYPE:
+        message = [text("kind is a string")]
+    elif code is RefusalCode.UNKNOWN_KIND and root is Descriptor:
+        # The only clauses in descriptors are parent scopes, which are core clauses.
+        kind = _tag_value(details, "kind")
+        message = [text("Unknown leaf kind")]
+        if isinstance(kind, str):
+            message = [text("Unknown leaf kind "), data(kind)]
+        alternatives = [text(name) for name in PARENT_SCOPE_KINDS]
     elif code is RefusalCode.UNKNOWN_KIND:
         alternatives = [text(kind) for kind in CORE_KINDS_TEXT.replace(" or", ",").split(", ")]
         alternatives.append(text("<pack id>.<name> for a pack leaf"))
@@ -783,6 +988,9 @@ def _refusal(
         fallback = CONSTANT_CHARACTERS if error_type == "string_too_long" else LIST_MEMBERS
         name = str(ctx.get("limit") or (named[0] if named else fallback))
         limit = Limit(name=name, max=int(ctx["max_length"]))
+    if "shown" in ctx:
+        shown = ctx["shown"]
+        message.append(data(shown if isinstance(shown, str) else json.dumps(shown)))
     return Refusal(
         code=code,
         path=at,
@@ -790,3 +998,116 @@ def _refusal(
         alternatives=alternatives,
         limit=limit,
     )
+
+
+# --- Descriptors -----------------------------------------------------------------------------
+
+_DESCRIPTOR: TypeAdapter[Descriptor] = TypeAdapter(Descriptor)
+
+
+@dataclass(frozen=True)
+class DescriptorResult:
+    """A validated descriptor, or the refusals that stop it, with paths into the descriptor."""
+
+    descriptor: Descriptor | None
+    refusals: list[Refusal]
+
+
+def load_descriptor(source: str | bytes) -> DescriptorResult:
+    """Parse and validate one descriptor, such as one an agent proposes (SPEC §5, §11.1)."""
+    size = len(source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source)
+    if size > MAX_DOCUMENT_BYTES:
+        return DescriptorResult(
+            None,
+            [
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=None,
+                    message=[text("The descriptor is too large")],
+                    limit=Limit(name=DESCRIPTOR_BYTES, max=MAX_DOCUMENT_BYTES),
+                )
+            ],
+        )
+    try:
+        value = parse_json(source)
+    except JsonError as problem:
+        limit = Limit(name=problem.limit[0], max=problem.limit[1]) if problem.limit else None
+        return DescriptorResult(
+            None,
+            [
+                Refusal(
+                    code=RefusalCode(problem.code),
+                    path=problem.pointer,
+                    message=[text(problem.message)],
+                    limit=limit,
+                )
+            ],
+        )
+    return _paused(_validated_descriptor, value)
+
+
+def _validated_descriptor(value: JsonValue) -> DescriptorResult:
+    try:
+        descriptor = _DESCRIPTOR.validate_python(value)
+    except ValidationError as error:
+        banned = _banned_in_scope(value)
+        found = [_Found((*at, "kind"), RefusalCode.INVALID_VALUE, _banned_refusal) for at in banned]
+        inside = _Positions()
+        for at in banned:
+            inside.add(at)
+        for details in error.errors(include_url=False):
+            tokens = _tokens(details["loc"], "descriptor")
+            path, code = _classified(details, tokens)
+            if not inside.covers(path):
+                found.append(_Found(path, code, _descriptor_refusal(details, tokens)))
+        return DescriptorResult(None, _finish(found, _Positions()))
+    return DescriptorResult(descriptor, [])
+
+
+def _banned_in_scope(value: JsonValue) -> list[Position]:
+    """The clauses of a coverage's parent scope, as written, of a kind no parent scope holds:
+    pack, ids and cohort leaves (§5.6).
+
+    Each is refused at its kind, and what else is wrong inside it is left out, since it must go
+    whatever it holds.
+    """
+    if not isinstance(value, dict) or value.get("kind") != "coverage":
+        return []
+    fields = value.get("fields")
+    if not isinstance(fields, dict) or "parent_scope" not in fields:
+        return []
+    banned: list[Position] = []
+    pending: list[tuple[JsonValue, Position]] = [
+        (fields["parent_scope"], ("fields", "parent_scope"))
+    ]
+    while pending:
+        clause, at = pending.pop()
+        tag = clause_tag(clause)
+        if tag in ("leaf:pack", "leaf:ids", "leaf:cohort"):
+            banned.append(at)
+        elif isinstance(clause, dict):
+            # Only the shapes the models read: a list in where, all and any; one clause else.
+            member = "where" if tag == "leaf:exists" else tag.removeprefix("clause:")
+            inner = clause.get(member)
+            # The model reads no item of a list too long for it, only refuses its length.
+            if isinstance(inner, list) and member in ("where", "all", "any"):
+                if len(inner) <= MAX_CLAUSES:
+                    pending.extend((item, (*at, member, index)) for index, item in enumerate(inner))
+            elif isinstance(inner, dict) and member in ("not", "known", "unknown"):
+                pending.append((inner, (*at, member)))
+    return banned
+
+
+def _banned_refusal(at: str | None) -> Refusal:
+    """The refusal the model gives a pack, ids or cohort leaf in a parent scope, at ``at``."""
+    error = parent_scope_kind()
+    return Refusal(
+        code=RefusalCode.INVALID_VALUE,
+        path=at,
+        message=[text(error.message())],
+        alternatives=[text(kind) for kind in PARENT_SCOPE_KINDS],
+    )
+
+
+def _descriptor_refusal(details: ErrorDetails, tokens: Position) -> Callable[[str | None], Refusal]:
+    return lambda at: _refusal(details, Descriptor, tokens, at)
