@@ -7,6 +7,7 @@ against a release (M2); checks that need only the document are in ``aibi.core.sc
 
 import math
 import re
+from collections.abc import Iterator
 from collections.abc import Set as AbstractSet
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, LiteralString, Self, cast
 
@@ -911,3 +912,45 @@ class Document(DocModel):
 
 for _model in (ExistsLeaf, AllClause, AnyClause, NotClause, KnownClause, UnknownClause, Cohort):
     _model.model_rebuild()
+
+
+# --- Walking clause trees --------------------------------------------------------------------
+
+ClausePath = list[str | int]
+
+
+def _children(
+    clause: ClauseModel, path: ClausePath
+) -> Iterator[tuple[ClauseModel, ClausePath, bool]]:
+    """Direct sub-clauses, with their paths and whether they sit inside a ``where``."""
+    if isinstance(clause, AllClause):
+        for index, member in enumerate(clause.all):
+            yield member, [*path, "all", index], False
+    elif isinstance(clause, AnyClause):
+        for index, member in enumerate(clause.any):
+            yield member, [*path, "any", index], False
+    elif isinstance(clause, NotClause):
+        yield clause.not_, [*path, "not"], False
+    elif isinstance(clause, KnownClause):
+        yield clause.known, [*path, "known"], False
+    elif isinstance(clause, UnknownClause):
+        yield clause.unknown, [*path, "unknown"], False
+    elif isinstance(clause, ExistsLeaf):
+        for index, member in enumerate(clause.where or []):
+            yield member, [*path, "where", index], True
+
+
+def walk(
+    clauses: list[ClauseModel], path: ClausePath, in_where: bool = False
+) -> Iterator[tuple[ClauseModel, ClausePath, bool]]:
+    """Every clause under ``path``, depth first, with whether it is inside some ``where``."""
+    for index, clause in enumerate(clauses):
+        stack: list[tuple[ClauseModel, ClausePath, bool]] = [(clause, [*path, index], in_where)]
+        while stack:
+            current, current_path, inside = stack.pop()
+            yield current, current_path, inside
+            children = list(_children(current, current_path))
+            stack.extend(
+                (child, child_path, inside or nested)
+                for child, child_path, nested in reversed(children)
+            )

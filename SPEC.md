@@ -252,7 +252,9 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
   | analysis | `<family>.<identifier>`; core families are `summary`, `compare` and `survival`; a pack's analyses use its pack id as the family |
   | model card | `model:<identifier>` |
 
-- Pack ids are identifiers that equal no core analysis family and no core leaf kind.
+- Pack ids are identifiers that equal no core analysis family, no core leaf kind, and no word
+  that begins a core id form (`rel`, `cov`, `ep`, `model`, `dataset`, `sha256`, `drv`, `leaf`,
+  `iss`, `stat`), so that no concept, analysis or code of a pack looks like one of those ids.
 - Cohort and parameter names in documents match `[A-Za-z_][A-Za-z0-9_]*` and have at most 64
   characters.
 - Field paths are JSON Pointers (RFC 6901) relative to the descriptor's root and name whole
@@ -1070,8 +1072,23 @@ every figure.
   (complete cases in `survival.cox`; units with valid endpoint data in `survival.km`). For views
   over several columns or predicates, it counts the units analysed for at least one of them and
   adds `variables`: one `{n, excluded, excluded_units}` per column or predicate, in parameter
-  order. `excluded` counts a unit under each of its reasons; `excluded_units` counts each excluded
-  unit once.
+  order (two or more); no variable's `n` exceeds the overall `n`. `excluded` counts a unit under each of its
+  reasons and lists every exclusion reason, zeros included; `excluded_units` counts each excluded
+  unit once, so `n` + `excluded_units` is the position's `n_true`. A suppressed count in
+  `analysed` is `null` with `not_estimable` reason `suppressed`; in `population`, `suppressed`
+  lists the null members by JSON Pointers relative to the entry (e.g. `"/n_false"`).
+- A result has one to six cohorts. `reference` is true for the reference position of an analysis
+  that declares `uses_reference`, and false everywhere else.
+- A release's `label` is its number, or `"draft"` exactly when its `status` is `draft`; `releases`
+  lists each dataset once, by dataset id. An issuance's `values_from` is its own id exactly when
+  it is not a cache hit; an output over a draft is never a cache hit (§12.3).
+- **Caveats in outputs** affect the digested parts only: `/cohorts`, `/population`, `/analysed` and
+  `/values`, and, for `DRAFT_RELEASE`, `/derivation/releases`. The checks an output makes of its
+  caveats read those parts alone, never the documents or parameters echoed beside them. Caveats are
+  sorted by code, affected paths, severity and message (each segment by kind, data before text, then
+  its string, then truncation), strings compared as UTF-16 code units, and exact duplicates are
+  dropped; `affects` and `suppressed` are sorted the same way. An absent optional member of an
+  output is omitted, never written as `null`.
 - **Segments.** A `Segment` is `{"text": "<server-written text>"}` or `{"data": "<text from data
   or a document>", "truncated": true?}`. Values, numbers included, appear in readbacks and
   messages as data tokens holding strings; a data token is cut at 200 characters and then marked
@@ -1086,21 +1103,31 @@ every figure.
   issuance served from the cache says so and names the issuance whose SQL produced the values.
   `explain` returns the SQL recorded for an issuance (§12.2); it is not part of `run_analysis`
   responses.
-- **Cohort counts** (`count_cohort`, §11.1) are `{id, digest, population, size, readback,
-  caveats, releases, issuance}` per cohort. `size` is the cohort's size as a proportion of the
-  unit table (§8.2), with `denominator_definition` `{position: null, predicate: null, counts:
-  "unit_table"}`. Caveats of a cohort count have `affects: ["/population"]`.
+- **Cohort counts** (`count_cohort`, §11.1) are `{id, digest, population, size, disclosure,
+  readback, caveats, releases, issuance}` per cohort. `size` is the cohort's size as a proportion
+  of the unit table (§8.2), with `denominator_definition` `{position: null, predicate: null,
+  counts: "unit_table"}` and no `excluded`, since nothing is excluded from the unit table.
+  `disclosure` is the effective setting, `{min_cell_count}` (§8.4). Caveats of a cohort count have
+  `affects: ["/population"]`, and never concern analyses or several cohorts (`COHORTS_OVERLAP`,
+  `CONFOUNDED_WITH_DATASET`, `INVALID_EXCLUDED`).
 - **Catalogue statistics** (row counts, value distributions, observation-state counts, and the
   counts in the curation queue) carry a release-scoped reference
-  `stat:<manifest hash>/<descriptor id>/<JSON Pointer>`, with `?floor=<n>` appended when a
-  deployment floor (§8.4) applies. The assistant cites it like a derivation id.
+  `stat:<manifest hash>/<descriptor id><JSON Pointer>` (the pointer supplies the `/`), with
+  `?floor=<n>` (2 ≤ n ≤ 2^53 − 1) appended when a deployment floor (§8.4) applies. The pointer is
+  written in its URI fragment form (RFC 6901 §6): percent-encoded from UTF-8 with upper-case hex,
+  `?`, `#` and `%` included, so a reference has exactly one spelling and is compared as a string.
+  The assistant cites it like a derivation id.
 
 ### 8.2 Numbers, proportions and effect sizes
 
-- Results contain no non-finite numbers. A number that cannot be computed is `null`, with its
+- Results contain only what JSON text carries unchanged: finite numbers within ±(2^53 − 1), and
+  Unicode text; a statistic beyond that range is refused or reported in other units, and an
+  integer beyond it inside `values` is a decimal string (§5.1). A number that cannot be computed
+  is `null`, with its
   reason in the enclosing object's `not_estimable` map, keyed by a JSON Pointer relative to that
   object, e.g. `{"estimate": 29.0, "ci": {"low": 21.4, "high": null}, "not_estimable":
-  {"/ci/high": "not_reached"}}`. Any number may be not estimable. The reasons are an enum:
+  {"/ci/high": "not_reached"}}`; the map is omitted when nothing is missing. Any number may be
+  not estimable. The reasons are an enum:
   `no_units`, `no_events`, `zero_denominator`, `zero_variance`, `not_reached`,
   `beyond_follow_up`, `separation`, `not_converged`, `degenerate_table`, `overlapping_cohorts`,
   `confounded_with_dataset`, `suppressed`.
@@ -1108,17 +1135,24 @@ every figure.
 
 ```jsonc
 {
-  "estimate": 0.412,
+  "estimate": 0.4119601328903654,
   "numerator": 124,
   "denominator": 301,
   "denominator_definition": { "position": 0, "predicate": "leaf:…", "counts": "known" },   // counts: "known" | "unit_table" | "rows"
   "denominator_text": [ /* segments; outside the digest */ ],
-  "excluded": { "NOT_COVERED": 17, "NO_INFORMATION": 3 },
+  "excluded": { "NOT_COVERED": 17, "NO_INFORMATION": 3, "NOT_ASSESSED": 0, … },   // every reason
   "ci": { "method": "wilson", "level": 0.95, "low": 0.358, "high": 0.468 }
 }
 ```
 
-  Survival-function estimates are not proportions and are exempt.
+  Survival-function estimates are not proportions and are exempt. The estimate is the numerator
+  over the denominator, as a double; rounding happens only before hashing (§9.3). A count is
+  `null` only when suppressed, and the estimate and its interval are suppressed exactly when a
+  count is. Over a zero denominator the estimate is not estimable: `no_units` where no unit was
+  counted, as §9.5 orders the reasons, else `zero_denominator`. `excluded`, where a proportion
+  has one, lists every exclusion reason, and a suppressed one is `null`. An interval's `level` is
+  between 0 and 1, exclusive, and its `method` is an identifier, as the analysis entry names its
+  methods.
 - Every effect size names its measure (an enum: `risk_difference`, `risk_ratio`,
   `proportion_difference`, `mean_difference`, `median_difference`, `hazard_ratio`), its position
   and its reference position. Differences are position minus reference; ratios are position over
@@ -1168,7 +1202,8 @@ an answer.
   (*k*) is `null` (off) by default and at least 2 when set; `allow_row_ids` defaults to true. Being
   part of the descriptor, the settings are part of the release. A deployment may set a floor for
   `min_cell_count`. The effective *k* of an output is the largest of the floor and the settings of
-  every dataset the output draws on; it is part of the ids and references of §7.6 and §8.1.
+  every dataset the output draws on; it is part of the ids and references of §7.6 and §8.1, and
+  results and cohort counts state it.
 - With *k* set, a disclosure pass runs on every output after it is computed. A suppressed value
   becomes `null` with `not_estimable` reason `suppressed` (in `population`, its pointer is listed
   in `suppressed`), and the output carries `SUPPRESSED`. The pass applies these rules:
@@ -1245,7 +1280,8 @@ the document as written, or `null` (where a problem lies inside a value a parame
 pointer is that of the `"$name"` string, and the message names the parameter; where a key cannot
 be written in a pointer because it is not Unicode text, the pointer is that of its object);
 `alternatives` lists what *is* available (A3); `limit` names the limit hit (§14); `counts`
-carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
+carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4);
+they are issued, and recorded, as `count_cohort`'s are.
 Refusals of a descriptor, such as one `propose_descriptor` receives, point into that descriptor
 in the same way, and rules that span the descriptors of a release point into the list of them
 (`UNKNOWN_DESCRIPTOR` where a descriptor names one the release does not hold).
@@ -1435,13 +1471,13 @@ the packs listed:
 | Extension point | Signature | Called | Packs consulted |
 |---|---|---|---|
 | **Concepts** | concept descriptors | at registration | all registered |
-| **Ontology systems** | `validate(system, code) -> bool` | on descriptor writes | all registered |
-| **Descriptor extensions** | a JSON Schema per descriptor kind | on every descriptor write | the dataset's `packs` |
-| **Importer** | `import(source: ConfinedPath, options) -> ImportResult` (raw snapshots, parse settings, tables with roles, relationships, coverage, descriptors and proposals); optionally `rebuild(raw, descriptors) -> tables` | operator import and re-import; rebuilds (§12.2) | the pack the operator names |
+| **Ontology systems** | a validator per system name, `validate(code) -> bool`; each system is registered by one pack | on descriptor writes | all registered |
+| **Descriptor extensions** | a JSON Schema object per descriptor kind | on every descriptor write | the dataset's `packs` |
+| **Importer** | `import_source(source: ConfinedPath, options) -> ImportResult` (raw snapshots, parse settings, tables with roles, relationships, coverage, descriptors and proposals); optionally `rebuild(raw, descriptors) -> tables` | operator import and re-import; rebuilds (§12.2) | the pack the operator names |
 | **Validator** | `validate_source(source, result) -> [Refusal]`; `validate_descriptors(release) -> [Refusal]` | at import; on every draft change | the dataset's `packs` |
 | **Curation proposer** | `propose(release) -> [Proposal]` | after import, and on request | the dataset's `packs` |
 | **Leaf kind** | a JSON Schema; `compile(leaf, release, pack_version) -> [Clause]` (§7.3); `summary(leaf) -> [Segment]` | canonicalisation; readbacks | the leaf's pack |
-| **Document translator** | `translate(document) -> (aibi document, [{pointer, message}])` | `validate_document` with a `format` | the pack named by the format |
+| **Document translator** | `translate(document) -> (aibi document, [{pointer, message}])`, by format `<pack id>.<name>` | `validate_document` with a `format` | the pack named by the format |
 | **Analysis** | a registry entry (§9.1) and `run(inputs) -> values`, where the inputs are, per cohort position, the units with the columns, aggregates and endpoint rows the entry requests, materialised by the core; deterministic as in §9.3 | `run_analysis` | the analysis's pack |
 | **Requirement predicate** | `predicate(release) -> bool`, cited in `requires` as `"<pack id>.<name>"` | applicability (§9.4) | the predicate's pack |
 | **Catalogue facet** | `facet(release) -> {name: [values]}` | catalogue indexing | the dataset's `packs` |
@@ -2060,7 +2096,7 @@ that revise or refine earlier ones say so.
 | D127 | Canonical leaves (refines D103; refined by D149) | Each leaf has exactly the listed members; constants are typed; units are kept as written and converted at evaluation; single-member combinators are unwrapped; `!=` and a `not` around a single-valued leaf toggle `negate` | Equivalent documents produced different ids |
 | D128 | Closedness reasons (refines D101; refined by D150, D152) | An intermediate step with no remaining children is UNKNOWN (`NOT_COVERED`); the closedness reason joins every UNKNOWN answer of an unclosed row; `covered` is evaluated in a fixed order; a lifted `covered` requires closedness | Rows with no children were answered with the wrong reasons, and `covered` had overlapping cases |
 | D129 | Flags (refines D88; refined by D151, D174) | `SCOPE_PARTIAL` and `COVERAGE_PROPOSED` are flags on truth values, raised as caveats when a unit's cohort-level value carries them; `UNCONFIRMED_SEMANTICS` is determined statically and names the fields | `validate_document` could not predict caveats raised during evaluation |
-| D130 | Cohort counts | `{id, digest, population, size, readback, caveats, releases, issuance}` per cohort, `size` being a proportion of the unit table | `count_cohort` had no defined output |
+| D130 | Cohort counts (refined by D200) | `{id, digest, population, size, disclosure, readback, caveats, releases, issuance}` per cohort, `size` being a proportion of the unit table | `count_cohort` had no defined output |
 | D131 | Refusals | `{code, path, message, alternatives, limit?, counts?}`; `validate_document` returns every refusal, sorted; other tools fail with the first | Refusals must be machine-readable to be acted on (A3) |
 | D132 | Identifiers (refines D81; refined by D175) | An identifier grammar and a normalisation of source names, with collisions resolved in source order | Importers would derive different ids from the same source |
 | D133 | Milestone order | Until M3, `validate_document` and `count_cohort` check cohorts only; concept references are refused until M6; `observation_window` is reserved | M2 would otherwise depend on parts of M3 and M6 |
@@ -2130,17 +2166,21 @@ that revise or refine earlier ones say so.
 | D197 | Who sets a status (M0) | Only an operator asserts, only an importer imports, and proposals come from models, agents and importers | A cheap check that a status claims no more than its source (A5) |
 | D198 | JSON-safe descriptors (M0) | Descriptors built in code hold only values JSON text carries unchanged: Unicode text, finite numbers within ±(2^53 − 1), integral numbers as integers. The limits on size (in bytes and JSON values), nesting and paths apply to a descriptor's JSON text and are checked when it is loaded | Every descriptor round-trips through its JSON text, and manifests hash that text |
 | D199 | Whole releases (M0) | A release holds every descriptor its descriptors name, a coverage's `parent_scope` included (with the scope columns of its `covered` leaves), and every `core:` concept they name is a core concept of the right sort; relationships and coverage parent columns lead to the parent's declared key; coverage tables have role `coverage` and are in no relationship; record filters are on `category` columns; an endpoint's table has a key and its time and entry columns are time offsets; derived columns form no cycle; packs with extensions are listed in `packs`. A rule whose inputs are undeclared (a key, a role, `packs`) is not checked, and each rule is checked as far as the release allows | These need no data, so they are checked when a release is assembled, before the gate's data checks (§13.2) |
+| D200 | Result invariants on construction (M0) | Result envelopes and cohort counts check their own contract: per-position arrays, `n` + `excluded_units` = `n_true`, caveats' `affects` resolve in the digested parts; `NOT_ESTIMABLE`, `LIFT_DIFFERS` and `DRAFT_RELEASE` are carried exactly when their conditions hold, and `SUPPRESSED`, `UNKNOWN_EXCLUDED` (whenever `n_unknown` is not 0, a suppressed one included), `INVALID_EXCLUDED`, `COHORTS_OVERLAP` and `CONFOUNDED_WITH_DATASET` whenever theirs do (`SUPPRESSED` also covers pooling and merging, which leave no `null`); and these rules of the disclosure pass, which need no data, hold: nothing suppressed without a `min_cell_count`, no shown count or count of a shown breakdown from 1 to *k* − 1, no linked set that shows its one suppressed member through a non-zero other, variables included, and with `n_true` shown `n` and `excluded_units` shown or suppressed together; no cohort count whose size shows a complement from 1 to *k* − 1 beside a non-zero numerator; a cohort count's size (a result envelope states none, so its accounting waits for its size in M3) accounts for its counts as the pass leaves them (each suppressed one counts at least one unit, one suppressed beside two zeros is from 1 to *k* − 1, two suppressed beside a shown count are small or one small and the smallest non-zero other, and with *k* = 2 three suppressed are one each); `analysed.n` is at least each variable's `n` and at most their sum, so no variable excludes fewer units; `lift_differs` is at most the size, and a suppressed one needs a size of at least 1. Cohort counts state their `min_cell_count` so that these can be checked. Until M3 types `values`, proportions there are checked for their `not_estimable` maps only. Outputs are checked when built, nested outputs and `model_copy` with `update` included; `model_construct` bypasses validation, and a dump then refuses anything that is not a JSON value JSON text carries unchanged, held in outputs and in containers of Python's own types, an enumeration member counting as the data of its `str`, `int` or `float` mixin, which must be its value, and no two keys of an object written as the same text | Agents can rely on the contract of any output the server returns |
+| D201 | Pack API names (M0) | The importer hook is `import_source` (`import` is a keyword); ontology validators are keyed by system, each system registered by one pack; leaf kinds, translator formats, analyses and predicates are `<pack id>.<name>`; concepts are `<pack id>:…`, each once; extension schemas are for release descriptor kinds only; a pack's analyses cite only declared caveat codes; versions are PEP 440 in normal form; the registry keeps a snapshot of what it was given, and hands out only copies of its concepts, schemas and analysis entries; extension schemas are JSON Schema objects holding only JSON values, read as Python's own types (a boolean schema is refused); ontology system names are Unicode text; every problem of every pack is reported at once; `requires_core` bounds the core version from below; an unknown pack in a lookup is refused alike everywhere | Fixed names let the registry refuse conflicts when packs are loaded, not when they are used |
+| D202 | Statistic references (M0) | The pointer of a `stat:` reference is written in URI fragment form, percent-encoded from UTF-8 with upper-case hex, and a floor is at least 2; any other spelling is refused | A reference must survive being pasted into a URL and be compared as a string, and a floor of 1 suppresses nothing |
 
 ---
 
 ## Appendix B. Change log
 
-- **v0.8.1** — Encodings settled by the M0 document and descriptor schemas (D188–D199): parsing
-  rules for text, numbers and nesting; verbatim notes and parameter values; bounds on
+- **v0.8.1** — Encodings settled by the M0 document, descriptor and result schemas (D188–D202):
+  parsing rules for text, numbers and nesting; verbatim notes and parameter values; bounds on
   substitution and on the refusals returned; id lengths and re-import by occurrence; the static
   cross-dataset checks; descriptor refusals, release rules and limits; values compared as JSON
   values; undeclared coverage and entry by absence; typed declared ranges; who sets a status;
-  JSON-safe descriptors; whole releases.
+  JSON-safe descriptors; whole releases; result invariants on construction, pack API names and
+  statistic references (D200–D202).
 - **v0.8** — Fourth review round, verifying v0.7 (D176–D187): canonicalisation to a fixpoint;
   conditions that must be TRUE for an intermediate FALSE; flags of dropped children; event-free
   units left out of Cox fits; totals, pooling order, small-count gates and empty bins under

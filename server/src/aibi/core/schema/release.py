@@ -25,7 +25,6 @@ data, come with the importers.
 from collections import defaultdict
 from collections.abc import Hashable, Mapping, Sequence
 
-from aibi.core.schema.checks import walk
 from aibi.core.schema.concepts import CORE_CONCEPTS
 from aibi.core.schema.descriptors import (
     RELEASE_KINDS,
@@ -42,7 +41,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
     derived_inputs,
 )
-from aibi.core.schema.document import ClauseModel, CoveredLeaf, ExistsLeaf, ValueLeaf
+from aibi.core.schema.document import ClauseModel, CoveredLeaf, ExistsLeaf, ValueLeaf, walk
 from aibi.core.schema.jsonio import pointer
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals

@@ -46,7 +46,6 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import PydanticCustomError
 
-from aibi.core.schema.checks import walk
 from aibi.core.schema.document import (
     Clause,
     ClauseModel,
@@ -58,6 +57,7 @@ from aibi.core.schema.document import (
     PackLeaf,
     Units,
     ValueLeaf,
+    walk,
 )
 from aibi.core.schema.errors import Location, Problems, problem
 from aibi.core.schema.ids import (
@@ -1793,8 +1793,12 @@ class AnalysisFields(DescModel):
     """The JSON Schema of the parameters."""
     returns: JsonSchemaObject
     methods: Annotated[
-        dict[String, Text], Field(max_length=MAX_ENTRIES), LimitName(ENTRIES), map_cap(MAX_ENTRIES)
+        dict[Identifier, Text],
+        Field(max_length=MAX_ENTRIES),
+        LimitName(ENTRIES),
+        map_cap(MAX_ENTRIES),
     ]
+    """By method name, as intervals and tests name them (SPEC §8.2)."""
     library: Library | None = None
     assumptions: Annotated[list[Label], Field(max_length=MAX_ENTRIES), LimitName(ENTRIES)]
     uses_reference: StrictBool

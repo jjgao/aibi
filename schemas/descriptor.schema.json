@@ -113,9 +113,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -138,7 +148,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|core|covered|exists|ids|value)\\."
+                "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
               }
             ]
           },
@@ -205,7 +215,7 @@
                   "pattern": "__"
                 },
                 {
-                  "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                  "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
                 }
               ]
             },
@@ -231,16 +241,21 @@
           "$ref": "#/$defs/Library"
         },
         "methods": {
-          "additionalProperties": {
-            "maxLength": 10000,
-            "minLength": 1,
-            "type": "string",
-            "x-aibi-data": true
-          },
+          "additionalProperties": false,
           "maxProperties": 64,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "maxLength": 10000,
+              "minLength": 1,
+              "type": "string",
+              "x-aibi-data": true
+            }
+          },
           "propertyNames": {
-            "maxLength": 4096,
-            "x-aibi-data": true
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
           },
           "title": "Methods",
           "type": "object"
@@ -570,9 +585,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -1036,9 +1061,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -1061,7 +1096,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -1174,7 +1209,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -1283,9 +1318,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -1500,7 +1545,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -1752,9 +1797,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -1876,9 +1931,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -2274,9 +2339,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -2388,7 +2463,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -2557,7 +2632,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -2953,9 +3028,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -3174,7 +3259,7 @@
           "not": {
             "anyOf": [
               {
-                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
               },
               {
                 "pattern": "__"
@@ -3547,9 +3632,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -3737,7 +3832,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
               }
             ]
           },
@@ -3882,9 +3977,19 @@
                     "cohort",
                     "compare",
                     "core",
+                    "cov",
                     "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
                     "exists",
                     "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
                     "summary",
                     "survival",
                     "value"
@@ -4010,7 +4115,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },
@@ -4273,7 +4378,7 @@
                 "pattern": "__"
               },
               {
-                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
               }
             ]
           },

@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from aibi.core.schema.jsonio import JsonError, json_value, parse_json, pointer
+from aibi.core.schema.jsonio import MISSING, JsonError, json_value, lookup, parse_json, pointer
 from aibi.core.schema.limits import MAX_DEPTH, MAX_POINTER, MAX_POINTERS, MAX_VALUES
 
 
@@ -161,3 +161,20 @@ def test_array_indices_count_in_the_pointer() -> None:
     with pytest.raises(JsonError) as raised:
         parse_json(json.dumps({key: [0] * 11}))
     assert raised.value.limit == ("pointer_characters", MAX_POINTER)
+
+
+def test_lookup_follows_pointers_and_reports_what_is_missing() -> None:
+    value = {"a": [{"b~/c": 1}], "": 2}
+    assert lookup(value, "/a/0/b~0~1c") == 1
+    assert lookup(value, "/") == 2
+    for missing in ("/a/1", "/a/01", "/a/\u00b2", "/x", "/a/0/b"):
+        assert lookup(value, missing) is MISSING
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["a", "a/b", "/a~2", "/~", "/0/" + "1" * 5000, "/a/-"],
+)
+def test_lookup_finds_nothing_for_what_is_no_pointer(path: str) -> None:
+    value = {"": {"b": 1}, "a": [{"1": 2}], "a~2": 3, "~": 4}
+    assert lookup(value, path) is MISSING
