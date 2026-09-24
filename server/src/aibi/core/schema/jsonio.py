@@ -139,7 +139,7 @@ def _build(value: object, path: list[str | int], count: list[int], length: int =
         raise JsonError(
             "LIMIT_EXCEEDED",
             pointer(path),
-            f"The paths to a document's values may have at most {MAX_POINTERS} characters "
+            f"The paths to all the values may have at most {MAX_POINTERS} characters "
             "together; shorten the long keys above many values",
             (ALL_POINTER_CHARACTERS, MAX_POINTERS),
         )
@@ -147,7 +147,7 @@ def _build(value: object, path: list[str | int], count: list[int], length: int =
         raise JsonError(
             "LIMIT_EXCEEDED",
             pointer(path),
-            f"A document may hold at most {MAX_VALUES} JSON values",
+            f"The text may hold at most {MAX_VALUES} JSON values",
             (JSON_VALUES, MAX_VALUES),
         )
     if isinstance(value, _Pairs | list) and len(path) >= MAX_DEPTH:

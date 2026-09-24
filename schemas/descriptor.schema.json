@@ -1,0 +1,4545 @@
+{
+  "$defs": {
+    "AllClause": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ValueLeaf"
+              },
+              {
+                "$ref": "#/$defs/ExistsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CoveredLeaf"
+              },
+              {
+                "$ref": "#/$defs/IdsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CohortLeaf"
+              },
+              {
+                "$ref": "#/$defs/PackLeaf"
+              },
+              {
+                "$ref": "#/$defs/AllClause"
+              },
+              {
+                "$ref": "#/$defs/AnyClause"
+              },
+              {
+                "$ref": "#/$defs/NotClause"
+              },
+              {
+                "$ref": "#/$defs/KnownClause"
+              },
+              {
+                "$ref": "#/$defs/UnknownClause"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "title": "All",
+          "type": "array"
+        }
+      },
+      "required": [
+        "all"
+      ],
+      "title": "AllClause",
+      "type": "object"
+    },
+    "AnalysisDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "additionalProperties": false,
+          "maxProperties": 0,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "$ref": "#/$defs/CurationStatus"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 4096
+          },
+          "title": "Curation",
+          "type": "object"
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/AnalysisFields"
+        },
+        "id": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|core|covered|exists|ids|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "analysis",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "AnalysisDescriptor",
+      "type": "object"
+    },
+    "AnalysisFields": {
+      "additionalProperties": false,
+      "description": "Required members are those without a default (§9.1).",
+      "properties": {
+        "assumes_independent_groups": {
+          "title": "Assumes Independent Groups",
+          "type": "boolean"
+        },
+        "assumptions": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 64,
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "caveats": {
+          "items": {
+            "maxLength": 129,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+                }
+              ]
+            },
+            "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Caveats",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "cross_dataset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CrossDataset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "library": {
+          "$ref": "#/$defs/Library"
+        },
+        "methods": {
+          "additionalProperties": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Methods",
+          "type": "object"
+        },
+        "min_events": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Min Events",
+          "type": "integer"
+        },
+        "min_group_n": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Min Group N",
+          "type": "integer"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DescriptorJson",
+            "x-aibi-data": true
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "randomness": {
+          "$ref": "#/$defs/Randomness"
+        },
+        "requires": {
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "maxItems": 64,
+          "title": "Requires",
+          "type": "array"
+        },
+        "returns": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DescriptorJson",
+            "x-aibi-data": true
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Returns",
+          "type": "object"
+        },
+        "uses_reference": {
+          "title": "Uses Reference",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requires",
+        "params",
+        "returns",
+        "methods",
+        "assumptions",
+        "uses_reference",
+        "assumes_independent_groups",
+        "cross_dataset",
+        "caveats"
+      ],
+      "title": "AnalysisFields",
+      "type": "object"
+    },
+    "AnyClause": {
+      "additionalProperties": false,
+      "properties": {
+        "any": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ValueLeaf"
+              },
+              {
+                "$ref": "#/$defs/ExistsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CoveredLeaf"
+              },
+              {
+                "$ref": "#/$defs/IdsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CohortLeaf"
+              },
+              {
+                "$ref": "#/$defs/PackLeaf"
+              },
+              {
+                "$ref": "#/$defs/AllClause"
+              },
+              {
+                "$ref": "#/$defs/AnyClause"
+              },
+              {
+                "$ref": "#/$defs/NotClause"
+              },
+              {
+                "$ref": "#/$defs/KnownClause"
+              },
+              {
+                "$ref": "#/$defs/UnknownClause"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "title": "Any",
+          "type": "array"
+        }
+      },
+      "required": [
+        "any"
+      ],
+      "title": "AnyClause",
+      "type": "object"
+    },
+    "Arith": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "items": {
+            "oneOf": [
+              {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                },
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/Arith"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Args",
+          "type": "array"
+        },
+        "op": {
+          "const": "arith",
+          "title": "Op",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "+",
+            "-",
+            "*",
+            "/"
+          ],
+          "title": "Operator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operator",
+        "args"
+      ],
+      "title": "Arith",
+      "type": "object"
+    },
+    "Assignment": {
+      "additionalProperties": false,
+      "properties": {
+        "group_column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Group Column",
+          "type": "string"
+        },
+        "parent_columns": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "maxLength": 64,
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Parent Columns",
+          "type": "object"
+        },
+        "table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Table",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table",
+        "parent_columns",
+        "group_column"
+      ],
+      "title": "Assignment",
+      "type": "object"
+    },
+    "CohortLeaf": {
+      "additionalProperties": false,
+      "description": "Another cohort of the same document (SPEC §7.2).",
+      "properties": {
+        "cohort": {
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+          "title": "Cohort",
+          "type": "string"
+        },
+        "kind": {
+          "const": "cohort",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "cohort"
+      ],
+      "title": "CohortLeaf",
+      "type": "object"
+    },
+    "ColumnDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/ColumnFields"
+        },
+        "id": {
+          "maxLength": 129,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "column",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "ColumnDescriptor",
+      "type": "object"
+    },
+    "ColumnFields": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "units"
+            ]
+          },
+          "then": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "number",
+                  "integer",
+                  "time_offset"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "range"
+            ]
+          },
+          "then": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "number",
+                  "integer",
+                  "date",
+                  "datetime",
+                  "time_offset"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "permissible_values"
+            ]
+          },
+          "then": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "category",
+                  "list<category>"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "list_syntax"
+            ]
+          },
+          "then": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "list<category>"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "number",
+                  "time_offset"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          },
+          "then": {
+            "properties": {
+              "range": {
+                "properties": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          },
+          "then": {
+            "properties": {
+              "range": {
+                "properties": {
+                  "max": {
+                    "type": "integer"
+                  },
+                  "min": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "date"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          },
+          "then": {
+            "properties": {
+              "range": {
+                "properties": {
+                  "max": {
+                    "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  },
+                  "min": {
+                    "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datatype": {
+                "enum": [
+                  "datetime"
+                ]
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          },
+          "then": {
+            "properties": {
+              "range": {
+                "properties": {
+                  "max": {
+                    "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+                    "type": "string"
+                  },
+                  "min": {
+                    "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datatype": {
+                "const": "list<category>"
+              }
+            },
+            "required": [
+              "datatype"
+            ]
+          },
+          "then": {
+            "required": [
+              "list_syntax"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ],
+          "title": "Completeness",
+          "type": "string"
+        },
+        "concepts": {
+          "items": {
+            "$ref": "#/$defs/OntologyRef"
+          },
+          "maxItems": 10000,
+          "title": "Concepts",
+          "type": "array"
+        },
+        "datatype": {
+          "enum": [
+            "number",
+            "integer",
+            "string",
+            "boolean",
+            "category",
+            "list<category>",
+            "date",
+            "datetime",
+            "time_offset"
+          ],
+          "title": "Datatype",
+          "type": "string"
+        },
+        "derived": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DateDiff"
+            },
+            {
+              "$ref": "#/$defs/Arith"
+            },
+            {
+              "$ref": "#/$defs/ValueMap"
+            },
+            {
+              "$ref": "#/$defs/UnitConvert"
+            }
+          ],
+          "title": "Derived"
+        },
+        "identifier": {
+          "title": "Identifier",
+          "type": "boolean"
+        },
+        "list_syntax": {
+          "$ref": "#/$defs/ListSyntax"
+        },
+        "maps_to": {
+          "$ref": "#/$defs/ConceptMapping"
+        },
+        "missing_codes": {
+          "additionalProperties": {
+            "enum": [
+              "UNKNOWN",
+              "NOT_APPLICABLE",
+              "NOT_ASSESSED"
+            ],
+            "type": "string"
+          },
+          "maxProperties": 10000,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Missing Codes",
+          "type": "object"
+        },
+        "permissible_values": {
+          "$ref": "#/$defs/PermissibleValues"
+        },
+        "range": {
+          "$ref": "#/$defs/DeclaredRange"
+        },
+        "source": {
+          "$ref": "#/$defs/ColumnSource"
+        },
+        "units": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "title": "ColumnFields",
+      "type": "object"
+    },
+    "ColumnSource": {
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "additionalProperties": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "original_name": {
+          "maxLength": 4096,
+          "title": "Original Name",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "original_name"
+      ],
+      "title": "ColumnSource",
+      "type": "object"
+    },
+    "ConceptDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "additionalProperties": false,
+          "maxProperties": 0,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "$ref": "#/$defs/CurationStatus"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 4096
+          },
+          "title": "Curation",
+          "type": "object"
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/ConceptFields"
+        },
+        "id": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "concept",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "ConceptDescriptor",
+      "type": "object"
+    },
+    "ConceptFields": {
+      "additionalProperties": false,
+      "else": {
+        "not": {
+          "required": [
+            "units",
+            "permissible_values"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "sort": {
+            "not": {
+              "const": "value"
+            }
+          }
+        }
+      },
+      "properties": {
+        "permissible_values": {
+          "$ref": "#/$defs/PermissibleValues"
+        },
+        "sort": {
+          "enum": [
+            "value",
+            "table",
+            "endpoint",
+            "time_origin"
+          ],
+          "title": "Sort",
+          "type": "string"
+        },
+        "units": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sort"
+      ],
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "units"
+              ]
+            },
+            {
+              "required": [
+                "permissible_values"
+              ]
+            }
+          ]
+        }
+      },
+      "title": "ConceptFields",
+      "type": "object"
+    },
+    "ConceptMapping": {
+      "additionalProperties": false,
+      "description": "An exact mapping to a concept, with at most a unit conversion or a value map (§5.7).",
+      "properties": {
+        "concept": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+          "title": "Concept",
+          "type": "string"
+        },
+        "transform": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/UnitTransform"
+                },
+                {
+                  "$ref": "#/$defs/ValueMapTransform"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transform"
+        }
+      },
+      "required": [
+        "concept"
+      ],
+      "title": "ConceptMapping",
+      "type": "object"
+    },
+    "CoverageDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/CoverageFields"
+        },
+        "id": {
+          "maxLength": 1108,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "coverage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "CoverageDescriptor",
+      "type": "object"
+    },
+    "CoverageFields": {
+      "additionalProperties": false,
+      "properties": {
+        "parent_scope": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ValueLeaf"
+            },
+            {
+              "$ref": "#/$defs/ExistsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CoveredLeaf"
+            },
+            {
+              "$ref": "#/$defs/IdsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CohortLeaf"
+            },
+            {
+              "$ref": "#/$defs/PackLeaf"
+            },
+            {
+              "$ref": "#/$defs/AllClause"
+            },
+            {
+              "$ref": "#/$defs/AnyClause"
+            },
+            {
+              "$ref": "#/$defs/NotClause"
+            },
+            {
+              "$ref": "#/$defs/KnownClause"
+            },
+            {
+              "$ref": "#/$defs/UnknownClause"
+            }
+          ],
+          "title": "Parent Scope"
+        },
+        "parents": {
+          "oneOf": [
+            {
+              "const": "all",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/DirectCoverage"
+            },
+            {
+              "$ref": "#/$defs/GroupedCoverage"
+            }
+          ],
+          "title": "Parents"
+        },
+        "record_filter": {
+          "additionalProperties": false,
+          "maxProperties": 64,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "items": {
+                "maxLength": 4096,
+                "type": "string",
+                "x-aibi-data": true
+              },
+              "maxItems": 10000,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Record Filter",
+          "type": "object"
+        },
+        "relationship": {
+          "maxLength": 1108,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
+          "title": "Relationship",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relationship"
+      ],
+      "title": "CoverageFields",
+      "type": "object"
+    },
+    "CoveredLeaf": {
+      "additionalProperties": false,
+      "description": "Coverage as a predicate (SPEC §6.5).",
+      "properties": {
+        "kind": {
+          "const": "covered",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lift": {
+          "enum": [
+            "strict",
+            "assessed"
+          ],
+          "title": "Lift",
+          "type": "string"
+        },
+        "scope": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "items": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "number"
+                  }
+                ]
+              },
+              "maxItems": 10000,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Scope",
+          "type": "object"
+        },
+        "table": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
+          "title": "Table",
+          "type": "string"
+        },
+        "via": {
+          "oneOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "maxItems": 16,
+                  "type": "array"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          ],
+          "title": "Via"
+        }
+      },
+      "required": [
+        "kind",
+        "table"
+      ],
+      "title": "CoveredLeaf",
+      "type": "object"
+    },
+    "CrossDataset": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Method",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "title": "CrossDataset",
+      "type": "object"
+    },
+    "CurationStatus": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "asserted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by": {
+                "pattern": "^(?:operator):"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "imported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by": {
+                "pattern": "^(?:importer):"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "imported_default"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by": {
+                "pattern": "^(?:importer):"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "proposed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by": {
+                "pattern": "^(?:model|agent|importer):"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "at": {
+          "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+          "title": "At",
+          "type": "string"
+        },
+        "by": {
+          "pattern": "^(?:(?:operator|agent):[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,200}|model:[a-z][a-z0-9_]{0,63}|importer:[A-Za-z0-9_.-]{1,200}@[A-Za-z0-9_.+-]{1,200})$",
+          "title": "By",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "evidence": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "inferred": {
+          "$ref": "#/$defs/DescriptorJson",
+          "x-aibi-data": true
+        },
+        "status": {
+          "enum": [
+            "asserted",
+            "proposed",
+            "imported",
+            "imported_default",
+            "undeclared"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "by",
+        "at"
+      ],
+      "title": "CurationStatus",
+      "type": "object"
+    },
+    "DatasetDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/DatasetFields"
+        },
+        "id": {
+          "const": "dataset",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "dataset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "DatasetDescriptor",
+      "type": "object"
+    },
+    "DatasetFields": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 10000,
+          "title": "Citation",
+          "type": "array"
+        },
+        "data_use": {
+          "items": {
+            "$ref": "#/$defs/OntologyRef"
+          },
+          "maxItems": 10000,
+          "title": "Data Use",
+          "type": "array"
+        },
+        "description": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "disclosure": {
+          "$ref": "#/$defs/Disclosure"
+        },
+        "domain_tags": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 10000,
+          "title": "Domain Tags",
+          "type": "array"
+        },
+        "license": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "License",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "name": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "packs": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Packs",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "references": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 10000,
+          "title": "References",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/DatasetSource"
+        }
+      },
+      "title": "DatasetFields",
+      "type": "object"
+    },
+    "DatasetSource": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Commit",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "kind": {
+          "enum": [
+            "files",
+            "database",
+            "pack"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "location": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Location",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "kind",
+        "location"
+      ],
+      "title": "DatasetSource",
+      "type": "object"
+    },
+    "DateDiff": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "From",
+          "type": "string"
+        },
+        "op": {
+          "const": "date_diff",
+          "title": "Op",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "To",
+          "type": "string"
+        },
+        "units": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "from",
+        "to",
+        "units"
+      ],
+      "title": "DateDiff",
+      "type": "object"
+    },
+    "DeclaredRange": {
+      "additionalProperties": false,
+      "description": "The range a column's values lie in, in the column's type (checked with the column).",
+      "properties": {
+        "max": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Max",
+          "x-aibi-data": true
+        },
+        "min": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Min",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "title": "DeclaredRange",
+      "type": "object"
+    },
+    "DescriptorJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DescriptorJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "DirectCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "parent_columns": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "maxLength": 64,
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Parent Columns",
+          "type": "object"
+        },
+        "scope_columns": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "maxLength": 64,
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Scope Columns",
+          "type": "object"
+        },
+        "table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Table",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table",
+        "parent_columns"
+      ],
+      "title": "DirectCoverage",
+      "type": "object"
+    },
+    "Disclosure": {
+      "additionalProperties": false,
+      "description": "``min_cell_count`` is ``null`` (off) or at least 2; without row ids it is required (§8.4).",
+      "if": {
+        "properties": {
+          "allow_row_ids": {
+            "const": false
+          }
+        },
+        "required": [
+          "allow_row_ids"
+        ]
+      },
+      "properties": {
+        "allow_row_ids": {
+          "default": true,
+          "title": "Allow Row Ids",
+          "type": "boolean"
+        },
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "then": {
+        "properties": {
+          "min_cell_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min_cell_count"
+        ]
+      },
+      "title": "Disclosure",
+      "type": "object"
+    },
+    "DocumentJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/DocumentJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DocumentJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value but null"
+    },
+    "EndpointDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/EndpointFields"
+        },
+        "id": {
+          "maxLength": 67,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^ep:[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "endpoint",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "EndpointDescriptor",
+      "type": "object"
+    },
+    "EndpointFields": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "oneOf": [
+            {
+              "const": "at_origin",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/EntryColumn"
+            }
+          ],
+          "title": "Entry"
+        },
+        "event_coding": {
+          "$ref": "#/$defs/EventCoding"
+        },
+        "maps_to": {
+          "$ref": "#/$defs/ConceptMapping"
+        },
+        "status_column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Status Column",
+          "type": "string"
+        },
+        "table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Table",
+          "type": "string"
+        },
+        "time_column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Time Column",
+          "type": "string"
+        },
+        "time_origin": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+          "title": "Time Origin",
+          "type": "string"
+        }
+      },
+      "title": "EndpointFields",
+      "type": "object"
+    },
+    "EntryColumn": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Column",
+          "type": "string"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "EntryColumn",
+      "type": "object"
+    },
+    "EventCoding": {
+      "additionalProperties": false,
+      "description": "Status values for an event and for censoring; no value is both.",
+      "properties": {
+        "censored": {
+          "items": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
+              }
+            ],
+            "x-aibi-data": true
+          },
+          "maxItems": 64,
+          "title": "Censored",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "event": {
+          "items": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
+              }
+            ],
+            "x-aibi-data": true
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Event",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "event",
+        "censored"
+      ],
+      "title": "EventCoding",
+      "type": "object"
+    },
+    "ExistsLeaf": {
+      "additionalProperties": false,
+      "description": "An existence question (SPEC §6.5); ``where`` clauses are ANDed per row of ``table``.",
+      "if": {
+        "required": [
+          "min_count"
+        ]
+      },
+      "properties": {
+        "exclude_self": {
+          "default": false,
+          "title": "Exclude Self",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "exists",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lift": {
+          "enum": [
+            "strict",
+            "assessed"
+          ],
+          "title": "Lift",
+          "type": "string"
+        },
+        "min_count": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Min Count",
+          "type": "integer"
+        },
+        "quantifier": {
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    "some",
+                    "every"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/SomeAtLeast"
+                }
+              ]
+            },
+            {
+              "items": {
+                "oneOf": [
+                  {
+                    "enum": [
+                      "some",
+                      "every"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/SomeAtLeast"
+                  }
+                ]
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            }
+          ],
+          "title": "Quantifier"
+        },
+        "table": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
+          "title": "Table",
+          "type": "string"
+        },
+        "via": {
+          "oneOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "maxItems": 16,
+                  "type": "array"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          ],
+          "title": "Via"
+        },
+        "where": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ValueLeaf"
+              },
+              {
+                "$ref": "#/$defs/ExistsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CoveredLeaf"
+              },
+              {
+                "$ref": "#/$defs/IdsLeaf"
+              },
+              {
+                "$ref": "#/$defs/CohortLeaf"
+              },
+              {
+                "$ref": "#/$defs/PackLeaf"
+              },
+              {
+                "$ref": "#/$defs/AllClause"
+              },
+              {
+                "$ref": "#/$defs/AnyClause"
+              },
+              {
+                "$ref": "#/$defs/NotClause"
+              },
+              {
+                "$ref": "#/$defs/KnownClause"
+              },
+              {
+                "$ref": "#/$defs/UnknownClause"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "title": "Where",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "table"
+      ],
+      "then": {
+        "properties": {
+          "quantifier": {
+            "const": "some"
+          }
+        }
+      },
+      "title": "ExistsLeaf",
+      "type": "object"
+    },
+    "GroupedCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment": {
+          "$ref": "#/$defs/Assignment"
+        },
+        "groups": {
+          "$ref": "#/$defs/Groups"
+        }
+      },
+      "required": [
+        "assignment",
+        "groups"
+      ],
+      "title": "GroupedCoverage",
+      "type": "object"
+    },
+    "Groups": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "covers_all_column": [
+          "scope_columns"
+        ]
+      },
+      "properties": {
+        "covers_all_column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Covers All Column",
+          "type": "string"
+        },
+        "group_column": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Group Column",
+          "type": "string"
+        },
+        "scope_columns": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "maxLength": 64,
+              "not": {
+                "pattern": "__"
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            }
+          },
+          "title": "Scope Columns",
+          "type": "object"
+        },
+        "table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Table",
+          "type": "string"
+        }
+      },
+      "required": [
+        "table",
+        "group_column"
+      ],
+      "title": "Groups",
+      "type": "object"
+    },
+    "IdsLeaf": {
+      "additionalProperties": false,
+      "description": "An explicit list of unit keys; not allowed inside any ``where`` (SPEC §7.2).",
+      "properties": {
+        "ids": {
+          "items": {
+            "oneOf": [
+              {
+                "maxLength": 4096,
+                "not": {
+                  "pattern": "^[^:]*__"
+                },
+                "pattern": "^[a-z][a-z0-9_]{0,63}:[^\\x00-\\x1f\\x7f\\u2028\\u2029]+$",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/UnitKey"
+              }
+            ]
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Ids",
+          "type": "array"
+        },
+        "kind": {
+          "const": "ids",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ids"
+      ],
+      "title": "IdsLeaf",
+      "type": "object"
+    },
+    "KnownClause": {
+      "additionalProperties": false,
+      "properties": {
+        "known": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ValueLeaf"
+            },
+            {
+              "$ref": "#/$defs/ExistsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CoveredLeaf"
+            },
+            {
+              "$ref": "#/$defs/IdsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CohortLeaf"
+            },
+            {
+              "$ref": "#/$defs/PackLeaf"
+            },
+            {
+              "$ref": "#/$defs/AllClause"
+            },
+            {
+              "$ref": "#/$defs/AnyClause"
+            },
+            {
+              "$ref": "#/$defs/NotClause"
+            },
+            {
+              "$ref": "#/$defs/KnownClause"
+            },
+            {
+              "$ref": "#/$defs/UnknownClause"
+            }
+          ],
+          "title": "Known"
+        }
+      },
+      "required": [
+        "known"
+      ],
+      "title": "KnownClause",
+      "type": "object"
+    },
+    "Library": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "version": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Library",
+      "type": "object"
+    },
+    "ListSyntax": {
+      "additionalProperties": false,
+      "else": {
+        "not": {
+          "required": [
+            "delimiter"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "format": {
+            "const": "delimited"
+          }
+        }
+      },
+      "properties": {
+        "delimiter": {
+          "maxLength": 8,
+          "minLength": 1,
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "json",
+            "python",
+            "delimited"
+          ],
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "then": {
+        "required": [
+          "delimiter"
+        ]
+      },
+      "title": "ListSyntax",
+      "type": "object"
+    },
+    "ModelCardDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "additionalProperties": false,
+          "maxProperties": 0,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "$ref": "#/$defs/CurationStatus"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 4096
+          },
+          "title": "Curation",
+          "type": "object"
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/ModelCardFields"
+        },
+        "id": {
+          "maxLength": 70,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^model:[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "model",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "ModelCardDescriptor",
+      "type": "object"
+    },
+    "ModelCardFields": {
+      "additionalProperties": false,
+      "description": "Every member is required (§5.9).",
+      "properties": {
+        "configuration_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Configuration Digest",
+          "type": "string"
+        },
+        "limitations": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Limitations",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "model_version": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Version",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provider": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "purpose": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Purpose",
+          "type": "array"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "model_version",
+        "purpose",
+        "limitations",
+        "configuration_digest"
+      ],
+      "title": "ModelCardFields",
+      "type": "object"
+    },
+    "NotClause": {
+      "additionalProperties": false,
+      "properties": {
+        "not": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ValueLeaf"
+            },
+            {
+              "$ref": "#/$defs/ExistsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CoveredLeaf"
+            },
+            {
+              "$ref": "#/$defs/IdsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CohortLeaf"
+            },
+            {
+              "$ref": "#/$defs/PackLeaf"
+            },
+            {
+              "$ref": "#/$defs/AllClause"
+            },
+            {
+              "$ref": "#/$defs/AnyClause"
+            },
+            {
+              "$ref": "#/$defs/NotClause"
+            },
+            {
+              "$ref": "#/$defs/KnownClause"
+            },
+            {
+              "$ref": "#/$defs/UnknownClause"
+            }
+          ],
+          "title": "Not"
+        }
+      },
+      "required": [
+        "not"
+      ],
+      "title": "NotClause",
+      "type": "object"
+    },
+    "OntologyRef": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "relation": {
+          "enum": [
+            "exact",
+            "broader",
+            "narrower",
+            "related"
+          ],
+          "title": "Relation",
+          "type": "string"
+        },
+        "system": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "System",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "system",
+        "code",
+        "label",
+        "relation"
+      ],
+      "title": "OntologyRef",
+      "type": "object"
+    },
+    "PackLeaf": {
+      "additionalProperties": {
+        "$ref": "#/$defs/DocumentJson"
+      },
+      "description": "A pack leaf, ``<pack id>.<name>``: other members are checked by the pack's schema.",
+      "properties": {
+        "kind": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+              },
+              {
+                "pattern": "__"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PackLeaf",
+      "type": "object"
+    },
+    "ParseSettings": {
+      "additionalProperties": false,
+      "description": "How a text file is read; every member is given. ``header_row`` counts from 0, after the\n``skip_rows`` skipped, and a ``tsv`` file is delimited by a tab.",
+      "if": {
+        "properties": {
+          "format": {
+            "const": "tsv"
+          }
+        }
+      },
+      "properties": {
+        "delimiter": {
+          "maxLength": 1,
+          "minLength": 1,
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "encoding": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Encoding",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "format": {
+          "enum": [
+            "csv",
+            "tsv"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "header_row": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Header Row",
+          "type": "integer"
+        },
+        "quote": {
+          "maxLength": 1,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "skip_rows": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Skip Rows",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "format",
+        "delimiter",
+        "quote",
+        "header_row",
+        "skip_rows",
+        "encoding"
+      ],
+      "then": {
+        "properties": {
+          "delimiter": {
+            "const": "\t"
+          }
+        }
+      },
+      "title": "ParseSettings",
+      "type": "object"
+    },
+    "PermissibleValue": {
+      "additionalProperties": false,
+      "description": "A category value; categories are strings, as their constants are (§6.4).",
+      "properties": {
+        "concepts": {
+          "items": {
+            "$ref": "#/$defs/OntologyRef"
+          },
+          "maxItems": 10000,
+          "title": "Concepts",
+          "type": "array"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "value": {
+          "maxLength": 4096,
+          "title": "Value",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "PermissibleValue",
+      "type": "object"
+    },
+    "PermissibleValues": {
+      "additionalProperties": false,
+      "properties": {
+        "ordered": {
+          "default": false,
+          "title": "Ordered",
+          "type": "boolean"
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/PermissibleValue"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "title": "PermissibleValues",
+      "type": "object"
+    },
+    "Pipeline": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "version": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Pipeline",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 10000,
+          "title": "Citation",
+          "type": "array"
+        },
+        "pipeline": {
+          "$ref": "#/$defs/Pipeline"
+        },
+        "source": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "title": "Provenance",
+      "type": "object"
+    },
+    "Randomness": {
+      "additionalProperties": false,
+      "properties": {
+        "replicates": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Replicates",
+          "type": "integer"
+        },
+        "seeded": {
+          "title": "Seeded",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "seeded",
+        "replicates"
+      ],
+      "title": "Randomness",
+      "type": "object"
+    },
+    "Range": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "gt",
+              "gte"
+            ]
+          },
+          {
+            "required": [
+              "lt",
+              "lte"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "gt": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Gt"
+        },
+        "gte": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Gte"
+        },
+        "lt": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Lt"
+        },
+        "lte": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Lte"
+        }
+      },
+      "title": "Range",
+      "type": "object"
+    },
+    "RelationshipDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/RelationshipFields"
+        },
+        "id": {
+          "maxLength": 1108,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "relationship",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "RelationshipDescriptor",
+      "type": "object"
+    },
+    "RelationshipFields": {
+      "additionalProperties": false,
+      "properties": {
+        "cardinality": {
+          "enum": [
+            "many-to-one",
+            "one-to-one"
+          ],
+          "title": "Cardinality",
+          "type": "string"
+        },
+        "child_columns": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Child Columns",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "child_table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Child Table",
+          "type": "string"
+        },
+        "parent_columns": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Parent Columns",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "parent_table": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Parent Table",
+          "type": "string"
+        },
+        "role": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "child_table",
+        "child_columns",
+        "parent_table",
+        "parent_columns",
+        "cardinality"
+      ],
+      "title": "RelationshipFields",
+      "type": "object"
+    },
+    "Requirement": {
+      "additionalProperties": false,
+      "description": "What an analysis needs (§9.1). Closed until M3 adds requirement predicates in use.",
+      "properties": {
+        "datatype": {
+          "enum": [
+            "number",
+            "integer",
+            "string",
+            "boolean",
+            "category",
+            "list<category>",
+            "date",
+            "datetime",
+            "time_offset"
+          ],
+          "title": "Datatype",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "endpoint",
+            "column",
+            "table"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "max": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Max",
+          "type": "integer"
+        },
+        "min": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Min",
+          "type": "integer"
+        },
+        "on": {
+          "const": "unit",
+          "title": "On",
+          "type": "string"
+        },
+        "predicate": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|covered|exists|ids|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Predicate",
+          "type": "string"
+        },
+        "role": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "SomeAtLeast": {
+      "additionalProperties": false,
+      "description": "``{\"some\": k}``: at least *k* children.",
+      "properties": {
+        "some": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Some",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "some"
+      ],
+      "title": "SomeAtLeast",
+      "type": "object"
+    },
+    "Step": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "title": "Dir",
+          "type": "string"
+        },
+        "rel": {
+          "maxLength": 1108,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
+          "title": "Rel",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rel",
+        "dir"
+      ],
+      "title": "Step",
+      "type": "object"
+    },
+    "TableDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "curation": {
+          "allOf": [
+            {
+              "additionalProperties": false,
+              "maxProperties": 10000,
+              "patternProperties": {
+                "^(?:/(?:[^~/]|~[01])*)*$": {
+                  "$ref": "#/$defs/CurationStatus"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 4096
+              },
+              "title": "Curation",
+              "type": "object"
+            },
+            {
+              "additionalProperties": {
+                "properties": {
+                  "status": {
+                    "not": {
+                      "const": "undeclared"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "definition": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "extensions": {
+          "additionalProperties": false,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "$ref": "#/$defs/DescriptorJson",
+                  "not": {
+                    "type": "null"
+                  },
+                  "x-aibi-data": true
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "covered",
+                    "exists",
+                    "ids",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Extensions",
+          "type": "object"
+        },
+        "fields": {
+          "$ref": "#/$defs/TableFields"
+        },
+        "id": {
+          "maxLength": 64,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "const": "dataset"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "table",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "id",
+        "version",
+        "fields"
+      ],
+      "title": "TableDescriptor",
+      "type": "object"
+    },
+    "TableFields": {
+      "additionalProperties": false,
+      "description": "``observation_window`` is reserved for timeline queries (M7): until then it is refused\nas an unknown member.",
+      "properties": {
+        "grain": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Grain",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "maps_to": {
+          "$ref": "#/$defs/ConceptMapping",
+          "properties": {
+            "transform": {
+              "type": "null"
+            }
+          }
+        },
+        "primary_key": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                },
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Primary Key"
+        },
+        "role": {
+          "enum": [
+            "entity",
+            "link",
+            "measurement",
+            "event",
+            "coverage"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TableSource"
+        },
+        "time_origin": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+          "title": "Time Origin",
+          "type": "string"
+        }
+      },
+      "title": "TableFields",
+      "type": "object"
+    },
+    "TableSource": {
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "parse"
+        ]
+      },
+      "properties": {
+        "kind": {
+          "enum": [
+            "file",
+            "sheet",
+            "database",
+            "pack"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "original_name": {
+          "maxLength": 4096,
+          "title": "Original Name",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "parse": {
+          "$ref": "#/$defs/ParseSettings"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "original_name"
+      ],
+      "then": {
+        "properties": {
+          "kind": {
+            "const": "file"
+          }
+        }
+      },
+      "title": "TableSource",
+      "type": "object"
+    },
+    "UnitConvert": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Input",
+          "type": "string"
+        },
+        "op": {
+          "const": "unit_convert",
+          "title": "Op",
+          "type": "string"
+        },
+        "units": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "input",
+        "units"
+      ],
+      "title": "UnitConvert",
+      "type": "object"
+    },
+    "UnitKey": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "key": {
+          "items": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
+              }
+            ]
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Key",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset",
+        "key"
+      ],
+      "title": "UnitKey",
+      "type": "object"
+    },
+    "UnitTransform": {
+      "additionalProperties": false,
+      "properties": {
+        "unit_from": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Unit From",
+          "type": "string"
+        },
+        "unit_to": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Unit To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unit_from",
+        "unit_to"
+      ],
+      "title": "UnitTransform",
+      "type": "object"
+    },
+    "UnknownClause": {
+      "additionalProperties": false,
+      "properties": {
+        "unknown": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ValueLeaf"
+            },
+            {
+              "$ref": "#/$defs/ExistsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CoveredLeaf"
+            },
+            {
+              "$ref": "#/$defs/IdsLeaf"
+            },
+            {
+              "$ref": "#/$defs/CohortLeaf"
+            },
+            {
+              "$ref": "#/$defs/PackLeaf"
+            },
+            {
+              "$ref": "#/$defs/AllClause"
+            },
+            {
+              "$ref": "#/$defs/AnyClause"
+            },
+            {
+              "$ref": "#/$defs/NotClause"
+            },
+            {
+              "$ref": "#/$defs/KnownClause"
+            },
+            {
+              "$ref": "#/$defs/UnknownClause"
+            }
+          ],
+          "title": "Unknown"
+        }
+      },
+      "required": [
+        "unknown"
+      ],
+      "title": "UnknownClause",
+      "type": "object"
+    },
+    "ValueLeaf": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "values"
+          ]
+        },
+        {
+          "required": [
+            "range"
+          ]
+        },
+        {
+          "required": [
+            "op"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "op": [
+          "value"
+        ],
+        "value": [
+          "op"
+        ]
+      },
+      "description": "A value predicate (SPEC §6.4): exactly one of ``values``, ``range`` or ``op`` + ``value``.",
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "values",
+              "range"
+            ]
+          },
+          {
+            "required": [
+              "values",
+              "op"
+            ]
+          },
+          {
+            "required": [
+              "range",
+              "op"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "column": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|covered|exists|ids|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*)$",
+          "title": "Column",
+          "type": "string"
+        },
+        "kind": {
+          "const": "value",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lift": {
+          "enum": [
+            "strict",
+            "assessed"
+          ],
+          "title": "Lift",
+          "type": "string"
+        },
+        "match": {
+          "enum": [
+            "any",
+            "all"
+          ],
+          "title": "Match",
+          "type": "string"
+        },
+        "negate": {
+          "default": false,
+          "title": "Negate",
+          "type": "boolean"
+        },
+        "op": {
+          "enum": [
+            "=",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<="
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "quantifier": {
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "enum": [
+                    "some",
+                    "every"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/SomeAtLeast"
+                }
+              ]
+            },
+            {
+              "items": {
+                "oneOf": [
+                  {
+                    "enum": [
+                      "some",
+                      "every"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/SomeAtLeast"
+                  }
+                ]
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            }
+          ],
+          "title": "Quantifier"
+        },
+        "range": {
+          "$ref": "#/$defs/Range"
+        },
+        "units": {
+          "pattern": "^[!-~]{1,64}$",
+          "title": "Units",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            }
+          ],
+          "title": "Value"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number"
+              }
+            ]
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        },
+        "via": {
+          "oneOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            {
+              "additionalProperties": false,
+              "maxProperties": 64,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,63}$": {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "maxItems": 16,
+                  "type": "array"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 64,
+                "not": {
+                  "pattern": "__"
+                }
+              },
+              "type": "object"
+            }
+          ],
+          "title": "Via"
+        }
+      },
+      "required": [
+        "kind",
+        "column"
+      ],
+      "title": "ValueLeaf",
+      "type": "object"
+    },
+    "ValueMap": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Input",
+          "type": "string"
+        },
+        "map": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxProperties": 10000,
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Map",
+          "type": "object"
+        },
+        "op": {
+          "const": "value_map",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "input",
+        "map"
+      ],
+      "title": "ValueMap",
+      "type": "object"
+    },
+    "ValueMapTransform": {
+      "additionalProperties": false,
+      "properties": {
+        "value_map": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxProperties": 10000,
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 4096,
+            "x-aibi-data": true
+          },
+          "title": "Value Map",
+          "type": "object"
+        }
+      },
+      "required": [
+        "value_map"
+      ],
+      "title": "ValueMapTransform",
+      "type": "object"
+    }
+  },
+  "$id": "descriptor.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/DatasetDescriptor"
+    },
+    {
+      "$ref": "#/$defs/TableDescriptor"
+    },
+    {
+      "$ref": "#/$defs/ColumnDescriptor"
+    },
+    {
+      "$ref": "#/$defs/RelationshipDescriptor"
+    },
+    {
+      "$ref": "#/$defs/CoverageDescriptor"
+    },
+    {
+      "$ref": "#/$defs/EndpointDescriptor"
+    },
+    {
+      "$ref": "#/$defs/ConceptDescriptor"
+    },
+    {
+      "$ref": "#/$defs/ModelCardDescriptor"
+    },
+    {
+      "$ref": "#/$defs/AnalysisDescriptor"
+    }
+  ]
+}
