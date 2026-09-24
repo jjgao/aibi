@@ -14,15 +14,17 @@ are in its §15.
 ## Development
 
 The server is a Python package in `server/`, managed with [uv](https://docs.astral.sh/uv/).
-It needs Python 3.12 or later (`uv python install` fetches the pinned version).
+It needs Python 3.12 or later.
 
 ```bash
 cd server
+uv python install                         # the version pinned in server/.python-version
 uv sync                                   # create .venv with the dev tools
 uv run ruff check . && uv run ruff format --check .
 uv run pyright                            # strict on aibi.core
 uv run lint-imports                       # the core must not import packs (SPEC P8)
-uv run pytest
+uv run pytest tests/core                  # the core suite, which must load no pack
+uv run pytest                             # everything
 ```
 
 CI runs the same checks on every pull request. See [CLAUDE.md](CLAUDE.md) for the conventions

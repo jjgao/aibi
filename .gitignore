@@ -16,3 +16,12 @@ htmlcov/
 
 # Local data written by a running server
 server/data/
+/data/
+coverage.xml
+.coverage.*
+
+# Secrets
+.env
+.env.*
+!.env.example
+.envrc

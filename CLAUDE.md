@@ -64,6 +64,7 @@ Python ≥ 3.12 with uv. Before pushing, run from `server/`:
 uv run ruff check . && uv run ruff format --check .
 uv run pyright
 uv run lint-imports      # core must not import packs
+uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
 ```
 
@@ -76,6 +77,8 @@ OpenAPI schema, not written by hand.
   open decisions) into the PR description, then implement.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
+- Stacked PRs: after a parent PR merges, rebase the child onto `main` and push. GitHub's
+  retargeting alone doesn't re-run CI, so the child's checks would still be the old base's.
 
 ## Conventions
 
