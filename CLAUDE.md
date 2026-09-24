@@ -9,8 +9,9 @@ the same PR or don't make the change.
 ## Status
 
 Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
-package skeleton, tooling and CI exist, and `core/schema/` holds the identifier,
-analysis-document and descriptor models; results and everything after them do not yet.
+package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
+analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
+Nothing evaluates a document yet (M2).
 
 ## Non-negotiables
 

@@ -21,6 +21,10 @@ from pydantic import JsonValue, TypeAdapter
 from aibi.core.schema.descriptors import DESCRIPTOR_JSON_MARK, DescModel, Descriptor
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
 from aibi.core.schema.ids import MAX_SAFE_INTEGER, NAME
+from aibi.core.schema.output import COMPUTED_MARK, OUTPUT_JSON_MARK
+from aibi.core.schema.pack_api import PackManifest
+from aibi.core.schema.refusals import Refusal
+from aibi.core.schema.results import CohortCount, ResultEnvelope
 
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 PARAMETER_REFERENCE: dict[str, JsonValue] = {
@@ -209,11 +213,82 @@ def descriptor_schema() -> JsonObject:
     return {"$schema": SCHEMA_DIALECT, "$id": "descriptor.schema.json", **schema}
 
 
+def _optional_without_null(node: JsonValue) -> JsonValue:
+    """Outputs omit an absent optional member rather than writing ``null`` (SPEC §8.1), so the
+    ``null`` Pydantic allows for optional members goes; required members, and computed ones
+    (whose ``null`` means not estimable), keep theirs."""
+    if isinstance(node, list):
+        return [_optional_without_null(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    result: JsonObject = {key: _optional_without_null(value) for key, value in node.items()}
+    properties = result.get("properties")
+    required = result.get("required", [])
+    if isinstance(properties, dict) and isinstance(required, list):
+        result["properties"] = {
+            name: member
+            if name in required or (isinstance(member, dict) and member.get(COMPUTED_MARK))
+            else _without_null(member)
+            for name, member in properties.items()
+        }
+    return result
+
+
+def _output_json(node: JsonValue) -> JsonValue:
+    """Replace the output JSON mark with a reference to its bounded definition."""
+    if isinstance(node, list):
+        return [_output_json(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if node.get(OUTPUT_JSON_MARK) is True:
+        rest = {key: _output_json(value) for key, value in node.items() if key != OUTPUT_JSON_MARK}
+        return {"$ref": "#/$defs/OutputJson", **rest}
+    return {key: _output_json(value) for key, value in node.items()}
+
+
+OUTPUT_JSON = _json_value("OutputJson", null=True)
+
+
+def _output_schema(output: object, schema_id: str) -> JsonObject:
+    """The schema of an output. Strings from data or documents are marked ``x-aibi-data``."""
+    schema = cast(JsonValue, TypeAdapter(output).json_schema())
+    closed = cast(JsonObject, _output_json(_closed(_optional_without_null(schema))))
+    if '"#/$defs/OutputJson"' in json.dumps(closed):
+        cast(JsonObject, closed.setdefault("$defs", {}))["OutputJson"] = OUTPUT_JSON
+    return {"$schema": SCHEMA_DIALECT, "$id": schema_id, **closed}
+
+
+def result_schema() -> JsonObject:
+    return _output_schema(ResultEnvelope, "result.schema.json")
+
+
+def cohort_count_schema() -> JsonObject:
+    return _output_schema(CohortCount, "cohort-count.schema.json")
+
+
+def refusal_schema() -> JsonObject:
+    return _output_schema(Refusal, "refusal.schema.json")
+
+
+def pack_manifest_schema() -> JsonObject:
+    return _output_schema(PackManifest, "pack-manifest.schema.json")
+
+
 SCHEMAS = {
     "document.schema.json": document_schema,
     "document.as-written.schema.json": document_as_written_schema,
     "descriptor.schema.json": descriptor_schema,
+    "result.schema.json": result_schema,
+    "cohort-count.schema.json": cohort_count_schema,
+    "refusal.schema.json": refusal_schema,
+    "pack-manifest.schema.json": pack_manifest_schema,
 }
+OUTPUT_SCHEMAS = (
+    "result.schema.json",
+    "cohort-count.schema.json",
+    "refusal.schema.json",
+    "pack-manifest.schema.json",
+)
 
 
 def render(schema: JsonObject) -> str:

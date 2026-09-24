@@ -1,0 +1,1788 @@
+{
+  "$defs": {
+    "Caveat": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNKNOWN_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "INVALID_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SCOPE_PARTIAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COVERAGE_PROPOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNCONFIRMED_SEMANTICS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNMAPPED_COMPARISON"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "TIME_ORIGIN_MISMATCH"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "block"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "CONFOUNDED_WITH_DATASET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COHORTS_OVERLAP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SMALL_N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "PH_VIOLATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "DRAFT_RELEASE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SUPPRESSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "NOT_ESTIMABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "LIFT_DIFFERS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "POOLED_ACROSS_DATASETS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        }
+      ],
+      "description": "``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.",
+      "properties": {
+        "affects": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$"
+            },
+            {
+              "enum": [
+                "UNKNOWN_EXCLUDED",
+                "INVALID_EXCLUDED",
+                "SCOPE_PARTIAL",
+                "COVERAGE_PROPOSED",
+                "UNCONFIRMED_SEMANTICS",
+                "UNMAPPED_COMPARISON",
+                "TIME_ORIGIN_MISMATCH",
+                "CONFOUNDED_WITH_DATASET",
+                "COHORTS_OVERLAP",
+                "SMALL_N",
+                "PH_VIOLATED",
+                "DRAFT_RELEASE",
+                "SUPPRESSED",
+                "NOT_ESTIMABLE",
+                "LIFT_DIFFERS",
+                "POOLED_ACROSS_DATASETS"
+              ]
+            }
+          ],
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "affects"
+      ],
+      "title": "Caveat",
+      "type": "object"
+    },
+    "DataSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "maxLength": 200,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "truncated": {
+          "const": true,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataSegment",
+      "type": "object"
+    },
+    "DenominatorDefinition": {
+      "additionalProperties": false,
+      "description": "What a proportion's denominator counts (SPEC §8.2).\n\n``counts`` is ``known`` (the units of a cohort for which a predicate is known), ``unit_table``\n(every unit of the unit table) or ``rows``.",
+      "properties": {
+        "counts": {
+          "enum": [
+            "known",
+            "unit_table",
+            "rows"
+          ],
+          "title": "Counts",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Position"
+        },
+        "predicate": {
+          "anyOf": [
+            {
+              "pattern": "^leaf:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Predicate"
+        }
+      },
+      "required": [
+        "position",
+        "predicate",
+        "counts"
+      ],
+      "title": "DenominatorDefinition",
+      "type": "object"
+    },
+    "Disclosure": {
+      "additionalProperties": false,
+      "description": "The effective disclosure setting of an output (SPEC §8.4).",
+      "properties": {
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "required": [
+        "min_cell_count"
+      ],
+      "title": "Disclosure",
+      "type": "object"
+    },
+    "ExclusionReason": {
+      "description": "Why an analysis left out a unit or row (SPEC §6.6): the reasons, and two more.",
+      "enum": [
+        "NOT_ASSESSED",
+        "NOT_COVERED",
+        "NO_INFORMATION",
+        "NO_PARENT",
+        "OUT_OF_SCOPE",
+        "NO_ROWS",
+        "NOT_APPLICABLE",
+        "INVALID_VALUE"
+      ],
+      "title": "ExclusionReason",
+      "type": "string"
+    },
+    "Interval": {
+      "additionalProperties": false,
+      "description": "A confidence interval. ``method`` names the method as the analysis entry does (§9.1).",
+      "properties": {
+        "high": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "High",
+          "x-aibi-computed": true
+        },
+        "level": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Level",
+          "type": "number"
+        },
+        "low": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Low",
+          "x-aibi-computed": true
+        },
+        "method": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "level",
+        "low",
+        "high"
+      ],
+      "title": "Interval",
+      "type": "object"
+    },
+    "Issuance": {
+      "additionalProperties": false,
+      "description": "One time an output was produced. ``values_from`` names the issuance whose SQL produced\nthe values: this one, or for a cache hit the one that filled the cache.",
+      "properties": {
+        "cache_hit": {
+          "title": "Cache Hit",
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "values_from": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Values From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "cache_hit",
+        "values_from"
+      ],
+      "title": "Issuance",
+      "type": "object"
+    },
+    "NotEstimableReason": {
+      "enum": [
+        "no_units",
+        "no_events",
+        "zero_denominator",
+        "zero_variance",
+        "not_reached",
+        "beyond_follow_up",
+        "separation",
+        "not_converged",
+        "degenerate_table",
+        "overlapping_cohorts",
+        "confounded_with_dataset",
+        "suppressed"
+      ],
+      "title": "NotEstimableReason",
+      "type": "string"
+    },
+    "Population": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n_true": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_true"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_true"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_true"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_true": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_true"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_false": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_false"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_false"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_false"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_false": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_false"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_unknown"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_unknown"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_reason"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_reason"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_leaf"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_leaf"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_leaf"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_leaf"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lift_differs": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "lift_differs"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/lift_differs"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/lift_differs"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lift_differs": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "lift_differs"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              },
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "suppressed": {
+              "items": {
+                "enum": [
+                  "/n_true",
+                  "/n_false",
+                  "/n_unknown",
+                  "/unknown_by_reason",
+                  "/unknown_by_leaf",
+                  "/lift_differs"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A cohort's accounting over the unit table (SPEC §6.6).\n\nA count is ``null`` only when the disclosure settings suppressed it, and ``suppressed``\nlists exactly those members. A breakdown is ``null`` with its total.",
+      "properties": {
+        "lift_differs": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lift Differs",
+          "x-aibi-computed": true
+        },
+        "n_false": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N False",
+          "x-aibi-computed": true
+        },
+        "n_true": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N True",
+          "x-aibi-computed": true
+        },
+        "n_unknown": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N Unknown",
+          "x-aibi-computed": true
+        },
+        "suppressed": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)+$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Suppressed",
+          "type": "array"
+        },
+        "unknown_by_leaf": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "patternProperties": {
+                "^leaf:[0-9a-f]{64}$": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unknown By Leaf",
+          "x-aibi-computed": true
+        },
+        "unknown_by_reason": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/Reason"
+              },
+              "required": [
+                "NOT_ASSESSED",
+                "NOT_COVERED",
+                "NO_INFORMATION",
+                "NO_PARENT",
+                "OUT_OF_SCOPE",
+                "NO_ROWS"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unknown By Reason",
+          "x-aibi-computed": true
+        }
+      },
+      "required": [
+        "n_true",
+        "n_false",
+        "n_unknown",
+        "unknown_by_reason",
+        "unknown_by_leaf",
+        "lift_differs"
+      ],
+      "title": "Population",
+      "type": "object"
+    },
+    "Proportion": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "estimate": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "estimate"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/estimate"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/estimate"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "estimate": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "estimate"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "numerator": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "numerator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/numerator"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/numerator"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "numerator"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/denominator"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/denominator"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "denominator": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ci": {
+                "properties": {
+                  "low": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "low"
+                ]
+              }
+            },
+            "required": [
+              "ci"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/ci/low"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/ci/low"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ci": {
+                "properties": {
+                  "low": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "low"
+                ]
+              }
+            },
+            "required": [
+              "ci"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ci": {
+                "properties": {
+                  "high": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "ci"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/ci/high"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/ci/high"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ci": {
+                "properties": {
+                  "high": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "ci"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/estimate",
+                  "/numerator",
+                  "/denominator",
+                  "/excluded",
+                  "/ci/low",
+                  "/ci/high"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "properties": {
+                "/denominator": {
+                  "const": "suppressed"
+                },
+                "/excluded": {
+                  "const": "suppressed"
+                },
+                "/numerator": {
+                  "const": "suppressed"
+                }
+              }
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "not_estimable": {
+                "properties": {
+                  "/estimate": {
+                    "const": "suppressed"
+                  }
+                },
+                "required": [
+                  "/estimate"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "if": {
+            "properties": {
+              "denominator": {
+                "type": "integer"
+              },
+              "numerator": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "numerator",
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "properties": {
+                  "/ci/high": {
+                    "not": {
+                      "const": "suppressed"
+                    }
+                  },
+                  "/ci/low": {
+                    "not": {
+                      "const": "suppressed"
+                    }
+                  },
+                  "/estimate": {
+                    "not": {
+                      "const": "suppressed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "ci": {
+          "$ref": "#/$defs/Interval"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Denominator",
+          "x-aibi-computed": true
+        },
+        "denominator_definition": {
+          "$ref": "#/$defs/DenominatorDefinition"
+        },
+        "denominator_text": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Denominator Text",
+          "type": "array"
+        },
+        "estimate": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Estimate",
+          "x-aibi-computed": true
+        },
+        "excluded": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/ExclusionReason"
+              },
+              "required": [
+                "NOT_ASSESSED",
+                "NOT_COVERED",
+                "NO_INFORMATION",
+                "NO_PARENT",
+                "OUT_OF_SCOPE",
+                "NO_ROWS",
+                "NOT_APPLICABLE",
+                "INVALID_VALUE"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Numerator",
+          "x-aibi-computed": true
+        }
+      },
+      "required": [
+        "estimate",
+        "numerator",
+        "denominator",
+        "denominator_definition"
+      ],
+      "title": "Proportion",
+      "type": "object"
+    },
+    "Reason": {
+      "description": "Why a truth value is UNKNOWN (SPEC §6.3). An UNKNOWN always has at least one.",
+      "enum": [
+        "NOT_ASSESSED",
+        "NOT_COVERED",
+        "NO_INFORMATION",
+        "NO_PARENT",
+        "OUT_OF_SCOPE",
+        "NO_ROWS"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "description": "A release an output drew on. The label is recorded beside the manifest, never hashed.",
+      "else": {
+        "properties": {
+          "label": {
+            "type": "integer"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "draft"
+          }
+        }
+      },
+      "properties": {
+        "dataset": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "label",
+        "manifest",
+        "status"
+      ],
+      "then": {
+        "properties": {
+          "label": {
+            "const": "draft"
+          }
+        }
+      },
+      "title": "ReleaseRef",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    }
+  },
+  "$id": "cohort-count.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "releases": {
+            "contains": {
+              "properties": {
+                "status": {
+                  "const": "draft"
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "issuance": {
+            "properties": {
+              "cache_hit": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
+  "properties": {
+    "caveats": {
+      "allOf": [
+        {
+          "items": {
+            "not": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "COHORTS_OVERLAP",
+                    "CONFOUNDED_WITH_DATASET",
+                    "INVALID_EXCLUDED"
+                  ]
+                }
+              }
+            },
+            "properties": {
+              "affects": {
+                "const": [
+                  "/population"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "items": {
+        "$ref": "#/$defs/Caveat"
+      },
+      "title": "Caveats",
+      "type": "array"
+    },
+    "digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    },
+    "disclosure": {
+      "$ref": "#/$defs/Disclosure"
+    },
+    "id": {
+      "pattern": "^drv:[0-9a-f]{64}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "issuance": {
+      "$ref": "#/$defs/Issuance"
+    },
+    "population": {
+      "$ref": "#/$defs/Population"
+    },
+    "readback": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TextSegment"
+          },
+          {
+            "$ref": "#/$defs/DataSegment"
+          }
+        ]
+      },
+      "title": "Readback",
+      "type": "array"
+    },
+    "releases": {
+      "items": {
+        "$ref": "#/$defs/ReleaseRef"
+      },
+      "minItems": 1,
+      "title": "Releases",
+      "type": "array"
+    },
+    "size": {
+      "$ref": "#/$defs/Proportion",
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "excluded"
+            ]
+          },
+          "properties": {
+            "denominator": {
+              "type": "integer"
+            },
+            "denominator_definition": {
+              "const": {
+                "counts": "unit_table",
+                "position": null,
+                "predicate": null
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "digest",
+    "population",
+    "size",
+    "disclosure",
+    "readback",
+    "caveats",
+    "releases",
+    "issuance"
+  ],
+  "title": "CohortCount",
+  "type": "object"
+}
