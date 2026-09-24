@@ -8,8 +8,8 @@ the same PR or don't make the change.
 
 ## Status
 
-Pre-code: the repository holds the spec only. Milestone M0 (SPEC.md §15) creates the skeleton
-below.
+Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
+package skeleton, tooling and CI exist; the schemas and everything after them do not yet.
 
 ## Non-negotiables
 
