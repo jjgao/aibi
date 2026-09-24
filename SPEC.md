@@ -1,46 +1,63 @@
 # aibi — Specification
 
-**Status:** Draft v0.1 · 2026-09-24 · open for review
+**Status:** Draft v0.2 · 2026-09-24 · open for review
 **Scope of this document:** product goals, principles, data model, query semantics, result
-contract, analysis registry, MCP surface, architecture and milestones. It is normative where it
-says MUST / MUST NOT / SHOULD (RFC 2119); everything else is rationale.
+contract, analysis registry, domain packs, MCP surface, architecture and milestones. It is
+normative where it says MUST / MUST NOT / SHOULD (RFC 2119); everything else is rationale.
+
+**Changes from v0.1:** the core is now domain-agnostic. Patients, samples, genes and molecular
+profiles moved out of the core into an *oncology pack* (§10). The core works over any set of
+related tables from spreadsheets, delimited files or databases. A new principle, P8, requires
+that a system like cBioPortal can be built on top of aibi without changing its core.
 
 ---
 
 ## 1. Purpose
 
-aibi is an **AI-native cohort exploration system** for curated clinical and genomic studies.
-A researcher, or an agent working for one, asks a question such as *"in GBM, do IDH-wild-type
-patients over 60 with EGFR amplification have worse overall survival?"*, and aibi returns an
-answer whose every number states how it was derived, over which patients, from which version
-of which data, and what it could not account for.
+aibi is an **AI-native system for exploring cohorts in related tables**. A cohort is any set of
+entities (patients, samples, customers, sites, devices) selected by criteria over their own
+attributes and over the rows related to them. A researcher, or an agent working for one, asks
+a question such as *"do patients over 60 with at least one grade ≥3 adverse event have shorter
+time to discontinuation?"*, and aibi returns an answer whose every number states how it was
+derived, over which entities, from which version of which data, and what it could not account
+for.
 
-The system is built so that software can use it without a human in the loop to interpret it:
-the metadata says what each value means, the catalogue says what each analysis needs, and each
-result says how it was computed. That is the sense of *AI-ready* adopted here (NIH Bridge2AI).
+The system is built so that software can use it without a human to interpret it: the metadata
+says what each value means, the catalogue says what each analysis needs, and each result says
+how it was computed. That is the sense of *AI-ready* adopted here (NIH Bridge2AI).
+
+Biomedical data, and cBioPortal studies in particular, are the reference use case and the
+hardest test of the design. They are not built into it: domain knowledge enters through
+**domain packs** (§10). The long-term test of the design is that cBioPortal's study
+exploration could be rebuilt as an aibi pack plus a UI.
 
 ### 1.1 Goals (v1)
 
-1. Import cBioPortal-format studies into immutable, versioned releases.
-2. Describe every study, attribute, molecular profile and endpoint with structured descriptors,
-   including explicit missing-versus-negative semantics.
-3. Let people and agents discover studies and attributes by facet **before** querying data.
-4. Define cohorts with a declarative JSON document; compile it on the server; never accept SQL.
-5. Run a small set of registered analyses (distributions, alteration frequency, clinical
-   comparison, Kaplan–Meier survival) whose results carry a machine-readable derivation.
-6. Expose all of the above through one MCP server and a web UI that share the same functions.
-7. Use a model to *propose* descriptors (curation) and *draft* analysis documents
-   (exploration), with a human confirming or editing both.
+1. Import any set of related tables (CSV/TSV, XLSX/ODS sheets, Parquet, or database tables)
+   into immutable, versioned releases.
+2. Describe every dataset, table, column, relationship and endpoint with structured
+   descriptors, including explicit missing-versus-negative semantics and declared coverage.
+3. Let people and agents discover datasets and columns by facet **before** querying data.
+4. Define cohorts with a declarative JSON document over the table graph; compile it on the
+   server; never accept SQL.
+5. Run a small set of registered, domain-neutral analyses (distributions, group comparison,
+   existence frequency, Kaplan–Meier) whose results carry a machine-readable derivation.
+6. Ship an oncology pack (cBioPortal-format import, genomic query shorthand, alteration
+   frequency) that uses only the public extension points.
+7. Expose all of the above through one MCP server and a web UI that share the same functions.
+8. Use a model to *propose* descriptors, keys and relationships (curation) and to *draft*
+   analysis documents (exploration), with a person confirming or editing both.
 
 ### 1.2 Non-goals (v1)
 
-- General-purpose BI over arbitrary tables (that was biai; see §2).
+- Dashboards and report building as ends in themselves. aibi answers questions about cohorts;
+  it is not a general BI tool (that was biai; see §2).
 - Raw SQL access for users or models.
+- Live queries against source databases. Database tables are snapshotted into releases (P6).
 - Multi-tenant hosting, fine-grained access control, or handling identifiable data. v1 assumes
   de-identified data and a trusted single-team deployment.
-- Federation across sites. The result contract (§8) leaves room for it; nothing implements it.
-- Timeline and treatment-line queries, Cox regression and JSON-LD export. Designed for here,
-  scheduled after v1 (§13).
+- Federation across sites. The result contract (§8) leaves room for it.
+- Timeline queries, Cox regression and JSON-LD export: designed for, scheduled after v1 (§14).
 
 ---
 
@@ -48,14 +65,14 @@ result says how it was computed. That is the sense of *AI-ready* adopted here (N
 
 | Source | What aibi takes | What it leaves |
 |---|---|---|
-| **biai** (`jjgao/biai`) | Domain lessons: multi-table datasets, list-valued columns, parent counting, filter propagation across related tables, the TCGA example data. Its e2e specs and user guide are the behavioural checklist for the UI. | The code, ClickHouse as an app-state store, string-built SQL, per-chart round trips. |
-| **cbio-lab DSL v2.2** (the system behind the `oncoprint` MCP server) | The document shape: named cohorts built from `all` / `any` / `not` clauses, plus views. The rules *clients never send SQL*, *refuse rather than approximate*, *profiled-only denominators*, *NOT_PROFILED as a first-class state*, deterministic plain-language readbacks, caveats the agent must surface, `observed` windows on absence queries, left truncation for re-anchored survival, and `params` templates. | Its `not` semantics (study base EXCEPT leaf) are replaced by three-valued logic (§6.3). Documents are pinned to data releases and hashed into derivation ids (§7). |
-| **cBioPortal study format and validator** | The import format (meta files, clinical files with header rows, MAF, discrete CNA, gene panel matrix, case lists) and the validator's role as a gate. | — |
+| **biai** (`jjgao/biai`) | The generic starting point: any multi-table dataset, relationships between tables, counting by a related (parent) table, filters that propagate along relationships, list-valued columns, spreadsheet and multi-sheet import, key detection. Its e2e specs and user guide are the behavioural checklist for the UI. | The code, ClickHouse as an app-state store, string-built SQL, per-chart round trips, silent path-finding between tables. |
+| **cbio-lab DSL v2.2** (the system behind the `oncoprint` MCP server) | The document shape: named cohorts built from `all` / `any` / `not` clauses, plus views. The rules *clients never send SQL*, *refuse rather than approximate*, *denominators count only what was assessed*, *not-assessed is a first-class state*, deterministic plain-language readbacks, caveats the agent must surface, `observed` windows on absence queries, left truncation for re-anchored survival, and `params` templates. These are generalised in the core; the oncology-specific parts (OQL, profiles, panels) become the oncology pack. | Its `not` semantics (base EXCEPT leaf) are replaced by three-valued logic (§6.3). Documents are pinned to releases and hashed into derivation ids (§7). |
+| **cBioPortal study format and validator** | The oncology pack's import format and the validator's role as a gate. | Nothing in the core depends on it. |
 
 Documents SHOULD stay close enough to cbio-lab's shape that a cbio-lab document can be
-translated mechanically. Any place where the two differ in meaning MUST be listed in
-`docs/cbio-lab-differences.md` once that file exists. Whether aibi should converge with
-cbio-lab rather than sit beside it is open question Q1 (§14).
+translated mechanically into core clauses plus oncology-pack leaves. Differences in meaning
+MUST be listed in `docs/cbio-lab-differences.md` once that file exists. Whether aibi and
+cbio-lab should converge is open question Q1 (§15).
 
 ---
 
@@ -74,35 +91,49 @@ proportion its numerator, its denominator, and a statement of what the denominat
 
 **P2 — Missing is not negative.**
 The data model distinguishes a value, a confirmed absence, not assessed, not applicable, and
-unknown (§6.1). Query logic is three-valued (§6.3). No statistic silently drops, imputes or
-reclassifies a missing observation; every exclusion is counted by reason in the result.
-*Enforced by:* the observation-state model in the engine; property tests (§12.3).
+unknown (§6.2). An absence of related rows means "none" only where the dataset declares that
+the table is complete for that entity (§6.4). Query logic is three-valued (§6.3). No statistic
+silently drops, imputes or reclassifies a missing observation; every exclusion is counted by
+reason in the result.
+*Enforced by:* the observation-state model in the engine; property tests (§13.3).
 
 **P3 — Comparability is asserted, not inferred.**
-Two attributes are comparable across studies only if both map to the same harmonised concept
-with a declared transform (§5.5). A shared column name counts for nothing. Compatibility
-constraints such as the reference genome build, value encoding and time origin are checked.
-*Enforced by:* the compiler refuses cross-study references to unharmonised attributes unless
-the document opts in explicitly, and then every affected result carries a caveat.
+Two columns are comparable across datasets only if both map to the same concept with a
+declared transform (§5.6). A shared column name counts for nothing. Units, value encodings and
+time origins are checked.
+*Enforced by:* the compiler refuses cross-dataset references to unmapped columns unless the
+document opts in explicitly, and then every affected result carries a caveat.
 
 **P4 — Metadata is queryable before data.**
-Study, attribute, profile and endpoint descriptors form a catalogue that can be searched by
-facet without issuing a data query. *Enforced by:* separate catalogue and query surfaces (§10).
+Dataset, table, column, relationship and endpoint descriptors form a catalogue that can be
+searched by facet without issuing a data query. *Enforced by:* separate catalogue and query
+surfaces (§11).
 
 **P5 — Capabilities are declared, not inferred.**
 Each analysis is a registry entry declaring the data it requires and the result it returns.
 The MCP tool schemas, the UI's analysis menu and the answer to *"which analyses does this
-study support?"* are all generated from the registry. *Enforced by:* no analysis can be called
-except through the registry (§9).
+dataset support?"* are all generated from the registry. *Enforced by:* no analysis can be
+called except through the registry (§9).
 
 **P6 — Results point to immutable releases.**
 Data is served from content-addressed, read-only releases. A curation change, even to one
-descriptor, creates a new release. *Enforced by:* the storage layer (§11.2); a document run
+descriptor, creates a new release. *Enforced by:* the storage layer (§12.2); a document run
 against the same pins returns the same result digest.
 
 **P7 — One documentation surface for data, computations and models.**
 Descriptors (data), registry entries (computations) and model cards (the models that propose
 descriptors or draft documents) share one envelope (§5.1) and one lookup path.
+
+**P8 — The core is domain-agnostic; domains are packs.**
+The core knows about tables, keys, relationships, columns, observation states, coverage,
+endpoints and concepts, and nothing else. It has no notion of patients, samples, genes or
+assays. Domain knowledge (vocabularies, descriptor extensions, importers, query shorthands,
+analyses, readback templates, caveat codes) is added by packs through public extension points
+(§10), and every pack leaf compiles to core clauses.
+*Enforced by:* an import-boundary test: `aibi.core` MUST NOT import from `aibi.packs`, and the
+core test suite runs with no packs installed. At least one non-biomedical fixture dataset is in
+the core test suite. The oncology pack's exit criterion (M4) is that it ships without any change
+to the core.
 
 ### 3.2 AI-interaction principles
 
@@ -117,16 +148,16 @@ document. Its readback is generated deterministically from the canonical documen
 model, so a person can confirm that the document asks what they meant.
 
 **A3 — Refuse rather than approximate.**
-An unsupported operator, an unknown attribute, or an analysis whose requirements are not met
-fails loudly, names the problem, and lists what *is* available.
+An unsupported operator, an unknown column, an ambiguous join path, or an analysis whose
+requirements are not met fails loudly, names the problem, and lists what *is* available.
 
 **A4 — No private tools.**
 The in-app assistant uses exactly the public MCP tools. Anything it can do, an external agent
 can do and a person can inspect.
 
 **A5 — Proposals are visible until confirmed.**
-Anything a model proposes (a descriptor, an ontology code, a harmonisation mapping) is stored
-with status `proposed` and the proposing model's card. It is never silently promoted to
+Anything a model proposes (a key, a relationship, a descriptor field, a concept mapping) is
+stored with status `proposed` and the proposing model's card. It is never silently promoted to
 `asserted`, and results that depend on it carry a caveat until a person confirms it.
 
 ---
@@ -135,16 +166,19 @@ with status `proposed` and the proposing model's card. It is never silently prom
 
 | Term | Meaning |
 |---|---|
-| **Study** | A curated collection of patients, samples and data from one source (e.g. `gbm_tcga_pan_can_atlas_2018`). |
-| **Release** | An immutable snapshot of a study's data **and** descriptors, identified as `<study>@<n>` and by a content hash. |
-| **Unit** | What is being counted: `patient` (default) or `sample`. |
-| **Attribute** | A clinical variable at patient or sample level. |
-| **Profile** | A molecular data set in a study: mutations, discrete CNA, structural variants, a continuous matrix, or a generic assay. |
-| **Endpoint** | A declared (time, status) pair usable for survival analysis. |
-| **Descriptor** | The structured metadata record for a study, attribute, profile, endpoint, analysis or model. |
-| **Concept** | A study-independent meaning (e.g. *age at diagnosis in years*) that attributes can be harmonised to. |
+| **Dataset** | A collection of related tables from one source, e.g. a clinical trial export, a CRM extract, or a cBioPortal study. |
+| **Release** | An immutable snapshot of a dataset's data **and** descriptors, identified as `<dataset>@<n>` and by a content hash. |
+| **Table** | A set of rows with a declared **grain**: what one row is (a patient, a sample, a mutation call, an order). |
+| **Entity table** | A table with a primary key. Any entity table can be the **unit** a cohort counts. |
+| **Relationship** | A declared many-to-one link from a child table's foreign key to a parent table's key. Relationships form the **table graph**. |
+| **Column** | A variable in a table. |
+| **Coverage** | A declaration of which parent rows (and, optionally, which scope values) a child table is complete for (§6.4). |
+| **Endpoint** | A declared (time, status) pair on an entity table, usable for time-to-event analysis. |
+| **Concept** | A dataset-independent meaning (e.g. *age at diagnosis in years*) that columns can be mapped to. |
+| **Descriptor** | The structured metadata record for any of the above, or for an analysis or model. |
+| **Pack** | A domain extension: concepts, descriptor extensions, importers, leaf kinds, analyses, templates (§10). |
 | **Analysis document** | The JSON object declaring cohorts and views (§7). |
-| **Derivation** | The canonical, hashed description of how a result was produced (§7.4). |
+| **Derivation** | The canonical, hashed description of how a result was produced (§7.5). |
 | **Caveat** | A structured, coded statement about a result's fitness for use (§8.3). |
 
 ---
@@ -157,13 +191,14 @@ Every descriptor, whatever it describes, has:
 
 ```jsonc
 {
-  "kind": "study | attribute | profile | endpoint | event_domain | analysis | model | concept",
+  "kind": "dataset | table | column | relationship | coverage | endpoint | concept | analysis | model",
   "id": "string, stable within its scope",
   "version": "string",
   "label": "Human-readable name",
   "definition": "One-paragraph definition in plain text",
-  "provenance": { "source": "...", "pipeline": {"name": "...", "version": "..."}, "citation": ["pmid:…", "doi:…"] },
-  "fields": { /* kind-specific, §5.2–5.6 */ },
+  "provenance": { "source": "...", "pipeline": {"name": "...", "version": "..."}, "citation": ["doi:…"] },
+  "fields": { /* kind-specific, §5.2–5.7 */ },
+  "extensions": { "<pack id>": { /* validated against the pack's JSON Schema */ } },
   "curation": { "<field path>": CurationStatus }
 }
 ```
@@ -179,116 +214,143 @@ CurationStatus = {
 }
 ```
 
-- `imported`: taken from the source files (e.g. a cBioPortal header row).
-- `imported_default`: the importer filled it in by convention (e.g. mapping `[Not Available]`
-  to UNKNOWN). Allowed, but it MUST be surfaced as a caveat wherever it affects a result.
-- `undeclared`: nobody has said. The engine MUST treat undeclared semantics conservatively
-  (e.g. an undeclared missing code is UNKNOWN, never negative).
+- `imported`: taken from the source (a header row, a database comment, a declared constraint).
+- `imported_default`: filled in by convention (e.g. mapping `NA` to UNKNOWN). Allowed, but it
+  MUST be surfaced as a caveat wherever it affects a result.
+- `undeclared`: nobody has said. The engine MUST treat undeclared semantics conservatively: an
+  undeclared missing code is UNKNOWN, and an undeclared coverage makes absence UNKNOWN, never
+  negative.
 
-### 5.2 Study descriptor
+`extensions` is how packs add domain fields (e.g. the oncology pack's `reference_genome` on a
+dataset). The core stores and validates them but never interprets them.
 
-`name`, `description`, `cancer_types` (OncoTree codes), `citation` / `references`,
-`source` (e.g. a Datahub path and commit), `license`, `data_use` (GA4GH DUO codes),
-`reference_genome` (e.g. `GRCh37`), `time_origin` (what day 0 means in this study, e.g.
-*date of initial pathologic diagnosis*; `undeclared` is allowed and triggers a caveat on any
-cross-study time comparison), and computed fields (`n_patients`, `n_samples`,
-`assay_composition`) that are filled in at release build time, never by hand.
+### 5.2 Dataset descriptor
 
-### 5.3 Attribute descriptor
+`name`, `description`, `domain_tags`, `citation` / `references`, `source` (file set, database
+and schema, or repository and commit), `license`, `data_use` (GA4GH DUO codes where relevant),
+`time_origin` (what time zero means for each entity table with time columns; `undeclared`
+triggers a caveat on cross-dataset time comparison), and computed fields (`n_rows` per table,
+`table_graph` summary) that are filled in at release build time, never by hand.
+
+### 5.3 Table descriptor
 
 | Field | Meaning |
 |---|---|
-| `level` | `patient` or `sample` |
-| `datatype` | `number`, `integer`, `string`, `boolean`, `category`, `list<category>`, `day_offset` |
-| `units` | UCUM code for numbers (`a`, `mo`, `d`, `mg/dL`); required for any number used in a cross-study comparison |
+| `grain` | Plain-text statement of what one row is (e.g. *one adverse event report*) |
+| `primary_key` | Column list, or `none`; a table without a key can be filtered and aggregated but cannot be a unit |
+| `source` | Sheet, file or database table it came from, and any header or skip-row handling applied |
+
+### 5.4 Column descriptor
+
+| Field | Meaning |
+|---|---|
+| `datatype` | `number`, `integer`, `string`, `boolean`, `category`, `list<category>`, `date`, `datetime`, `time_offset` |
+| `units` | UCUM code for numbers and offsets (`a`, `mo`, `d`, `mg/dL`, `USD`); required for any number used in a cross-dataset comparison |
 | `permissible_values` | For categories: `[{value, label, concepts: [OntologyRef]}]` |
-| `missing_codes` | Map from a raw token to an observation state: `{"[Not Available]": "UNKNOWN", "[Not Applicable]": "NOT_APPLICABLE", "[Not Evaluated]": "NOT_ASSESSED", "": "UNKNOWN", "NA": "UNKNOWN"}` |
-| `concepts` | `[OntologyRef]` describing what the attribute measures (NCIt, LOINC, …) |
-| `harmonized_as` | Optional `HarmonizationRef` (§5.5) |
-| `completeness` | `{scope: "all patients | patients with samples | …", declared: "complete | partial | unknown"}` plus computed counts per observation state |
-| `source` | `{file, column, header_display_name, header_description, header_datatype, header_priority}` as imported |
+| `missing_codes` | Map from a raw token to an observation state, e.g. `{"": "UNKNOWN", "NA": "UNKNOWN", "N/A": "NOT_APPLICABLE", "Not done": "NOT_ASSESSED"}` |
+| `concepts` | `[OntologyRef]` describing what the column measures |
+| `maps_to` | Optional `ConceptMapping` (§5.6) |
+| `list_syntax` | For `list<…>`: how lists are encoded in the source (JSON array, Python literal, delimiter) |
+| `completeness` | Declared (`complete | partial | unknown`) plus computed counts per observation state |
+| `source` | Original column name and any header metadata imported with it |
 
-`OntologyRef = {system: "NCIt | LOINC | OncoTree | HGNC | SNOMED | UBERON | …", code, label,
-relation: "exact | broader | narrower | related"}`.
+`OntologyRef = {system, code, label, relation: "exact | broader | narrower | related"}`. The
+core accepts any `system` string; packs register the systems they validate (e.g. NCIt, LOINC,
+OncoTree, HGNC).
 
-### 5.4 Profile descriptor
+### 5.5 Relationship and coverage descriptors
 
-| Field | Meaning |
-|---|---|
-| `profile_type` | `MUTATION`, `CNA_DISCRETE`, `STRUCTURAL_VARIANT`, `CONTINUOUS`, `GENERIC_ASSAY` |
-| `assay` | e.g. `WES`, `WGS`, `panel:IMPACT468` |
-| `coverage` | `whole_exome`, `whole_genome`, `panels` (per-sample, from the gene panel matrix) or `undeclared`. `whole_*` without a source is `imported_default` and raises a caveat |
-| `reference_genome` | Required for `MUTATION` and `STRUCTURAL_VARIANT` |
-| `pipeline` | Caller / normaliser and version |
-| `variant_scope` | For mutations: which variant classes and origins the file contains (e.g. *somatic, non-synonymous only*). A query for a class outside the scope is **refused**, since absence of such a record means nothing |
-| `value_semantics` | For CNA: encoding (e.g. GISTIC −2…2). For continuous data: scale and, for z-scores, the **reference population** (e.g. *diploid samples* vs *all samples*) |
-| `gene_identifiers` | Symbol source and version (HGNC release), with alias resolutions recorded at import |
+A **relationship** is `{child_table, child_columns, parent_table, parent_columns, cardinality:
+"many-to-one | one-to-one", role?}`. `role` names the relationship when two tables are linked
+more than once (e.g. `orders.billing_customer` and `orders.shipping_customer`).
 
-### 5.5 Concepts and harmonisation
-
-A **concept** is a study-independent descriptor (`kind: concept`) such as
-`aibi:age_at_diagnosis` (units `a`), `aibi:sex`, `aibi:oncotree_code`,
-`aibi:overall_survival` (an endpoint concept), `aibi:tmb_nonsynonymous`.
+A **coverage** declaration says for which parents a child table is complete, and over what
+scope:
 
 ```jsonc
-HarmonizationRef = {
-  "concept": "aibi:age_at_diagnosis",
-  "transform": { "unit_from": "d", "unit_to": "a" } | { "value_map": {"Male": "male", "M": "male"} } | null,
+{
+  "child_table": "mutations",
+  "relationship": "mutations.sample_id → samples.sample_id",
+  "parents": "all | { table: <coverage table>, columns: [...] } | undeclared",
+  "scope_columns": ["hugo_symbol"],          // optional: completeness is per (parent, scope value)
+  "record_filter": { /* core clause over the child: which kinds of rows the table holds */ }
+}
+```
+
+- `parents: "all"`: every parent row was assessed; no child rows means none exist.
+- `parents: {table, columns}`: a coverage table lists the assessed parents, and, when
+  `scope_columns` is set, the assessed (parent, scope value) pairs. This is how a gene panel is
+  expressed (the oncology pack generates it), but equally how "these sites reported adverse
+  events for these visit windows" is expressed.
+- `record_filter`: what the table holds, e.g. *only non-synonymous calls* or *only serious
+  adverse events*. A query for rows outside the filter is **refused**, since absence of such a
+  row means nothing.
+
+### 5.6 Concepts and mapping
+
+A **concept** is a dataset-independent descriptor (`kind: concept`) with units or permissible
+values. Concepts are namespaced by who defines them: `core:` for a handful of universal ones
+(`core:age_years`, `core:sex`), and `<pack>:` for the rest (`onco:overall_survival`,
+`onco:oncotree_code`).
+
+```jsonc
+ConceptMapping = {
+  "concept": "core:age_years",
+  "transform": { "unit_from": "d", "unit_to": "a" } | { "value_map": {"M": "male", "F": "female"} } | null,
   "status": CurationStatus
 }
 ```
 
-An attribute is **harmonised** if it has a `harmonized_as` with status `asserted`. Cross-study
-references in documents use the concept id, not the attribute id (§7.3). v1 ships a small
-concept set (the attributes needed for the M5 exit criteria); growing it is ongoing curation,
-not code.
+A column is **mapped** if it has a `maps_to` with status `asserted`. Cross-dataset references in
+documents use the concept id, not the column id (§7.4).
 
-### 5.6 Endpoint descriptor
+### 5.7 Endpoint descriptor
 
-`time_attribute`, `status_attribute`, `time_units`, `event_coding` (which status values are
-events and which are censored, e.g. `{"1:DECEASED": "event", "0:LIVING": "censored"}`),
-`time_origin` (defaults to the study's), and optionally `harmonized_as` (e.g.
-`aibi:overall_survival`). cBioPortal's `OS_MONTHS`/`OS_STATUS`, `PFS_*`, `DFS_*` and `DSS_*`
-pairs are detected at import with status `imported_default`.
+`table` (an entity table), `time_column`, `status_column`, `time_units`, `event_coding` (which
+status values are events and which are censored), `time_origin` (defaults to the dataset's for
+that table), and optionally `maps_to` a concept (e.g. `onco:overall_survival`). The core
+detects nothing by name; packs and the curation assistant propose endpoints.
 
 ---
 
-## 6. Data model and observation semantics
+## 6. Data model and query semantics
 
-### 6.1 Observation states
+### 6.1 The table graph
+
+A dataset's tables and relationships form a directed graph (child → parent). The engine
+supports two moves along it:
+
+- **Up** (child to parent, many-to-one): a parent's column is a single value for each child
+  row. A cohort of samples can be filtered on its patient's age.
+- **Down** (parent to children, one-to-many): a parent is related to zero or more child rows,
+  so a child-level criterion becomes an **existence** question with a quantifier (§6.3).
+
+Paths MUST be unambiguous. If more than one relationship path connects the unit to a referenced
+table, the compiler refuses and lists the paths; the document names one with `via`. There is
+no silent shortest-path choice (biai's BFS was a source of wrong joins).
+
+### 6.2 Observation states
 
 Every (unit, variable) pair evaluated by the engine has exactly one state:
 
 | State | Meaning | Examples |
 |---|---|---|
-| `PRESENT` | A value, record or alteration exists | `AGE = 61`; a KRAS G12C record in a sample profiled for KRAS |
-| `ABSENT` | It was assessed, and there is none | A sample profiled for TP53 with no TP53 record in a mutation profile whose `variant_scope` covers the query |
-| `NOT_ASSESSED` | It is known that it was not assessed | A sample not profiled for the gene; a CNA cell reported `NA`; `[Not Evaluated]` |
-| `NOT_APPLICABLE` | The question does not apply | `[Not Applicable]` |
-| `UNKNOWN` | There is no information either way | Empty cell, `[Not Available]`, `[Unknown]`, an undeclared missing code |
+| `PRESENT` | A value or a matching related row exists | `age = 61`; an adverse-event row of grade 3 |
+| `ABSENT` | It was assessed, and there is none | A covered parent with no matching child row |
+| `NOT_ASSESSED` | It is known that it was not assessed | A parent outside the table's coverage; a `Not done` code |
+| `NOT_APPLICABLE` | The question does not apply | `N/A` mapped to NOT_APPLICABLE |
+| `UNKNOWN` | There is no information either way | Empty cell, undeclared missing code, undeclared coverage |
 
-For clinical attributes, a negative answer (`"No"`) is a `PRESENT` value; `ABSENT` exists for
-**existence** variables: alterations and, later, events.
+For ordinary columns, a negative answer (`"No"`) is a `PRESENT` value. `ABSENT` exists for
+**existence** questions over related rows.
 
-### 6.2 Profiling and coverage
-
-`assessed(sample, profile, gene)` is a stored fact, computed at release build time from the
-case lists, the gene panel matrix and the panel definitions:
-
-- panel coverage: assessed iff the sample is in the profile's case list **and** the gene is on
-  the sample's panel;
-- whole-exome or whole-genome coverage: assessed iff the sample is in the profile's case list;
-- undeclared coverage: `UNKNOWN` for every gene. The importer MAY default to whole-exome when
-  no panel matrix exists, but then the coverage field is `imported_default` and results carry
-  `COVERAGE_ASSUMED`.
-
-### 6.3 Three-valued query logic
+### 6.3 Three-valued logic
 
 Leaf predicates evaluate per unit to `TRUE`, `FALSE` or `UNKNOWN` (Kleene logic):
 
-| Observation state | Value predicate (e.g. `AGE > 60`) | Existence predicate (e.g. `TP53: MUT`) |
+| Observation state | Value predicate (`age > 60`) | Existence predicate (`exists adverse_events where grade ≥ 3`) |
 |---|---|---|
-| PRESENT | TRUE or FALSE, by the value | TRUE if it matches, else FALSE |
+| PRESENT | TRUE or FALSE, by the value | TRUE if a matching row exists |
 | ABSENT | — | FALSE |
 | NOT_ASSESSED | UNKNOWN | UNKNOWN |
 | NOT_APPLICABLE | FALSE | FALSE |
@@ -296,23 +358,38 @@ Leaf predicates evaluate per unit to `TRUE`, `FALSE` or `UNKNOWN` (Kleene logic)
 
 - `all` is Kleene AND, `any` is Kleene OR, `not` swaps TRUE and FALSE and leaves UNKNOWN.
 - A unit is **in** a cohort iff the cohort predicate is TRUE.
-- `known(leaf)` is TRUE iff the leaf is not UNKNOWN; `unknown(leaf)` is its complement. These
-  are the only way to deliberately include unknowns.
-- **Consequence:** `{"not": {"kind": "genomic", "q": "TP53: MUT"}}` means *profiled for TP53
-  and not mutated*. It does not include unprofiled patients. This deliberately differs from
-  cbio-lab, where the same clause includes them unless a `profiled` clause is added.
+- `known(clause)` is TRUE iff the clause is not UNKNOWN; `unknown(clause)` is its complement.
+  These are the only way to deliberately include unknowns.
+- **Existence** is evaluated per unit as: TRUE if at least one related row matches; otherwise
+  FALSE if the unit is covered (§6.4) for the whole scope the predicate asks about; otherwise
+  UNKNOWN. So `not exists mutations where gene = TP53` means *assessed for TP53 and no TP53
+  row*, and it excludes units that were never assessed.
+- **Lifting through intermediate tables.** When a criterion sits two or more steps down
+  (patient → sample → mutation), each step down is its own existence quantifier: `any`
+  (default: Kleene OR over the children) or `all` (Kleene AND over the children). A parent
+  with no children at that step is UNKNOWN unless the step's own coverage says the parent has
+  none. Consequence: a patient with one assessed wild-type sample and one unassessed sample is
+  UNKNOWN for "has a TP53 mutation in any sample" (see Q2).
+- A value predicate that reaches a list-valued column matches if any list item matches;
+  `{"match": "all"}` requires every item to.
 
-**Sample-to-patient lifting.** When the unit is `patient` and a predicate is sample-level,
-the patient's value is the Kleene OR over their samples: TRUE if any sample is TRUE; otherwise
-UNKNOWN if any sample is UNKNOWN; otherwise FALSE. A patient with no samples is UNKNOWN. A
-patient with one wild-type profiled sample and one unprofiled sample is therefore UNKNOWN for
-"TP53 mutated", which is stricter than cBioPortal's convention (see Q2). A document may request
-`"lift": "all"` (every sample TRUE) instead.
+### 6.4 Coverage evaluation
 
-### 6.4 Accounting
+For a unit `u` and an existence predicate over child table `T` with filter `F`:
 
-Every cohort result reports `n_true`, `n_false` and `n_unknown` over the study base, and for
-each leaf how many units it made UNKNOWN. This makes it visible when a cohort shrank because of
+1. If `F` asks for rows outside `T`'s `record_filter`, the document is refused.
+2. If a matching row exists, TRUE.
+3. If `T`'s coverage is `undeclared`, UNKNOWN.
+4. If coverage is `all` and has no scope columns, FALSE.
+5. With scope columns: if `F` fixes the scope column(s) to specific values, FALSE iff `u` is
+   covered for every one of them; otherwise UNKNOWN. If `F` leaves the scope open, the answer
+   is evaluated over the scope values `u` is covered for, and the result carries
+   `SCOPE_PARTIAL` naming the restriction (e.g. *no mutation among the genes assessed*).
+
+### 6.5 Accounting
+
+Every cohort result reports `n_true`, `n_false` and `n_unknown` over the unit's base table, and
+for each leaf how many units it made UNKNOWN. This shows when a cohort shrank because of
 missing data rather than because of the criterion.
 
 ---
@@ -324,13 +401,14 @@ missing data rather than because of the criterion.
 ```jsonc
 {
   "aibi": "1",                                   // document format version
-  "params": { "genes": ["EGFR", "PTEN"] },       // optional; exact "$name" value substitution, as in cbio-lab
-  "study": "gbm_tcga_pan_can_atlas_2018",        // default study; may be pinned: "...@3"
-  "unit": "patient",                             // patient | sample
+  "packs": { "onco": "1.2" },                    // packs whose leaves or analyses are used, pinned
+  "params": { "min_grade": 3 },                  // optional; exact "$name" value substitution, as in cbio-lab
+  "dataset": "trial_xyz",                        // default dataset; may be pinned: "trial_xyz@3"
+  "unit": "participants",                        // any entity table in the dataset
   "cohorts": {
     "<name>": {
-      "all": [ Clause ],                         // [] = every unit in the study
-      "study": "<id>",                           // optional override
+      "all": [ Clause ],                         // [] = every row of the unit table
+      "dataset": "<id>",                         // optional override
       "notes": "plain text, never compiled"
     }
   },
@@ -341,63 +419,73 @@ missing data rather than because of the criterion.
 
 `Clause := Leaf | {"all": [Clause]} | {"any": [Clause]} | {"not": Clause} | {"known": Clause} | {"unknown": Clause}`.
 
-Nesting is allowed but capped (depth 4, 32 leaves per cohort, 6 cohorts, 8 views per document)
-so that readbacks stay readable and compiled queries stay bounded.
+Caps: depth 4, 32 leaves per cohort, 6 cohorts, 8 views per document, so that readbacks stay
+readable and compiled queries stay bounded.
 
-### 7.2 Leaf kinds (v1)
+### 7.2 Core leaf kinds
 
-| Kind | Shape | Notes |
+| Kind | Shape | Meaning |
 |---|---|---|
-| `clinical` | `{attribute \| concept, values?: [..], range?: {gt,gte,lt,lte}, op?, value?}` | Attribute ids are validated against descriptors; units in `range` MUST match the attribute's `units` or be given explicitly and convertible |
-| `genomic` | `{q: "<OQL subset>", profile?}` | `MUT`, `MUT=<change>`, classes `MISSENSE NONSENSE TRUNC INFRAME SPLICE`, `AMP`, `HOMDEL`, `FUSION`. `DRIVER` is refused until an annotation source is pinned (M6). Anything outside the subset, or outside the profile's `variant_scope`, is refused |
-| `assessed` | `{profile_type \| profile, gene?}` | TRUE if assessed (for the gene, when given) |
-| `ids` | `{patients \| samples: ["<study>:<id>", …]}` | Explicit lists |
+| `value` | `{column: "<table>.<column>" \| concept, values?, range?: {gt,gte,lt,lte}, op?, value?, via?, match?}` | A value predicate on the unit's own table or any table reachable from it. Reaching a table below the unit implies `exists` with `any`. Units in `range` MUST match the column's `units` or be convertible |
+| `exists` | `{table, where?: [Clause], quantifier?: "any" \| "all", min_count?, via?}` | An existence predicate over a child table, with coverage semantics (§6.4). `min_count` asks for at least *k* matching rows |
+| `covered` | `{table, scope?: {<column>: value}}` | TRUE if the unit is inside the table's coverage (for the scope, if given) |
+| `ids` | `{ids: ["<dataset>:<key>", …]}` | Explicit lists of unit keys |
 
-Timeline `event` and `derived` leaves follow in M6, with cbio-lab's semantics (exists-pair,
-`observed` windows, `priorGuard`), plus an `event_domain` descriptor declaring each domain's
-completeness, so that "no treatment record" can resolve to ABSENT only when the domain says it
-is complete over the patient's observation window.
+`where` clauses inside `exists` are evaluated per child row with the same logic, so criteria
+nest along the graph.
 
-### 7.3 Cross-study references
+### 7.3 Pack leaf kinds
 
-A cohort may name several studies (`"studies": [..]`). Inside such a cohort, `clinical` leaves
-MUST use `concept`, not `attribute`, and every study MUST have an asserted harmonisation for
-that concept, or the document is refused with the list of studies and attributes that lack
-one. `"unharmonized": "allow"` on the cohort turns the refusal into an
-`UNHARMONIZED_COMPARISON` caveat on every result that uses it. Tests across studies are
-stratified by study (as in cbio-lab); pooled values are reported alongside, labelled as such.
+Packs register additional leaf kinds (§10.2), namespaced by pack id: e.g. `onco.genomic`
+(`{"kind": "onco.genomic", "q": "EGFR: AMP; PTEN: HOMDEL"}`). A pack leaf MUST compile to core
+clauses, and `validate_document` returns that expansion so the readback and the derivation are
+in core terms. Canonicalisation (§7.5) stores the pack leaf **and** the pack version, so a pack
+change that alters an expansion changes the derivation.
 
-### 7.4 Canonical form and derivation id
+### 7.4 Cross-dataset references
+
+A cohort may name several datasets (`"datasets": [..]`). Inside such a cohort, `value` leaves
+MUST reference a `concept`, the unit MUST be given as a concept-mapped entity table in each
+dataset, and every dataset MUST have an asserted mapping for each concept used, or the document
+is refused with a list of what is missing. `"unmapped": "allow"` on the cohort turns the
+refusal into an `UNMAPPED_COMPARISON` caveat on every result that uses it. Tests across
+datasets are stratified by dataset; pooled values are reported alongside, labelled as such.
+
+### 7.5 Canonical form and derivation id
 
 Before compilation, the server canonicalises the document:
 
 1. Substitute `params`.
-2. Resolve every study reference to a pinned release (`<study>@<n>`) and record its manifest
-   hash.
-3. Resolve attribute and concept references to descriptor ids and versions.
-4. Write every semantically relevant default explicitly (`unit`, `lift`, analysis parameter
-   defaults).
+2. Resolve every dataset reference to a pinned release (`<dataset>@<n>`) and record its
+   manifest hash; pin every pack to its exact version.
+3. Resolve column, table and concept references to descriptor ids and versions; resolve join
+   paths and write them explicitly as `via`.
+4. Write every semantically relevant default explicitly (`quantifier`, `match`, analysis
+   parameter defaults).
 5. Sort order-insensitive collections: values in `values`, and clauses inside `all` / `any`,
    by their own canonical serialisation.
 6. Drop fields that do not affect results (`notes`, `note`, cohort display order).
 
 The canonical form is serialised with the JSON Canonicalization Scheme (RFC 8785).
 
-- A **cohort derivation id** is `drv:` + SHA-256 of `{canonical cohort, unit, release pins}`.
+- A **cohort derivation id** is `drv:` + SHA-256 of `{canonical cohort, unit, release pins,
+  pack pins}`.
 - A **result derivation id** is `drv:` + SHA-256 of `{analysis id@version, canonical
   parameters, the derivation ids of its cohorts}`.
 - A **result digest** is the SHA-256 of the canonical result values.
 
 Invariant: the same result derivation id MUST produce the same result digest. A code change
-that alters the digest for an unchanged derivation id is a bug unless the analysis version was
-bumped. The golden tests check this (§12.3).
+that alters the digest for an unchanged derivation id is a bug unless the analysis (or pack)
+version was bumped. Golden tests check this (§13.3).
 
-### 7.5 Readback
+### 7.6 Readback
 
 The server renders a deterministic, plain-language readback of each canonical cohort and view
-from templates (e.g. *"Patients in GBM (TCGA PanCan) @3 with ≥1 sample profiled for EGFR
-(mutations, CNA), aged over 60 years at diagnosis, and with EGFR amplified in any sample"*).
-Readbacks are returned with every result and shown next to every figure.
+from templates (e.g. *"Participants in Trial XYZ @3 aged over 60 years at enrolment, with at
+least one adverse event of grade 3 or higher among sites that reported adverse events"*). Packs
+supply templates for their leaves, so an `onco.genomic` leaf reads as *"with EGFR amplified in
+any sample assessed for copy number"*, not as its core expansion. Readbacks are returned with
+every result and shown next to every figure.
 
 ---
 
@@ -411,7 +499,8 @@ Readbacks are returned with every result and shown next to every figure.
     "id": "drv:…",
     "document": { /* canonical form */ },
     "analysis": { "id": "survival.km", "version": "1.0.0" },
-    "releases": [ { "study": "gbm_tcga_pan_can_atlas_2018", "release": 3, "manifest": "sha256:…" } ],
+    "releases": [ { "dataset": "trial_xyz", "release": 3, "manifest": "sha256:…" } ],
+    "packs": { "onco": "1.2.0" },
     "engine": "aibi 0.3.1",
     "sql": [ "…" ]                               // compiled queries, for audit
   },
@@ -432,7 +521,7 @@ Every proportion in `values` is an object, never a bare number:
   "estimate": 0.412,
   "numerator": 124,
   "denominator": 301,
-  "denominator_definition": "patients in cohort 'IDH-wt >60' with ≥1 sample assessed for EGFR in profile gbm_tcga_pan_can_atlas_2018_mutations",
+  "denominator_definition": "participants in cohort 'over 60' covered by adverse_events reporting",
   "excluded": { "NOT_ASSESSED": 17, "UNKNOWN": 3 },
   "ci": { "method": "wilson", "level": 0.95, "low": 0.357, "high": 0.469 }
 }
@@ -441,17 +530,18 @@ Every proportion in `values` is an object, never a bare number:
 ### 8.3 Caveats
 
 `Caveat = {code, severity: "info | warn | block", message, affects: [paths into values]}`.
-Codes are a stable, documented enum. The initial set:
+Codes are a stable, documented enum; core codes are unprefixed and pack codes are namespaced
+(`onco.DRIVER_ANNOTATION_PIN`). The initial core set:
 
 | Code | Raised when |
 |---|---|
 | `UNKNOWN_EXCLUDED` | A cohort or denominator excluded units because they were UNKNOWN or NOT_ASSESSED |
-| `COVERAGE_ASSUMED` | Profiling status relies on an `imported_default` coverage |
+| `SCOPE_PARTIAL` | An existence answer was evaluated only over the scope values a unit is covered for (§6.4) |
 | `DEFAULT_SEMANTICS` | Any `imported_default` or `proposed` descriptor field affected the result |
-| `UNHARMONIZED_COMPARISON` | Cross-study comparison over attributes without an asserted harmonisation |
-| `TIME_ORIGIN_UNDECLARED` | Time-based values are compared across studies whose `time_origin` is undeclared or different |
-| `SMALL_N` | A group falls below the analysis's declared minimum for a reliable estimate |
-| `POOLED_ACROSS_STUDIES` | A pooled value is reported next to a stratified one |
+| `UNMAPPED_COMPARISON` | A cross-dataset comparison used columns without an asserted concept mapping |
+| `TIME_ORIGIN_UNDECLARED` | Time-based values were compared across datasets whose `time_origin` is undeclared or different |
+| `SMALL_N` | A group fell below the analysis's declared minimum for a reliable estimate |
+| `POOLED_ACROSS_DATASETS` | A pooled value is reported next to a stratified one |
 
 MCP tool descriptions MUST tell clients that `warn` and `block` caveats have to be shown to the
 user. A `block` caveat means the result is returned for inspection but MUST NOT be presented as
@@ -469,92 +559,147 @@ Each analysis is a descriptor (`kind: analysis`) plus an implementation:
 {
   "id": "survival.km", "version": "1.0.0",
   "label": "Kaplan–Meier survival",
-  "definition": "Kaplan–Meier estimate per cohort; log-rank test (k-sample) when there are ≥2 cohorts; median survival with CI.",
+  "definition": "Kaplan–Meier estimate per cohort; k-sample log-rank test when there are ≥2 cohorts; median time with CI.",
   "requires": [
-    { "role": "endpoint", "kind": "endpoint" },
+    { "role": "endpoint", "kind": "endpoint", "on": "unit" },
     { "role": "cohorts", "min": 1, "max": 6 }
   ],
   "params": { /* JSON Schema, generated from a Pydantic model */ },
   "returns": { /* JSON Schema of `values` */ },
   "method": { "library": "lifelines", "version": "…", "references": ["doi:…"] },
-  "assumptions": ["independent censoring", "…"],
+  "assumptions": ["independent censoring"],
   "caveats": ["UNKNOWN_EXCLUDED", "SMALL_N", "TIME_ORIGIN_UNDECLARED"],
   "min_group_n": 10
 }
 ```
 
+Requirements are stated against **core** descriptor kinds (an endpoint, a numeric column, a
+child table with declared coverage). A pack analysis may additionally require pack extension
+fields.
+
 ### 9.2 Applicability
 
-`applicable_analyses(study)` matches each entry's `requires` against the study's descriptors
-and returns, for each analysis, `available`, `unavailable` (with the missing requirement named)
-or `available_with_caveats` (e.g. an endpoint whose event coding is `imported_default`). The
-study page and `describe_study` both show this.
+`applicable_analyses(dataset, unit)` matches each entry's `requires` against the dataset's
+descriptors and returns, for each analysis, `available`, `unavailable` (with the missing
+requirement named) or `available_with_caveats` (e.g. an endpoint whose event coding is
+`imported_default`). The dataset page and `describe_dataset` both show this.
 
-### 9.3 v1 analyses
+### 9.3 Core analyses (v1)
 
 | Id | Returns |
 |---|---|
-| `summary.distribution` | Per attribute: category counts or numeric summary and histogram, per cohort, with observation-state counts |
-| `genomic.frequency` | Per gene: altered proportion per cohort over assessed units (§8.2); two-sided Fisher exact test when there are exactly 2 cohorts; Benjamini–Hochberg q across genes |
-| `clinical.compare` | Per attribute: chi-squared (categorical) or Welch t / Mann–Whitney (numeric) across cohorts; BH q across attributes |
+| `summary.distribution` | Per column: category counts or numeric summary and histogram, per cohort, with observation-state counts |
+| `compare.columns` | Per column: chi-squared (categorical) or Welch t / Mann–Whitney (numeric) across cohorts; Benjamini–Hochberg q across columns |
+| `compare.existence` | Per existence predicate (e.g. "has a grade ≥3 AE", "has a TP53 mutation"): proportion per cohort over covered units (§8.2); Fisher exact test for 2 cohorts, chi-squared otherwise; BH q across predicates |
 | `survival.km` | As in §9.1 |
 
 ---
 
-## 10. MCP and HTTP surface
+## 10. Domain packs
 
-One set of Python functions backs both the HTTP API (FastAPI) and the MCP server. Tool schemas
-are generated from the same Pydantic models as the HTTP API.
+### 10.1 What a pack is
 
-| Tool | Purpose | Touches row data? |
-|---|---|---|
-| `search_catalog` | Faceted search over studies: cancer type (OncoTree, including descendants), assay composition, profiles, concepts present, sample and patient counts, completeness thresholds, data-use codes | No |
-| `describe_study` | Study descriptor, attributes, profiles, endpoints, applicable analyses, standing caveats | No (computed stats only) |
-| `describe_attribute` | Full descriptor with observation-state counts and value distribution | Aggregates only |
-| `list_analyses` | Registry entries, optionally filtered by applicability to a study | No |
-| `validate_document` | Canonicalise, check and read back a document without running it; returns errors, caveats that would be raised, and derivation ids | No |
-| `run_analysis` | Run a document; returns results per §8 | Yes |
-| `explain` | Given a derivation id: canonical document, readback, releases, SQL, analysis descriptor | No |
-| `curation_queue` | Descriptor fields that are `undeclared`, `imported_default` or `proposed` | No |
-| `propose_descriptor` | Record a proposed value for a descriptor field, with rationale and model card | No |
+A pack is a Python package with a manifest (`id`, `version`, required core version) that
+registers any of:
 
-Confirming a proposal (`proposed` → `asserted`) is a UI action by a person, not an MCP tool, in
-v1. Descriptors are also exposed as MCP resources (`aibi://study/<id>@<n>/attribute/<id>`).
+| Extension point | Example (oncology pack) |
+|---|---|
+| **Concepts** | `onco:overall_survival`, `onco:oncotree_code`, `onco:tmb_nonsynonymous` |
+| **Ontology systems** | OncoTree, HGNC, NCIt, LOINC validators |
+| **Descriptor extensions** (JSON Schema per descriptor kind) | `reference_genome` on datasets; `assay`, `variant_scope`, `value_semantics` (CNA encoding, z-score reference population) on tables |
+| **Importers** | cBioPortal study directories → tables, relationships, coverage tables, descriptors |
+| **Curation proposers** | Detect `OS_MONTHS` / `OS_STATUS` pairs and propose an endpoint |
+| **Leaf kinds** (with compile-to-core, a JSON Schema, and readback templates) | `onco.genomic` (OQL subset: `MUT`, `MUT=<change>`, classes, `AMP`, `HOMDEL`, `FUSION`) |
+| **Analyses** | `onco.alteration_frequency` (a specialisation of `compare.existence` over genes), later oncoprint |
+| **Caveat codes** | `onco.COVERAGE_ASSUMED_WES` |
+
+Packs MUST NOT patch or monkey-patch the core. If a pack needs something the extension points
+do not offer, the extension point is added to the core in its own change, with a
+domain-neutral test.
+
+### 10.2 How cBioPortal maps onto the core
+
+This mapping is the working test of P8:
+
+| cBioPortal | aibi core |
+|---|---|
+| Study | Dataset |
+| Patient, sample | Entity tables; `samples.patient_id → patients.patient_id` |
+| Clinical attributes (with the four header rows) | Columns, with `label`, `definition`, `datatype` imported |
+| Mutation, CNA, structural-variant data | Child tables of `samples` (CNA as a long table of non-neutral calls plus its own coverage) |
+| Case lists + gene panel matrix + panel definitions | Coverage tables keyed by (sample, gene), generated by the importer |
+| `NA`, `[Not Available]`, `[Not Applicable]`, … | `missing_codes` with `imported_default` status |
+| OS / PFS / DFS / DSS | Endpoints on `patients` |
+| OQL | The `onco.genomic` leaf, compiled to `exists` clauses |
+| "Altered in x% of profiled samples" | `compare.existence` over covered units |
+
+### 10.3 Other packs
+
+None are planned for v1. The design test for the core is that a clinical-trials pack
+(CDISC-like domains, adverse-event grading) or a non-biomedical pack could be written the same
+way; a small non-biomedical fixture keeps the core honest in the meantime.
 
 ---
 
-## 11. Architecture
+## 11. MCP and HTTP surface
 
-### 11.1 Components
+One set of Python functions backs both the HTTP API (FastAPI) and the MCP server. Tool schemas
+are generated from the same Pydantic models as the HTTP API. Packs contribute leaf kinds and
+analyses to these tools; they do not add tools of their own in v1.
+
+| Tool | Purpose | Touches row data? |
+|---|---|---|
+| `search_catalog` | Faceted search over datasets: domain tags, tables and their grains, concepts present, row counts, completeness thresholds, data-use codes, pack-defined facets (e.g. cancer type, assay) | No |
+| `describe_dataset` | Dataset descriptor, table graph, columns, coverage, endpoints, applicable analyses, standing caveats | No (computed stats only) |
+| `describe_column` | Full descriptor with observation-state counts and value distribution | Aggregates only |
+| `list_analyses` | Registry entries, optionally filtered by applicability | No |
+| `validate_document` | Canonicalise, check, expand pack leaves and read back a document without running it; returns errors, caveats that would be raised, and derivation ids | No |
+| `run_analysis` | Run a document; returns results per §8 | Yes |
+| `explain` | Given a derivation id: canonical document, readback, releases, pack pins, SQL, analysis descriptor | No |
+| `curation_queue` | Keys, relationships, coverage and descriptor fields that are `undeclared`, `imported_default` or `proposed` | No |
+| `propose_descriptor` | Record a proposed value for any of those, with rationale and model card | No |
+
+Confirming a proposal (`proposed` → `asserted`) is a UI action by a person, not an MCP tool, in
+v1. Descriptors are also exposed as MCP resources (`aibi://dataset/<id>@<n>/column/<table>.<column>`).
+
+---
+
+## 12. Architecture
+
+### 12.1 Components
 
 ```
           Web UI (React + TS)          External agents (Claude, …)
                  │  HTTP                        │  MCP
                  ▼                              ▼
-        ┌──────────────────────────────────────────────┐
-        │  aibi server (Python, one process)           │
-        │                                              │
-        │  api/ (FastAPI)          mcp/ (MCP SDK)       │
-        │         └──────────┬──────────┘              │
-        │              service functions               │
-        │   ┌────────────┬───┴──────────┬───────────┐  │
-        │   catalog      engine          analyses    assistant
-        │   (descriptors (canonicalise,  (registry,  (Claude API,
-        │    & search)    3VL compile,    lifelines,  uses the MCP
-        │                 SQLGlot→DuckDB) scipy)      tools only)
-        │   └──────┬─────┴──────┬───────┘              │
+        ┌──────────────────────────────────────────────────┐
+        │  aibi server (Python, one process)               │
+        │                                                  │
+        │  api/ (FastAPI)            mcp/ (MCP SDK)         │
+        │          └──────────┬──────────┘                 │
+        │               service functions                  │
+        │   ┌────────────┬────┴─────────┬──────────────┐   │
+        │   catalog      engine          analyses     assistant
+        │   (descriptors (canonicalise,  (registry,   (Claude API,
+        │    & search)    3VL compile,    lifelines,   uses the MCP
+        │                 SQLGlot→DuckDB) scipy)       tools only)
+        │   └──────┬─────┴──────┬────────┘             │
         │    app DB (SQLite)   releases (Parquet + manifest, DuckDB)
-        └──────────────────────────────────────────────┘
-                 ▲
-       importers/cbioportal  (validator gate → release builder)
+        │                                                  │
+        │   importers: files (CSV/TSV/XLSX/ODS/Parquet),   │
+        │              databases (snapshot)                │
+        │   ─────────────── extension points ───────────── │
+        │   packs/onco: concepts, cBioPortal importer,     │
+        │               onco.genomic leaf, analyses        │
+        └──────────────────────────────────────────────────┘
 ```
 
-### 11.2 Storage
+### 12.2 Storage
 
-- **Releases:** `data/releases/<study>/<n>/` holds Parquet files, `descriptors.json`, and
-  `manifest.json` listing every file's SHA-256. The manifest's own hash identifies the release.
-  Unchanged Parquet files are shared between releases by hash, so a descriptor-only release
-  costs almost nothing. Releases are never modified or deleted in place.
+- **Releases:** `data/releases/<dataset>/<n>/` holds one Parquet file per table,
+  `descriptors.json`, and `manifest.json` listing every file's SHA-256. The manifest's own hash
+  identifies the release. Unchanged Parquet files are shared between releases by hash, so a
+  descriptor-only release costs almost nothing. Releases are never modified or deleted in place.
 - **App DB (SQLite):** the catalogue index (a denormalised copy of descriptors for search),
   saved documents, the curation queue and its audit trail, and the result cache keyed by
   derivation id.
@@ -562,19 +707,19 @@ v1. Descriptors are also exposed as MCP resources (`aibi://study/<id>@<n>/attrib
   SQLGlot expression trees and never concatenates identifiers or values into strings; every
   identifier comes from a descriptor.
 
-### 11.3 Stack
+### 12.3 Stack
 
 | Layer | Choice |
 |---|---|
-| Language and tooling | Python ≥ 3.12, uv, ruff, pyright (strict on `schema/` and `engine/`), pytest, hypothesis |
+| Language and tooling | Python ≥ 3.12, uv, ruff, pyright (strict on `core/`), pytest, hypothesis |
 | Schemas | Pydantic v2 as the source of truth; JSON Schema and OpenAPI generated from it |
 | API and MCP | FastAPI; the official MCP Python SDK |
-| Data | DuckDB, Parquet, SQLite |
+| Data | DuckDB (including its readers for CSV, Excel, Parquet, Postgres, MySQL and SQLite), Parquet, SQLite |
 | Statistics | lifelines, scipy, statsmodels |
 | Assistant | Claude API, calling the same MCP tools |
 | Frontend | React + TypeScript + Vite, types generated from OpenAPI; charts rendered from result `values`, never from model text |
 
-### 11.4 Repository layout
+### 12.4 Repository layout
 
 ```
 aibi/
@@ -582,77 +727,95 @@ aibi/
   server/
     pyproject.toml
     src/aibi/
-      schema/        # Pydantic models: descriptors, documents, results, caveats
-      store/         # release builder and reader, app DB
-      importers/cbioportal/
-      catalog/
-      engine/        # canonicalise → validate → plan → SQL; three-valued logic
-      analyses/      # registry and implementations
-      api/  mcp/  assistant/
+      core/
+        schema/      # Pydantic models: descriptors, documents, results, caveats, pack API
+        store/       # release builder and reader, app DB
+        importers/   # files and database snapshots
+        catalog/
+        engine/      # canonicalise → validate → plan → SQL; three-valued logic; coverage
+        analyses/    # registry and core analyses
+        api/  mcp/  assistant/
+      packs/
+        onco/        # concepts, descriptor extensions, cBioPortal importer, onco.genomic, analyses
     tests/
+      core/          # runs with no packs installed
+      packs/onco/
   web/
-  fixtures/          # small public studies used by tests
+  fixtures/          # small public datasets: at least one non-biomedical, one spreadsheet, one cBioPortal study
 ```
 
 ---
 
-## 12. Import, validation and testing
+## 13. Import, validation and testing
 
-### 12.1 cBioPortal import (v1 scope)
+### 13.1 Generic import (core)
 
-`meta_study.txt`; clinical patient and sample files (four header rows → descriptor fields with
-status `imported`); `data_mutations` (MAF); discrete CNA; structural variants; the gene panel
-matrix and panel definitions; case lists. Continuous profiles, generic assays and timeline
-files follow in M6.
+- **Files:** CSV/TSV (delimiter, header row, skip rows and encoding detected, then recorded as
+  `imported_default`), XLSX/ODS (each sheet a table), Parquet.
+- **Databases:** Postgres, MySQL, SQLite and DuckDB tables, read through DuckDB and snapshotted
+  into a release. Declared primary and foreign keys, and column comments, are imported with
+  status `imported`.
+- **Structure proposal:** for files, the importer proposes grain, primary keys, relationships
+  (by value containment, as biai's foreign-key detector did), datatypes, list columns and
+  missing codes. Everything proposed lands in the curation queue; nothing proposed is
+  `asserted`.
 
-### 12.2 Validation as a gate
+### 13.2 Validation as a gate
 
-Structural errors (unparseable files, records referring to unknown patient or sample ids,
-duplicate ids, a sample on a gene panel that is not defined) stop the import. Semantic gaps (missing units, undeclared coverage,
-unknown missing codes) do not stop it; they become `undeclared` or `imported_default` fields
-and land in the curation queue.
+Structural errors (unparseable files, duplicate primary keys, foreign keys that reference
+missing parent rows, a coverage table that references unknown parents) stop the import, or,
+for proposed rather than declared keys, drop the proposal with the evidence. Semantic gaps
+(missing units, undeclared coverage, unknown missing codes) do not stop it; they become
+`undeclared` or `imported_default` fields in the curation queue. Packs add their own
+validators (the oncology pack's mirrors the cBioPortal validator).
 
-### 12.3 Tests that encode the principles
+### 13.3 Tests that encode the principles
 
 - **Three-valued logic (property tests):** for any cohort predicate `C`, `n_true(C) +
-  n_false(C) + n_unknown(C)` equals the study base; `not(not C) ≡ C`; `C` and `not C` never
+  n_false(C) + n_unknown(C)` equals the unit base; `not(not C) ≡ C`; `C` and `not C` never
   share a unit; `known(C)` equals `C ∪ not C`.
-- **Missing is not negative:** on a fixture with an unprofiled sample, `not TP53: MUT` excludes
-  it and the result reports it under `UNKNOWN_EXCLUDED`.
+- **Missing is not negative:** on a fixture with an uncovered parent, `not exists …` excludes
+  it and the result reports it under `UNKNOWN_EXCLUDED`; with coverage `undeclared`, every
+  absence is UNKNOWN.
+- **Ambiguous paths:** a fixture with two relationship paths is refused without `via`.
 - **Derivation stability (golden tests):** each fixture document has a checked-in derivation
-  id and result digest; CI fails if either changes without an analysis version bump.
+  id and result digest; CI fails if either changes without an analysis or pack version bump.
 - **Statistical correctness:** KM curves, log-rank, Fisher and BH values agree with reference
   outputs from R (`survival`, `stats`) computed once and checked in.
-- **Refusal:** each refusal rule (unknown attribute, out-of-scope variant class, unharmonised
-  cross-study reference, unmet analysis requirement) has a test asserting the error lists the
-  available alternatives.
+- **Refusal:** each refusal rule (unknown column, out-of-filter existence query, unmapped
+  cross-dataset reference, ambiguous path, unmet analysis requirement) has a test asserting
+  that the error lists the available alternatives.
+- **Domain boundary:** an import-linter contract forbids `aibi.core` → `aibi.packs`; the core
+  suite runs with no packs installed and includes a non-biomedical fixture.
 - **Assistant evals:** a small set of questions whose answers the assistant must reach through
-  the tools, citing derivation ids, and surfacing required caveats.
+  the tools, citing derivation ids and surfacing required caveats.
 
 ---
 
-## 13. Milestones
+## 14. Milestones
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
-| **M0** | Repo skeleton, CI, Pydantic schemas for descriptors, documents, results and caveats; JSON Schema export | Schemas published; CI runs lint, type check and tests |
-| **M1** | cBioPortal importer with validator gate; release builder; catalogue; `search_catalog`, `describe_study`, `describe_attribute`, `curation_queue` | One whole-exome study (TCGA GBM PanCan) and one panel study imported; an MCP client can find and describe both |
-| **M2** | Engine: canonicalisation, derivation ids, three-valued compile to DuckDB, `clinical` / `genomic` / `assessed` / `ids` leaves, readbacks, `validate_document`, `explain` | Property tests pass; the unprofiled-sample test passes |
-| **M3** | Registry and the four v1 analyses; `applicable_analyses`; `run_analysis` | Golden and R-reference tests pass |
-| **M4** | Web UI: catalogue, study page with applicable analyses, cohort builder with live counts including unknowns, results with provenance panel | biai's exploration e2e scenarios, ported, pass |
-| **M5** | Assistant (chat that edits the document); AI-proposed descriptors with a confirmation UI; initial concept set and cross-study queries | Assistant evals pass; a harmonised two-study survival comparison runs with stratified log-rank |
-| **M6** | Timeline events and derived leaves; continuous profiles; Cox; driver annotation; JSON-LD / Bioschemas export | Per-feature, set when M5 lands |
+| **M0** | Repo skeleton, CI, Pydantic schemas for descriptors, documents, results, caveats and the pack API; JSON Schema export; import-boundary check | Schemas published; CI runs lint, type check, boundary check and tests |
+| **M1** | Generic importers (files and database snapshots) with structure proposals and validation gate; release builder; catalogue; `search_catalog`, `describe_dataset`, `describe_column`, `curation_queue` | biai's example spreadsheets and a non-biomedical dataset imported with confirmed keys and relationships; an MCP client can find and describe them |
+| **M2** | Engine: table-graph resolution, canonicalisation, derivation ids, three-valued compile with coverage, core leaves, readbacks, `validate_document`, `explain` | Property, coverage and ambiguous-path tests pass |
+| **M3** | Registry and the four core analyses; `applicable_analyses`; `run_analysis` | Golden and R-reference tests pass |
+| **M4** | Oncology pack: cBioPortal importer and validator, coverage tables from panels, `onco.genomic`, `onco.alteration_frequency`, concepts, endpoint proposer | TCGA GBM PanCan and one panel study imported; cbio-lab examples 1 and 4 reproduced; **no core change in the pack's PR** |
+| **M5** | Web UI: catalogue, dataset page with table graph and applicable analyses, cohort builder with live counts including unknowns, results with provenance panel, curation queue | biai's exploration e2e scenarios, ported, pass |
+| **M6** | Assistant (chat that edits the document); AI-proposed descriptors, keys, relationships and coverage with confirmation; concept mappings and cross-dataset queries | Assistant evals pass; a mapped two-dataset survival comparison runs with a stratified log-rank |
+| **M7** | Event tables and time-window leaves; Cox; driver annotation (onco); JSON-LD / Bioschemas export | Set when M6 lands |
 
 ---
 
-## 14. Open questions
+## 15. Open questions
 
 | # | Question | Current leaning |
 |---|---|---|
-| Q1 | Should aibi converge with cbio-lab (one engine, one DSL) rather than sit beside it? | Keep documents translatable now; decide after M3, when both engines exist and can be compared on the same studies |
-| Q2 | Strict sample-to-patient lifting (§6.3) makes some patients UNKNOWN that cBioPortal counts as profiled. Keep strict as the default? | Yes, strict by default, with the count of patients this affects reported in every result |
+| Q1 | Should aibi converge with cbio-lab (one engine, one DSL) rather than sit beside it? | Keep documents translatable now; decide after M4, when the oncology pack can be compared with cbio-lab on the same studies |
+| Q2 | Strict lifting (§6.3) makes some parents UNKNOWN that cBioPortal counts as assessed ("profiled in any sample"). Keep strict as the default? | Yes, strict by default, with the count of units this affects reported in every result |
 | Q3 | Deployment target: a single-user local app, a lab server, or both? It decides auth and whether the app DB stays SQLite | Lab server with no auth in v1; revisit before handling any restricted data |
-| Q4 | Target scale per study (patients, mutation records)? | Up to ~100k patients and ~10M mutation records per study on one machine |
-| Q5 | Where should concepts come from: an aibi-owned list, cBioPortal's own harmonisation work, OMOP, or a mix? | Start with an aibi-owned list mapped to NCIt and LOINC; align with cBioPortal's work once it has identifiers |
-| Q6 | Import from files only, or also directly from a cBioPortal instance (API or database)? | Files in v1; a connector later |
+| Q4 | Target scale per dataset? | Up to ~100k units and ~10M child rows per dataset on one machine |
+| Q5 | Where do concepts come from: aibi-owned lists, OMOP, cBioPortal's harmonisation work, or a mix? | A tiny `core:` set, pack-owned sets mapped to NCIt and LOINC, aligned with cBioPortal's work once it has identifiers |
+| Q6 | Should releases ever track a live database instead of a snapshot? | No in v1; a scheduled re-snapshot creating new releases covers most needs without breaking P6 |
 | Q7 | Should confirming a descriptor be restricted to named curators? | Any user in v1, with every confirmation audited |
+| Q8 | Is a pack allowed to add MCP tools of its own (e.g. an oncoprint renderer)? | Not in v1; revisit with the oncoprint analysis in M7 |
