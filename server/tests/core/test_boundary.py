@@ -8,8 +8,9 @@ Two checks enforce the boundary, and each covers what the other misses:
   module was loaded. It sees what module-level code does, dynamic imports and ``aibi``'s own
   ``__init__`` included, but not an import inside a function that never ran.
 
-Both see only regular packages, so every directory of modules must have an ``__init__.py``;
-ruff's INP rule and the test below enforce that.
+import-linter does not look inside a directory without an ``__init__.py``, or below one, so
+every directory on the way to a module must be a regular package; ruff's INP rule and the tests
+below enforce that. The runtime check finds modules on disk and imports them either way.
 """
 
 import subprocess
@@ -48,10 +49,20 @@ def modules_under(source_root: Path, package_dir: Path) -> list[str]:
 
 
 def directories_without_init(source_root: Path, package_dir: Path) -> list[str]:
-    """Directories that hold modules but are not regular packages."""
+    """Directories on the way to a module that are not regular packages.
+
+    An intermediate directory with no modules of its own still needs an ``__init__.py``:
+    import-linter does not look below a directory without one.
+    """
+    directories: set[Path] = set()
+    for path in package_dir.rglob("*.py"):
+        for directory in path.parents:
+            directories.add(directory)
+            if directory == package_dir:
+                break
     return sorted(
         directory.relative_to(source_root).as_posix()
-        for directory in {path.parent for path in package_dir.rglob("*.py")}
+        for directory in directories
         if not (directory / "__init__.py").is_file()
     )
 
@@ -115,3 +126,16 @@ def test_a_directory_of_modules_without_init_is_reported(tmp_path: Path) -> None
         },
     )
     assert directories_without_init(tmp_path, tmp_path / "demo") == ["demo/core/sub"]
+
+
+def test_an_intermediate_directory_without_init_is_reported(tmp_path: Path) -> None:
+    _write_package(
+        tmp_path,
+        {
+            "demo/__init__.py": "",
+            "demo/core/__init__.py": "",
+            "demo/core/engine/sql/__init__.py": "",
+            "demo/core/engine/sql/compile.py": "",
+        },
+    )
+    assert directories_without_init(tmp_path, tmp_path / "demo") == ["demo/core/engine"]

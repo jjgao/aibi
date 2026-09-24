@@ -5,13 +5,29 @@ from pathlib import Path
 
 import pytest
 
-CORE_TESTS = Path(__file__).parent
+CORE_TESTS = Path(__file__).parent.resolve()
+_loaded: list[str] = []
+
+
+def _only_core_tests_collected(config: pytest.Config) -> bool:
+    # Decide on what the run was asked to collect, not on what -k, -m or --deselect kept:
+    # collecting any other test module may already have imported a pack.
+    root = config.invocation_params.dir
+    return all(
+        (root / arg.split("::", 1)[0]).resolve().is_relative_to(CORE_TESTS) for arg in config.args
+    )
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
-    # A run that also collected other tests may load packs; only a core-only run is checked.
-    if not session.items or not all(item.path.is_relative_to(CORE_TESTS) for item in session.items):
+    if not session.items or not _only_core_tests_collected(session.config):
         return
-    loaded = sorted(m for m in sys.modules if m == "aibi.packs" or m.startswith("aibi.packs."))
-    if loaded:
-        pytest.exit("the core tests loaded " + ", ".join(loaded), returncode=1)
+    _loaded[:] = sorted(m for m in sys.modules if m == "aibi.packs" or m.startswith("aibi.packs."))
+    if _loaded:
+        # Don't raise: pytest.exit here would suppress the whole terminal summary.
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    if _loaded:
+        terminalreporter.section("the core tests loaded packs (SPEC P8)", sep="=", red=True)
+        terminalreporter.line(", ".join(_loaded))

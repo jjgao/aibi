@@ -77,8 +77,9 @@ OpenAPI schema, not written by hand.
   open decisions) into the PR description, then implement.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
-- Stacked PRs: after a parent PR merges, rebase the child onto `main` and push. GitHub's
-  retargeting alone doesn't re-run CI, so the child's checks would still be the old base's.
+- Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
+  parent merges, change the child's base to `main` (GitHub retargets it only if the parent's
+  branch is deleted), then rebase it onto `main` and push; retargeting alone doesn't re-run CI.
 
 ## Conventions
 
