@@ -27,14 +27,17 @@ These come from SPEC.md and are the easiest to break by accident:
 - **The reference evaluator defines the semantics** (§13.3). The SQL compiler must agree with
   it; when they disagree, fix the spec and both.
 - **Never pick a join path silently.** Ambiguous paths through the table graph are refused.
-- **No user-chosen name survives canonicalisation** (§7.6). Ids never depend on cohort names,
-  notes or JSON key order.
+- **No user-chosen name survives canonicalisation** (§7.6). Ids and digests never depend on
+  cohort names, notes, JSON key order or rendered text.
+- **Operator operations are never tools** (§11.2): import, curation sessions, accepting
+  proposals and withdrawal go through the operator router or CLI with the curator token.
 - **Every result carries its derivation** (§8). Every proportion is an object with numerator,
   denominator and denominator definition, never a bare number.
 - **Refuse rather than approximate.** Unsupported input fails with an error that lists what is
   supported.
 - **Analyses are only reachable through the registry** (§9). A new analysis is a registry entry
-  plus an implementation plus golden tests. Floating-point sums must not depend on order (§9.3).
+  plus an implementation plus golden tests. Numbers that enter a digest are never aggregated
+  with DuckDB DOUBLE aggregates, and never non-finite (§8.2, §9.3).
 - Changing an analysis's output for the same inputs requires bumping its version; the golden
   id and digest tests will fail otherwise, and that failure is the point.
 - Readbacks are generated from templates, never by a model.
@@ -45,9 +48,9 @@ These come from SPEC.md and are the easiest to break by accident:
 ## Layout (from M0)
 
 ```
-server/src/aibi/core/{schema,store,importers,catalog,engine,analyses,api,mcp,assistant}
+server/src/aibi/core/{schema,store,importers,catalog,engine,analyses,api,mcp,operator,assistant}
 server/src/aibi/packs/onco/
-server/tests/core/        # must pass with no packs installed
+server/tests/core/        # must pass with no pack registered
 server/tests/packs/onco/
 web/
 fixtures/
