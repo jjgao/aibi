@@ -14,11 +14,17 @@ from aibi.core.schema.document import (
     Document,
     ExistsLeaf,
     IdsLeaf,
+    PackLeaf,
     ValueLeaf,
     walk,
 )
 from aibi.core.schema.jsonio import pointer
-from aibi.core.schema.limits import COHORT_REFERENCES, MAX_COHORT_REFERENCES
+from aibi.core.schema.limits import (
+    COHORT_REFERENCES,
+    MAX_COHORT_REFERENCES,
+    MAX_PACK_LEAVES,
+    PACK_LEAVES,
+)
 from aibi.core.schema.output import data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 
@@ -172,8 +178,9 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                     ],
                 )
             )
-        cohort_leaves = 0
+        cohort_leaves = pack_leaves = 0
         for clause, path, inside in walk(list(cohort.all), [*cohort_path, "all"]):
+            pack_leaves += isinstance(clause, PackLeaf)
             if inside and isinstance(clause, IdsLeaf | CohortLeaf):
                 refusals.append(
                     Refusal(
@@ -221,6 +228,18 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                         text(f"{MAX_COHORT_REFERENCES} may be: each inlines the cohort it names"),
                     ],
                     limit=Limit(name=COHORT_REFERENCES, max=MAX_COHORT_REFERENCES),
+                )
+            )
+        if pack_leaves > MAX_PACK_LEAVES:
+            refusals.append(
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer([*cohort_path, "all"]),
+                    message=[
+                        text(f"The cohort has {pack_leaves} pack leaves, and at most "),
+                        text(f"{MAX_PACK_LEAVES} may be: each is compiled by its pack (D285)"),
+                    ],
+                    limit=Limit(name=PACK_LEAVES, max=MAX_PACK_LEAVES),
                 )
             )
 

@@ -386,7 +386,7 @@ def test_a_release_withdrawn_before_is_passed_over(
 def test_the_person_s_numeric_key_is_erased_from_free_text_too(
     store: Store, library: Library
 ) -> None:
-    """A patient number is the person's; a surrogate key below them stays in prose."""
+    """A member's number is the person's; a surrogate key below them stays in prose."""
     number = "104233"
     members = library.members.replace(KEY.encode(), number.encode())
     loans = tuple(tuple(number if v == KEY else v for v in loan) for loan in library.loans)
@@ -1180,9 +1180,16 @@ def test_the_longest_term_is_erased_first() -> None:
 
 
 def test_numbers_below_the_person_are_erased_only_as_whole_values() -> None:
-    terms = Terms(["104233"], ["2"])
+    terms = Terms(["104233"], ["2"], numbers=["2"])
     assert terms.text("page 2 of 104233") == f"page 2 of {MARK}"
     assert terms.json({"n": 2, "m": "2", "k": 104233}) == {"k": MARK, "m": MARK, "n": MARK}
+
+
+def test_text_below_the_person_that_reads_as_a_number_is_erased_as_a_token() -> None:
+    terms = Terms(["m-1"], ["2", "3"], numbers=["3"])
+    assert terms.text("page 2 of 3") == f"page {MARK} of 3"
+    assert terms.numbers == frozenset({"3"})
+    assert Terms.loads(terms.dumps()).numbers == frozenset({"3"})
 
 
 def test_object_keys_that_are_terms_are_erased_and_kept_apart(

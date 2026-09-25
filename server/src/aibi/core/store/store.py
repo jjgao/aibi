@@ -61,7 +61,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from types import TracebackType
-from typing import Literal, Self
+from typing import Literal, Self, cast
 
 from pydantic import JsonValue
 
@@ -75,6 +75,12 @@ from aibi.core.store import build, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
+from aibi.core.store.derivations import (
+    DerivationLog,
+    DerivationRecord,
+    IssuanceRecord,
+    stamp,
+)
 from aibi.core.store.gate import Mode
 from aibi.core.store.manifest import Manifest, hex_of
 from aibi.core.store.sources import RawSource
@@ -88,6 +94,24 @@ CHECKPOINT_RETRY = 1.0
 Status = Literal["published", "withdrawn", "draft", "discarded"]
 OperationKind = Literal["import", "reimport", "withdraw", "erase", "session"]
 _REFUSED_WHILE_OPEN: frozenset[OperationKind] = frozenset({"import", "reimport", "withdraw"})
+
+
+IdStatus = Literal[
+    "issued", "not_issued", "unknown", "withdrawn", "discarded", "unknown_release", "erased"
+]
+
+
+@dataclass(frozen=True)
+class Explained:
+    """What the derivation log says of an id (§7.6, §12.2, D289): a derivation id's record, or an
+    issuance id's with its derivation's. ``not_issued`` is a derivation id the log does not hold,
+    ``unknown`` an issuance id it does not (never issued, or pruned), and ``unknown_release`` a
+    derivation over a release the store has no record of, which no path of the store records."""
+
+    id: str
+    status: IdStatus
+    derivation: DerivationRecord | None = None
+    issuance: IssuanceRecord | None = None
 
 
 class StoreLockedError(RuntimeError):
@@ -185,6 +209,7 @@ class Store:
             self.blobs.clean()
             self.db = db = AppDB(root / APP_DB)
             self.lock: threading.RLock = self.db.lock
+            self.derivations = DerivationLog(self.db, self.now)
             self.pinned: Counter[str] = Counter()
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}
@@ -207,7 +232,7 @@ class Store:
 
     def now(self) -> str:
         """RFC 3339 in UTC, as curation statuses write it."""
-        return self.clock().astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        return stamp(self.clock())
 
     # --- Releases ------------------------------------------------------------------------------
 
@@ -434,6 +459,34 @@ class Store:
         if self.db.is_draft_state(dataset, pin):
             return Resolution(dataset, pin, None, "discarded")
         raise StoreRefused(RefusalCode.UNKNOWN_RELEASE, "No release of the dataset has that hash")
+
+    def explain(self, identifier: str) -> Explained:
+        """What the log holds for a derivation or issuance id, and what the id resolves to: a
+        derivation that erasure took is *erased*; one over a withdrawn release *withdrawn*; one
+        over a draft state that is no longer live *discarded*; one over a release the store has
+        no record of *unknown_release*; any other *issued* (§7.6, D289)."""
+        if identifier.startswith("iss:"):
+            issuance = self.derivations.issuance(identifier)
+            if issuance is None:
+                return Explained(identifier, "unknown")
+            found = self.explain(issuance.derivation)
+            return Explained(identifier, found.status, found.derivation, issuance)
+        derivation = self.derivations.derivation(identifier)
+        if derivation is None:
+            return Explained(identifier, "not_issued")
+        if derivation.erased:
+            return Explained(identifier, "erased", derivation)
+        statuses: set[str] = set()
+        for release in cast(list[dict[str, str]], derivation.releases):
+            try:
+                statuses.add(self.resolve(release["dataset"], release["manifest"]).status)
+            except StoreRefused:
+                statuses.add("unknown_release")
+        order: tuple[IdStatus, ...] = ("withdrawn", "discarded", "unknown_release")
+        for status in order:
+            if status in statuses:
+                return Explained(identifier, status, derivation)
+        return Explained(identifier, "issued", derivation)
 
     def withdraw(self, dataset: str, release: int | str, by: str) -> list[int]:
         """Withdraw a release, by label or manifest hash: every label of its manifest (§12.3),

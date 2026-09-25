@@ -1,0 +1,307 @@
+{
+  "every_member": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": []
+        }
+      }
+    },
+    "id": "drv:546f713db26b4413ff62640618ea57dc5147853a28f7d9ff58bcbcf7408cb5e5",
+    "computation_id": "drv:e8cebe67110ce16a71e113138c408f8d13bb763b0e45c8374e0421ffd8e6f61c",
+    "keys": [],
+    "digest": "sha256:32c11976f43bc560b4e9544ef3befd9e5fa268e954c0dbc94c57998c1abc4fa6"
+  },
+  "gold_members": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "members.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:9844c84c0f29bbda830aba96ac3653545f03fd1ab9a9f4e89d48426249e32bc5",
+    "computation_id": "drv:7cade6107a97b78967341a6bd69a6449f49b48aeac642df7e8163e0d3ec14ff8",
+    "keys": [
+      "leaf:51821ee961241dc2235f1476fe6d74a7d423deb8c8b27ae9500f1b7542ebed0e"
+    ],
+    "digest": "sha256:e34b8952868d3258743a50223bb85efc58cbc5614e1080ab49ae74fd1da058cf"
+  },
+  "silver_or_better": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "members.tier",
+              "range": {
+                "gte": "silver"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:1b33cdbb6ea551f745a5562dffa246027e5c5bcf05664555d27a1201b37849d0",
+    "computation_id": "drv:7a90ffbd428a0a68d4b5d8540db53b932746371a723dbcaf367d4123cf3f9e41",
+    "keys": [
+      "leaf:8f097670156d6e6d67207cb261e4ec986fcd32e1272f24fb8a91d0f70c5b5afc"
+    ],
+    "digest": "sha256:63bd26d556ee6265a3a072574909355003522d3317a822ca174fd7bb3d6a5faf"
+  },
+  "not_over_sixty": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "not": {
+                "kind": "value",
+                "column": "members.age",
+                "op": ">",
+                "value": 60
+              }
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:9902ea3688d56cf1000250aab823502f1b29999f952611190e27eebd974e38df",
+    "computation_id": "drv:56006dc5cb800125767dbd9a5e34a5e12cba5a7708d2e80fb40edd7c4ccea09e",
+    "keys": [
+      "leaf:0623646e179102e405f4627fa296aff925546c9d2e16c698b8bec4fe03ff5ec3"
+    ],
+    "digest": "sha256:6409e29754aa2213e54628c8ad84dcb676f5289a1e29da0f4d6074c00b211c95"
+  },
+  "known_over_thirty": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "known": {
+                "kind": "value",
+                "column": "members.age",
+                "range": {
+                  "gt": 30
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:696e69720a4baeb3dadc7cc226414dcca53e71587572b7bb19f669ac1519ee67",
+    "computation_id": "drv:885a50dba4929773da2db79ca618ed6dd6861661d2a1493e8808e1525be2aa30",
+    "keys": [
+      "leaf:e970afc0cc53c37dbfcbfcc0bc76f8469619dfd17fa5cbdcd00dd5a251965149"
+    ],
+    "digest": "sha256:98bfd37ff6cf3398bad17421a96448d072d54d4586be2e86213a77fe13fe01be"
+  },
+  "borrowed_history": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "books.genre",
+              "values": [
+                "history"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:fe2f340e8156fd9be61c12ea080d88e0b2e09706a801de716a7b1a89bd92ec55",
+    "computation_id": "drv:573fedd53c0ac5dd144d79db15f9e944920e222b1a4ee477b54dbcd76a9edca1",
+    "keys": [
+      "leaf:376e1b78a213a46213c2d54a816fb28b198dd5f4bb356e779448ce4cf2276711"
+    ],
+    "digest": "sha256:98b33d0bd08faea14e7aade9e56700207a2fa4699257e6b4d8df9e2bbc6f0c6a"
+  },
+  "every_loan_a_week": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "exists",
+              "table": "loans",
+              "quantifier": "every",
+              "where": [
+                {
+                  "kind": "value",
+                  "column": "loans.days",
+                  "range": {
+                    "gte": 7
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:3d34c126d4b3517fdd39c200e1ef125d1dc21d78f5ebf15c5b45974ed8ac7f13",
+    "computation_id": "drv:1707ff4b5aef38f156fa8542423ce83caad5059d2b8452d75fb56a2a709a3fed",
+    "keys": [
+      "leaf:e12b013fcc51baa9d19467738dd4e57dd4c22f8523cba8781643a256ab589968"
+    ],
+    "digest": "sha256:c2c8f0b67aa8b116fce296958bbfe27c3f46f78b64f4e2ab0ce09e8939f8716b"
+  },
+  "two_loans_of_short_books": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "exists",
+              "table": "loans",
+              "min_count": 2,
+              "where": [
+                {
+                  "kind": "value",
+                  "column": "books.pages",
+                  "range": {
+                    "lt": 200
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:04ad62df0f9c78032fee250e36c9ebecca026975edb1d202b4190568410ab479",
+    "computation_id": "drv:6b66b60605f5016feb96d6434ba2e54b41ee33d035261268ff16df1b3bd40556",
+    "keys": [
+      "leaf:4bbd230e74d375dc9dd878891f0ccc93cfb6fe76c40c18a5463818868672591a"
+    ],
+    "digest": "sha256:32633ec1599308f140f64465d1ef1d03acdcd95465468156db3f2b1c2a817aa9"
+  },
+  "joined_before_2021_or_gold": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "any": [
+                {
+                  "kind": "value",
+                  "column": "members.joined",
+                  "range": {
+                    "lt": "2021-01-01"
+                  }
+                },
+                {
+                  "kind": "value",
+                  "column": "members.tier",
+                  "values": [
+                    "gold"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:63af67a08a8a19e721d8be329ba3d12d22d9c19c695c156b46d7c743052f2ceb",
+    "computation_id": "drv:3c79744c05bf0f395efa446b9db42dd5fd3d767b081eb3553f91ebfe28da0849",
+    "keys": [
+      "leaf:7eb4141e2bc635b0de7051b0c22348a1374cf2473409c7bb77309721004619bd"
+    ],
+    "digest": "sha256:09fb1cb46401ad636a46047e9e2d783f9141f595a5b13629e83d02b9e675dba7"
+  },
+  "named_members": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "ids",
+              "ids": [
+                "library:m3",
+                "library:m1"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "id": "drv:871f4a1f31435d6e4080d72b29a427cb5f20b1f18da686ac2441d796232b0c08",
+    "computation_id": "drv:1e10e9ccad3e7ca1639bb5aa5e92a347dcb1b75f63c453f6920506cd9066975e",
+    "keys": [
+      "leaf:7dbf44fe394359d2b45f6ac179a70d2b34ca7ee865f1942afd568902d11348f2"
+    ],
+    "digest": "sha256:114295a511014398abd65180fdeb468728d531abd8c55b2af156cfcae44e67d5"
+  },
+  "gold_members_under_a_floor": {
+    "document": {
+      "aibi": "1",
+      "dataset": "library",
+      "unit": "members",
+      "cohorts": {
+        "c": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "members.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "floor": 5,
+    "id": "drv:f0e252b302478c5317c40b8d070e4acbeb0c6a3b59e90a86f318feff38674f6a",
+    "computation_id": "drv:7cade6107a97b78967341a6bd69a6449f49b48aeac642df7e8163e0d3ec14ff8",
+    "keys": [
+      "leaf:51821ee961241dc2235f1476fe6d74a7d423deb8c8b27ae9500f1b7542ebed0e"
+    ],
+    "digest": "sha256:e34b8952868d3258743a50223bb85efc58cbc5614e1080ab49ae74fd1da058cf"
+  }
+}

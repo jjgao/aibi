@@ -112,8 +112,8 @@ class CohortResult:
     unknown_by_reason: Mapping[Reason, int]
     """Every reason, zeros included; a unit counts under each of its reasons."""
     unknown_by_clause: tuple[int, ...]
-    """For each top-level clause, the unknown units for which it is UNKNOWN (M2.2 keys them
-    ``leaf:<hash>``)."""
+    """For each top-level clause, the unknown units for which it is UNKNOWN (``counts`` keys them
+    by leaf key)."""
     lift_differs: int
     marks: frozenset[Mark]
     """The flags of every unit's cohort-level value, with their relationships."""

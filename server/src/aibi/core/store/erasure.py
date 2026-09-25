@@ -29,9 +29,11 @@ that row names the person too.
    that is not of the key columns' datatypes, or that no published release holds, is refused
    (``INVALID_KEY``), unless ``redact_only`` is given (below).
 2. From every other published release that holds the person it collects the terms: the keys of
-   the person's rows, and their values in identifier columns (§5.4), as canonical strings, but
-   not their foreign keys to rows not theirs (a book they borrowed). The person's own row gives
-   the person's terms; the rows below give the terms below them (``redaction.Terms``).
+   the person's rows, and their values in identifier columns (§5.4), each item of a list, as
+   canonical strings, but not their foreign keys to rows not theirs (a book they borrowed).
+   The person's own row gives the person's terms; the rows below give the terms below them
+   (``redaction.Terms``); each term is kept with the tables of the rows that gave it, and each
+   column whose values name their rows with the tables whose rows it names (D290).
 3. In one transaction it withdraws every such release, so that the sweep deletes its blobs
    except its manifest and what a live release shares with it, writes its audit entry, and
    records the redaction and, given ``uploads``, that the upload area is still to be deleted.
@@ -246,7 +248,11 @@ def _redact_only(store: Store, dataset: str, person: "_Person") -> Terms:
         break
     else:
         values = person.given
-    terms = Terms([text for value in values if (text := canonical_string(value))])
+    texts = [(text, value) for value in values if (text := canonical_string(value))]
+    terms = Terms(
+        [text for text, _ in texts],
+        numbers=[text for text, value in texts if _number(value)],
+    )
     if not terms:
         raise StoreRefused(RefusalCode.INVALID_KEY, "The key has no value to redact")
     return terms
@@ -453,13 +459,54 @@ class _Person:
         )
 
     def terms(self) -> Terms:
+        """The person's terms and those below them, each with the tables whose rows of theirs
+        hold it, which are the tables that hold them (D290)."""
         person: set[str] = set(self.key_terms())
         below: set[str] = set()
+        numbers: set[str] = set()
+        text: set[str] = set()
+        origins: dict[str, set[str]] = {term: {self.table} for term in person}
         for manifest in self.releases:
             for current, index in sorted(self.rows[manifest]):
                 found = self._identifying(manifest, current, index)
                 (person if current == self.table else below).update(found)
-        return Terms(person, below)
+                for term, number in found.items():
+                    (numbers if number else text).add(term)
+                    origins.setdefault(term, set()).add(current)
+        holding = {self.table} | {table for rows in self.rows.values() for table, _ in rows}
+        return Terms(
+            person,
+            below,
+            numbers=numbers - text,
+            tables=holding,
+            columns=self._naming(holding),
+            origins=origins,
+        )
+
+    def _naming(self, holding: set[str]) -> dict[str, frozenset[str]]:
+        """The columns, by descriptor id, whose values name the person's rows, each with the
+        tables whose rows its values name (D290): the key and identifier columns of the tables
+        that hold them, but for foreign keys to rows of other tables, their own table's, and
+        every foreign key into those tables, the table it points into."""
+        found: dict[str, set[str]] = {}
+        for manifest, release in self.releases.items():
+            links = self.links[manifest]
+            for table in holding:
+                columns = set(release.primary_key(table) or ())
+                for column in release.columns(table):
+                    descriptor = release.column(table, column)
+                    if descriptor is not None and descriptor.fields.identifier:
+                        columns.add(column)
+                for link in links:
+                    if link.child == table and link.parent not in holding:
+                        columns.difference_update(link.child_columns)
+                for column in columns:
+                    found.setdefault(f"{table}.{column}", set()).add(table)
+            for link in links:
+                if link.parent in holding:
+                    for column in link.child_columns:
+                        found.setdefault(f"{link.child}.{column}", set()).add(link.parent)
+        return {column: frozenset(tables) for column, tables in found.items()}
 
     def key_terms(self) -> frozenset[str]:
         """The canonical strings of the key's values, as the releases that type it type them,
@@ -468,10 +515,12 @@ class _Person:
         values = [value for key in typed for _, value in key] if typed else self.given
         return frozenset(text for value in values if (text := canonical_string(value)))
 
-    def _identifying(self, manifest: str, table: str, row: int) -> set[str]:
-        """A row's key and its values in identifier columns, except its foreign keys to rows that
-        are not the person's (a book they borrowed, say, even when it is part of a link table's
-        key). A foreign key to a row of theirs holds that row's key, a term already."""
+    def _identifying(self, manifest: str, table: str, row: int) -> dict[str, bool]:
+        """A row's key and its values in identifier columns, each PRESENT item of a list, except
+        its foreign keys to rows that are not the person's (a book they borrowed, say, even when
+        it is part of a link table's key), each with whether it is a number by its column's
+        datatype (D290). A foreign key to a row of theirs holds that row's key, a term
+        already."""
         release = self.releases[manifest]
         columns = set(release.primary_key(table) or ())
         for column in release.columns(table):
@@ -481,17 +530,16 @@ class _Person:
         for link in self.links[manifest]:
             if link.child == table and not self._names(manifest, link, row):
                 columns.difference_update(link.child_columns)
-        found: set[str] = set()
-        for column in columns:
+        found: dict[str, bool] = {}
+        for column in sorted(columns):
             cell = release.rows(table).cell(row, column)
-            if (
-                cell.state is PRESENT
-                and cell.value is not None
-                and not isinstance(cell.value, tuple)
-            ):
-                text = canonical_string(cell.value)
+            items = cell.value if isinstance(cell.value, tuple) else (cell,)
+            for item in items if cell.state is PRESENT else ():
+                if item.state is not PRESENT or item.value is None or isinstance(item.value, tuple):
+                    continue
+                text = canonical_string(item.value)
                 if text:
-                    found.add(text)
+                    found[text] = found.get(text, True) and _number(item.value)
         return found
 
     def unheld(self, store: Store, dataset: str, withdrawn_before: bool, redact_only: bool) -> str:
@@ -521,6 +569,12 @@ class _Person:
         if store.db.upload_pending(dataset):
             reason += " and uploads, to delete the upload area still to delete"
         return reason
+
+
+def _number(value: SourceValue) -> bool:
+    """Whether a value is a number, as an integer or number column holds one, a boolean not
+    (D290)."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _typed(release: Release, table: str, key: Sequence[SourceValue]) -> Key | None:
