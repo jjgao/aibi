@@ -141,6 +141,26 @@ MAX_QUEUE_BYTES = 8 * 2**20
 """Bytes of a curation queue's items in JSON: four descriptors of ``descriptor_bytes``, or about a
 hundred proposals of ``MAX_PROPOSAL_BYTES`` with their evidence (D250)."""
 
+REQUEST_BYTES = "request_bytes"
+"""Bytes of one request body over HTTP; an upload's are bounded by ``import_bytes`` instead
+(D260)."""
+OPERATOR_REQUESTS = "operator_requests"
+"""Requests a client makes to the operator router, per minute (D259)."""
+API_REQUESTS = "api_requests"
+"""Requests a client makes to every other route, per minute (D259)."""
+TOKEN_FAILURES = "token_failures"
+"""Operator requests a client makes with a missing or wrong curator token, per minute (D259)."""
+CONCURRENT_IMPORTS = "concurrent_imports"
+"""Uploads, imports, re-imports and erasures that run at once in the server (D266)."""
+UPLOAD_IDLE_SECONDS = "upload_idle_seconds"
+"""Seconds an upload may send nothing before it is refused, freeing its place (D266)."""
+UPLOAD_SECONDS = "upload_seconds"
+"""Seconds an upload may take in all: ``upload_idle_seconds``, and its length at the slowest rate
+the server accepts (D266)."""
+MAX_BODY_BYTES = 8 * 1024 * 1024
+"""The default ``request_bytes``: enough for a change that puts a descriptor at its limits, or
+several smaller ones; the document's value limit bounds a body too (D260)."""
+
 RATIO_FLOOR = 1 << 20
 """Uncompressed bytes from which ``archive_ratio`` applies, to a member or to the total."""
 
@@ -202,6 +222,7 @@ def _entries(value: object) -> int:
 
 __all__ = [
     "ALL_POINTER_CHARACTERS",
+    "API_REQUESTS",
     "ARCHIVE_BYTES",
     "ARCHIVE_MEMBERS",
     "ARCHIVE_RATIO",
@@ -210,6 +231,7 @@ __all__ = [
     "CLAUSE_DEPTH",
     "COHORTS",
     "COHORT_REFERENCES",
+    "CONCURRENT_IMPORTS",
     "CONSTANT_CHARACTERS",
     "DATASETS",
     "DECODED_BYTES",
@@ -225,6 +247,7 @@ __all__ = [
     "KEY_COLUMNS",
     "LEAVES",
     "LIST_MEMBERS",
+    "MAX_BODY_BYTES",
     "MAX_CHANGE_EDITS",
     "MAX_CLAUSES",
     "MAX_CLAUSE_DEPTH",
@@ -258,6 +281,7 @@ __all__ = [
     "NESTING_DEPTH",
     "NOTE_CHARACTERS",
     "OPEN_PROPOSALS",
+    "OPERATOR_REQUESTS",
     "PACKS",
     "PARAMETERS",
     "PATH_SEARCH",
@@ -272,11 +296,13 @@ __all__ = [
     "READER_WORKERS",
     "REFERENCE_CHARACTERS",
     "REFUSALS",
+    "REQUEST_BYTES",
     "SCOPE_COLUMNS",
     "STRING_CHARACTERS",
     "SUBSTITUTED_BYTES",
     "TABLE_COLUMNS",
     "TEXT_CHARACTERS",
+    "TOKEN_FAILURES",
     "VIEWS",
     "ImportLimits",
     "LimitName",
