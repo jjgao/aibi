@@ -111,6 +111,11 @@ def test_a_second_round_trip_with_uploads_proposals_and_a_take_over(
     done(run("session", "open", "d"))
     done(run("session", "accept", "d", "1"))
     assert "Rejected proposal 2 of d" in done(run("reject", "d", "2")).out
+    assert (
+        "Rejected 0 open proposals of d; kept 1 that the open draft accepted and holds"
+        in done(run("reject-all", "d", "--kind", "importer")).out
+    )
+    assert run("reject-all", "d").code == 2
     queued = done(run("queue", "d")).out
     assert "proposal 1: counts /definition by importer:surveys@1.0.0 (accepted in the draft)" in (
         queued

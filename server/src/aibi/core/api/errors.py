@@ -10,9 +10,10 @@ all of a change's failing stage (D246) or of an import. Its status is the first 
   ``METHOD_NOT_ALLOWED``;
 - 409 ``DATASET_BUSY``, ``CONFLICT``, ``NO_SESSION``, ``NO_CHANGE``, ``DATASET_EXISTS``,
   ``RELEASE_WITHDRAWN`` and ``ERASURE_BLOCKED``; 411 ``LENGTH_REQUIRED``;
-- ``LIMIT_EXCEEDED``: 408 naming ``upload_idle_seconds`` or ``upload_seconds``, 413 naming
-  ``request_bytes``, 429 naming a rate and 503 naming ``concurrent_imports`` (both with
-  ``Retry-After``), and 422 naming any other limit;
+- ``LIMIT_EXCEEDED``: 408 naming ``upload_idle_seconds``, ``tool_body_idle_seconds`` or
+  ``upload_seconds``, 413 naming ``request_bytes``, 429 naming a rate (``proposal_requests``
+  included) and 503 naming ``concurrent_imports``, ``tool_calls``, ``client_tool_calls`` or
+  ``tool_seconds`` (with ``Retry-After``), and 422 naming any other limit;
 - 415 ``UNSUPPORTED_MEDIA_TYPE``; 500 ``INTERNAL_ERROR``, which says nothing more;
 - 422 every other code, a pack's included.
 
@@ -34,10 +35,15 @@ from aibi.core.importers.errors import ImportRefused
 from aibi.core.operator.auth import AUTHORIZATION
 from aibi.core.schema.limits import (
     API_REQUESTS,
+    CLIENT_TOOL_CALLS,
     CONCURRENT_IMPORTS,
     OPERATOR_REQUESTS,
+    PROPOSAL_REQUESTS,
     REQUEST_BYTES,
     TOKEN_FAILURES,
+    TOOL_BODY_IDLE_SECONDS,
+    TOOL_CALLS,
+    TOOL_SECONDS,
     UPLOAD_IDLE_SECONDS,
     UPLOAD_SECONDS,
 )
@@ -74,12 +80,17 @@ _STATUS: Mapping[str, int] = {
 }
 _LIMITS: Mapping[str, int] = {
     UPLOAD_IDLE_SECONDS: 408,
+    TOOL_BODY_IDLE_SECONDS: 408,
     UPLOAD_SECONDS: 408,
     REQUEST_BYTES: 413,
     OPERATOR_REQUESTS: 429,
     API_REQUESTS: 429,
     TOKEN_FAILURES: 429,
+    PROPOSAL_REQUESTS: 429,
     CONCURRENT_IMPORTS: 503,
+    TOOL_CALLS: 503,
+    CLIENT_TOOL_CALLS: 503,
+    TOOL_SECONDS: 503,
 }
 RETRY_IMPORT = 30
 """The ``Retry-After`` of an import refused while ``concurrent_imports`` run, in seconds."""

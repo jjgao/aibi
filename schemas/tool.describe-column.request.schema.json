@@ -1,0 +1,49 @@
+{
+  "$id": "tool.describe-column.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "column": {
+      "maxLength": 129,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+      "title": "Column",
+      "type": "string"
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "release": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "const": "draft",
+          "type": "string"
+        },
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      ],
+      "title": "Release"
+    }
+  },
+  "required": [
+    "dataset",
+    "column"
+  ],
+  "title": "DescribeColumn",
+  "type": "object"
+}

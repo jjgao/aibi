@@ -1,0 +1,53 @@
+{
+  "$id": "tool.describe-dataset.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "columns_limit": {
+      "default": 2000,
+      "maximum": 10000,
+      "minimum": 1,
+      "title": "Columns Limit",
+      "type": "integer"
+    },
+    "columns_offset": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Columns Offset",
+      "type": "integer"
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "release": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "const": "draft",
+          "type": "string"
+        },
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      ],
+      "title": "Release"
+    }
+  },
+  "required": [
+    "dataset"
+  ],
+  "title": "DescribeDataset",
+  "type": "object"
+}

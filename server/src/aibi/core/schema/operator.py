@@ -37,6 +37,7 @@ from pydantic import (
     Tag,
 )
 
+from aibi.core.schema.catalog import ProposeDescriptor
 from aibi.core.schema.curation import ChangeRequest, DescriptorId, QueueNote, QueueText
 from aibi.core.schema.descriptors import (
     By,
@@ -163,6 +164,14 @@ class Empty(_Request):
     """A body with nothing to say: ``{}``."""
 
 
+class RejectProposals(_Request):
+    """A rejection of every open proposal of one ``proposer``, or of every proposer of a
+    ``kind``: exactly one of the two (D277)."""
+
+    proposer: By | None = None
+    kind: Literal["agent", "model", "importer"] | None = None
+
+
 class SessionChange(ChangeRequest):
     """A change to the draft (D245), with the session's handle and the draft it expects."""
 
@@ -206,13 +215,18 @@ def _holds(value: str, digest: bytes | None) -> bool:
 
 
 def _stored(request: BaseModel) -> Iterator[tuple[str, JsonValue]]:
-    """The text a request gives that the server keeps, by its pointer: an import's names, and a
-    change's values, evidence and whole descriptors put."""
+    """The text a request gives that the server keeps, by its pointer: an import's names, a
+    change's values, evidence and whole descriptors put, and a proposal's value and evidence."""
     if isinstance(request, ImportRequest):
         for member in ("name", "original_name"):
             given = cast(str | None, getattr(request, member))
             if given is not None:
                 yield f"/{member}", given
+    elif isinstance(request, ProposeDescriptor):
+        written = cast(dict[str, JsonValue], request.model_dump(mode="json", exclude_unset=True))
+        for member in ("value", "evidence"):
+            if member in written:
+                yield f"/{member}", written[member]
     elif isinstance(request, SessionChange):
         for index, edit in enumerate(request.edits):
             written = cast(dict[str, JsonValue], edit.model_dump(mode="json", exclude_unset=True))
@@ -369,6 +383,15 @@ class Rejected(Output):
     proposal: PositiveInt
 
 
+class ProposalsRejected(Output):
+    """What a rejection of a proposer's open proposals did: those rejected, and those kept
+    because the open draft accepted and holds them (D277)."""
+
+    dataset: DatasetId
+    rejected: Count
+    kept: Count
+
+
 class DescriptorShown(Output):
     """One descriptor of a release or of the draft, as stored: data (A6)."""
 
@@ -404,8 +427,10 @@ __all__ = [
     "LabelState",
     "OpenSession",
     "PathSource",
+    "ProposalsRejected",
     "ProposersRan",
     "Refusals",
+    "RejectProposals",
     "Rejected",
     "ReleaseRef",
     "SessionChange",

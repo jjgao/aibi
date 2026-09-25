@@ -11,14 +11,19 @@ latest release's descriptors (their models, ``check_release`` and the pack check
 refused with those refusals, paths at ``/descriptors/<id>/…``. It changes no release. An open
 proposal that is the same (descriptor, pointer, value, proposer and evidence) is returned rather
 than recorded twice, and then counts as made against the latest release; a dataset has at most
-``MAX_OPEN_PROPOSALS`` open (``LIMIT_EXCEEDED``). Both are checked before the proposal is applied,
-so that repeats and spam cost no release check; the pack checks evaluate the descriptors the
-proposal adds or changes, within a proposal's step ceiling (``STEPS_MAX``), and a session's publish
-checks the others against the running registry (D247). Accepting one is a draft edit
-(``edits``); it becomes ``accepted`` when that session publishes, if the draft still holds what it
-proposes (``holding``): a later edit of the same field or descriptor leaves it open.
-``reject_proposal`` needs no session, is audited, and is refused for a proposal the open draft
-accepted and still holds.
+``MAX_OPEN_PROPOSALS`` open (``LIMIT_EXCEEDED``), of which agents, who propose through the public
+tools without a token, hold at most ``MAX_AGENT_PROPOSALS`` (``agent_proposals``, D277), so that the
+importers' and models' proposals always have room, and the agents of one client (its address as the
+rates key it, which the caller gives) at most ``MAX_CLIENT_PROPOSALS`` (``client_proposals``). These
+are checked before the proposal is applied, so that repeats and spam cost no release check; the pack
+checks evaluate the descriptors the proposal adds or changes, within a proposal's step ceiling
+(``STEPS_MAX``), and a session's publish checks the others against the running registry (D247).
+Accepting one is a draft edit (``edits``); it becomes ``accepted`` when that session publishes, if
+the draft still holds what it proposes (``holding``): a later edit of the same field or descriptor
+leaves it open. ``reject_proposal`` needs no session, is audited, and is refused for a proposal the
+open draft accepted and still holds; ``reject_proposals`` rejects at once every open proposal of one
+proposer, or of every proposer of a kind (``agent``), keeping those the open draft accepted and
+holds, so that an operator takes the agents' share back in one step (D277).
 
 **Proposers.** ``run_proposers`` runs the curation proposers of the packs the dataset lists on a
 view of its latest release, after every publish and on request (D249); their proposals enter the
@@ -40,7 +45,7 @@ draft are read and pinned under the store's lock.
 """
 
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -64,6 +69,10 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.jsonio import canonical, lookup
 from aibi.core.schema.limits import (
+    AGENT_PROPOSALS,
+    CLIENT_PROPOSALS,
+    MAX_AGENT_PROPOSALS,
+    MAX_CLIENT_PROPOSALS,
     MAX_OPEN_PROPOSALS,
     MAX_PROPOSAL_BYTES,
     MAX_QUEUE_BYTES,
@@ -115,8 +124,11 @@ def propose_descriptor(
     by: str,
     *,
     registry: PackRegistry | None = None,
+    client: str | None = None,
 ) -> int:
-    """Record a proposal; returns its id. Raises ``StoreRefused`` or ``EditRefused``.
+    """Record a proposal; returns its id. Raises ``StoreRefused`` or ``EditRefused``. ``client``
+    is the key of the client an agent's proposal came from, by which agents' share is shared
+    (D277).
 
     The cheap checks come first: an open proposal that is the same, made against the latest
     release, is returned at once, and the cap is checked before the proposal is applied to the
@@ -155,7 +167,7 @@ def propose_descriptor(
         if found is not None and found[1] == latest.manifest:
             return found[0]
         if found is None:
-            _capped(store, db, dataset)
+            _capped(store, db, dataset, by, client)
     with store.pin() as pin:
         pin.manifest(latest.manifest)
         descriptors = store.descriptors(latest.manifest)
@@ -171,7 +183,7 @@ def propose_descriptor(
         if found is not None:
             store.db.restate(db, found[0], latest.manifest)
             return found[0]
-        _capped(store, db, dataset)
+        _capped(store, db, dataset, by, client)
         return store.db.add_proposal(
             db,
             dataset=dataset,
@@ -183,6 +195,7 @@ def propose_descriptor(
             proposer=by,
             evidence=stored.evidence,
             at=stored.at,
+            client=client if by.startswith("agent:") else None,
         )
 
 
@@ -205,12 +218,35 @@ def _like(
     )
 
 
-def _capped(store: Store, db: sqlite3.Connection, dataset: str) -> None:
+def _capped(
+    store: Store, db: sqlite3.Connection, dataset: str, by: str, client: str | None
+) -> None:
     if store.db.open_proposals(db, dataset) >= MAX_OPEN_PROPOSALS:
         raise StoreRefused(
             RefusalCode.LIMIT_EXCEEDED,
             f"The dataset has {MAX_OPEN_PROPOSALS} open proposals: decide some first",
             limit=Limit(name=OPEN_PROPOSALS, max=MAX_OPEN_PROPOSALS),
+        )
+    if by.startswith("agent:") and (
+        store.db.open_proposals(db, dataset, kind="agent") >= MAX_AGENT_PROPOSALS
+    ):
+        raise StoreRefused(
+            RefusalCode.LIMIT_EXCEEDED,
+            f"Agents have {MAX_AGENT_PROPOSALS} open proposals of the dataset, their share: an "
+            "operator decides some first",
+            limit=Limit(name=AGENT_PROPOSALS, max=MAX_AGENT_PROPOSALS),
+        )
+    if (
+        by.startswith("agent:")
+        and client is not None
+        and store.db.open_proposals(db, dataset, kind="agent", client=client)
+        >= MAX_CLIENT_PROPOSALS
+    ):
+        raise StoreRefused(
+            RefusalCode.LIMIT_EXCEEDED,
+            f"Agents at this client's address have {MAX_CLIENT_PROPOSALS} open proposals of the "
+            "dataset, a client's share: an operator decides some first",
+            limit=Limit(name=CLIENT_PROPOSALS, max=MAX_CLIENT_PROPOSALS),
         )
 
 
@@ -282,6 +318,51 @@ def reject_proposal(store: Store, dataset: str, proposal: int, by: str) -> None:
         store.db.decide(db, proposal, "rejected", at, by)
         detail: JsonValue = {"proposal": proposal}
         store.db.audit(db, at, dataset, by, "reject_proposal", detail)
+
+
+PROPOSER_KINDS = ("agent", "model", "importer")
+"""The proposers whose open proposals ``reject_proposals`` rejects by kind."""
+
+
+def reject_proposals(
+    store: Store, dataset: str, by: str, *, proposer: str | None = None, kind: str | None = None
+) -> tuple[int, int]:
+    """Reject, as the operator ``by``, every open proposal of the dataset by ``proposer`` (one
+    attribution, such as ``agent:<name>``) or by every proposer of ``kind`` (``agent``,
+    ``model`` or ``importer``), exactly one of them given; returns how many were rejected and
+    how many were kept because the open draft accepted and holds them (D277). One audit entry
+    records the proposer or the kind and the counts."""
+    if not attributed(by, ("operator",)):
+        raise StoreRefused(
+            RefusalCode.INVALID_VALUE, "Rejecting a proposal is an operator's: operator:<name>"
+        )
+    if (
+        (proposer is None) == (kind is None)
+        or (kind is not None and kind not in PROPOSER_KINDS)
+        or (proposer is not None and not attributed(proposer, PROPOSER_KINDS))
+    ):
+        raise StoreRefused(
+            RefusalCode.INVALID_VALUE,
+            "Name one proposer (agent:<name>, model:<identifier> or importer:<name>@<version>), "
+            "or one kind of proposer (agent, model or importer), not both",
+        )
+    at = store.now()
+    with store.db.transaction() as db:
+        ids = store.db.open_ids(db, dataset, kind=kind, proposer=proposer)
+        kept: set[int] = set()
+        session = store.db.open_session_of(dataset)
+        if session is not None and ids:
+            with store.pin() as pin:
+                pin.manifest(session.draft)
+                draft = store.descriptors(session.draft)
+            kept = holding(store, session, draft, ids=ids)
+        rejected = [found for found in ids if found not in kept]
+        for found in rejected:
+            store.db.decide(db, found, "rejected", at, by)
+        named: JsonValue = proposer if proposer is not None else f"{kind}:*"
+        detail: JsonValue = {"proposer": named, "rejected": len(rejected), "kept": len(kept)}
+        store.db.audit(db, at, dataset, by, "reject_proposals", detail)
+    return len(rejected), len(kept)
 
 
 def _pack_proposals(found: object) -> list[object]:
@@ -425,11 +506,18 @@ def _bytes(item: Output) -> int:
     return len(item.model_dump_json().encode("utf-8", "surrogatepass"))
 
 
+Shown = Callable[[str, int, Output], Output]
+"""What the queue holds of an item, given its kind (``fields``, ``undeclared``, ``proposals`` or
+``notes``) and its position among the items of that kind, a note's being its place in the import
+report."""
+
+
 class _Filling:
     """The queue's items, in order, until ``MAX_QUEUE_ITEMS`` of them or ``MAX_QUEUE_BYTES`` of
     their JSON; the first that does not fit and every item after it are left out, and counted."""
 
-    def __init__(self) -> None:
+    def __init__(self, shown: Shown | None) -> None:
+        self.shown = shown
         self.items: dict[str, list[Output]] = {
             "fields": [],
             "undeclared": [],
@@ -441,8 +529,10 @@ class _Filling:
         self.truncated = 0
         self.full = False
 
-    def add(self, kind: str, item: Output) -> None:
+    def add(self, kind: str, position: int, item: Output) -> None:
         if not self.full:
+            if self.shown is not None:
+                item = self.shown(kind, position, item)
             cost = _bytes(item)
             if self.counted < MAX_QUEUE_ITEMS and self.size + cost <= MAX_QUEUE_BYTES:
                 self.counted += 1
@@ -453,10 +543,14 @@ class _Filling:
         self.truncated += 1
 
 
-def curation_queue(store: Store, dataset: str, *, release: int | None = None) -> CurationQueue:
+def curation_queue(
+    store: Store, dataset: str, *, release: int | None = None, shown: Shown | None = None
+) -> CurationQueue:
     """The curation queue of the latest published release, or of the published label
     ``release``. The release, the open session and its draft are read, and pinned, under the
-    store's lock, so that no change, discard or withdrawal sweeps them in between."""
+    store's lock, so that no change, discard or withdrawal sweeps them in between. ``shown``
+    gives what the queue holds of each item, before the item is counted against
+    ``MAX_QUEUE_BYTES``, so that a reader who is shown less gets as many items as fit (D277)."""
     with store.pin() as pin:
         with store.lock:
             latest = store.latest(dataset)
@@ -482,16 +576,18 @@ def curation_queue(store: Store, dataset: str, *, release: int | None = None) ->
         descriptors = store.descriptors(manifest)
         notes = [] if found.report is None else read_report(store.blobs.read(found.report))
     current = latest.manifest if latest is not None else None
-    queue = _Filling()
-    for field in _fields(descriptors):
-        queue.add("fields", field)
-    for undeclared in _undeclared(descriptors):
-        queue.add("undeclared", undeclared)
+    queue = _Filling(shown)
+    for position, field in enumerate(_fields(descriptors)):
+        queue.add("fields", position, field)
+    for position, undeclared in enumerate(_undeclared(descriptors)):
+        queue.add("undeclared", position, undeclared)
     last = 0
-    for proposal in () if queue.full else _open_proposals(store, dataset):
+    proposals = () if queue.full else _open_proposals(store, dataset)
+    for position, proposal in enumerate(proposals):
         last = proposal.id
         queue.add(
             "proposals",
+            position,
             QueueProposal(
                 id=proposal.id,
                 descriptor=proposal.descriptor,
@@ -511,8 +607,8 @@ def curation_queue(store: Store, dataset: str, *, release: int | None = None) ->
     if queue.full:
         with store.lock:
             queue.truncated += store.db.open_proposals(store.db.connection, dataset, after=last)
-    for note in notes:
-        queue.add("notes", QueueNote.model_validate(note))
+    for position, note in enumerate(notes):
+        queue.add("notes", position, QueueNote.model_validate(note))
     return CurationQueue(
         dataset=dataset,
         release=manifest,
@@ -526,11 +622,14 @@ def curation_queue(store: Store, dataset: str, *, release: int | None = None) ->
 
 
 __all__ = [
+    "PROPOSER_KINDS",
     "ProposersRun",
+    "Shown",
     "Skipped",
     "curation_queue",
     "holding",
     "propose_descriptor",
     "reject_proposal",
+    "reject_proposals",
     "run_proposers",
 ]
