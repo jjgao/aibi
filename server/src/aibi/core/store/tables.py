@@ -187,6 +187,15 @@ def _any_item_missing(cells: Sequence[Cell]) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class TableSource:
+    """A table's blob as a query reads it in place (D293): its path, and the columns the blob
+    stores, companions included."""
+
+    path: str
+    columns: frozenset[str]
+
+
 class CorruptTableError(ValueError):
     """A table blob that is not what ``encode`` writes."""
 
@@ -258,6 +267,7 @@ __all__ = [
     "ColumnReport",
     "CorruptTableError",
     "TableError",
+    "TableSource",
     "TypedTable",
     "build_table",
     "decode",

@@ -91,6 +91,12 @@ def read(source: Path | bytes) -> list[Column]:
     return found
 
 
+def names(path: Path) -> tuple[str, ...]:
+    """The columns a file stores, in order, from its footer alone."""
+    with open(path, "rb") as file:  # a file, never a dataset directory to discover
+        return tuple(pq.read_schema(file).names)
+
+
 def read_columns(source: bytes, names: Collection[str]) -> tuple[int, list[Column]]:
     """The file's row count, and those of ``names`` it has, in the file's order; only they are
     read and decompressed."""
@@ -279,6 +285,7 @@ __all__ = [
     "PhysicalType",
     "UnreadableParquetError",
     "UnsupportedTypeError",
+    "names",
     "read",
     "read_columns",
     "read_source",
