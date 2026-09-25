@@ -1,5 +1,6 @@
-"""Importers (SPEC §12.3, §13.1, §14): files into raw snapshots, layouts and descriptors with
-the importer's proposals, through the validation gate into a published release.
+"""Importers (SPEC §12.3, §13.1, §14): files and database snapshots into raw snapshots, layouts
+and descriptors with the importer's proposals, through the validation gate into a published
+release.
 
 - ``errors``: the refusal that stops an import.
 - ``confine``: paths confined to the upload area and the import directories, read once.
@@ -12,5 +13,8 @@ the importer's proposals, through the validation gate into a published release.
 - ``infer``: datatypes, keys, relationships, roles, grain, coverage and identifiers.
 - ``describe``: descriptors with curation entries from what was inferred.
 - ``files``: the core's own importer, of files, directories and zip archives.
+- ``snapshot``: a database snapshot, read in the import's worker process, the only place an
+  import loads DuckDB.
+- ``databases``: the core's importer of database snapshots, from named connections.
 - ``run``: imports and re-imports, from the importer to the release published.
 """

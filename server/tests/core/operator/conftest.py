@@ -1,7 +1,8 @@
 """The operator tests' server: the whole application in process, over a store in ``tmp_path``.
 
 - ``make_server`` builds a ``Store`` with a ticking clock, a curator token from ``new_token``, a
-  configuration whose import directory is under ``tmp_path``, and the application behind
+  configuration whose import directory is under ``tmp_path`` (with the named database connections
+  a test gives, D305), and the application behind
   request protection, with a ``TestClient`` at ``http://127.0.0.1:8000``; ``server`` is one with
   the defaults. Rates are generous unless a test sets them, so that repeated requests are not
   limited.
@@ -222,6 +223,7 @@ def make_server(tmp_path: Path) -> Iterator[MakeServer]:
         server: dict[str, Any] | None = None,
         imports: dict[str, Any] | None = None,
         registry: PackRegistry | None = None,
+        databases: dict[str, Any] | None = None,
         **client: Any,
     ) -> Server:
         root = tmp_path / name
@@ -234,6 +236,7 @@ def make_server(tmp_path: Path) -> Iterator[MakeServer]:
             "curator": {"token_hash": hash_token(token)},
             "storage": {"data": "data", "imports": ["imports"]},
             "imports": imports or {},
+            "databases": databases or {},
         }
         config = ServerConfig.model_validate(written, context={BASE: root})
         store = Store(config.storage.data, clock=_clock())

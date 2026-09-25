@@ -156,6 +156,21 @@ class SourceReader(Protocol):
 
 
 @dataclass(frozen=True)
+class DatabaseSource:
+    """A database snapshot's source, as a validator sees it (SPEC §13.1, §14, D305): the named
+    connection, its kind, and where it points, as the dataset's ``source`` records it (host,
+    database and schema, or a file's location); never a credential."""
+
+    connection: str
+    kind: Literal["postgres", "mysql", "sqlite", "duckdb"]
+    location: str
+
+
+ImportSource = ConfinedPath | DatabaseSource
+"""What an import reads: a confined file or directory, or a named connection (D305)."""
+
+
+@dataclass(frozen=True)
 class Previous:
     """The names of the release a re-import starts from, so that the *k*-th occurrence of a name
     keeps its id (SPEC §5.1, §12.3, D238). Every importer, the core's or a pack's, passes them to
@@ -281,9 +296,10 @@ class Rebuilder(Protocol):
 class Validator(Protocol):
     """A pack's validator (SPEC §10.1). The paths of ``validate_descriptors``'s refusals point
     into the release's descriptors by id, ``/<descriptor id><field pointer>``, and the core
-    points them at ``/descriptors/…`` on an import and ``/draft/…`` on a draft change (D246)."""
+    points them at ``/descriptors/…`` on an import and ``/draft/…`` on a draft change (D246).
+    ``validate_source`` is given a database snapshot's source as a ``DatabaseSource`` (D305)."""
 
-    def validate_source(self, source: ConfinedPath, result: ImportResult) -> Sequence[Refusal]: ...
+    def validate_source(self, source: ImportSource, result: ImportResult) -> Sequence[Refusal]: ...
 
     def validate_descriptors(self, release: ReleaseView) -> Sequence[Refusal]: ...
 
@@ -815,12 +831,14 @@ __all__ = [
     "AnalysisInputs",
     "CaveatRule",
     "ConfinedPath",
+    "DatabaseSource",
     "DirectoryEntry",
     "EntryKind",
     "Facet",
     "ImportNote",
     "ImportOptions",
     "ImportResult",
+    "ImportSource",
     "Importer",
     "JsonSchema",
     "LeafKind",

@@ -93,6 +93,10 @@ class Confinement:
         self._confined[real] = (status.st_dev, status.st_ino)
         return ConfinedPath(real)
 
+    def identity(self, path: ConfinedPath) -> tuple[int, int]:
+        """The device and inode of what was confined at ``path``."""
+        return self._identity(path)
+
     def _identity(self, path: ConfinedPath) -> tuple[int, int]:
         found = self._confined.get(Path(path))
         if found is None:
