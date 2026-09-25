@@ -119,7 +119,13 @@ from aibi.core.schema.ids import CONCEPT_ID_RE
 from aibi.core.schema.jsonio import canonical, number_text
 from aibi.core.store.appdb import loads
 from aibi.core.store.cells import typed
-from aibi.core.store.derivations import text_of
+from aibi.core.store.derivations import (
+    drop_unnamed_texts,
+    names_dataset,
+    request_of,
+    store_text,
+    text_of,
+)
 from aibi.core.store.sources import canonical_string
 
 MARK = "[erased]"
@@ -901,36 +907,6 @@ def _catalog(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
     return db.execute("DELETE FROM catalog WHERE dataset = ?", (dataset,)).rowcount
 
 
-def _names_dataset(written: JsonValue, params: JsonValue, dataset: str) -> bool:
-    """Whether a document as written names the dataset (its ``dataset``, a cohort's ``dataset``
-    or ``datasets``), or a parameter does, one given with the issuance or in the document's own
-    ``params``, or one in a list of them."""
-
-    def named(value: JsonValue) -> bool:
-        return isinstance(value, str) and value.split("@", 1)[0] == dataset
-
-    found: list[JsonValue] = []
-    given = [params]
-    if isinstance(written, dict):
-        found.append(written.get("dataset"))
-        given.append(written.get("params"))
-        cohorts = written.get("cohorts")
-        if isinstance(cohorts, dict):
-            for cohort in cohorts.values():
-                if isinstance(cohort, dict):
-                    found.append(cohort.get("dataset"))
-                    datasets = cohort.get("datasets")
-                    if isinstance(datasets, list):
-                        found.extend(datasets)
-    for values in given:
-        if isinstance(values, dict):
-            found.extend(values.values())
-            for value in values.values():
-                if isinstance(value, list):
-                    found.extend(value)
-    return any(named(value) for value in found)
-
-
 DERIVATION_BATCH = 256
 """Derivations an erasure reads at a time: the log is never read whole into memory."""
 
@@ -1496,24 +1472,25 @@ ISSUANCE_BATCH = 256
 
 def _naming_issuances(
     db: sqlite3.Connection, dataset: str
-) -> Iterator[tuple[str, str, str, str | None, int]]:
-    """The issuances that may name the dataset, in id order, ``ISSUANCE_BATCH`` at a time: those
-    of a derivation over one of its releases, and those whose document as written or
-    parameters hold the dataset id as the start of a JSON string (``_names_dataset`` decides),
-    each with whether it is of the first kind (D290)."""
+) -> Iterator[tuple[str, str, str | None, int]]:
+    """The issuances that may name the dataset, in id order, ``ISSUANCE_BATCH`` at a time, with
+    their request's and SQL's texts: those of a derivation over one of its releases, and those
+    whose request (the document as written and the parameters) holds the dataset id as the
+    start of a JSON string (``names_dataset`` decides), each with whether it is of the first
+    kind (D290, D300)."""
     after = ""
     quoted = json.dumps(dataset)[:-1]
     while True:
         rows = cast(
-            list[tuple[str, str, str, str | None, int]],
+            list[tuple[str, str, str | None, int]],
             db.execute(
-                "SELECT * FROM (SELECT i.id, i.written, i.params, i.sql, EXISTS ("
-                "SELECT 1 FROM derivation_releases r"
-                " WHERE r.derivation = i.derivation AND r.dataset = ?) AS ours"
-                " FROM issuances i WHERE i.id > ?)"
-                " WHERE ours OR instr(written, ?) > 0 OR instr(params, ?) > 0"
-                " ORDER BY id LIMIT ?",
-                (dataset, after, quoted, quoted, ISSUANCE_BATCH),
+                "SELECT * FROM (SELECT i.id, r.text AS request, s.text AS sql, EXISTS ("
+                "SELECT 1 FROM derivation_releases d"
+                " WHERE d.derivation = i.derivation AND d.dataset = ?) AS ours"
+                " FROM issuances i JOIN log_texts r ON r.digest = i.request"
+                " LEFT JOIN log_texts s ON s.digest = i.sql WHERE i.id > ?)"
+                " WHERE ours OR instr(request, ?) > 0 ORDER BY id LIMIT ?",
+                (dataset, after, quoted, ISSUANCE_BATCH),
             ).fetchall(),
         )
         yield from rows
@@ -1523,27 +1500,35 @@ def _naming_issuances(
 
 
 def _issuances(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
-    """Redact the document, parameters and SQL of every issuance that names the dataset,
-    through its derivation or in its document, by ``_Written``'s rules; how many changed."""
+    """Redact the request (the document and the parameters) and the SQL of every issuance that
+    names the dataset, through its derivation or in its document, by ``_Written``'s rules,
+    pointing it at the redacted texts; then remove the texts no issuance names, the ones that
+    held the terms among them (D300). How many issuances changed."""
     changed = 0
-    for identifier, written, params, sql, ours in _naming_issuances(db, dataset):
-        document, parameters = loads(written), loads(params)
-        if not ours and not _names_dataset(document, parameters, dataset):
+    for identifier, request, sql, ours in _naming_issuances(db, dataset):
+        found = cast(dict[str, JsonValue], loads(request))
+        document, parameters = found["document"], found["params"]
+        if not ours and not names_dataset(document, parameters, dataset):
             continue
         unit = document.get("unit") if isinstance(document, dict) else None
         table = unit if isinstance(unit, str) and _reference(unit) is None else None
         redactor = _Written(terms, table, dataset)
-        new = (
-            text_of(redactor.document(document)),
-            text_of(redactor.parameters(parameters)),
-            None if sql is None else text_of(redactor.sql(loads(sql))),
-        )
-        if new != (written, params, sql):
+        redacted = request_of(redactor.document(document), redactor.parameters(parameters))
+        rewritten = None if sql is None else redactor.sql(loads(sql))
+        if (text_of(redacted), None if rewritten is None else text_of(rewritten)) != (
+            request,
+            sql,
+        ):
             db.execute(
-                "UPDATE issuances SET written = ?, params = ?, sql = ? WHERE id = ?",
-                (*new, identifier),
+                "UPDATE issuances SET request = ?, sql = ? WHERE id = ?",
+                (
+                    store_text(db, redacted),
+                    None if rewritten is None else store_text(db, rewritten),
+                    identifier,
+                ),
             )
             changed += 1
+    drop_unnamed_texts(db)
     return changed
 
 

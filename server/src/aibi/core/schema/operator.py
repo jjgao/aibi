@@ -38,6 +38,13 @@ from pydantic import (
 )
 
 from aibi.core.schema.catalog import ProposeDescriptor
+from aibi.core.schema.cohorts import (
+    ENGINE_RE,
+    TIME_RE,
+    CountCohort,
+    DataObject,
+    RecordJson,
+)
 from aibi.core.schema.curation import ChangeRequest, DescriptorId, QueueNote, QueueText
 from aibi.core.schema.descriptors import (
     By,
@@ -47,7 +54,15 @@ from aibi.core.schema.descriptors import (
     PositiveInt,
     String,
 )
-from aibi.core.schema.ids import MAX_COLUMNS, DatasetId, PackId, Sha256, TableId
+from aibi.core.schema.ids import (
+    MAX_COLUMNS,
+    DatasetId,
+    DerivationId,
+    IssuanceId,
+    PackId,
+    Sha256,
+    TableId,
+)
 from aibi.core.schema.jsonio import escape_token
 from aibi.core.schema.limits import KEY_COLUMNS, MAX_STRING, STRING_CHARACTERS, LimitName
 from aibi.core.schema.output import DATA_MARK, Count, FiniteJsonObject, Output, text
@@ -172,6 +187,21 @@ class RejectProposals(_Request):
     kind: Literal["agent", "model", "importer"] | None = None
 
 
+class IssuanceRequest(_Request):
+    """An issuance of the derivation log, by its id, which the body carries so that no URL,
+    and so no access log, holds it (D302)."""
+
+    id: IssuanceId
+
+
+class PruneRequest(_Request):
+    """A pruning of ``count_cohort``'s issuances recorded before ``before``, an RFC 3339 time
+    with its offset; without it, before the configured period (``keep_count_issuances_days``,
+    D300)."""
+
+    before: Annotated[str, StringConstraints(max_length=64)] | None = None
+
+
 class SessionChange(ChangeRequest):
     """A change to the draft (D245), with the session's handle and the draft it expects."""
 
@@ -216,8 +246,11 @@ def _holds(value: str, digest: bytes | None) -> bool:
 
 def _stored(request: BaseModel) -> Iterator[tuple[str, JsonValue]]:
     """The text a request gives that the server keeps, by its pointer: an import's names, a
-    change's values, evidence and whole descriptors put, and a proposal's value and evidence."""
-    if isinstance(request, ImportRequest):
+    change's values, evidence and whole descriptors put, a proposal's value and evidence, and the
+    document a count records in the derivation log (D300)."""
+    if isinstance(request, CountCohort):
+        yield "/document", cast(JsonValue, dict(request.document))
+    elif isinstance(request, ImportRequest):
         for member in ("name", "original_name"):
             given = cast(str | None, getattr(request, member))
             if given is not None:
@@ -401,6 +434,32 @@ class DescriptorShown(Output):
     descriptor: Annotated[FiniteJsonObject, Field(json_schema_extra=DATA_MARK)]
 
 
+class Pruned(Output):
+    """What a pruning of the derivation log did (§12.2, D300): the issuances it removed, the
+    time before which it removed them, and the bytes the log holds now (``log_bytes``)."""
+
+    pruned: Count
+    before: Annotated[str, StringConstraints(pattern=TIME_RE)]
+    log_bytes: Count
+
+
+class LoggedIssuance(Output):
+    """One issuance as the log holds it, its request included: the document as written and the
+    parameters used, which ``explain`` never gives (D302). Everything from a document is data
+    (A6)."""
+
+    id: IssuanceId
+    derivation: DerivationId
+    tool: Literal["count_cohort", "run_analysis"]
+    document: RecordJson
+    params: RecordJson
+    sql: RecordJson | None = None
+    values_from: IssuanceId
+    engine: Annotated[str, StringConstraints(pattern=ENGINE_RE)]
+    packs: DataObject
+    at: Annotated[str, StringConstraints(pattern=TIME_RE)]
+
+
 class Refusals(Output):
     """Every error response over HTTP (§8.6, D265)."""
 
@@ -424,11 +483,15 @@ __all__ = [
     "Health",
     "ImportPublished",
     "ImportRequest",
+    "IssuanceRequest",
     "LabelState",
+    "LoggedIssuance",
     "OpenSession",
     "PathSource",
     "ProposalsRejected",
     "ProposersRan",
+    "PruneRequest",
+    "Pruned",
     "Refusals",
     "RejectProposals",
     "Rejected",

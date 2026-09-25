@@ -861,3 +861,38 @@ def test_openapi_is_generated_but_neither_it_nor_the_docs_are_served(server: Ser
     for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
         response = server.client.get(path)
         assert (response.status_code, codes(response)) == (404, [("NOT_FOUND", None)])
+
+
+# --- The derivation log (D300, D302) -------------------------------------------------------------
+
+
+def test_the_log_is_pruned_before_the_configured_period_or_a_time_given(server: Server) -> None:
+    configured = server.post("/operator/log/prune")
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["pruned"] == 0
+    assert configured.json()["before"].startswith("2025-12-02T00:00:0")  # 30 days before now
+    given = server.post("/operator/log/prune", {"before": "2026-01-01T00:00:00+02:00"})
+    assert given.json() == {
+        "pruned": 0,
+        "before": "2025-12-31T22:00:00.000000Z",
+        "log_bytes": server.store.derivations.usage(),
+    }
+    wrong = server.post("/operator/log/prune", {"before": "yesterday"})
+    assert (wrong.status_code, codes(wrong)) == (422, [("INVALID_VALUE", None)])
+
+
+def test_an_issuance_is_asked_for_in_the_body_and_one_the_log_does_not_hold_is_not_found(
+    server: Server,
+) -> None:
+    """The id travels in the body, so that no URL, and no access log, holds it (D302)."""
+    unknown = server.post("/operator/log/issuance", {"id": "iss:" + "0" * 26})
+    assert (unknown.status_code, codes(unknown)) == (404, [("NOT_FOUND", None)])
+    malformed = server.post("/operator/log/issuance", {"id": "drv:0"})
+    assert malformed.status_code == 422
+    assert server.get("/operator/log/issuances/iss:" + "0" * 26).status_code == 404
+
+
+def test_a_time_out_of_range_to_prune_before_is_an_invalid_value(server: Server) -> None:
+    for before in ("0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"):
+        wrong = server.post("/operator/log/prune", {"before": before})
+        assert (wrong.status_code, codes(wrong)) == (422, [("INVALID_VALUE", None)])

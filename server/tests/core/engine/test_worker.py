@@ -361,6 +361,22 @@ def test_a_wait_for_a_place_ends_by_the_caller_s_deadline() -> None:
     assert 0.4 <= time.monotonic() - started < 2
 
 
+def test_a_child_that_hangs_up_and_runs_on_past_the_caller_s_deadline_ends_the_caller_s_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child that closes its socket and keeps running is waited for until the caller's
+    deadline, which then names the caller's own limit (``tool_seconds``, D301), not the
+    worker's."""
+    hang_up = "sock.close()\nimport time\ntime.sleep(60)\n"
+    monkeypatch.setattr(worker, "_CHILD", _fake(hang_up))
+    workers = Workers(QueryLimits(query_seconds=20))
+    started = time.monotonic()
+    with pytest.raises(CallerDeadline):
+        workers.run([], [Query("SELECT 1", {}, 1)], ends=started + 1.0)
+    assert 0.9 <= time.monotonic() - started < 3
+    assert _workers_left() == []
+
+
 def test_a_caller_s_deadline_after_the_worker_s_own_leaves_its_limits_named() -> None:
     workers = Workers(QueryLimits(query_seconds=1))
     with pytest.raises(QueryRefused) as refused:

@@ -35,6 +35,10 @@ closed, so an unknown key is refused, and every problem is reported at once with
   D278).
 - ``[queries]``: the limits of the workers that run queries (D293): ``query_seconds``,
   ``query_memory``, ``query_workers`` and ``query_threads``.
+- ``[log]``: how long the derivation log keeps ``count_cohort``'s issuances,
+  ``keep_count_issuances_days`` (30 by default, at most ``MAX_KEEP_DAYS``; 0 keeps them until
+  an operator prunes), and ``log_bytes``, the most the log may take, counting the pages of all
+  that pruning can free (D300).
 - ``[disclosure] min_cell_count_floor``: the deployment's floor for *k* (§8.4), 2 or more.
 - ``[databases.<identifier>]``: named connections, by shape only until database snapshots use
   them (#13): a SQLite or DuckDB file inside an import directory, or for Postgres and MySQL the
@@ -72,10 +76,19 @@ from pydantic_core import ErrorDetails, PydanticCustomError
 from aibi.core.api.origins import LOOPBACK_HOSTS, hostname, is_loopback, origin
 from aibi.core.schema.descriptors import ModelCardDescriptor
 from aibi.core.schema.ids import Identifier
-from aibi.core.schema.limits import MAX_BODY_BYTES, MIN_QUERY_MEMORY, ImportLimits, QueryLimits
+from aibi.core.schema.limits import (
+    MAX_BODY_BYTES,
+    MAX_KEEP_DAYS,
+    MIN_LOG_BYTES,
+    MIN_QUERY_MEMORY,
+    ImportLimits,
+    LogLimits,
+    QueryLimits,
+)
 
 _DEFAULT_LIMITS = ImportLimits()
 _DEFAULT_QUERIES = QueryLimits()
+_DEFAULT_LOG = LogLimits()
 WORKER_THREADS = 40
 """The worker threads that the reads, the operations and the parsing of bodies share: anyio's
 default limiter, which the server leaves as it is."""
@@ -256,6 +269,19 @@ class Queries(_Config):
         return QueryLimits(**self.model_dump())
 
 
+class Log(_Config):
+    """How long the derivation log keeps ``count_cohort``'s issuances, and how large it grows
+    (D300): ``LogLimits``, with its defaults."""
+
+    keep_count_issuances_days: Annotated[StrictInt, Field(ge=0, le=MAX_KEEP_DAYS)] = 30
+    """0 keeps them until an operator prunes; at most ``MAX_KEEP_DAYS``."""
+    log_bytes: Annotated[StrictInt, Field(ge=MIN_LOG_BYTES)] = _DEFAULT_LOG.log_bytes
+
+    def limits(self) -> LogLimits:
+        days = self.keep_count_issuances_days
+        return LogLimits(keep_count_issuances_days=days or None, log_bytes=self.log_bytes)
+
+
 class Disclosure(_Config):
     min_cell_count_floor: Annotated[StrictInt, Field(ge=2)] | None = None
 
@@ -290,6 +316,7 @@ class ServerConfig(_Config):
     storage: Storage
     imports: Imports = Imports()
     queries: Queries = Queries()
+    log: Log = Log()
     disclosure: Disclosure = Disclosure()
     databases: dict[Identifier, DatabaseConnection] = Field(
         default_factory=dict[str, DatabaseConnection]

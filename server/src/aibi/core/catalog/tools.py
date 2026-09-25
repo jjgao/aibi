@@ -10,9 +10,10 @@ text marked as data is data, not instructions (A6). ``INSTRUCTIONS`` says the sa
 server.
 
 The tools are exactly ``search_catalog``, ``describe_dataset``, ``describe_column``,
-``curation_queue`` and ``propose_descriptor``; the others of §11.1 arrive with the milestones that
-compute what they return (M2, M3). No operator operation is a tool (§11.2): importing, curation
-sessions, accepting or rejecting proposals, withdrawal and erasure are the operator router's.
+``curation_queue`` and ``propose_descriptor`` (M1), and ``validate_document``, ``count_cohort``
+and ``explain`` (M2, ``cohorts``); ``list_analyses`` and ``run_analysis`` arrive with the registry
+(M3). No operator operation is a tool (§11.2): importing, curation sessions, accepting or
+rejecting proposals, withdrawal and erasure are the operator router's.
 
 ``call`` runs a tool on a request body: the body is read by ``load_request`` (D260), as the
 operator router reads its own, text a proposal stores is refused if it holds a token's or a
@@ -29,6 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from aibi.core.catalog.cohorts import count_cohort, explain, validate_document
 from aibi.core.catalog.service import Catalog, refusals_of
 from aibi.core.schema.catalog import TOOL_MODELS
 from aibi.core.schema.loading import load_request
@@ -48,8 +50,22 @@ RULES = (
 INSTRUCTIONS = (
     "aibi answers questions about cohorts in related tables. Find datasets with "
     "search_catalog, then read describe_dataset and describe_column before asking anything of "
-    "the data. Operators import, curate and publish releases; an agent can only propose "
-    "descriptors, with propose_descriptor, for an operator to accept or reject. " + RULES
+    "the data. Write an analysis document (JSON, never SQL) that names cohorts by their "
+    "criteria, check it with validate_document, confirm its readback with the user, then count "
+    "its cohorts with count_cohort; explain says how an id was computed. Operators import, "
+    "curate and publish releases; an agent can only propose descriptors, with "
+    "propose_descriptor, for an operator to accept or reject. " + RULES
+)
+DOCUMENT_TEXT = (
+    'The document is an aibi analysis document as written (§7.1): {"aibi": "1", "dataset": '
+    '"<id>" (or "<id>@<label>", "@draft", "@sha256:<hex>"), "unit": "<table>", "cohorts": '
+    '{"<name>": {"all": [clauses]}}, and optional "params", "views", "packs" and "notes"}. A '
+    'clause is a leaf ({"kind": "value", "column": "<table>.<column>", "values": [...] or '
+    '"range": {"gte": ...}}, {"kind": "exists", "table": "<table>", "where": [clauses]}, '
+    '{"kind": "covered", ...}, {"kind": "ids", ...}, {"kind": "cohort", "cohort": "<name>"}, or '
+    'a pack\'s leaf) or {"all": [...]}, {"any": [...]}, {"not": clause}, {"known": clause} or '
+    '{"unknown": clause}. Logic is three-valued: a unit whose criteria cannot be decided is '
+    "unknown and counted apart, never as not matching."
 )
 
 
@@ -126,6 +142,43 @@ TOOLS: tuple[Tool, ...] = (
         ),
         lambda catalog, request, client: catalog.propose_descriptor(request, client=client),
         read_only=False,
+    ),
+    Tool(
+        "validate_document",
+        _described(
+            "Check an analysis document without reading any row: load it, resolve its "
+            "releases, canonicalise its cohorts and read them back. Returns every refusal, "
+            "sorted, each with the path into the document where it lies and what is available "
+            "instead; each cohort that canonicalised with its canonical form, its cohort id "
+            "(not issued until count_cohort counts it), its readback, which the user should "
+            "confirm, and the caveats that need no data; and its views, unchecked until the "
+            "analysis registry exists. With format (<pack id>.<name>), an installed pack first "
+            "translates a document of another format, and every not is flagged. " + DOCUMENT_TEXT
+        ),
+        lambda catalog, request, client: validate_document(catalog, request),
+    ),
+    Tool(
+        "count_cohort",
+        _described(
+            "Count each cohort of an analysis document over its release: n_true (the cohort's "
+            "size), n_false and n_unknown with the unknown units by reason and by top-level "
+            "clause, the size as a proportion of the unit table, the caveats, the readback and "
+            "the cohort id (drv:) and issuance id (iss:) to cite. Fails with the first refusal; "
+            "validate_document lists them all. " + DOCUMENT_TEXT
+        ),
+        lambda catalog, request, client: count_cohort(catalog, request),
+        read_only=False,
+    ),
+    Tool(
+        "explain",
+        _described(
+            "Say how an output was computed, from a cohort id (drv:...) or an issuance id "
+            "(iss:...): what the id resolves to (issued, not issued, withdrawn, discarded, "
+            "erased), the canonical object it hashes with the releases and versions, and for "
+            "an issuance the SQL as run, the engine and pack versions and when it was issued "
+            "(never the document as written or its parameters, which only the operator reads)."
+        ),
+        lambda catalog, request, client: explain(catalog, request),
     ),
 )
 BY_NAME: Mapping[str, Tool] = MappingProxyType({tool.name: tool for tool in TOOLS})

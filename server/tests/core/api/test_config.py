@@ -23,7 +23,14 @@ from aibi.core.api.config import (
     Imports,
     load_config,
 )
-from aibi.core.schema.limits import MIN_QUERY_MEMORY, ImportLimits, QueryLimits
+from aibi.core.schema.limits import (
+    MAX_KEEP_DAYS,
+    MIN_LOG_BYTES,
+    MIN_QUERY_MEMORY,
+    ImportLimits,
+    LogLimits,
+    QueryLimits,
+)
 
 EXAMPLE = Path(__file__).resolve().parents[3] / "aibi.example.toml"
 HASH = "sha256:" + "a" * 64
@@ -453,3 +460,21 @@ def test_the_query_workers_limits_are_configured(write_config: Write) -> None:
     assert load_config(write_config(minimal())).queries.limits() == QueryLimits()
     [found] = problems(write_config, minimal(queries=f"query_memory = {MIN_QUERY_MEMORY - 1}"))
     assert found.startswith("queries.query_memory: ")
+
+
+def test_the_derivation_log_s_period_and_size_are_configured(write_config: Write) -> None:
+    config = load_config(write_config(minimal(log="keep_count_issuances_days = 7")))
+    assert config.log.limits() == LogLimits(keep_count_issuances_days=7)
+    kept = load_config(write_config(minimal(log="keep_count_issuances_days = 0")))
+    assert kept.log.limits().keep_count_issuances_days is None
+    assert load_config(write_config(minimal())).log.limits() == LogLimits()
+    [found] = problems(write_config, minimal(log=f"log_bytes = {MIN_LOG_BYTES - 1}"))
+    assert found.startswith("log.log_bytes: ")
+    [found] = problems(
+        write_config, minimal(log=f"keep_count_issuances_days = {MAX_KEEP_DAYS + 1}")
+    )
+    assert found.startswith("log.keep_count_issuances_days: ")
+    kept = load_config(write_config(minimal(log=f"keep_count_issuances_days = {MAX_KEEP_DAYS}")))
+    assert kept.log.limits().keep_count_issuances_days == MAX_KEEP_DAYS
+    with pytest.raises(ValueError, match="keep_count_issuances_days"):
+        LogLimits(keep_count_issuances_days=MAX_KEEP_DAYS + 1)
