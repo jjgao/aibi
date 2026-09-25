@@ -8,6 +8,7 @@ dependencies = [
     "packaging>=24",
     "pyarrow>=20",
     "pydantic>=2.11",
+    "python-calamine>=0.8.2",
 ]
 
 [dependency-groups]
@@ -65,3 +66,9 @@ name = "The core does not import packs (SPEC P8)"
 type = "forbidden"
 source_modules = ["aibi.core"]
 forbidden_modules = ["aibi.packs"]
+
+[[tool.importlinter.contracts]]
+name = "The store does not import the importers, so the gate stays with the store (SPEC §13.2)"
+type = "forbidden"
+source_modules = ["aibi.core.store"]
+forbidden_modules = ["aibi.core.importers"]

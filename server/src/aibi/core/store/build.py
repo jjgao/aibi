@@ -15,12 +15,20 @@ so a table rebuilt without need gets the blob it had. Descriptors are checked as
 lone surrogate, a header name that is not Unicode text or is too long) is refused. Every
 refusal's path points into the descriptors given.
 
+An import runs the validation gate (``gate``, §13.2) on the tables it built, before anything
+reads them as a release: a structural error refuses the import, and a proposal that fails is
+dropped from the descriptors written, with its evidence. The import report (D231) holds the
+importer's notes, what the gate dropped, its gaps, and the cells of each column that did not
+parse, as counts and row references without values. A change carries its base's report.
+
 Each blob is pinned through ``holder`` before it is written, so that a sweep leaves it alone
 until the operation commits or fails (§12.2, Deletion).
 """
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -33,15 +41,18 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.jsonio import canonical, is_text, pointer
 from aibi.core.schema.limits import MAX_STRING, STRING_CHARACTERS
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
-from aibi.core.store import tables
+from aibi.core.store import gate, tables
 from aibi.core.store.blobs import BlobStore, Holder
+from aibi.core.store.gate import GateResult
 from aibi.core.store.manifest import Manifest, SourceColumn, SourceEntry, TableEntry
 from aibi.core.store.sources import RawSource, SourceError, decode, encode, parse
-from aibi.core.store.tables import ColumnReport, TableError
+from aibi.core.store.tables import ColumnReport, TableError, TypedTable
 
+REPORT_FORMAT = "aibi.import-report/1"
 _PARSE_FIELDS = ("datatype", "missing_codes", "list_syntax", "derived", "units")
 _DESCRIPTORS: TypeAdapter[list[Descriptor]] = TypeAdapter(list[Descriptor])
 
@@ -61,6 +72,11 @@ class Built:
     """For each table built, by column: its states and the tokens that did not parse."""
     rebuilt: frozenset[str]
     """The tables built; the others reused their blobs."""
+    descriptors: tuple[Descriptor, ...] = ()
+    """The descriptors written: those given, less what the gate dropped."""
+    gate: GateResult | None = None
+    notes: tuple[ImportNote, ...] = ()
+    """The import report's notes, in the report's order."""
 
 
 class BuildRefused(Exception):  # noqa: N818 - the spec's word
@@ -79,8 +95,10 @@ def import_release(
     holder: Holder | None = None,
     statistics: str | None = None,
     tombstones: str | None = None,
+    notes: Sequence[ImportNote] = (),
 ) -> Built:
-    """A release built from new raw snapshots. Raises ``BuildRefused``."""
+    """A release built from new raw snapshots, through the validation gate, with its import
+    report, which holds ``notes``. Raises ``BuildRefused``."""
     index = _Index(descriptors)
     _refuse_if(check_release(descriptors))
     refusals: list[Refusal] = []
@@ -92,6 +110,9 @@ def import_release(
         if table not in index.tables:
             message = f"No descriptor for the table {table}"
             refusals.append(_refusal(RefusalCode.UNKNOWN_DESCRIPTOR, None, message))
+        elif len({column for column, _ in layout.columns}) != len(layout.columns):
+            message = "The layout gives a column id to two source columns"
+            refusals.append(index.refusal(RefusalCode.DUPLICATE_ENTRY, table, (), message))
         if layout.source not in sources:
             raise ValueError(f"table {table} is laid out on no source: {layout.source}")
     _refuse_if(refusals)
@@ -106,10 +127,15 @@ def import_release(
                 [_refusal(RefusalCode.UNPARSEABLE_SOURCE, path, str(error))]
             ) from None
         entries.append(SourceEntry(name=name, kind=source.kind, hash=blobs.put(data, holder)))
-    builder = _Builder(blobs, index, holder)
+    builder = _Builder(blobs, index, holder, gate.needed(descriptors))
     for table, layout in sorted(layouts.items()):
         builder.table(table, sources[layout.source], layout.source, layout.columns)
-    return builder.finish(dataset, tuple(entries), statistics, tombstones)
+    result = gate.check(descriptors, builder.typed, mode="import")
+    _refuse_if(result.refusals)
+    builder.index = _Index(result.descriptors)
+    found = sorted_notes([*notes, *_gate_notes(result), *_unparsed_notes(builder.reports)])
+    report = blobs.put(report_bytes(found), holder)
+    return builder.finish(dataset, tuple(entries), statistics, tombstones, report, result, found)
 
 
 def change_release(
@@ -151,7 +177,7 @@ def change_release(
         columns = tuple((column.id, column.name) for column in entry.columns)
         builder.table(entry.id, raw, entry.source, columns)
     kept = base.tombstones if keep_tombstones and tombstones is None else tombstones
-    return builder.finish(base.dataset, base.sources, statistics, kept)
+    return builder.finish(base.dataset, base.sources, statistics, kept, base.report)
 
 
 def descriptors_bytes(descriptors: Sequence[Descriptor]) -> bytes:
@@ -163,6 +189,79 @@ def descriptors_bytes(descriptors: Sequence[Descriptor]) -> bytes:
 
 def read_descriptors(data: bytes) -> tuple[Descriptor, ...]:
     return tuple(_DESCRIPTORS.validate_json(data))
+
+
+def _note_json(note: ImportNote) -> JsonValue:
+    written: dict[str, JsonValue] = {
+        "kind": note.kind,
+        "message": [segment.model_dump(mode="json") for segment in note.message],
+    }
+    if note.subject is not None:
+        written["subject"] = note.subject
+    if note.count is not None:
+        written["count"] = note.count
+    if note.rows:
+        written["rows"] = list(note.rows)
+    return written
+
+
+def sorted_notes(notes: Sequence[ImportNote]) -> list[ImportNote]:
+    """Notes in the report's order: by kind, subject and content."""
+    keys = [(note.kind, note.subject or "", canonical(_note_json(note))) for note in notes]
+    return [notes[i] for i in sorted(range(len(notes)), key=lambda i: keys[i])]
+
+
+def report_bytes(notes: Sequence[ImportNote]) -> bytes:
+    """The import report blob (D231): ``{"format": "aibi.import-report/1", "notes": [...]}`` in
+    RFC 8785 form, the notes in ``sorted_notes`` order, without timestamps, so that the same
+    inputs give the same report."""
+    ordered: list[JsonValue] = [_note_json(note) for note in sorted_notes(notes)]
+    return canonical({"format": REPORT_FORMAT, "notes": ordered})
+
+
+def read_report(data: bytes) -> list[dict[str, JsonValue]]:
+    """The notes of an import report blob, as JSON values."""
+    parsed: object = json.loads(data)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"an import report is {REPORT_FORMAT}")
+    report = cast(dict[str, JsonValue], parsed)
+    if report.get("format") != REPORT_FORMAT:
+        raise ValueError(f"an import report is {REPORT_FORMAT}")
+    return cast(list[dict[str, JsonValue]], report["notes"])
+
+
+def _gate_notes(result: GateResult) -> list[ImportNote]:
+    found: list[ImportNote] = []
+    for dropped in result.dropped:
+        what = "field " + dropped.pointer if dropped.pointer else "descriptor"
+        message: list[Segment] = [text(f"The proposed {what} was dropped ({dropped.code}). ")]
+        message.append(text(dropped.message))
+        if dropped.evidence:
+            message.extend((text(". Its evidence: "), data(dropped.evidence)))
+        count = dropped.count or None
+        found.append(ImportNote("dropped", dropped.descriptor, message, count, dropped.rows))
+    for gap in result.gaps:
+        said = {
+            "outside_coverage": "Child rows whose parent the coverage does not list; they are "
+            "kept, as evidence",
+            "invalid_endpoint_rows": "Rows with a status outside the event coding, a negative "
+            "time or an entry at or after the time; analyses exclude them as INVALID_VALUE",
+        }[gap.kind]
+        found.append(ImportNote("gap", gap.subject, [text(said)], gap.count, gap.rows))
+    return found
+
+
+def _unparsed_notes(reports: Mapping[str, Mapping[str, ColumnReport]]) -> list[ImportNote]:
+    found: list[ImportNote] = []
+    for table, columns in sorted(reports.items()):
+        for column, report in sorted(columns.items()):
+            count = report.unparsed_cells
+            if not count:
+                continue
+            message = "Cells whose value does not parse as the column's datatype, which are UNKNOWN"
+            rows = tuple(row + 1 for row in report.unparsed_rows)
+            found.append(ImportNote("unparsed", f"{table}.{column}", [text(message)], count, rows))
+    return found
 
 
 class _Index:
@@ -258,13 +357,22 @@ def _refuse_if(refusals: Sequence[Refusal]) -> None:
 
 
 class _Builder:
-    def __init__(self, blobs: BlobStore, index: _Index, holder: Holder | None) -> None:
+    def __init__(
+        self,
+        blobs: BlobStore,
+        index: _Index,
+        holder: Holder | None,
+        keep: Mapping[str, set[str]] | None = None,
+    ) -> None:
         self.blobs = blobs
         self.index = index
         self.holder = holder
+        self.keep = keep
+        """The columns of each table the gate reads, kept in memory once it is built."""
         self.entries: list[TableEntry] = []
         self.reports: dict[str, Mapping[str, ColumnReport]] = {}
         self.rebuilt: set[str] = set()
+        self.typed: dict[str, TypedTable] = {}
 
     def reuse(self, entry: TableEntry) -> None:
         self.entries.append(entry)
@@ -302,6 +410,10 @@ class _Builder:
         self.entries.append(TableEntry(id=table, hash=digest, source=source, columns=laid_out))
         self.reports[table] = typed.report
         self.rebuilt.add(table)
+        if self.keep is not None:
+            kept = self.keep.get(table, set())
+            cells = {name: found for name, found in typed.cells.items() if name in kept}
+            self.typed[table] = TypedTable(table, typed.columns, cells, typed.rows, {})
 
     def finish(
         self,
@@ -309,6 +421,9 @@ class _Builder:
         sources: tuple[SourceEntry, ...],
         statistics: str | None,
         tombstones: str | None,
+        report: str | None = None,
+        result: GateResult | None = None,
+        notes: Sequence[ImportNote] = (),
     ) -> Built:
         described = self.blobs.put(descriptors_bytes(self.index.descriptors), self.holder)
         manifest = Manifest(
@@ -318,12 +433,21 @@ class _Builder:
             tables=tuple(sorted(self.entries, key=lambda entry: entry.id)),
             statistics=statistics,
             tombstones=tombstones,
+            report=report,
         )
         self.blobs.put(manifest.canonical_bytes(), self.holder)
-        return Built(manifest, self.reports, frozenset(self.rebuilt))
+        return Built(
+            manifest,
+            self.reports,
+            frozenset(self.rebuilt),
+            tuple(self.index.descriptors),
+            result,
+            tuple(notes),
+        )
 
 
 __all__ = [
+    "REPORT_FORMAT",
     "BuildRefused",
     "Built",
     "Layout",
@@ -331,4 +455,7 @@ __all__ = [
     "descriptors_bytes",
     "import_release",
     "read_descriptors",
+    "read_report",
+    "report_bytes",
+    "sorted_notes",
 ]

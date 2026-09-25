@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 from aibi.core.engine.data import EMPTY, PRESENT, Cell
 from aibi.core.schema.descriptors import ListSyntax
 from aibi.core.schema.semantics import ObservationState
-from aibi.core.store.cells import MAX_LIST_TEXT, ColumnCells
+from aibi.core.store.cells import MAX_LIST_TEXT, UNPARSED_ROWS, ColumnCells
 from aibi.core.store.sources import ErrorCell, SourceValue, canonical_string
 
 UNKNOWN = ObservationState.UNKNOWN
@@ -262,6 +262,15 @@ def test_tokens_that_do_not_parse_are_counted() -> None:
         column.cell(value)
     assert column.unparsed == {"x": 2, "#N/A": 1, "NaN": 1, "2.5": 1}
     assert column.states == {PRESENT: 1, UNKNOWN: 7}
+    assert column.unparsed_rows == [1, 2, 5, 6, 7]
+
+
+def test_the_first_rows_that_do_not_parse_are_kept_and_no_more() -> None:
+    column = ColumnCells("integer", None)
+    for value in ("1", *["x"] * (UNPARSED_ROWS + 2)):
+        column.cell(value)
+    assert column.unparsed_rows == list(range(1, UNPARSED_ROWS + 1))
+    assert column.unparsed_cells == UNPARSED_ROWS + 2
 
 
 # --- Lists --------------------------------------------------------------------------------------

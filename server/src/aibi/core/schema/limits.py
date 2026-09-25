@@ -1,4 +1,4 @@
-"""Default size limits for documents and descriptors (SPEC §7.1, §14).
+"""Default size limits for documents, descriptors and imports (SPEC §7.1, §14).
 
 Every refusal names the limit it hit, by one of the names below; clients may depend on them.
 """
@@ -93,6 +93,58 @@ PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
 ALL_POINTER_CHARACTERS = "all_pointer_characters"
+IMPORT_BYTES = "import_bytes"
+"""Bytes of one file an import reads, an upload included."""
+ARCHIVE_MEMBERS = "archive_members"
+ARCHIVE_BYTES = "archive_bytes"
+"""Bytes of an archive's members, uncompressed, together."""
+MEMBER_BYTES = "member_bytes"
+"""Bytes of one archive member, uncompressed."""
+ARCHIVE_RATIO = "archive_ratio"
+"""Uncompressed bytes per compressed byte, of a member over 1 MiB and of an archive's total."""
+IMPORT_TABLES = "import_tables"
+TABLE_COLUMNS = "table_columns"
+IMPORT_CELLS = "import_cells"
+"""Cells of every table of an import, together."""
+READER_MEMORY = "reader_memory"
+"""Bytes of address space of the worker process that reads an import's workbooks and Parquet
+files."""
+READER_SECONDS = "reader_seconds"
+"""Seconds that worker process reads for, over the whole import; an import waits for one to
+start as long, and 5 seconds more, in which one stopped at its deadline is reaped."""
+READER_WORKERS = "reader_workers"
+"""Worker processes of that kind that run at once in a server process, over every import: at
+least 1. They bound the workers, not the imports, whose memory in the server adds up (D225)."""
+DECODED_BYTES = "decoded_bytes"
+"""Bytes of the strings read from an import's workbooks and Parquet files, together, in UTF-8."""
+
+RATIO_FLOOR = 1 << 20
+"""Uncompressed bytes from which ``archive_ratio`` applies, to a member or to the total."""
+
+
+@dataclass(frozen=True)
+class ImportLimits:
+    """The limits of one import (SPEC §14, D233), each named by the refusal that hits it."""
+
+    import_bytes: int = 1 << 30
+    archive_members: int = 10_000
+    archive_bytes: int = 4 << 30
+    member_bytes: int = 1 << 30
+    archive_ratio: int = 100
+    import_tables: int = 1_000
+    table_columns: int = 4_096
+    import_cells: int = 20_000_000
+    reader_memory: int = 4 << 30
+    reader_seconds: int = 300
+    reader_workers: int = 2
+    decoded_bytes: int = 1 << 28
+
+    def __post_init__(self) -> None:
+        if self.reader_workers < 1:
+            raise ValueError(
+                f"reader_workers is at least 1, not {self.reader_workers}: an import reads its "
+                "workbooks and Parquet files in a worker"
+            )
 
 
 @dataclass(frozen=True)
@@ -127,16 +179,23 @@ def _entries(value: object) -> int:
 
 __all__ = [
     "ALL_POINTER_CHARACTERS",
+    "ARCHIVE_BYTES",
+    "ARCHIVE_MEMBERS",
+    "ARCHIVE_RATIO",
     "CLAUSES",
     "CLAUSE_DEPTH",
     "COHORTS",
     "COHORT_REFERENCES",
     "CONSTANT_CHARACTERS",
     "DATASETS",
+    "DECODED_BYTES",
     "DESCRIPTOR_BYTES",
     "DOCUMENT_BYTES",
     "ENTRIES",
     "IDENTIFIER_CHARACTERS",
+    "IMPORT_BYTES",
+    "IMPORT_CELLS",
+    "IMPORT_TABLES",
     "JSON_VALUES",
     "KEY_COLUMNS",
     "LEAVES",
@@ -164,6 +223,7 @@ __all__ = [
     "MAX_TEXT",
     "MAX_VALUES",
     "MAX_VIEWS",
+    "MEMBER_BYTES",
     "NAME_CHARACTERS",
     "NESTING_DEPTH",
     "NOTE_CHARACTERS",
@@ -172,13 +232,19 @@ __all__ = [
     "PATH_SEARCH",
     "PATH_STEPS",
     "POINTER_CHARACTERS",
+    "RATIO_FLOOR",
+    "READER_MEMORY",
+    "READER_SECONDS",
+    "READER_WORKERS",
     "REFERENCE_CHARACTERS",
     "REFUSALS",
     "SCOPE_COLUMNS",
     "STRING_CHARACTERS",
     "SUBSTITUTED_BYTES",
+    "TABLE_COLUMNS",
     "TEXT_CHARACTERS",
     "VIEWS",
+    "ImportLimits",
     "LimitName",
     "map_cap",
 ]

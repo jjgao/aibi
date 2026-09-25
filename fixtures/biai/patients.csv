@@ -1,0 +1,6 @@
+patient_id,age,gender,diagnosis
+P001,45,Male,Flu
+P002,32,Female,Cold
+P003,55,Male,Flu
+P004,28,Female,Allergy
+P005,60,Male,Covid
