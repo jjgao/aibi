@@ -13,12 +13,17 @@ from typing import Any
 
 import jsonschema
 import pytest
-from pydantic import BaseModel, ValidationError, computed_field
+from pydantic import BaseModel, TypeAdapter, ValidationError, computed_field
 from pydantic_core import PydanticSerializationError
 
+from aibi.core.schema.caveats import Caveat
+from aibi.core.schema.digests import COUNT_MEMBERS, RESULT_MEMBERS, output_digest
 from aibi.core.schema.export import OUTPUT_SCHEMAS, SCHEMAS
+from aibi.core.schema.numbers import Proportion
 from aibi.core.schema.results import (
+    Analysed,
     CohortCount,
+    CohortRef,
     Derivation,
     Issuance,
     Population,
@@ -130,9 +135,77 @@ def caveat(code: str, affects: list[str], severity: str = "info") -> dict[str, A
     return {"code": code, "severity": severity, "message": [{"text": "x"}], "affects": affects}
 
 
+def _lift(population: dict[str, Any], lift: int | None) -> bool:
+    """Sets a population's ``lift_differs`` (``None`` suppresses it) and says whether it needs
+    ``LIFT_DIFFERS``."""
+    population["lift_differs"] = lift
+    listed = set(population.get("suppressed", [])) - {"/lift_differs"}
+    population["suppressed"] = sorted(listed | ({"/lift_differs"} if lift is None else set()))
+    return lift is None or lift > 0
+
+
+def _lift_hidden(value: dict[str, Any]) -> dict[str, Any]:
+    """An envelope whose populations suppress ``lift_differs`` beside a suppressed count, as the
+    pass does (§8.4, D297)."""
+    for position, population in enumerate(value["population"]):
+        if None in (population["n_true"], population["n_false"], population["n_unknown"]):
+            _lift(population, None)
+            value["caveats"] = [
+                *value["caveats"],
+                caveat("LIFT_DIFFERS", [f"/population/{position}"]),
+            ]
+    return value
+
+
+def _count_lift(count: dict[str, Any], lift: int | None) -> dict[str, Any]:
+    """A cohort count with ``lift_differs`` given, ``LIFT_DIFFERS`` carried as it needs."""
+    caveats = [given for given in count["caveats"] if given["code"] != "LIFT_DIFFERS"]
+    if _lift(count["population"], lift):
+        caveats.append(caveat("LIFT_DIFFERS", ["/population"]))
+    count["caveats"] = caveats
+    return count
+
+
+_MEMBERS: dict[type[Any], dict[str, Any]] = {
+    CohortCount: {"population": Population, "size": Proportion, "caveats": list[Caveat]},
+    ResultEnvelope: {
+        "cohorts": list[CohortRef],
+        "population": list[Population],
+        "analysed": list[Analysed],
+        "values": Values,
+        "caveats": list[Caveat],
+    },
+}
+
+
+def digested(model: type[Any], value: Any) -> Any:
+    """``value`` with the digest of what it carries in place of the placeholder ``MANIFEST``,
+    when its digested members are valid on their own, so that each test meets the rule it is
+    about rather than the digest's (D298)."""
+    members = _MEMBERS.get(model)
+    if members is None or not isinstance(value, dict) or value.get("digest") != MANIFEST:
+        return value
+    try:
+        parts = {
+            name: TypeAdapter(kind).validate_python(value[name]) for name, kind in members.items()
+        }
+    except (KeyError, ValidationError):
+        return value
+    dumped = {
+        name: TypeAdapter(members[name]).dump_python(part, mode="json")
+        for name, part in parts.items()
+    }
+    names = COUNT_MEMBERS if model is CohortCount else RESULT_MEMBERS
+    return {**value, "digest": output_digest(dumped, parts["caveats"], names)}
+
+
+def _valid(model: type[Any], value: Any) -> Any:
+    return model.model_validate(digested(model, value))
+
+
 def error_types(model: type[Any], value: dict[str, Any]) -> list[str]:
     with pytest.raises(ValidationError) as raised:
-        model.model_validate(value)
+        model.model_validate(digested(model, value))
     return [str(error["type"]) for error in raised.value.errors()]
 
 
@@ -140,9 +213,9 @@ def error_types(model: type[Any], value: dict[str, Any]) -> list[str]:
 
 
 def test_a_result_validates_and_round_trips() -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     dumped = result.model_dump(mode="json")
-    assert ResultEnvelope.model_validate(dumped) == result
+    assert _valid(ResultEnvelope, dumped) == result
     assert ResultEnvelope.model_validate_json(result.model_dump_json()) == result
     jsonschema.validate(dumped, SCHEMAS["result.schema.json"]())
 
@@ -184,16 +257,18 @@ def test_suppression_needs_its_caveat() -> None:
         n_false=None, n_unknown=None, unknown_by_reason=None, unknown_by_leaf=None
     )
     suppressed["suppressed"] = ["/n_false", "/n_unknown", "/unknown_by_leaf", "/unknown_by_reason"]
-    value = envelope(
-        population=[suppressed, known_population()],
-        derivation=derivation(disclosure={"min_cell_count": 5}),
+    value = _lift_hidden(
+        envelope(
+            population=[suppressed, known_population()],
+            derivation=derivation(disclosure={"min_cell_count": 5}),
+        )
     )
     assert "caveat_missing" in error_types(ResultEnvelope, value)
-    value["caveats"] = [caveat("SUPPRESSED", ["/population/0/n_unknown"])]
+    value["caveats"].append(caveat("SUPPRESSED", ["/population/0/n_unknown"]))
     # A suppressed n_unknown is never 0, so the units it counts were excluded as unknown.
     assert "caveat_missing" in error_types(ResultEnvelope, value)
     value["caveats"].append(caveat("UNKNOWN_EXCLUDED", ["/population/0"], "warn"))
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
 
 
 def test_numbers_not_estimable_need_their_caveat() -> None:
@@ -205,7 +280,7 @@ def test_numbers_not_estimable_need_their_caveat() -> None:
     value = envelope(values=values)
     assert "caveat_missing" in error_types(ResultEnvelope, value)
     value["caveats"] = [caveat("NOT_ESTIMABLE", ["/values/positions/0/median"])]
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
     bad = {
         "positions": [{"median": {"estimate": 1.0, "not_estimable": {"/estimate": "no_units"}}}] * 2
     }
@@ -218,11 +293,11 @@ def test_lift_differs_and_draft_releases_need_their_caveats() -> None:
     value = envelope(population=[known_population(lift_differs=3), known_population()])
     assert "caveat_missing" in error_types(ResultEnvelope, value)
     value["caveats"] = [caveat("LIFT_DIFFERS", ["/population/0/lift_differs"])]
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
     draft = envelope(derivation=derivation(releases=[release(label="draft", status="draft")]))
     assert "caveat_missing" in error_types(ResultEnvelope, draft)
     draft["caveats"] = [caveat("DRAFT_RELEASE", ["/derivation/releases/0"], "warn")]
-    assert ResultEnvelope.model_validate(draft)
+    assert _valid(ResultEnvelope, draft)
 
 
 def test_caveats_are_sorted_and_deduplicated() -> None:
@@ -232,7 +307,7 @@ def test_caveats_are_sorted_and_deduplicated() -> None:
     first = caveat("LIFT_DIFFERS", ["/population/1/lift_differs"])
     second = caveat("LIFT_DIFFERS", ["/population/0/lift_differs"])
     value["caveats"] = [first, second, first]
-    result = ResultEnvelope.model_validate(value)
+    result = _valid(ResultEnvelope, value)
     assert [c.affects for c in result.caveats] == [
         ["/population/0/lift_differs"],
         ["/population/1/lift_differs"],
@@ -243,11 +318,11 @@ def test_values_are_finite_json() -> None:
     for bad in (math.nan, math.inf, 2**60):
         values = {"positions": [{"x": bad}, {"x": 1}], "view": {}}
         with pytest.raises(ValidationError):
-            ResultEnvelope.model_validate(envelope(values=values))
+            _valid(ResultEnvelope, envelope(values=values))
 
 
 def test_smuggled_non_finite_values_cannot_be_dumped() -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     with pytest.raises(ValidationError):
         result.values.model_copy(update={"view": {"x": math.nan}})
     values = Values.model_construct(positions=result.values.positions, view={"x": math.nan})
@@ -317,8 +392,6 @@ def test_a_suppressed_count_is_listed_by_its_pointer() -> None:
 
 
 def test_analysed_counts() -> None:
-    from aibi.core.schema.results import Analysed
-
     assert Analysed.model_validate(analysed())
     assert "analysed_excluded" in error_types(Analysed, analysed(excluded_units=5))
     assert "analysed_excluded" in error_types(
@@ -358,7 +431,7 @@ def cohort_count(**members: Any) -> dict[str, Any]:
 
 
 def test_a_cohort_count_validates_and_matches_its_schema() -> None:
-    count = CohortCount.model_validate(cohort_count())
+    count = _valid(CohortCount, cohort_count())
     jsonschema.validate(count.model_dump(mode="json"), SCHEMAS["cohort-count.schema.json"]())
 
 
@@ -380,7 +453,7 @@ def test_cohort_count_rules() -> None:
     lifted["caveats"] = [caveat("LIFT_DIFFERS", ["/population/lift_differs"])]
     assert "count_affects" in error_types(CohortCount, lifted)
     lifted["caveats"] = [caveat("LIFT_DIFFERS", ["/population"])]
-    assert CohortCount.model_validate(lifted)
+    assert _valid(CohortCount, lifted)
 
 
 def test_a_suppressed_cohort_count() -> None:
@@ -393,10 +466,12 @@ def test_a_suppressed_cohort_count() -> None:
         "denominator_definition": {"position": None, "predicate": None, "counts": "unit_table"},
         "not_estimable": {"/estimate": "suppressed", "/numerator": "suppressed"},
     }
-    count = cohort_count(population=hidden, size=size, disclosure={"min_cell_count": 5})
+    count = _count_lift(
+        cohort_count(population=hidden, size=size, disclosure={"min_cell_count": 5}), None
+    )
     assert "caveat_missing" in error_types(CohortCount, count)
-    count["caveats"] = [caveat("SUPPRESSED", ["/population"])]
-    assert CohortCount.model_validate(count)
+    count["caveats"].append(caveat("SUPPRESSED", ["/population"]))
+    assert _valid(CohortCount, count)
     off = {**count, "disclosure": {"min_cell_count": None}}
     assert "disclosure" in error_types(CohortCount, off)
 
@@ -508,9 +583,9 @@ def test_the_walker_finds_unmarked_text() -> None:
 
 
 def test_outputs_dumped_to_json_validate_again() -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     again = json.loads(result.model_dump_json())
-    assert ResultEnvelope.model_validate(copy.deepcopy(again)) == result
+    assert _valid(ResultEnvelope, copy.deepcopy(again)) == result
 
 
 # --- Round 1: what raises caveats, JSON safety, disclosure and the parts ---------------------
@@ -526,7 +601,7 @@ def test_caveats_are_raised_only_by_the_digested_parts() -> None:
         derivation=derivation(document={"not_estimable": {"/x": "no_units"}}),
         charts=[{"data": {"values": [marks]}}],
     )
-    result = ResultEnvelope.model_validate(value)
+    result = _valid(ResultEnvelope, value)
     assert result.caveats == []
 
 
@@ -543,7 +618,7 @@ def test_caveats_are_raised_only_by_the_digested_parts() -> None:
 )
 def test_every_json_member_holds_only_what_json_carries(members: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
-        ResultEnvelope.model_validate(envelope(**members))
+        _valid(ResultEnvelope, envelope(**members))
 
 
 @pytest.mark.parametrize(
@@ -552,7 +627,7 @@ def test_every_json_member_holds_only_what_json_carries(members: dict[str, Any])
     ids=repr,
 )
 def test_smuggled_values_cannot_be_dumped_anywhere(bad: object) -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     with pytest.raises(ValidationError):
         result.source.model_copy(update={"params": {"p": bad}})
     source = Source.model_construct(**{**dict(result.source), "params": {"p": bad}})
@@ -571,7 +646,7 @@ def test_smuggled_values_cannot_be_dumped_anywhere(bad: object) -> None:
                 dump()
     # Nested outputs built without validation are validated where they are used.
     with pytest.raises(ValidationError):
-        ResultEnvelope.model_validate({**dict(result), "source": source})
+        _valid(ResultEnvelope, {**dict(result), "source": source})
 
 
 @pytest.mark.parametrize(
@@ -653,13 +728,13 @@ def test_unknown_units_and_invalid_rows_need_their_caveats() -> None:
     value["analysed"] = [analysed(n=8, excluded=excluded(NOT_ASSESSED=2), excluded_units=2)] * 2
     assert "caveat_missing" in error_types(ResultEnvelope, value)
     value["caveats"] = [UNKNOWN_EXCLUDED]
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
     invalid = envelope(
         analysed=[analysed(n=8, excluded=excluded(INVALID_VALUE=2), excluded_units=2)] * 2
     )
     assert "caveat_missing" in error_types(ResultEnvelope, invalid)
     invalid["caveats"] = [caveat("INVALID_EXCLUDED", ["/analysed"], "warn")]
-    assert ResultEnvelope.model_validate(invalid)
+    assert _valid(ResultEnvelope, invalid)
 
 
 @pytest.mark.parametrize(
@@ -675,7 +750,7 @@ def test_reasons_of_views_need_their_caveats(reason: str, code: str) -> None:
     value["caveats"] = [caveat("NOT_ESTIMABLE", ["/values/view"])]
     assert "caveat_missing" in error_types(ResultEnvelope, value)
     value["caveats"].append(caveat(code, ["/values/view"], "warn"))
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
 
 
 def test_disclosure_rules_that_need_no_data() -> None:
@@ -706,12 +781,10 @@ def test_a_cohort_count_shows_the_unit_table_size() -> None:
     unknowns["size"] = {**unknowns["size"], "denominator": 17, "estimate": 10 / 17}
     assert "caveat_missing" in error_types(CohortCount, unknowns)
     unknowns["caveats"] = [{**UNKNOWN_EXCLUDED, "affects": ["/population"]}]
-    assert CohortCount.model_validate(unknowns)
+    assert _valid(CohortCount, unknowns)
 
 
 def test_analysed_variables() -> None:
-    from aibi.core.schema.results import Analysed
-
     assert "too_short" in error_types(Analysed, analysed(variables=[]))
     wide = analysed(variables=[analysed(n=11, excluded_units=0), analysed()])
     assert "analysed_variables" in error_types(Analysed, wide)
@@ -726,7 +799,7 @@ def test_values_messages_carry_no_text_from_values() -> None:
         }
     }
     with pytest.raises(ValidationError) as raised:
-        ResultEnvelope.model_validate(envelope(values={"positions": [bad, {}], "view": {}}))
+        _valid(ResultEnvelope, envelope(values={"positions": [bad, {}], "view": {}}))
     [error] = raised.value.errors()
     assert "Ignore" not in error["msg"]
     assert (
@@ -786,7 +859,7 @@ def _schema_refuses(name: str, value: Any) -> bool:
 
 
 def test_the_output_schemas_say_what_json_schema_can() -> None:
-    result = ResultEnvelope.model_validate(envelope()).model_dump(mode="json")
+    result = _valid(ResultEnvelope, envelope()).model_dump(mode="json")
     assert not _schema_refuses("result.schema.json", result)
     wrong_severity = {**result, "caveats": [caveat("SMALL_N", ["/values"], "info")]}
     unknown_code = {**result, "caveats": [caveat("NOT_A_CODE", ["/values"], "warn")]}
@@ -799,7 +872,7 @@ def test_the_output_schemas_say_what_json_schema_can() -> None:
     partial["analysed"][0]["excluded"] = {"NOT_ASSESSED": 0}
     for value in (wrong_severity, unknown_code, two_references, draft_label, big, partial):
         assert _schema_refuses("result.schema.json", value)
-    count = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    count = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     assert not _schema_refuses("cohort-count.schema.json", count)
     elsewhere = {**count, "caveats": [caveat("SMALL_N", ["/size"], "warn")]}
     known = copy.deepcopy(count)
@@ -828,14 +901,14 @@ def _unknowns(**members: Any) -> dict[str, Any]:
 
 
 def _under_k(**members: Any) -> dict[str, Any]:
-    value = envelope(derivation=derivation(disclosure=K5), **members)
+    value = _lift_hidden(envelope(derivation=derivation(disclosure=K5), **members))
     if any(p["n_unknown"] != 0 for p in value["population"]):
         value["caveats"] = [*value["caveats"], caveat("UNKNOWN_EXCLUDED", ["/population"], "warn")]
     return value
 
 
 def test_shown_breakdowns_hold_no_count_below_k() -> None:
-    assert ResultEnvelope.model_validate(_under_k(population=[_unknowns(), known_population()]))
+    assert _valid(ResultEnvelope, _under_k(population=[_unknowns(), known_population()]))
     by_reason = {**_unknowns()["unknown_by_reason"], "NOT_ASSESSED": 5, "NO_ROWS": 1}
     for changed in (
         _unknowns(unknown_by_reason=by_reason),
@@ -909,7 +982,7 @@ def test_one_suppressed_count_is_not_shown_by_the_others(
     if revealing:
         assert "disclosure" in error_types(ResultEnvelope, value)
     else:
-        assert ResultEnvelope.model_validate(value)
+        assert _valid(ResultEnvelope, value)
 
 
 def test_analysed_counts_do_not_show_a_suppressed_one() -> None:
@@ -958,9 +1031,10 @@ def test_cohort_counts_follow_the_disclosure_rules() -> None:
     )
     unknown["size"] = {**unknown["size"], "denominator": 17, "estimate": 10 / 17}
     unknown["caveats"] = [caveat("SUPPRESSED", ["/population"])]
+    _count_lift(unknown, None)
     assert "caveat_missing" in error_types(CohortCount, unknown)  # n_unknown is not 0
     unknown["caveats"].append({**UNKNOWN_EXCLUDED, "affects": ["/population"]})
-    assert CohortCount.model_validate(unknown)
+    assert _valid(CohortCount, unknown)
 
 
 def test_cohort_counts_carry_no_analysis_caveats_or_exclusions() -> None:
@@ -978,8 +1052,6 @@ def test_impossible_populations_are_refused() -> None:
     assert "population_leaves" in error_types(Population, short)
     assert Population.model_validate(population(unknown_by_leaf={LEAF: 2, "leaf:" + HEX[::-1]: 1}))
     zero_units = analysed(excluded=None, not_estimable={"/excluded": "suppressed"})
-    from aibi.core.schema.results import Analysed
-
     assert "analysed_breakdown" in error_types(Analysed, zero_units)
 
 
@@ -1016,7 +1088,7 @@ def test_statistic_references_name_real_relationships() -> None:
 
 
 def test_the_schemas_say_more_of_what_the_models_refuse() -> None:
-    result = ResultEnvelope.model_validate(envelope()).model_dump(mode="json")
+    result = _valid(ResultEnvelope, envelope()).model_dump(mode="json")
     huge = copy.deepcopy(result)
     huge["values"]["view"] = {"x": 1e300}
     affects = {**result, "caveats": [caveat("SMALL_N", ["/source"], "warn")]}
@@ -1046,7 +1118,7 @@ def test_the_schemas_say_more_of_what_the_models_refuse() -> None:
     fine["caveats"] = [draft_release]
     assert not _schema_refuses("result.schema.json", fine)
 
-    count = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    count = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     hidden_denominator = copy.deepcopy(count)
     hidden_denominator["size"].update(denominator=None, estimate=None)
     hidden_denominator["size"]["not_estimable"] = {
@@ -1097,28 +1169,50 @@ def _count_with(n_true: int | None, n_false: int | None, n_unknown: int | None, 
         count["caveats"] = [caveat("SUPPRESSED", ["/population"])]
     if n_unknown != 0:
         count["caveats"] = [*count["caveats"], {**UNKNOWN_EXCLUDED, "affects": ["/population"]}]
-    return count
+    return _count_lift(count, None if hidden else 0)
 
 
 @pytest.mark.parametrize(
-    ("parts", "size", "accepted"),
+    ("parts", "size", "error"),
     [
-        ((10, None, None), 14, False),  # 4 units outside the cohort show
-        ((10, None, None), 12, False),  # and, with 2, each suppressed count is 1
-        ((10, None, None), 15, True),
-        ((0, None, None), 3, True),  # the numerator is 0: nothing else to suppress
-        ((None, None, None), 14, True),  # what the pass writes for the first case
-        ((None, 0, 0), 3, True),  # every other member 0 (SPEC §8.4's exception)
+        ((10, None, None), 14, "disclosure"),  # 4 units outside the cohort show
+        ((10, None, None), 13, "disclosure"),  # and 3
+        ((10, None, None), 12, "count_size"),  # and, with 2, each suppressed count is 1
+        ((10, None, None), 15, None),
+        ((0, None, None), 13, None),  # the numerator is 0: nothing to hide it for
+        ((None, None, None), 14, None),  # what the pass writes for the first case
+        ((None, 0, 0), 3, "count_size"),  # a table under k shows no size (D297)
     ],
 )
 def test_a_cohort_count_hides_a_small_complement(
-    parts: tuple[int | None, int | None, int | None], size: int, accepted: bool
+    parts: tuple[int | None, int | None, int | None], size: int, error: str | None
 ) -> None:
     count = _count_with(*parts, size=size)
-    if accepted:
-        assert CohortCount.model_validate(count)
+    if error is None:
+        assert _valid(CohortCount, count)
     else:
-        assert "disclosure" in error_types(CohortCount, count)
+        assert error in error_types(CohortCount, count)
+
+
+def _suppressed_size(count: Any) -> Any:
+    count["size"].update(estimate=None, denominator=None)
+    count["size"]["not_estimable"] = {
+        "/denominator": "suppressed",
+        "/estimate": "suppressed",
+        "/numerator": "suppressed",
+    }
+    return count
+
+
+def test_a_suppressed_unit_table_size_suppresses_every_count() -> None:
+    """The size is suppressed only under a min_cell_count and with all three counts (D297)."""
+    assert _valid(CohortCount, _suppressed_size(_count_with(None, None, None, size=3)))
+    shown = _suppressed_size(_count_with(None, 0, None, size=3))
+    assert "count_size" in error_types(CohortCount, shown)
+    unset = _suppressed_size(_count_with(None, None, None, size=3))
+    unset["disclosure"] = {"min_cell_count": None}
+    assert {"count_size", "disclosure"} & set(error_types(CohortCount, unset))
+    assert _schema_refuses("cohort-count.schema.json", digested(CohortCount, shown))
 
 
 def test_counts_at_and_over_k_minus_one() -> None:
@@ -1128,7 +1222,7 @@ def test_counts_at_and_over_k_minus_one() -> None:
             derivation=derivation(disclosure=K5),
         )
         if accepted:
-            assert ResultEnvelope.model_validate(value)
+            assert _valid(ResultEnvelope, value)
         else:
             assert "disclosure" in error_types(ResultEnvelope, value)
 
@@ -1141,7 +1235,7 @@ def test_a_small_lift_differs_count_is_not_shown() -> None:
     )
     assert "disclosure" in error_types(ResultEnvelope, value)
     value["population"][0]["lift_differs"] = 5
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
 
 
 def test_a_breakdown_with_a_small_count_is_refused_whatever_its_total() -> None:
@@ -1152,7 +1246,7 @@ def test_a_breakdown_with_a_small_count_is_refused_whatever_its_total() -> None:
     value["caveats"].append(caveat("INVALID_EXCLUDED", ["/analysed/0"], "warn"))
     assert "disclosure" in error_types(ResultEnvelope, value)
     value["analysed"][0]["excluded"] = excluded(NOT_APPLICABLE=5, INVALID_VALUE=5)
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, value)
 
 
 def test_zero_analysed_counts_would_show_a_suppressed_n_true() -> None:
@@ -1176,19 +1270,17 @@ def test_a_cohort_counts_size_has_no_excluded_member_even_null() -> None:
 
 
 def test_caveats_may_affect_a_cohorts_entry_and_nothing_else_by_name() -> None:
-    assert ResultEnvelope.model_validate(
-        envelope(caveats=[caveat("SMALL_N", ["/cohorts/0"], "warn")])
-    )
+    assert _valid(ResultEnvelope, envelope(caveats=[caveat("SMALL_N", ["/cohorts/0"], "warn")]))
     for affects in (["/valuesx"], ["/cohortsx/0"], ["/readback"]):
         value = envelope(caveats=[caveat("SMALL_N", affects, "warn")])
         assert error_types(ResultEnvelope, value)
-        dumped = ResultEnvelope.model_validate(envelope()).model_dump(mode="json")
+        dumped = _valid(ResultEnvelope, envelope()).model_dump(mode="json")
         dumped["caveats"] = [caveat("SMALL_N", affects, "warn")]
         assert _schema_refuses("result.schema.json", dumped)
 
 
 def _size_schema_refuses(**changes: Any) -> bool:
-    dumped = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    dumped = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     dumped["size"] = {**dumped["size"], **changes}
     return _schema_refuses("cohort-count.schema.json", dumped)
 
@@ -1204,10 +1296,10 @@ def test_the_count_schema_states_the_rules_of_proportions() -> None:
 
 
 def test_suppressed_counts_are_named_by_their_members_in_the_schema() -> None:
-    dumped = ResultEnvelope.model_validate(envelope()).model_dump(mode="json")
+    dumped = _valid(ResultEnvelope, envelope()).model_dump(mode="json")
     dumped["analysed"][0]["not_estimable"] = {"/n": "suppressed"}  # n is shown
     assert _schema_refuses("result.schema.json", dumped)
-    count = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    count = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     count["population"]["suppressed"] = ["/foo"]
     assert _schema_refuses("cohort-count.schema.json", count)
 
@@ -1229,14 +1321,14 @@ def test_an_absent_limit_is_not_written_as_null() -> None:
 
 
 def test_a_nested_output_built_without_validation_is_validated_where_it_is_used() -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     issuance = Issuance.model_construct(id="iss:not-an-id", cache_hit=False, values_from=ISSUANCE)
     with pytest.raises(ValidationError):
-        ResultEnvelope.model_validate({**dict(result), "issuance": issuance})
+        _valid(ResultEnvelope, {**dict(result), "issuance": issuance})
 
 
 def test_a_value_that_holds_itself_is_refused_without_hanging() -> None:
-    result = ResultEnvelope.model_validate(envelope())
+    result = _valid(ResultEnvelope, envelope())
     loop: list[Any] = []
     loop.append(loop)
     values = Values.model_construct(positions=[{"x": loop}, {}], view={})
@@ -1246,8 +1338,6 @@ def test_a_value_that_holds_itself_is_refused_without_hanging() -> None:
 
 
 def test_variables_are_for_views_over_several() -> None:
-    from aibi.core.schema.results import Analysed
-
     one = analysed(variables=[analysed()])
     assert "too_short" in error_types(Analysed, one)
     other = analysed(n=4, excluded=excluded(NO_PARENT=6), excluded_units=6)
@@ -1269,16 +1359,10 @@ def _accounted(
         population.update(unknown_by_reason=by_reason, unknown_by_leaf={LEAF: unknown})
     if not size:
         count["size"].update(denominator=0, estimate=None, not_estimable={"/estimate": "no_units"})
-    population["lift_differs"] = lift
     codes = {given["code"] for given in count["caveats"]}
-    if lift is None:
-        population["suppressed"] = sorted([*population["suppressed"], "/lift_differs"])
-        if "SUPPRESSED" not in codes:
-            count["caveats"] = [*count["caveats"], caveat("SUPPRESSED", ["/population"])]
-    if lift is None or lift:
-        lifted = caveat("LIFT_DIFFERS", ["/population"])
-        count["caveats"] = [*count["caveats"], lifted]
-    return count
+    if lift is None and "SUPPRESSED" not in codes:
+        count["caveats"] = [*count["caveats"], caveat("SUPPRESSED", ["/population"])]
+    return _count_lift(count, lift)
 
 
 @pytest.mark.parametrize(
@@ -1291,8 +1375,9 @@ def _accounted(
         ((None, 0, 0), 40, 0, "count_size"),  # a suppressed 40, which is not small
         ((10, None, None), 10, 0, "count_size"),  # two suppressed zeros
         ((None, None, 20), 25, None, None),
-        ((None, 0, 0), 3, 0, None),
-        ((10, None, None), 12, 0, "disclosure"),  # the complement, 2, is small
+        ((None, 0, 0), 3, 0, "count_size"),  # a table under k shows no size (D297)
+        ((10, None, None), 13, 0, "disclosure"),  # the complement, 3, is small
+        ((10, None, None), 12, 0, "count_size"),  # the two suppressed would each be 1
     ],
 )
 def test_the_unit_table_accounts_for_suppressed_counts(
@@ -1302,7 +1387,7 @@ def test_the_unit_table_accounts_for_suppressed_counts(
     suppressed beside zeros is the whole table (§8.4)."""
     count = _accounted(parts, size, lift)
     if error is None:
-        assert CohortCount.model_validate(count)
+        assert _valid(CohortCount, count)
     else:
         assert error in error_types(CohortCount, count)
 
@@ -1323,8 +1408,6 @@ def test_with_n_true_shown_n_and_excluded_units_are_shown_or_suppressed_together
 
 
 def test_n_is_at_most_the_sum_of_the_variables_n() -> None:
-    from aibi.core.schema.results import Analysed
-
     part = analysed(n=4, excluded=excluded(NO_PARENT=6), excluded_units=6)
     assert "analysed_variables" in error_types(Analysed, analysed(n=10, variables=[part, part]))
     within = analysed(n=8, excluded=excluded(NO_PARENT=2), excluded_units=2, variables=[part, part])
@@ -1403,19 +1486,19 @@ def test_values_held_in_many_places_and_tuples_dump() -> None:
 
 def test_the_schemas_accept_every_suppressed_count_and_every_pointer_not_estimable() -> None:
     count = _accounted((None, None, 20), 25, None)
-    dumped = CohortCount.model_validate(count).model_dump(mode="json")
+    dumped = _valid(CohortCount, count).model_dump(mode="json")
     assert not _schema_refuses("cohort-count.schema.json", dumped)
     interval = {"method": "wilson", "level": 0.95, "low": None, "high": None}
     reasons = {"/estimate": "no_units", "/ci/low": "no_units", "/ci/high": "no_units"}
     zero = {"estimate": None, "numerator": 0, "denominator": 0, "ci": interval}
-    dumped = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    dumped = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     dumped["size"] = {**dumped["size"], **zero, "not_estimable": reasons}
     dumped["population"] = {**dumped["population"], "n_true": 0, "n_false": 0, "n_unknown": 0}
     assert not _schema_refuses("cohort-count.schema.json", dumped)
 
 
 def test_the_count_schema_says_a_count_over_a_draft_is_never_cached() -> None:
-    dumped = CohortCount.model_validate(cohort_count()).model_dump(mode="json")
+    dumped = _valid(CohortCount, cohort_count()).model_dump(mode="json")
     dumped["releases"] = [{**release, "status": "draft"} for release in dumped["releases"]]
     dumped["caveats"] = [caveat("DRAFT_RELEASE", ["/population"], "warn")]
     dumped["issuance"] = {**dumped["issuance"], "cache_hit": True}
@@ -1613,7 +1696,7 @@ def test_a_container_held_in_many_places_is_walked_once() -> None:
 
 def _population_of(k: int, parts: tuple[int | None, int | None, int | None], size: int) -> Any:
     """A cohort count under ``k`` with these counts, ``None`` suppressed."""
-    count = _accounted(parts, size, 0)
+    count = _accounted(parts, size, None if None in parts else 0)
     count["disclosure"] = {"min_cell_count": k}
     return count
 
@@ -1621,23 +1704,29 @@ def _population_of(k: int, parts: tuple[int | None, int | None, int | None], siz
 @pytest.mark.parametrize(
     ("k", "parts", "size", "accepted"),
     [
-        # Two suppressed beside a shown 10: both small (4 + 4), or one small and the smallest
-        # non-zero other, at most 10, or 9 when the shown one is n_true, first in order.
-        (5, (None, None, 10), 24, True),  # 4 + 10, n_true 10 first on the tie
-        (5, (None, None, 10), 25, False),
+        # n_true and n_false suppressed beside a shown n_unknown: one small, and its partner of
+        # any size. n_unknown and another beside a shown 10: both small (4 + 4), or one small
+        # and the smaller non-zero of n_true and n_false, below 10, as a tie takes both.
+        (5, (None, None, 10), 25, True),
+        (5, (None, None, 5), 105, True),
         (5, (10, None, None), 23, True),  # 4 + 9
         (5, (10, None, None), 24, False),  # 4 + 10: the tie would suppress n_true
-        (5, (None, 10, None), 24, True),
+        (5, (None, 10, None), 23, True),
+        (5, (None, 10, None), 24, False),
         (5, (None, 0, None), 105, True),  # beside a 0 the second can be any size
-        (5, (None, None, 5), 105, False),  # the pass suppresses n_unknown, not 96 or more
-        # All three suppressed are small, or n_true is the complement of two small ones.
+        (5, (None, 5, None), 105, False),  # the pass suppresses the smaller, not 96 or more
+        # All three suppressed: a table of at most 3, or two that would each be 1 and the
+        # smallest shown one, or n_true the complement of two small ones (D297).
         (2, (None, None, None), 3, True),
-        (2, (None, None, None), 4, False),
-        (2, (None, None, None), 10, False),
+        (2, (None, None, None), 4, True),  # 1, 1 and 2
+        (2, (None, None, None), 10, True),  # 1, 1 and 8
         (5, (None, None, None), 103, True),  # 100, 2 and 1: the complement 3 is small
-        # One suppressed beside zeros is the whole table, which is small.
-        (5, (None, 0, 0), 4, True),
-        (5, (None, 0, 0), 5, False),
+        (5, (None, None, None), 3, False),  # a table under k shows no size
+        # A table of fewer than max(k, 4) units shows none of the three, zeros included;
+        # under k its size is suppressed too.
+        (2, (None, 0, None), 3, False),
+        (5, (None, 0, 0), 4, False),
+        (5, (None, 0, 0), 5, False),  # one suppressed beside zeros would be the table
     ],
 )
 def test_a_cohort_count_shows_only_what_the_pass_can_leave(
@@ -1645,25 +1734,32 @@ def test_a_cohort_count_shows_only_what_the_pass_can_leave(
 ) -> None:
     count = _population_of(k, parts, size)
     if accepted:
-        assert CohortCount.model_validate(count)
+        assert _valid(CohortCount, count)
     else:
         assert "count_size" in error_types(CohortCount, count)
 
 
-@pytest.mark.parametrize(("lift", "size", "error"), [(12, 12, None), (None, 0, "population_lift")])
-def test_lift_differs_counts_at_most_the_unit_table(
-    lift: int | None, size: int, error: str | None
+@pytest.mark.parametrize(
+    ("parts", "size", "lift", "error"),
+    [
+        ((12, 0, 0), 12, 12, None),
+        ((12, 0, 0), 12, 13, "population_lift"),
+        ((None, None, 0), 12, None, None),
+        ((None, None, 0), 12, 5, "disclosure"),  # shown beside a suppressed count (D297)
+        ((0, 0, 0), 0, None, "population_lift"),
+    ],
+)
+def test_lift_differs_counts_at_most_the_unit_table_and_hides_with_the_counts(
+    parts: tuple[int | None, int | None, int | None], size: int, lift: int | None, error: str | None
 ) -> None:
-    count = _accounted((None, None, 0) if size else (0, 0, 0), size, lift)
+    count = _accounted(parts, size, lift)
     if error is None:
-        assert CohortCount.model_validate(count)
+        assert _valid(CohortCount, count)
     else:
         assert error in error_types(CohortCount, count)
 
 
 def test_a_variable_excludes_at_least_the_units_the_whole_excludes() -> None:
-    from aibi.core.schema.results import Analysed
-
     part = analysed(n=None, excluded=excluded(NO_PARENT=6), excluded_units=6)
     part["not_estimable"] = {"/n": "suppressed"}
     whole = analysed(n=None, excluded=excluded(NO_PARENT=7), excluded_units=7)
@@ -1692,4 +1788,23 @@ def test_with_n_true_suppressed_n_may_be_suppressed_beside_a_shown_excluded_unit
             {**UNKNOWN_EXCLUDED, "affects": ["/analysed/0"]},
         ],
     )
-    assert ResultEnvelope.model_validate(value)
+    assert _valid(ResultEnvelope, _lift_hidden(value))
+
+
+def test_an_output_carries_the_digest_of_its_digested_members() -> None:
+    """A cohort count or a result whose digest is not the digest of what it carries cannot be
+    built (§7.6, D298); rendered text is outside it."""
+    other = "sha256:" + "f" * 64
+    count = digested(CohortCount, cohort_count())
+    assert CohortCount.model_validate(count)
+    assert "digest" in error_types(CohortCount, {**count, "digest": other})
+    worded = {**count, "readback": [{"text": "another readback"}]}
+    assert CohortCount.model_validate(worded)
+    fewer = {**count, "size": {**count["size"], "numerator": 9, "estimate": 9 / 15}}
+    fewer["population"] = known_population(n_true=9, n_false=6)
+    assert "digest" in error_types(CohortCount, fewer)
+    result = digested(ResultEnvelope, envelope())
+    assert ResultEnvelope.model_validate(result)
+    assert "digest" in error_types(ResultEnvelope, {**result, "digest": other})
+    relabelled = {**result, "labels": [{"data": "x"}, {"data": "y"}]}
+    assert ResultEnvelope.model_validate(relabelled)

@@ -68,6 +68,7 @@ from pydantic import JsonValue
 from aibi.core.engine.data import Release
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
+from aibi.core.schema.limits import LogLimits
 from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
@@ -76,6 +77,7 @@ from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
 from aibi.core.store.derivations import (
+    OPEN_BATCHES,
     DerivationLog,
     DerivationRecord,
     IssuanceRecord,
@@ -198,8 +200,13 @@ def _now() -> datetime:
 class Store:
     """The blobs under ``root``/blobs and the app DB at ``root``/app.db."""
 
-    def __init__(self, root: Path, *, clock: Callable[[], datetime] = _now) -> None:
-        """Opens the store; ``StoreLockedError`` if another process has it open."""
+    def __init__(
+        self, root: Path, *, clock: Callable[[], datetime] = _now, log: LogLimits | None = None
+    ) -> None:
+        """Opens the store; ``StoreLockedError`` if another process has it open. ``log`` is how
+        long the derivation log keeps ``count_cohort``'s issuances and how large it grows
+        (D300): up to ``OPEN_BATCHES`` batches of the expired ones are pruned now, and the log's
+        thread prunes the rest, and what expires later, until the store closes."""
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self.clock = clock
@@ -210,7 +217,7 @@ class Store:
             self.blobs.clean()
             self.db = db = AppDB(root / APP_DB)
             self.lock: threading.RLock = self.db.lock
-            self.derivations = DerivationLog(self.db, self.now)
+            self.derivations = DerivationLog(self.db, self.now, limits=log)
             self.pinned: Counter[str] = Counter()
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}
@@ -221,6 +228,8 @@ class Store:
             # This process holds no pin yet: what a crash left pinned is swept now.
             self.sweep()
             self.run_pending_redactions()
+            opened = self.derivations.prune_expired(batches=OPEN_BATCHES)
+            self.derivations.start_pruning(first=None if opened.finished else 0.0)
         except BaseException:
             if db is not None:
                 db.close()
@@ -228,6 +237,7 @@ class Store:
             raise
 
     def close(self) -> None:
+        self.derivations.stop_pruning()
         self.db.close()
         os.close(self._lock_file)  # closing the file releases its flock
 

@@ -9,8 +9,10 @@ synchronisation, and ``secure_delete``, so that what redaction overwrites or del
 in free pages (§12.2, Erasure); after a redaction the WAL is checkpointed and truncated, and
 ``checkpoint`` says whether that finished.
 
-The derivation log's tables (M2, D289) are ``derivations``'s, which says what their triggers
-hold.
+The derivation log's tables (M2, D289, D300) are ``derivations``'s, which says what their
+triggers hold; migration 5 moves the texts of its issuances into ``log_texts``, each stored once
+by its digest, lets pruning remove a derivation no issuance names, and keeps in ``log_usage`` the
+bytes of what pruning can free (``LOG_USAGE``).
 
 Rules the schema holds itself, by triggers: a label is never removed or changed; a manifest is
 never removed, and is only ever withdrawn, once; the audit trail is never removed from, and only
@@ -26,6 +28,7 @@ and it is decided once: from *open* to *accepted* or *rejected*, never back (D24
 ``""`` names a whole descriptor.
 """
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -39,8 +42,120 @@ from pydantic import JsonValue
 
 from aibi.core.schema.jsonio import canonical
 
+
+def text_digest(text: str) -> str:
+    """``sha256:`` and the hex SHA-256 of a text's UTF-8 bytes: the key the log stores a text
+    under (D300)."""
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+def request_text(written: str, params: str) -> str:
+    """The RFC 8785 text of an issuance's request: the document as written and the parameters
+    used, given as the texts the log held them in before migration 5."""
+    request: JsonValue = {"document": loads(written), "params": loads(params)}
+    return canonical(request).decode()
+
+
 CHECKPOINT_WAIT = 0.1
 """Seconds a checkpoint waits for readers of the WAL to finish before it gives up."""
+
+LOG_PAGE_BYTES = 4096
+"""The app DB's page size, which ``AppDB`` sets on a new database: the unit ``LOG_USAGE``
+charges rows' pages in."""
+_MAX_LOCAL = LOG_PAGE_BYTES - 35
+_MIN_LOCAL = (LOG_PAGE_BYTES - 12) * 32 // 255 - 23
+_OVERFLOW = LOG_PAGE_BYTES - 4
+LOG_CELL_BYTES = 40
+"""What a row's cell takes in a table's leaf page beyond its payload: its size and rowid, an
+overflow page's number, its pointer, and a share of the interior page above the leaf, and of
+the page's header, rounded up."""
+LOG_TEXT_BYTES = 192
+"""What a text of the derivation log takes beyond its row: its digest's entry in the index of
+digests, whose random keys leave its pages half full or more, twice over, and a share of that
+index's interior pages (D300)."""
+LOG_DERIVATION_BYTES = 256
+"""What a derivation takes beyond its row and its releases' rows: its id's entry in the index of
+ids, twice over, as for a text's digest."""
+LOG_RELEASE_FACTOR = 4
+"""What a derivation's releases take, in bytes for each byte of its list of them: a
+``derivation_releases`` row of each and their entries in its two indexes, each twice over."""
+LOG_ISSUANCE_BYTES = 1024
+"""What an issuance takes beyond its packs' text: its row, of which only the packs and the
+engine vary, the entries of its six indexes, the three of random keys (derivation, request and
+SQL) twice over, and a share of their interior pages."""
+
+
+def stored_sql(payload: str) -> str:
+    """The bytes a row of ``payload`` bytes (an SQL expression) can take in a table whose rows
+    are appended in rowid order (D300): its cell twice over, and its overflow pages whole. A row
+    fills a leaf page with the cells before it, and the next one opens a page when it does not
+    fit, which wastes less than its own cell of the page before; so charging each cell twice
+    bounds every leaf page, however rows of different sizes alternate. A payload above
+    ``_MAX_LOCAL`` keeps SQLite's local part in the leaf and the rest in overflow pages of
+    ``_OVERFLOW`` bytes."""
+    surplus = f"({_MIN_LOCAL} + (({payload}) - {_MIN_LOCAL}) % {_OVERFLOW})"
+    return (
+        f"(CASE WHEN ({payload}) <= {_MAX_LOCAL} THEN 2 * (({payload}) + {LOG_CELL_BYTES})"
+        f" WHEN {surplus} <= {_MAX_LOCAL} THEN 2 * ({surplus} + {LOG_CELL_BYTES})"
+        f" + (({payload}) - {_MIN_LOCAL}) / {_OVERFLOW} * {LOG_PAGE_BYTES}"
+        f" ELSE 2 * ({_MIN_LOCAL} + {LOG_CELL_BYTES})"
+        f" + ((({payload}) - {_MIN_LOCAL} + {_OVERFLOW - 1}) / {_OVERFLOW}) * {LOG_PAGE_BYTES}"
+        " END)"
+    )
+
+
+def stored_bytes(payload: int) -> int:
+    """``stored_sql`` of a row of ``payload`` bytes, computed here."""
+    if payload <= _MAX_LOCAL:
+        return 2 * (payload + LOG_CELL_BYTES)
+    surplus = _MIN_LOCAL + (payload - _MIN_LOCAL) % _OVERFLOW
+    if surplus <= _MAX_LOCAL:
+        overflow = (payload - _MIN_LOCAL) // _OVERFLOW
+        return 2 * (surplus + LOG_CELL_BYTES) + overflow * LOG_PAGE_BYTES
+    overflow = -(-(payload - _MIN_LOCAL) // _OVERFLOW)
+    return 2 * (_MIN_LOCAL + LOG_CELL_BYTES) + overflow * LOG_PAGE_BYTES
+
+
+def _bytes(column: str) -> str:
+    return f"length(CAST({column} AS BLOB))"
+
+
+def _text(row: str) -> str:
+    """A text's bytes: its row (the text, its digest and the record's header) and
+    ``LOG_TEXT_BYTES``."""
+    return f"({stored_sql(_bytes(f'{row}text') + ' + 80')} + {LOG_TEXT_BYTES})"
+
+
+def _derivation(row: str) -> str:
+    """A derivation's bytes: its row (its object, its list of releases, its id, kind and time,
+    and the record's header), what its releases take (``LOG_RELEASE_FACTOR``) and
+    ``LOG_DERIVATION_BYTES``."""
+    listed = _bytes(f"{row}releases")
+    stored = stored_sql(f"{_bytes(f'{row}hashed')} + {listed} + 112")
+    return f"({stored} + {LOG_RELEASE_FACTOR} * {listed} + {LOG_DERIVATION_BYTES})"
+
+
+def _issuance(row: str) -> str:
+    return f"({_bytes(f'{row}packs')} + {LOG_ISSUANCE_BYTES})"
+
+
+LOG_USAGE = f"""
+    (SELECT coalesce(sum({_text("")}), 0) FROM log_texts)
+    + (SELECT coalesce(sum({_derivation("")}), 0) FROM derivations WHERE hashed IS NOT NULL)
+    + (SELECT coalesce(sum({_issuance("")}), 0) FROM issuances)
+"""
+"""The bytes ``log_bytes`` bounds (D300): every text, every derivation that is not erased, with
+its object, and every issuance, each with the pages its rows and index entries can take, so
+that the pages the log adds to the app DB as it grows are at most what it counts (a row is
+charged its cell twice over and its overflow pages, ``stored_sql``). That is what pruning can
+free (an erased derivation, which only erasure makes, is kept and not counted), so pruning
+before now brings it down to what ``run_analysis``'s issuances hold; the pages pruning leaves
+partly full are SQLite's to reuse. ``log_usage`` keeps it, by triggers; the constants are part
+of migration 5's triggers, so changing them needs a migration."""
+_TEXT = _text("NEW.")
+_OLD_TEXT = _text("OLD.")
+_DERIVATION = _derivation("{row}.")
+_ISSUANCE = _issuance("{row}.")
 
 MIGRATIONS: tuple[str, ...] = (
     # 1: M1 (#8)
@@ -290,6 +405,136 @@ MIGRATIONS: tuple[str, ...] = (
         )
         BEGIN SELECT RAISE(ABORT, 'an issuance is removed only by erasure or pruning'); END;
     """,
+    # 5: M2 (#17), the log's texts, each stored once, its size, and pruned derivations (D300)
+    f"""
+    CREATE TABLE log_texts (
+        digest TEXT PRIMARY KEY CHECK (digest GLOB 'sha256:*' AND length(digest) = 71),
+        text TEXT NOT NULL CHECK (json_valid(text))
+    ) STRICT;
+    CREATE TABLE log_usage (
+        one INTEGER PRIMARY KEY CHECK (one = 1),
+        bytes INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE issuances_v5 (
+        id TEXT PRIMARY KEY CHECK (id GLOB 'iss:*' AND length(id) = 30),
+        derivation TEXT NOT NULL REFERENCES derivations (id),
+        tool TEXT NOT NULL CHECK (tool IN ('count_cohort', 'run_analysis')),
+        request TEXT NOT NULL REFERENCES log_texts (digest),
+        sql TEXT REFERENCES log_texts (digest),
+        values_from TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        packs TEXT NOT NULL,
+        at TEXT NOT NULL,
+        CHECK ((sql IS NULL) = (values_from != id))
+    ) STRICT;
+    INSERT INTO log_texts (digest, text)
+        SELECT aibi_digest(aibi_request(written, params)), aibi_request(written, params)
+        FROM issuances
+        UNION SELECT aibi_digest(sql), sql FROM issuances WHERE sql IS NOT NULL;
+    INSERT INTO issuances_v5
+        SELECT id, derivation, tool, aibi_digest(aibi_request(written, params)),
+            CASE WHEN sql IS NULL THEN NULL ELSE aibi_digest(sql) END,
+            values_from, engine, packs, at
+        FROM issuances;
+    DROP TABLE issuances;
+    ALTER TABLE issuances_v5 RENAME TO issuances;
+    CREATE INDEX issuances_by_derivation ON issuances (derivation);
+    CREATE INDEX issuances_by_time ON issuances (tool, at);
+    CREATE INDEX issuances_by_source ON issuances (values_from);
+    CREATE INDEX issuances_by_request ON issuances (request);
+    CREATE INDEX issuances_by_sql ON issuances (sql);
+    DROP TRIGGER derivations_kept;
+    DROP TRIGGER derivation_releases_kept;
+    DELETE FROM derivation_releases WHERE derivation IN (
+        SELECT id FROM derivations d WHERE hashed IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM issuances WHERE derivation = d.id)
+    );
+    DELETE FROM derivations WHERE hashed IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM issuances WHERE derivation = derivations.id);
+    CREATE TRIGGER derivations_removed_by_pruning BEFORE DELETE ON derivations
+        WHEN OLD.hashed IS NULL
+            OR EXISTS (SELECT 1 FROM issuances WHERE derivation = OLD.id)
+            OR NOT EXISTS (SELECT 1 FROM log_permits WHERE kind = 'pruning')
+        BEGIN
+            SELECT RAISE(ABORT, 'only pruning removes a derivation, once no issuance names it');
+        END;
+    CREATE TRIGGER derivation_releases_removed_by_pruning BEFORE DELETE ON derivation_releases
+        WHEN (SELECT hashed FROM derivations WHERE id = OLD.derivation) IS NULL
+            OR EXISTS (SELECT 1 FROM issuances WHERE derivation = OLD.derivation)
+            OR NOT EXISTS (SELECT 1 FROM log_permits WHERE kind = 'pruning')
+        BEGIN
+            SELECT RAISE(ABORT, 'the releases of a derivation go only with it, by pruning');
+        END;
+    INSERT INTO log_usage (one, bytes) VALUES (1, {LOG_USAGE});
+    CREATE TRIGGER log_usage_kept BEFORE DELETE ON log_usage
+        BEGIN SELECT RAISE(ABORT, 'the log''s size is never removed'); END;
+    CREATE TRIGGER log_texts_stored_once BEFORE INSERT ON log_texts
+        WHEN EXISTS (SELECT 1 FROM log_texts WHERE digest = NEW.digest AND text IS NOT NEW.text)
+        BEGIN SELECT RAISE(ABORT, 'a text of the log is stored once, under its digest'); END;
+    CREATE TRIGGER log_texts_fixed BEFORE UPDATE ON log_texts
+        BEGIN SELECT RAISE(ABORT, 'a text of the log never changes'); END;
+    CREATE TRIGGER log_texts_removed_by_erasure_or_pruning BEFORE DELETE ON log_texts
+        WHEN NOT EXISTS (SELECT 1 FROM log_permits)
+        BEGIN SELECT RAISE(ABORT, 'a text of the log is removed only by erasure or pruning'); END;
+    CREATE TRIGGER log_texts_counted AFTER INSERT ON log_texts
+        BEGIN UPDATE log_usage SET bytes = bytes + {_TEXT}; END;
+    CREATE TRIGGER log_texts_uncounted AFTER DELETE ON log_texts
+        BEGIN UPDATE log_usage SET bytes = bytes - ({_OLD_TEXT}); END;
+    CREATE TRIGGER derivations_counted AFTER INSERT ON derivations
+        BEGIN UPDATE log_usage SET bytes = bytes + {_DERIVATION.format(row="NEW")}; END;
+    CREATE TRIGGER derivations_uncounted AFTER UPDATE OF hashed ON derivations
+        WHEN OLD.hashed IS NOT NULL AND NEW.hashed IS NULL
+        BEGIN UPDATE log_usage SET bytes = bytes - ({_DERIVATION.format(row="OLD")}); END;
+    CREATE TRIGGER derivations_pruned AFTER DELETE ON derivations WHEN OLD.hashed IS NOT NULL
+        BEGIN UPDATE log_usage SET bytes = bytes - ({_DERIVATION.format(row="OLD")}); END;
+    CREATE TRIGGER issuances_counted AFTER INSERT ON issuances
+        BEGIN UPDATE log_usage SET bytes = bytes + {_ISSUANCE.format(row="NEW")}; END;
+    CREATE TRIGGER issuances_uncounted AFTER DELETE ON issuances
+        BEGIN UPDATE log_usage SET bytes = bytes - ({_ISSUANCE.format(row="OLD")}); END;
+    CREATE TRIGGER issuances_recorded_once BEFORE INSERT ON issuances
+        WHEN EXISTS (SELECT 1 FROM issuances WHERE id = NEW.id)
+            OR (SELECT hashed FROM derivations WHERE id = NEW.derivation) IS NULL
+            OR EXISTS (
+                SELECT 1 FROM derivation_releases r JOIN manifests m ON m.hash = r.manifest
+                WHERE r.derivation = NEW.derivation AND m.withdrawn_at IS NOT NULL
+            )
+            OR (NEW.values_from IS NOT NEW.id AND NOT EXISTS (
+                SELECT 1 FROM issuances
+                WHERE id = NEW.values_from AND values_from = id AND derivation = NEW.derivation
+            ))
+        BEGIN
+            SELECT RAISE(ABORT, 'an issuance is recorded once, of a live derivation it names');
+        END;
+    CREATE TRIGGER issuances_redacted_only BEFORE UPDATE ON issuances
+        WHEN NEW.id IS NOT OLD.id OR NEW.derivation IS NOT OLD.derivation
+            OR NEW.tool IS NOT OLD.tool OR NEW.values_from IS NOT OLD.values_from
+            OR NEW.engine IS NOT OLD.engine OR NEW.packs IS NOT OLD.packs OR NEW.at IS NOT OLD.at
+            OR (NEW.request IS NOT OLD.request AND NOT EXISTS (
+                SELECT 1 FROM log_texts WHERE digest = NEW.request AND instr(text, '[erased]') > 0
+            ))
+            OR (NEW.sql IS NOT OLD.sql AND NOT EXISTS (
+                SELECT 1 FROM log_texts WHERE digest = NEW.sql AND instr(text, '[erased]') > 0
+            ))
+            OR NOT EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+        BEGIN SELECT RAISE(ABORT, 'only redaction changes an issuance'); END;
+    CREATE TRIGGER issuances_removed_by_erasure_or_pruning BEFORE DELETE ON issuances
+        WHEN NOT (
+            (
+                (SELECT hashed FROM derivations WHERE id = OLD.derivation) IS NULL
+                AND EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+            )
+            OR EXISTS (
+                SELECT 1 FROM log_permits p
+                WHERE p.kind = 'pruning' AND OLD.tool = 'count_cohort' AND OLD.at < p.before
+                    AND NOT EXISTS (
+                        SELECT 1 FROM issuances k
+                        WHERE k.values_from = OLD.id AND k.id IS NOT OLD.id
+                            AND NOT (k.tool = 'count_cohort' AND k.at < p.before)
+                    )
+            )
+        )
+        BEGIN SELECT RAISE(ABORT, 'an issuance is removed only by erasure or pruning'); END;
+    """,
 )
 
 
@@ -338,12 +583,16 @@ class AppDB:
         self.lock = threading.RLock()
         self.connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         for pragma in (
+            f"PRAGMA page_size = {LOG_PAGE_BYTES}",
             "PRAGMA journal_mode = WAL",
             "PRAGMA foreign_keys = ON",
             "PRAGMA synchronous = FULL",
             "PRAGMA secure_delete = ON",
         ):
             self.connection.execute(pragma)
+        # Migration 5 moves the log's texts into ``log_texts`` by their digests (D300).
+        self.connection.create_function("aibi_digest", 1, text_digest, deterministic=True)
+        self.connection.create_function("aibi_request", 2, request_text, deterministic=True)
         self._migrate()
 
     def close(self) -> None:
@@ -779,10 +1028,21 @@ def loads(text: str) -> JsonValue:
 
 __all__ = [
     "CHECKPOINT_WAIT",
+    "LOG_CELL_BYTES",
+    "LOG_DERIVATION_BYTES",
+    "LOG_ISSUANCE_BYTES",
+    "LOG_PAGE_BYTES",
+    "LOG_RELEASE_FACTOR",
+    "LOG_TEXT_BYTES",
+    "LOG_USAGE",
     "MIGRATIONS",
     "AppDB",
     "Label",
     "Session",
     "StoredProposal",
     "loads",
+    "request_text",
+    "stored_bytes",
+    "stored_sql",
+    "text_digest",
 ]

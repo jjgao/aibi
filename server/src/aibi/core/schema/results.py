@@ -19,12 +19,15 @@ here, so an output that breaks them cannot be built:
 - the rules of the disclosure pass that need no data (§8.4): nothing is suppressed, and no
   ``SUPPRESSED`` carried, without a ``min_cell_count``; no shown count lies between 1 and
   *k* − 1, nor any count of a shown breakdown; no linked set shows one suppressed member, or a
-  suppressed total, through a non-zero other; with ``n_true`` shown, ``n`` and
+  suppressed total, through a non-zero other; ``lift_differs`` is shown only beside ``n_true``,
+  ``n_false`` and ``n_unknown``; with ``n_true`` shown, ``n`` and
   ``excluded_units`` are shown or suppressed together; a cohort count's size shows no
-  complement from 1 to *k* − 1, and accounts for its counts as the pass leaves them;
+  complement from 1 to *k* − 1, is suppressed only with every count of a unit table of 1 to
+  *k* − 1 units, and accounts for its counts as the pass leaves them (D297);
 - ``analysed.n`` is at least each variable's ``n`` and at most their sum, and so each
   variable excludes at least as many units; ``lift_differs`` is at most the size, and a
-  suppressed one needs a size of at least 1.
+  suppressed one needs a size of at least 1;
+- the ``digest`` is the digest of the digested members the output carries (§7.6, D298).
 
 Cohort counts carry their effective ``min_cell_count`` so that the same rules can be checked.
 Proportions inside ``values`` are checked for their ``not_estimable`` maps only, until their
@@ -33,7 +36,7 @@ shape is typed (M3).
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Annotated, Any, Literal, NamedTuple, Self
+from typing import Annotated, Any, Literal, NamedTuple, Self, cast
 from urllib.parse import quote, unquote
 
 from packaging.version import InvalidVersion, Version
@@ -52,6 +55,7 @@ from pydantic import (
 
 from aibi.core.schema.caveats import Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.descriptors import SemVer
+from aibi.core.schema.digests import COUNT_MEMBERS, RESULT_MEMBERS, output_digest
 from aibi.core.schema.document import PackKey
 from aibi.core.schema.errors import problem
 from aibi.core.schema.ids import (
@@ -609,17 +613,45 @@ def _revealing(members: Sequence[int | None]) -> bool:
     return nulls == 1 and any(member for member in members if member is not None)
 
 
-def _check_accounting(population: Population, denominator: int, k: int | None) -> None:
+_TINY = 4
+"""A unit table with fewer units than this, or than *k*, shows none of its three counts (§8.4,
+D297; ``engine.suppression.TINY``)."""
+
+
+def _check_accounting(population: Population, denominator: int | None, k: int | None) -> None:
     """The unit table's size accounts for the population, suppressed counts included, as the
-    disclosure pass leaves them (§8.4). A suppressed count counts at least one unit. One
-    suppressed beside two zeros is the whole table, from 1 to *k* − 1. Two suppressed beside a
-    shown count are both from 1 to *k* − 1, or one is and the other is the smallest non-zero
-    other count, so no larger than the shown one (and smaller when the shown one comes first in
-    the listed order, which wins a tie). All three suppressed are each from 1 to *k* − 1 or the
-    first is the complement of two small ones, which with *k* = 2 means one unit each."""
+    disclosure pass leaves them (§8.4, D297). The size is suppressed only under a
+    ``min_cell_count``, only when it is from 1 to *k* − 1, and then with all three counts. A
+    unit table of fewer than ``max(k, 4)`` units shows none of the three, zeros included. Over a
+    larger table a suppressed count counts at least one unit; no count is suppressed alone; the
+    suppressed ones are not all 1; and ``n_unknown`` suppressed with one other beside a shown
+    count is from 1 to *k* − 1 with it, or one of them is and the other is the smaller non-zero
+    of ``n_true`` and ``n_false``, so smaller than the shown one, which a tie would suppress
+    too. ``n_true`` and ``n_false`` suppressed together are one small count and its partner,
+    of any size."""
     parts = (population.n_true, population.n_false, population.n_unknown)
     shown = [part for part in parts if part is not None]
     hidden = len(parts) - len(shown)
+    if denominator is None:
+        if k is None or hidden != len(parts):
+            raise problem(
+                "count_size",
+                "size.denominator is suppressed only under a min_cell_count, with n_true, n_false "
+                "and n_unknown (§8.4)",
+            )
+        return
+    if k is not None and 0 < denominator < k:
+        raise problem(
+            "count_size",
+            "A unit table of 1 to min_cell_count - 1 units has its size suppressed (§8.4)",
+        )
+    if k is not None and 0 < denominator < max(k, _TINY):
+        if hidden != len(parts):
+            raise problem(
+                "count_size",
+                "A unit table this small shows none of n_true, n_false and n_unknown (§8.4)",
+            )
+        return
     if not hidden and denominator != sum(shown):
         raise problem("count_size", "size.denominator is n_true + n_false + n_unknown")
     if sum(shown) + hidden > denominator:
@@ -628,26 +660,30 @@ def _check_accounting(population: Population, denominator: int, k: int | None) -
             "size.denominator is n_true + n_false + n_unknown, and a suppressed count is at "
             "least 1",
         )
-    if hidden == 1 and not any(shown) and k is not None and not 0 < denominator < k:
+    if hidden == 1 and not any(shown):
         raise problem(
             "count_size",
-            "A count suppressed beside two zeros is the unit table's size, from 1 to "
-            "min_cell_count - 1",
+            "A count suppressed beside two zeros is the unit table's size, which this table "
+            "shows (§8.4)",
         )
-    if hidden == 2 and k is not None and shown[0] > 0:
-        at = next(index for index, part in enumerate(parts) if part is not None)
-        # The second one suppressed is at most the shown one; below it if that one is first.
-        second = shown[0] if at > 0 else shown[0] - 1
-        if denominator - shown[0] > max(2 * (k - 1), k - 1 + second):
-            raise problem(
-                "count_size",
-                "Two suppressed counts are small, or one is and the other is the smallest "
-                "non-zero other count: they add up to more than the pass leaves (§8.4)",
-            )
-    if hidden == 3 and k == 2 and denominator != 3:
+    if hidden and denominator - sum(shown) == hidden:
         raise problem(
             "count_size",
-            "With min_cell_count 2, all three counts are suppressed only when each is 1",
+            "The suppressed counts would each be 1; the smallest non-zero shown one is "
+            "suppressed too (§8.4)",
+        )
+    if (
+        hidden == 2
+        and k is not None
+        and shown[0] > 0
+        and population.n_unknown is None
+        and denominator - shown[0] > max(2 * (k - 1), k + shown[0] - 2)
+    ):
+        raise problem(
+            "count_size",
+            "n_unknown and one other suppressed are small, or one is and the other is the "
+            "smaller non-zero of n_true and n_false: they add up to more than the pass leaves "
+            "(§8.4)",
         )
     lift_differs = population.lift_differs
     if lift_differs is not None and lift_differs > denominator:
@@ -696,6 +732,12 @@ def _check_disclosure(
             "disclosure",
             "n_true, n_false and n_unknown show a suppressed one through the others and the "
             "unit table's size; a second one is suppressed too (§8.4)",
+        )
+    if population.lift_differs is not None and None in linked:
+        raise problem(
+            "disclosure",
+            "lift_differs is bounded by n_true, n_false and n_unknown, and is suppressed "
+            "whenever one of them is (§8.4)",
         )
     for entry in analysed:
         if population.n_true is not None and (entry.n is None) != (entry.excluded_units is None):
@@ -851,7 +893,18 @@ class ResultEnvelope(Output):
                 {CaveatCode.NOT_ESTIMABLE, CaveatCode.LIFT_DIFFERS, CaveatCode.DRAFT_RELEASE}
             ),
         )
+        _check_digest(self, RESULT_MEMBERS)
         return self
+
+
+def _check_digest(output: "ResultEnvelope | CohortCount", members: Sequence[str]) -> None:
+    """An output's ``digest`` is the digest of the members of §7.6 it carries (D298)."""
+    dumped = cast(dict[str, JsonValue], output.model_dump(mode="json", include=set(members)))
+    if output.digest != output_digest(dumped, output.caveats, members):
+        raise problem(
+            "digest",
+            "digest is the digest of the output's digested members as it carries them (§7.6)",
+        )
 
 
 _UNIT_TABLE: dict[str, JsonValue] = {"position": None, "predicate": None, "counts": "unit_table"}
@@ -867,13 +920,25 @@ _NOT_FOR_ONE_COHORT_CODES: list[JsonValue] = [code.value for code in sorted(_NOT
 
 
 def _count_schema(schema: dict[str, Any]) -> None:
-    """JSON Schema: a count over a draft release is never a cache hit (§12.3)."""
+    """JSON Schema: a count over a draft release is never a cache hit (§12.3), and a suppressed
+    size suppresses every count (§8.4, D297)."""
     draft: dict[str, JsonValue] = {"contains": {"properties": {"status": {"const": "draft"}}}}
+    null: dict[str, JsonValue] = {"type": "null"}
     schema["allOf"] = [
         {
             "if": {"properties": {"releases": draft}},
             "then": {"properties": {"issuance": {"properties": {"cache_hit": {"const": False}}}}},
-        }
+        },
+        {
+            "if": {"properties": {"size": {"properties": {"denominator": null}}}},
+            "then": {
+                "properties": {
+                    "population": {
+                        "properties": {"n_true": null, "n_false": null, "n_unknown": null}
+                    }
+                }
+            },
+        },
     ]
 
 
@@ -891,10 +956,7 @@ class CohortCount(Output):
             json_schema_extra={
                 "allOf": [
                     {
-                        "properties": {
-                            "denominator_definition": {"const": _UNIT_TABLE},
-                            "denominator": {"type": "integer"},
-                        },
+                        "properties": {"denominator_definition": {"const": _UNIT_TABLE}},
                         "not": {"required": ["excluded"]},
                     }
                 ]
@@ -944,8 +1006,6 @@ class CohortCount(Output):
         if self.size.numerator != population.n_true:
             raise problem("count_size", "size.numerator is n_true, and suppressed with it")
         denominator = self.size.denominator
-        if denominator is None:
-            raise problem("count_size", "size.denominator, the unit table's size, is shown (§8.4)")
         _check_accounting(population, denominator, self.disclosure.min_cell_count)
         if "excluded" in self.size.model_fields_set:
             raise problem("count_size", "Nothing is excluded from the unit table: no excluded")
@@ -965,11 +1025,11 @@ class CohortCount(Output):
         suppressed = bool(population.suppressed) or NotEstimableReason.SUPPRESSED in reasons
         k = self.disclosure.min_cell_count
         _check_disclosure(k, population, [], suppressed or CaveatCode.SUPPRESSED in codes)
-        # A proportion's numerator and its complement are a linked set; the size's denominator
-        # is always shown, so a small complement is hidden by suppressing the numerator,
-        # unless the numerator is 0 (SPEC §8.4).
+        # A proportion's numerator and its complement are a linked set; beside a shown
+        # denominator a small complement is hidden by suppressing the numerator, unless the
+        # numerator is 0 (SPEC §8.4).
         numerator = self.size.numerator
-        if numerator and _small(k, denominator - numerator):
+        if numerator and denominator is not None and _small(k, denominator - numerator):
             raise problem(
                 "disclosure",
                 "size shows its complement, the units outside the cohort, between 1 and "
@@ -991,6 +1051,7 @@ class CohortCount(Output):
                 {CaveatCode.NOT_ESTIMABLE, CaveatCode.LIFT_DIFFERS, CaveatCode.DRAFT_RELEASE}
             ),
         )
+        _check_digest(self, COUNT_MEMBERS)
         return self
 
 

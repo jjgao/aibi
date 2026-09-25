@@ -27,7 +27,8 @@ Refusals are raised as ``ToolRefused``, the store's ``StoreRefused`` or the prop
 """
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Literal, cast
@@ -48,6 +49,7 @@ from aibi.core.catalog.index import (
     entries,
     kept_statistics,
 )
+from aibi.core.engine.worker import Workers
 from aibi.core.schema.catalog import (
     MAX_HIT_TABLES,
     CatalogHit,
@@ -281,6 +283,29 @@ def _unconfirmed(reads: Sequence[tuple[str, str, str]], affects: Sequence[str]) 
 
 
 @dataclass(frozen=True)
+class Deadline:
+    """When a tool call must be answered: ``at``, a ``time.monotonic()`` instant, which is
+    ``seconds`` (``tool_seconds``) from when its body arrived."""
+
+    at: float
+    seconds: float
+
+
+DEADLINE: ContextVar[Deadline | None] = ContextVar("aibi_tool_deadline", default=None)
+"""The deadline of the tool call this thread runs (set by ``mcp.calls``); ``None`` outside a
+call (D301)."""
+
+
+def within[T](deadline: Deadline, function: Callable[[], T]) -> T:
+    """``function``'s result, called with ``DEADLINE`` set to ``deadline``."""
+    token = DEADLINE.set(deadline)
+    try:
+        return function()
+    finally:
+        DEADLINE.reset(token)
+
+
+@dataclass(frozen=True)
 class Catalog:
     """What the catalogue's service functions read (module docstring)."""
 
@@ -292,6 +317,9 @@ class Catalog:
     token_digest: bytes | None = field(default=None, repr=False)
     """The configured curator token's SHA-256, which text a proposal stores may not hold
     anywhere (D265)."""
+    workers: Workers | None = field(default=None, repr=False)
+    """The query workers that ``count_cohort`` runs a document's queries in (§14, D293); a
+    catalogue without them counts nothing."""
 
     def _references(self, manifest: str) -> References:
         return References(manifest, self.floor)
@@ -336,16 +364,21 @@ class Catalog:
         release's too, so that a session cannot lower it before it is published (D275)."""
         if release.label != "draft":
             return effective_k(self.floor, dataset_k(descriptors))
-        for label in reversed(self.store.labels(release.dataset)):
+        published = self.published_k(pin, release.dataset)
+        return effective_k(self.floor, dataset_k(descriptors), published)
+
+    def published_k(self, pin: Pin, dataset: str) -> int | None:
+        """The ``min_cell_count`` of the dataset's latest published release that is still kept,
+        pinned: at least what a draft's outputs use (D275, D300)."""
+        for label in reversed(self.store.labels(dataset)):
             if label.withdrawn:
                 continue
             try:
                 pin.manifest(label.manifest)
             except MissingBlobError:
                 continue
-            published = dataset_k(self.store.descriptors(label.manifest))
-            return effective_k(self.floor, dataset_k(descriptors), published)
-        return effective_k(self.floor, dataset_k(descriptors))
+            return dataset_k(self.store.descriptors(label.manifest))
+        return None
 
     def _known(self, dataset: str, path: str | None = "/dataset") -> None:
         if not self.store.labels(dataset):
@@ -845,8 +878,11 @@ def _complete(entry: Entry, request: SearchCatalog) -> bool:
 
 
 __all__ = [
+    "DEADLINE",
     "RESOURCE_TEMPLATES",
     "Catalog",
+    "Deadline",
     "ToolRefused",
     "refusals_of",
+    "within",
 ]

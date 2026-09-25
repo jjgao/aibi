@@ -340,6 +340,345 @@
       "title": "Caveat",
       "type": "object"
     },
+    "CohortCheck": {
+      "additionalProperties": false,
+      "description": "A cohort of a document validated (§11.1, D299): its canonical form, its ids as the log\nknows them, its readback and the caveats of its count that need no data.",
+      "properties": {
+        "caveats": {
+          "items": {
+            "$ref": "#/$defs/Caveat"
+          },
+          "title": "Caveats",
+          "type": "array"
+        },
+        "cohort": {
+          "$ref": "#/$defs/Data"
+        },
+        "computation_id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Computation Id",
+          "type": "string"
+        },
+        "disclosure": {
+          "$ref": "#/$defs/Disclosure"
+        },
+        "form": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Form",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "leaves": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "items": {
+                "pattern": "^leaf:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Leaves",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "packs": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "$ref": "#/$defs/PackVersion"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "cov",
+                    "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
+                    "exists",
+                    "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Packs",
+          "type": "object"
+        },
+        "readback": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Readback",
+          "type": "array"
+        },
+        "release": {
+          "$ref": "#/$defs/ReleaseRef"
+        },
+        "status": {
+          "enum": [
+            "issued",
+            "not_issued",
+            "withdrawn",
+            "discarded",
+            "unknown_release",
+            "erased"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cohort",
+        "id",
+        "computation_id",
+        "status",
+        "form",
+        "unit",
+        "release",
+        "disclosure",
+        "packs",
+        "leaves",
+        "readback",
+        "caveats"
+      ],
+      "title": "CohortCheck",
+      "type": "object"
+    },
+    "CohortCount": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "releases": {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "draft"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "issuance": {
+                "properties": {
+                  "cache_hit": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "size": {
+                "properties": {
+                  "denominator": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "population": {
+                "properties": {
+                  "n_false": {
+                    "type": "null"
+                  },
+                  "n_true": {
+                    "type": "null"
+                  },
+                  "n_unknown": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
+      "properties": {
+        "caveats": {
+          "allOf": [
+            {
+              "items": {
+                "not": {
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "COHORTS_OVERLAP",
+                        "CONFOUNDED_WITH_DATASET",
+                        "INVALID_EXCLUDED"
+                      ]
+                    }
+                  }
+                },
+                "properties": {
+                  "affects": {
+                    "const": [
+                      "/population"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "items": {
+            "$ref": "#/$defs/Caveat"
+          },
+          "title": "Caveats",
+          "type": "array"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "disclosure": {
+          "$ref": "#/$defs/Disclosure"
+        },
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "issuance": {
+          "$ref": "#/$defs/Issuance"
+        },
+        "population": {
+          "$ref": "#/$defs/Population"
+        },
+        "readback": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Readback",
+          "type": "array"
+        },
+        "releases": {
+          "items": {
+            "$ref": "#/$defs/ReleaseRef"
+          },
+          "minItems": 1,
+          "title": "Releases",
+          "type": "array"
+        },
+        "size": {
+          "$ref": "#/$defs/Proportion",
+          "allOf": [
+            {
+              "not": {
+                "required": [
+                  "excluded"
+                ]
+              },
+              "properties": {
+                "denominator_definition": {
+                  "const": {
+                    "counts": "unit_table",
+                    "position": null,
+                    "predicate": null
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "digest",
+        "population",
+        "size",
+        "disclosure",
+        "readback",
+        "caveats",
+        "releases",
+        "issuance"
+      ],
+      "title": "CohortCount",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1).",
+      "properties": {
+        "data": {
+          "maxLength": 10000,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
     "DataSegment": {
       "additionalProperties": false,
       "properties": {
@@ -531,6 +870,29 @@
       "title": "Issuance",
       "type": "object"
     },
+    "Limit": {
+      "additionalProperties": false,
+      "description": "The limit a refusal hit: one of the names in ``aibi.core.schema.limits``, or a pack's.",
+      "properties": {
+        "max": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Max",
+          "type": "integer"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "max"
+      ],
+      "title": "Limit",
+      "type": "object"
+    },
     "NotEstimableReason": {
       "enum": [
         "no_units",
@@ -548,6 +910,85 @@
       ],
       "title": "NotEstimableReason",
       "type": "string"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "PackVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "results_version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Results Version",
+          "type": "integer"
+        },
+        "version": {
+          "maxLength": 64,
+          "pattern": "^(?:[0-9]+!)?[0-9]+(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:\\+[a-z0-9]+(?:\\.[a-z0-9]+)*)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "results_version"
+      ],
+      "title": "PackVersion",
+      "type": "object"
+    },
+    "Parameters": {
+      "additionalProperties": false,
+      "description": "The parameters the document used, echoed (outside every digest), and those it declared\nbut did not use (§7.1).",
+      "properties": {
+        "unused": {
+          "items": {
+            "$ref": "#/$defs/Data"
+          },
+          "title": "Unused",
+          "type": "array"
+        },
+        "used": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Used",
+          "type": "object",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "used",
+        "unused"
+      ],
+      "title": "Parameters",
+      "type": "object"
     },
     "Population": {
       "additionalProperties": false,
@@ -1547,6 +1988,183 @@
       "title": "Reason",
       "type": "string"
     },
+    "Refusal": {
+      "additionalProperties": false,
+      "description": "A structured error (SPEC §8.6).\n\n``path`` is a JSON Pointer into the document as written, or ``None``.",
+      "properties": {
+        "alternatives": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefusalCode"
+            },
+            {
+              "maxLength": 129,
+              "not": {
+                "anyOf": [
+                  {
+                    "pattern": "__"
+                  },
+                  {
+                    "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+                  }
+                ]
+              },
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$",
+              "type": "string"
+            }
+          ],
+          "title": "Code"
+        },
+        "counts": {
+          "items": {
+            "$ref": "#/$defs/CohortCount"
+          },
+          "title": "Counts",
+          "type": "array"
+        },
+        "limit": {
+          "$ref": "#/$defs/Limit"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+              "type": "string",
+              "x-aibi-data": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        }
+      },
+      "required": [
+        "code",
+        "path",
+        "message"
+      ],
+      "title": "Refusal",
+      "type": "object"
+    },
+    "RefusalCode": {
+      "description": "Stable refusal codes of the core. Pack codes are namespaced and not listed here.",
+      "enum": [
+        "INVALID_JSON",
+        "DUPLICATE_KEY",
+        "NON_FINITE_NUMBER",
+        "INTEGER_OUT_OF_RANGE",
+        "NULL_NOT_ALLOWED",
+        "MISSING_MEMBER",
+        "UNKNOWN_MEMBER",
+        "WRONG_TYPE",
+        "INVALID_VALUE",
+        "UNKNOWN_KIND",
+        "CONFLICTING_MEMBERS",
+        "UNKNOWN_PARAMETER",
+        "INVALID_PARAMETER_REFERENCE",
+        "UNKNOWN_COHORT",
+        "COHORT_CYCLE",
+        "COHORT_MISMATCH",
+        "LEAF_NOT_ALLOWED",
+        "DATASET_MISSING",
+        "DUPLICATE_ENTRY",
+        "REFERENCE_NOT_IN_VIEW",
+        "CONCEPT_REQUIRED",
+        "CROSS_DATASET_ONLY",
+        "UNKNOWN_DATASET",
+        "LIMIT_EXCEEDED",
+        "UNKNOWN_DESCRIPTOR",
+        "UNKNOWN_TABLE",
+        "UNKNOWN_COLUMN",
+        "UNKNOWN_RELATIONSHIP",
+        "INVALID_UNIT",
+        "INVALID_PATH",
+        "NO_PATH",
+        "AMBIGUOUS_PATH",
+        "QUANTIFIER_MISMATCH",
+        "EXCLUDE_SELF_NOT_ALLOWED",
+        "UNDECLARED_DATATYPE",
+        "INVALID_CONSTANT",
+        "NOT_PERMISSIBLE",
+        "UNITS_UNCONVERTIBLE",
+        "RANGE_NOT_ALLOWED",
+        "MEMBER_NOT_APPLICABLE",
+        "SCOPE_COLUMN_MENTION",
+        "FILTER_COLUMN_MENTION",
+        "UNKNOWN_SCOPE_COLUMN",
+        "ROW_IDS_NOT_ALLOWED",
+        "INVALID_KEY",
+        "MIXED_RELEASES",
+        "NOT_SUPPORTED",
+        "PACK_UNAVAILABLE",
+        "PACK_FAILED",
+        "UNPARSEABLE_SOURCE",
+        "COLUMNS_CHANGED",
+        "UNKNOWN_RELEASE",
+        "RELEASE_WITHDRAWN",
+        "ERASURE_BLOCKED",
+        "KEY_NULL",
+        "KEY_NOT_UNIQUE",
+        "CARDINALITY_VIOLATED",
+        "DANGLING_REFERENCE",
+        "COVERAGE_NULL",
+        "COVERAGE_UNKNOWN",
+        "OUTSIDE_RECORD_FILTER",
+        "NOT_APPLICABLE_IN_FILTER",
+        "PATH_NOT_CONFINED",
+        "ARCHIVE_REFUSED",
+        "UNSUPPORTED_FORMAT",
+        "EMPTY_SOURCE",
+        "DATASET_BUSY",
+        "DATASET_EXISTS",
+        "CONFLICT",
+        "NO_SESSION",
+        "NO_CHANGE",
+        "UNKNOWN_PROPOSAL",
+        "INVALID_EXTENSION",
+        "HOST_NOT_ALLOWED",
+        "ORIGIN_NOT_ALLOWED",
+        "TOKEN_REQUIRED",
+        "OPERATOR_REQUIRED",
+        "CSRF_REQUIRED",
+        "NOT_FOUND",
+        "METHOD_NOT_ALLOWED",
+        "UNSUPPORTED_MEDIA_TYPE",
+        "LENGTH_REQUIRED",
+        "INTERNAL_ERROR"
+      ],
+      "title": "RefusalCode",
+      "type": "string"
+    },
     "ReleaseRef": {
       "additionalProperties": false,
       "description": "A release an output drew on. The label is recorded beside the manifest, never hashed.",
@@ -1640,176 +2258,150 @@
       ],
       "title": "TextSegment",
       "type": "object"
-    }
-  },
-  "$id": "cohort-count.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "releases": {
-            "contains": {
-              "properties": {
-                "status": {
-                  "const": "draft"
-                }
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "issuance": {
-            "properties": {
-              "cache_hit": {
-                "const": false
-              }
-            }
-          }
-        }
-      }
     },
-    {
-      "if": {
-        "properties": {
-          "size": {
-            "properties": {
-              "denominator": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "population": {
-            "properties": {
-              "n_false": {
-                "type": "null"
-              },
-              "n_true": {
-                "type": "null"
-              },
-              "n_unknown": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      }
-    }
-  ],
-  "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
-  "properties": {
-    "caveats": {
-      "allOf": [
-        {
-          "items": {
-            "not": {
-              "properties": {
-                "code": {
-                  "enum": [
-                    "COHORTS_OVERLAP",
-                    "CONFOUNDED_WITH_DATASET",
-                    "INVALID_EXCLUDED"
-                  ]
-                }
-              }
-            },
-            "properties": {
-              "affects": {
-                "const": [
-                  "/population"
-                ]
-              }
-            }
-          }
-        }
-      ],
-      "items": {
-        "$ref": "#/$defs/Caveat"
-      },
-      "title": "Caveats",
-      "type": "array"
-    },
-    "digest": {
-      "pattern": "^sha256:[0-9a-f]{64}$",
-      "title": "Digest",
-      "type": "string"
-    },
-    "disclosure": {
-      "$ref": "#/$defs/Disclosure"
-    },
-    "id": {
-      "pattern": "^drv:[0-9a-f]{64}$",
-      "title": "Id",
-      "type": "string"
-    },
-    "issuance": {
-      "$ref": "#/$defs/Issuance"
-    },
-    "population": {
-      "$ref": "#/$defs/Population"
-    },
-    "readback": {
-      "items": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/TextSegment"
+    "Translation": {
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
           },
-          {
-            "$ref": "#/$defs/DataSegment"
-          }
-        ]
-      },
-      "title": "Readback",
-      "type": "array"
-    },
-    "releases": {
-      "items": {
-        "$ref": "#/$defs/ReleaseRef"
-      },
-      "minItems": 1,
-      "title": "Releases",
-      "type": "array"
-    },
-    "size": {
-      "$ref": "#/$defs/Proportion",
-      "allOf": [
-        {
+          "title": "Document",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "format": {
           "not": {
-            "required": [
-              "excluded"
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Format",
+          "type": "string"
+        },
+        "notes": {
+          "items": {
+            "$ref": "#/$defs/TranslationNote"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "format",
+        "document",
+        "notes"
+      ],
+      "title": "Translation",
+      "type": "object"
+    },
+    "TranslationNote": {
+      "additionalProperties": false,
+      "description": "A place where a translation changed meaning or could not be exact (§7.1, D303).",
+      "properties": {
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
             ]
           },
-          "properties": {
-            "denominator_definition": {
-              "const": {
-                "counts": "unit_table",
-                "position": null,
-                "predicate": null
-              }
-            }
-          }
+          "title": "Message",
+          "type": "array"
+        },
+        "pointer": {
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "translated": {
+          "title": "Translated",
+          "type": "boolean"
         }
-      ]
+      },
+      "required": [
+        "pointer",
+        "translated",
+        "message"
+      ],
+      "title": "TranslationNote",
+      "type": "object"
+    },
+    "UncheckedView": {
+      "additionalProperties": false,
+      "description": "A view of the document: syntax-checked only until M3 (§15, D284).",
+      "properties": {
+        "analysis": {
+          "$ref": "#/$defs/Data"
+        },
+        "position": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "status": {
+          "const": "unchecked",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "position",
+        "analysis",
+        "status"
+      ],
+      "title": "UncheckedView",
+      "type": "object"
+    }
+  },
+  "$id": "tool.validate-document.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What ``validate_document`` gives (§8.6, §11.1): every refusal, sorted, and every cohort\nthat canonicalised.",
+  "properties": {
+    "cohorts": {
+      "items": {
+        "$ref": "#/$defs/CohortCheck"
+      },
+      "title": "Cohorts",
+      "type": "array"
+    },
+    "params": {
+      "$ref": "#/$defs/Parameters"
+    },
+    "refusals": {
+      "items": {
+        "$ref": "#/$defs/Refusal"
+      },
+      "title": "Refusals",
+      "type": "array"
+    },
+    "translation": {
+      "$ref": "#/$defs/Translation"
+    },
+    "valid": {
+      "title": "Valid",
+      "type": "boolean"
+    },
+    "views": {
+      "items": {
+        "$ref": "#/$defs/UncheckedView"
+      },
+      "title": "Views",
+      "type": "array"
     }
   },
   "required": [
-    "id",
-    "digest",
-    "population",
-    "size",
-    "disclosure",
-    "readback",
-    "caveats",
-    "releases",
-    "issuance"
+    "valid",
+    "refusals",
+    "cohorts",
+    "views"
   ],
-  "title": "CohortCount",
+  "title": "DocumentValidation",
   "type": "object"
 }

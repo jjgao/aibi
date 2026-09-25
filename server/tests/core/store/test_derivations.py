@@ -2,12 +2,16 @@
 their id hashes, issuances, pruning, what ``explain`` resolves ids to, and erasure."""
 
 import functools
+import itertools
 import json
 import math
 import random
 import re
 import sqlite3
+import threading
+import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -25,24 +29,33 @@ from aibi.core.engine.canonical import (
     as_document,
     canonicalise,
 )
+from aibi.core.engine.ids import derivation_id
 from aibi.core.schema.curation import ChangeRequest
 from aibi.core.schema.document import Clause, PackLeaf
 from aibi.core.schema.ids import ISSUANCE_ID_RE
 from aibi.core.schema.jsonio import number_text
+from aibi.core.schema.limits import MIN_LOG_BYTES, LogLimits
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.output import Segment, text
 from aibi.core.schema.pack_api import Pack, PackManifest, PackRegistry, ReleaseView
-from aibi.core.store import redaction
+from aibi.core.store import derivations, redaction
+from aibi.core.store import store as store_module
+from aibi.core.store.appdb import LOG_ISSUANCE_BYTES
 from aibi.core.store.build import Layout
 from aibi.core.store.derivations import (
     DerivationConflictError,
     DerivationLog,
+    Issue,
+    LogFullError,
+    NotAdmittedError,
     Ulids,
     WithdrawnReleaseError,
     new_issuance_id,
     stamp,
+    store_text,
     text_of,
     ulid,
+    ulid_milliseconds,
     utc,
 )
 from aibi.core.store.erasure import erase
@@ -161,17 +174,28 @@ def test_a_derivation_id_is_recorded_only_with_the_object_it_is_the_hash_of(
 
 
 def test_issuance_ids_increase_within_a_millisecond_and_when_the_clock_steps_back() -> None:
-    times = iter([5_000_000, 5_000_000, 5_000_000, 4_000_000, 6_000_000])
-    ulids = Ulids(lambda: next(times), lambda size: b"\xff" * size)
+    """Order comes from the time: an id in the millisecond of the last one, or before it, takes
+    the millisecond after it, and every id draws randomness of its own (D302)."""
+    times = iter([5_000_000, 5_000_000, 5_000_000, 4_000_000, 20_000_000])
+    draws = iter(bytes([value]) * 10 for value in (9, 3, 7, 1, 5))
+    ulids = Ulids(lambda: next(times), lambda size: next(draws))
     made = [ulids() for _ in range(5)]
-    assert made == sorted(made)
-    assert len(set(made)) == 5
-    assert made[1] == ulid(6, bytes(10))  # the randomness spent, the next millisecond
-    assert made[2] == ulid(6, (1).to_bytes(10, "big"))
-    assert made[3] == ulid(6, (2).to_bytes(10, "big"))
+    assert made == [
+        ulid(5, b"\x09" * 10),
+        ulid(6, b"\x03" * 10),
+        ulid(7, b"\x07" * 10),
+        ulid(8, b"\x01" * 10),
+        ulid(20, b"\x05" * 10),
+    ]
     many = [new_issuance_id() for _ in range(1_000)]
     assert many == sorted(many)
-    assert len(set(many)) == len(many)
+    crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    drawn = [
+        sum(crockford.index(char) << (5 * place) for place, char in enumerate(reversed(tail)))
+        for tail in (identifier[-16:] for identifier in many)
+    ]
+    assert len(set(drawn)) == len(many)
+    assert not any(later - earlier == 1 for earlier, later in itertools.pairwise(drawn))
 
 
 def test_issuance_ids_are_ulids_in_crockford_s_base_32() -> None:
@@ -230,9 +254,13 @@ def test_a_cache_hit_names_the_issuance_whose_sql_produced_its_values(
         "INSERT INTO derivation_releases SELECT derivation, 'other', manifest"
         " FROM derivation_releases",
         "INSERT OR REPLACE INTO issuances SELECT * FROM issuances",
-        "UPDATE issuances SET written = '{}'",
-        "UPDATE issuances SET params = '{\"[erased]\"'",
+        "UPDATE issuances SET request = sql",
+        "UPDATE issuances SET sql = request",
         "UPDATE issuances SET sql = NULL",
+        "UPDATE log_texts SET text = '[\"[erased]\"]'",
+        "INSERT OR REPLACE INTO log_texts SELECT digest, '[\"[erased]\"]' FROM log_texts",
+        "DELETE FROM log_texts",
+        "DELETE FROM log_usage",
         "UPDATE issuances SET engine = 'other'",
         "DELETE FROM issuances",
     ],
@@ -321,8 +349,10 @@ def test_a_rewrite_of_an_issuance_without_redaction_s_permit_is_refused(
 ) -> None:
     cohort, written = _cohort(store, imported, [AGE])
     _issue(store, cohort, written)
+    with store.db.transaction() as db:
+        forged = store_text(db, {"forged": "m-99", "x": "[erased]"})
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
-        db.execute('UPDATE issuances SET written = \'{"forged":"m-99","x":"[erased]"}\'')
+        db.execute("UPDATE issuances SET request = ?", (forged,))
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
         db.execute("UPDATE derivations SET hashed = NULL")
     assert store.explain(cohort.id).status == "issued"
@@ -336,9 +366,10 @@ def test_a_redaction_never_takes_an_issuance_s_sql_to_or_from_none(
     hit = _issue(store, cohort, written, values_from=ran)
     with store.db.transaction() as db:
         db.execute("INSERT INTO log_permits (kind) VALUES ('redaction')")
-    for identifier, sql in ((ran, None), (hit, '["[erased]"]')):
+        erased = store_text(db, cast(JsonValue, ["[erased]"]))
+    for identifier, digest in ((ran, None), (hit, erased)):
         with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
-            db.execute("UPDATE issuances SET sql = ? WHERE id = ?", (sql, identifier))
+            db.execute("UPDATE issuances SET sql = ? WHERE id = ?", (digest, identifier))
 
 
 def test_a_redaction_s_rewrite_of_an_issuance_is_admitted(store: Store, imported: str) -> None:
@@ -347,8 +378,12 @@ def test_a_redaction_s_rewrite_of_an_issuance_is_admitted(store: Store, imported
     with store.db.transaction() as db:
         db.execute("INSERT INTO log_permits (kind) VALUES ('redaction')")
         db.execute(
-            "UPDATE issuances SET written = ?, params = ?, sql = ? WHERE id = ?",
-            ('{"notes":"[erased]"}', '{"who":"[erased]"}', '["[erased]"]', issued),
+            "UPDATE issuances SET request = ?, sql = ? WHERE id = ?",
+            (
+                store_text(db, {"document": {"notes": "[erased]"}, "params": {"who": "[erased]"}}),
+                store_text(db, cast(JsonValue, ["[erased]"])),
+                issued,
+            ),
         )
         db.execute("DELETE FROM log_permits")
     record = store.derivations.issuance(issued)
@@ -376,7 +411,7 @@ def test_a_derivation_erased_or_of_another_kind_takes_no_issuance(
         _issue(store, cohort, written)
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
         db.execute(
-            "INSERT INTO issuances SELECT ?, derivation, tool, written, params, sql, ?, engine,"
+            "INSERT INTO issuances SELECT ?, derivation, tool, request, sql, ?, engine,"
             " packs, at FROM issuances WHERE id = ?",
             (forged := new_issuance_id(), forged, issued),
         )
@@ -428,7 +463,9 @@ def test_explain_resolves_an_id_as_the_log_and_its_releases_stand(
     assert store.explain(issued).status == "withdrawn"
 
 
-def test_a_derivation_s_issuances_are_listed_by_time_then_id(store: Store, imported: str) -> None:
+def test_a_derivation_s_issuances_are_listed_as_recorded_whatever_the_clock_says(
+    store: Store, imported: str
+) -> None:
     times = iter(["2026-01-01T00:00:09Z", "2026-01-01T00:00:08Z", "2026-01-01T00:00:07Z"])
     log = DerivationLog(store.db, lambda: next(times))
     cohort, written = _cohort(store, imported, [AGE])
@@ -447,7 +484,7 @@ def test_a_derivation_s_issuances_are_listed_by_time_then_id(store: Store, impor
         )
         for _ in range(2)
     ]
-    assert log.issuances(cohort.id) == [made[1], made[0]]
+    assert log.issuances(cohort.id) == made
 
 
 def _issued(store: Store, **fields: Any) -> str:
@@ -713,6 +750,61 @@ def _without_the_member(store: Store, library: Library) -> str:
     return built.manifest.hash
 
 
+def test_an_erasure_recorded_after_the_mark_refuses_a_call_s_issuances(
+    store: Store, library: Library, imported: str
+) -> None:
+    """Erasure is one pass over what the log holds when it runs: issuances canonicalised before
+    it and recorded after it, over a live release it left alone, would keep the note that names
+    the person, so they are refused, and nothing is recorded (D290)."""
+    live = _without(store, library, KEY)
+    cohort, written = _cohort(store, live, [AGE], label=2, notes=f"looking at {KEY}")
+    mark = store.derivations.erasure_mark()
+    assert erase(store, "lib", "members", [KEY], ADA).redacted
+    with pytest.raises(derivations.ErasedMeanwhileError):
+        store.derivations.issue_all(_issues(cohort, written, 2), erasures_after=mark)
+    assert store.derivations.derivation(cohort.id) is None
+    assert (_count(store, "issuances"), _count(store, "log_texts")) == (0, 0)
+    after = store.derivations.erasure_mark()
+    assert after > mark
+    [issued] = store.derivations.issue_all(_issues(cohort, written, 1), erasures_after=after)
+    assert store.derivations.issuance(issued) is not None
+    assert derivations.ERASURES == redaction.ERASE_ACTION
+
+
+def test_an_erasure_of_another_dataset_refuses_nothing(
+    store: Store, library: Library, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    mark = store.derivations.erasure_mark()
+    with store.db.transaction() as db:
+        store.db.audit(db, store.now(), "other", ADA, redaction.ERASE_ACTION, {})
+    assert store.derivations.erasure_mark() > mark
+    [issued] = store.derivations.issue_all(_issues(cohort, written, 1), erasures_after=mark)
+    assert store.derivations.issuance(issued) is not None
+
+
+@pytest.mark.parametrize(
+    ("dataset", "params"),
+    [("other@1", {}), (None, {"d": "other"}), (None, {"ds": ["x", "other@2"]})],
+)
+def test_an_erasure_of_a_dataset_the_document_or_its_parameters_name_refuses_the_call(
+    store: Store, imported: str, dataset: str | None, params: dict[str, JsonValue]
+) -> None:
+    """An issuance names a dataset in its document as written and its parameters as well as
+    through its derivation (D290), and an erasure that would redact it for either refuses it."""
+    cohort, written = _cohort(store, imported, [AGE])
+    assert isinstance(written, dict)
+    if dataset is not None:
+        written = {**written, "dataset": dataset}
+    mark = store.derivations.erasure_mark()
+    with store.db.transaction() as db:
+        store.db.audit(db, store.now(), "other", ADA, redaction.ERASE_ACTION, {})
+    issues = [replace(issue, params=params) for issue in _issues(cohort, written, 2)]
+    with pytest.raises(derivations.ErasedMeanwhileError):
+        store.derivations.issue_all(issues, erasures_after=mark)
+    assert _count(store, "issuances") == 0
+
+
 def _holds(store: Store, text: str) -> list[str]:
     token = re.compile(rb"(?<![0-9A-Za-z])" + re.escape(text.encode()) + rb"(?![0-9A-Za-z])")
     return [
@@ -886,7 +978,7 @@ def test_a_derivation_takes_no_issuance_once_a_release_of_it_is_withdrawn(
         _issue(store, cohort, written)
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
         db.execute(
-            "INSERT INTO issuances SELECT ?, derivation, tool, written, params, sql, ?, engine,"
+            "INSERT INTO issuances SELECT ?, derivation, tool, request, sql, ?, engine,"
             " packs, at FROM issuances WHERE id = ?",
             (forged := new_issuance_id(), forged, issued),
         )
@@ -910,7 +1002,7 @@ def test_a_cache_hit_recorded_by_hand_names_an_issuance_of_its_derivation(
     elsewhere = _issue(store, other, other_written)
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
         db.execute(
-            "INSERT INTO issuances SELECT ?, derivation, tool, written, params, NULL, ?, engine,"
+            "INSERT INTO issuances SELECT ?, derivation, tool, request, NULL, ?, engine,"
             " packs, at FROM issuances WHERE id = ?",
             (new_issuance_id(), elsewhere, issued),
         )
@@ -2865,3 +2957,376 @@ def test_a_concept_s_coverage_scope_is_held_as_one_on_a_column_that_names_the_pe
     identifier = _derivation(store, [{"dataset": "lib", "manifest": live}], tree)
     assert erase(store, "lib", "members", [KEY], ADA).redacted
     assert store.explain(identifier).status == status
+
+
+# --- Texts stored once, issuances recorded together, and pruning (D300) ------------------------
+
+
+def _issues(cohort: CanonicalCohort, written: JsonValue, count: int) -> list[Issue]:
+    return [
+        Issue(
+            derivation=cohort.id,
+            kind="cohort",
+            hashed=cohort.identity.hashed(),
+            releases=[cohort.release.model_dump(mode="json")],
+            tool="count_cohort",
+            written=written,
+            params={},
+            sql=SQL,
+            engine="aibi 0.0.1",
+            packs={},
+        )
+        for _ in range(count)
+    ]
+
+
+def _count(store: Store, table: str) -> int:
+    return int(store.db.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+
+
+def test_a_call_s_issuances_are_recorded_together_naming_one_stored_request(
+    store: Store, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    issued = store.derivations.issue_all(_issues(cohort, written, 3))
+    assert store.derivations.issuances(cohort.id) == issued == sorted(issued)
+    assert _count(store, "log_texts") == 2
+    record = store.derivations.issuance(issued[0])
+    assert record is not None
+    assert (record.written, record.params, record.sql) == (written, {}, SQL)
+
+
+def test_nothing_is_recorded_when_the_call_will_not_be_answered(
+    store: Store, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    with pytest.raises(NotAdmittedError):
+        store.derivations.issue_all(_issues(cohort, written, 2), admit=lambda: False)
+    assert store.derivations.derivation(cohort.id) is None
+    assert (_count(store, "issuances"), _count(store, "log_texts")) == (0, 0)
+    assert store.derivations.usage() == 0
+
+
+def test_what_would_take_the_log_past_its_size_is_refused(store: Store, imported: str) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    log = DerivationLog(store.db, store.now, limits=LogLimits(log_bytes=MIN_LOG_BYTES))
+    with store.db.transaction() as db:
+        store_text(db, "x" * (MIN_LOG_BYTES - 100))
+    with pytest.raises(LogFullError):
+        log.issue_all(_issues(cohort, written, 1))
+    assert log.derivation(cohort.id) is None
+    assert _count(store, "log_texts") == 1
+
+
+def _distinct(store: Store, manifest: str, count: int, start: int, notes: int = 0) -> list[Issue]:
+    """Issuances of ``count`` derivations no other has, from ``start``: distinct cohorts, each
+    written with ``notes`` bytes of notes."""
+    release = {"dataset": "lib", "label": 1, "manifest": manifest, "status": "published"}
+    issues: list[Issue] = []
+    for number in range(start, start + count):
+        tree: JsonValue = {"all": [{"kind": "value", "column": "members.age", "values": [number]}]}
+        hashed: JsonValue = {
+            "cohort": {manifest: tree},
+            "unit": "members",
+            "semantics_version": 1,
+            "packs": {},
+            "disclosure": {"min_cell_count": None},
+        }
+        issues.append(
+            Issue(
+                derivation=derivation_id(hashed),
+                kind="cohort",
+                hashed=hashed,
+                releases=[release],
+                tool="count_cohort",
+                written={"cohorts": {"c": tree}, "notes": "n" * notes},
+                params={},
+                sql=SQL,
+                engine="aibi 0.0.1",
+                packs={},
+            )
+        )
+    return issues
+
+
+def _pages(store: Store) -> int:
+    """The bytes of the app DB's pages in use."""
+    connection = store.db.connection
+    pages, free, size = (
+        int(connection.execute(f"PRAGMA {pragma}").fetchone()[0])
+        for pragma in ("page_count", "freelist_count", "page_size")
+    )
+    return (pages - free) * size
+
+
+@pytest.mark.parametrize(
+    ("notes", "again"),
+    [
+        ((0,), True),  # a count made again: its issuance alone
+        ((0,), False),  # small rows
+        ((1950,), False),  # a text just over half a page, one to a page
+        ((4100,), False),  # just over a page: a leaf's local part and an overflow page
+        ((13000,), False),  # several pages
+        ((3700, 0), False),  # a text near a page, then a small one, and again
+    ],
+)
+def test_the_log_counts_at_least_the_pages_its_rows_take(
+    store: Store, imported: str, notes: tuple[int, ...], again: bool
+) -> None:
+    """``usage`` grows by at least the bytes of the pages the log adds to the app DB, for rows
+    of every size and rows of two sizes in turn, and by at most a little over twice that: each
+    row's cell is charged twice, for the page the next one may leave part empty (D300)."""
+    log = store.derivations
+    log.issue_all(_distinct(store, imported, 1, 0))
+    pages, used = _pages(store), log.usage()
+    for number in range(1, 201):
+        size = notes[number % len(notes)]
+        log.issue_all(_distinct(store, imported, 1, 0 if again else number, size))
+    ratio = (_pages(store) - pages) / (log.usage() - used)
+    assert 0.45 <= ratio <= 1
+
+
+def _filled(log: DerivationLog, store: Store, manifest: str) -> int:
+    """Record distinct cohorts until the log refuses one; how many it holds."""
+    held = 0
+    for size in (100, 10, 1):
+        while True:
+            try:
+                log.issue_all(_distinct(store, manifest, size, held))
+            except LogFullError:
+                break
+            held += size
+    return held
+
+
+def test_a_log_filled_with_distinct_cohorts_counts_again_once_pruned(
+    store: Store, imported: str
+) -> None:
+    """Every derivation, text and issuance counts towards ``log_bytes``, and pruning frees all
+    of them, a derivation no issuance names included (D300)."""
+    log = DerivationLog(store.db, store.now, limits=LogLimits(log_bytes=MIN_LOG_BYTES))
+    held = _filled(log, store, imported)
+    assert held > 100
+    assert log.usage() == log.measured() <= MIN_LOG_BYTES
+    with pytest.raises(LogFullError):
+        log.issue_all(_distinct(store, imported, 1, held))
+    assert log.prune("9999-01-01T00:00:00Z") == held
+    assert (_count(store, "derivations"), _count(store, "log_texts")) == (0, 0)
+    assert log.usage() == log.measured() == 0
+    [issued] = log.issue_all(_distinct(store, imported, 1, held))
+    assert log.issuance(issued) is not None
+
+
+def test_a_count_made_again_grows_the_log_by_its_issuance(store: Store, imported: str) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    store.derivations.issue_all(_issues(cohort, written, 1))
+    once = store.derivations.usage()
+    store.derivations.issue_all(_issues(cohort, written, 1))
+    assert store.derivations.usage() - once == LOG_ISSUANCE_BYTES + len("{}")
+    assert store.derivations.usage() == store.derivations.measured()
+
+
+def test_pruning_takes_the_derivations_and_texts_no_issuance_names_any_more(
+    store: Store, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    other, other_written = _cohort(store, imported, [])
+    store.derivations.issue_all(_issues(cohort, written, 2))
+    kept = _issue(store, other, other_written, tool="run_analysis")
+    assert store.derivations.prune("9999-01-01T00:00:00Z") == 2
+    assert store.derivations.issuances(cohort.id) == []
+    assert store.derivations.derivation(cohort.id) is None
+    assert store.explain(cohort.id).status == "not_issued"
+    assert store.derivations.issuances(other.id) == [kept]
+    assert _count(store, "log_texts") == 2
+    assert store.derivations.usage() == store.derivations.measured()
+
+
+def test_pruning_s_permit_admits_removing_only_a_derivation_no_issuance_names(
+    store: Store, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    named = _issue(store, cohort, written)
+    other = _derivation(store, [{"dataset": "lib", "manifest": imported}])
+    with store.db.transaction() as db:
+        db.execute("INSERT INTO log_permits VALUES ('pruning', '9999')")
+    for statement in ("DELETE FROM derivation_releases", "DELETE FROM derivations"):
+        with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
+            db.execute(
+                statement
+                + " WHERE "
+                + ("derivation" if "releases" in statement else "id")
+                + " = ?",
+                (cohort.id,),
+            )
+    with store.db.transaction() as db:
+        db.execute("DELETE FROM derivation_releases WHERE derivation = ?", (other,))
+        db.execute("DELETE FROM derivations WHERE id = ?", (other,))
+    assert store.derivations.derivation(other) is None
+    assert store.derivations.issuances(cohort.id) == [named]
+    assert store.derivations.usage() == store.derivations.measured()
+
+
+def test_an_erased_derivation_is_never_pruned_and_its_bytes_are_no_longer_counted(
+    store: Store, library: Library, imported: str
+) -> None:
+    live = _without(store, library, KEY)
+    naming = {"kind": "value", "column": "loans.member_id", "values": [KEY]}
+    cohort, written = _cohort(store, live, [{**LOAN, "where": [naming]}], label=2)
+    _issue(store, cohort, written)
+    kept, kept_written = _cohort(store, live, [AGE], label=2)
+    _issue(store, kept, kept_written)
+    assert erase(store, "lib", "members", [KEY], ADA).redacted
+    assert store.explain(cohort.id).status == "erased"
+    assert store.derivations.usage() == store.derivations.measured() > 0
+    with store.db.transaction() as db:
+        db.execute("INSERT INTO log_permits VALUES ('pruning', '9999')")
+    with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
+        db.execute("DELETE FROM derivation_releases WHERE derivation = ?", (cohort.id,))
+    store.derivations.prune("9999-01-01T00:00:00Z")
+    assert store.explain(cohort.id).status == "erased"
+    assert store.derivations.usage() == store.derivations.measured() == 0
+
+
+def test_a_count_prunes_nothing_itself(store: Store, imported: str) -> None:
+    """Pruning is the log's thread's, never a tool call's (D300)."""
+    cohort, written = _cohort(store, imported, [AGE])
+    now = ["2026-01-01T00:00:00.000000Z"]
+    log = DerivationLog(store.db, lambda: now[0], limits=LogLimits(keep_count_issuances_days=1))
+    [old] = log.issue_all(_issues(cohort, written, 1))
+    now[0] = "2026-01-03T00:00:00.000000Z"
+    [late] = log.issue_all(_issues(cohort, written, 1))
+    assert log.issuances(cohort.id) == [old, late]
+
+
+def test_the_log_s_thread_prunes_what_expires_every_period(store: Store, imported: str) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    now = ["2026-01-01T00:00:00.000000Z"]
+    log = DerivationLog(store.db, lambda: now[0], limits=LogLimits(keep_count_issuances_days=1))
+    [old] = log.issue_all(_issues(cohort, written, 1))
+    now[0] = "2026-01-03T00:00:00.000000Z"
+    [late] = log.issue_all(_issues(cohort, written, 1))
+    log.start_pruning(every=0.05)
+    try:
+        ends = time.monotonic() + 10
+        while log.issuance(old) is not None and time.monotonic() < ends:
+            time.sleep(0.01)
+    finally:
+        log.stop_pruning()
+    assert log.issuances(cohort.id) == [late]
+    assert log.expired() == "2026-01-02T00:00:00.000000Z"
+
+
+def test_pruning_takes_the_app_db_one_batch_at_a_time(
+    store: Store, imported: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(derivations, "PRUNE_BATCH", 2)
+    cohort, written = _cohort(store, imported, [AGE])
+    store.derivations.issue_all(_issues(cohort, written, 5))
+    began: list[str] = []
+    store.db.connection.set_trace_callback(
+        lambda statement: began.append(statement) if statement.startswith("BEGIN") else None
+    )
+    try:
+        assert store.derivations.prune("9999-01-01T00:00:00Z") == 5
+    finally:
+        store.db.connection.set_trace_callback(None)
+    assert len(began) == 3
+    assert store.derivations.derivation(cohort.id) is None
+
+
+def test_expired_count_issuances_are_pruned_when_the_store_opens(
+    tmp_path: Path, library: Library, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store prunes ``OPEN_BATCHES`` batches as it opens, and the log's thread the rest at
+    once; a derivation whose issuances all went goes with them, its id no longer issued."""
+    at = [datetime(2026, 1, 1, tzinfo=UTC)]
+    opened = Store(
+        tmp_path / "data", clock=lambda: at[0], log=LogLimits(keep_count_issuances_days=7)
+    )
+    with opened.pin() as pin:
+        built = opened.import_release(
+            pin, "lib", library.descriptors(), library.sources(), library.layouts
+        )
+        opened.publish("lib", built.manifest.hash, "operator:ada")
+    cohort, written = _cohort(opened, built.manifest.hash, [AGE])
+    issued = opened.derivations.issue_all(_issues(cohort, written, 3))
+    opened.close()
+    at[0] = datetime(2026, 1, 20, tzinfo=UTC)
+    monkeypatch.setattr(derivations, "PRUNE_BATCH", 1)
+    monkeypatch.setattr(store_module, "OPEN_BATCHES", 1)
+    again = Store(
+        tmp_path / "data", clock=lambda: at[0], log=LogLimits(keep_count_issuances_days=7)
+    )
+    try:
+        assert again.derivations.issuance(issued[-1]) is None
+        ends = time.monotonic() + 10
+        while again.derivations.issuances(cohort.id) and time.monotonic() < ends:
+            time.sleep(0.01)
+        assert again.derivations.issuances(cohort.id) == []
+        assert again.explain(cohort.id).status == "not_issued"
+    finally:
+        again.close()
+
+
+def _opened_with_expired(tmp_path: Path, library: Library, count: int) -> tuple[str, list[str]]:
+    """A store under ``tmp_path`` holding ``count`` issuances of one cohort that expire a week
+    later, closed; the cohort's id and the issuances'."""
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    opened = Store(tmp_path / "data", clock=lambda: at, log=LogLimits(keep_count_issuances_days=7))
+    try:
+        with opened.pin() as pin:
+            built = opened.import_release(
+                pin, "lib", library.descriptors(), library.sources(), library.layouts
+            )
+            opened.publish("lib", built.manifest.hash, "operator:ada")
+        cohort, written = _cohort(opened, built.manifest.hash, [AGE])
+        return cohort.id, opened.derivations.issue_all(_issues(cohort, written, count))
+    finally:
+        opened.close()
+
+
+def test_the_store_prunes_open_batches_as_it_opens_whatever_the_log_s_thread_does(
+    tmp_path: Path, library: Library, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the log's thread not started, opening prunes ``OPEN_BATCHES`` batches, no more and
+    no fewer (D300)."""
+    cohort, issued = _opened_with_expired(tmp_path, library, 5)
+    monkeypatch.setattr(derivations, "PRUNE_BATCH", 1)
+    monkeypatch.setattr(store_module, "OPEN_BATCHES", 2)
+    monkeypatch.setattr(DerivationLog, "start_pruning", lambda self, **_: None)
+    later = datetime(2026, 1, 20, tzinfo=UTC)
+    again = Store(
+        tmp_path / "data", clock=lambda: later, log=LogLimits(keep_count_issuances_days=7)
+    )
+    try:
+        assert again.derivations.issuances(cohort) == issued[:3]
+    finally:
+        again.close()
+
+
+def _pruning_threads() -> int:
+    return sum(thread.name == "aibi-log-pruning" for thread in threading.enumerate())
+
+
+def test_closing_the_store_ends_the_log_s_thread(tmp_path: Path) -> None:
+    before = _pruning_threads()
+    opened = Store(tmp_path / "data")
+    assert _pruning_threads() == before + 1
+    opened.close()
+    assert _pruning_threads() == before
+
+
+def test_issuance_ids_increase_across_restarts_whatever_the_clock_says(
+    store: Store, imported: str
+) -> None:
+    """A log seeds its ids with the greatest it holds, so that a clock set back after a
+    restart still makes later ids (D302)."""
+    cohort, written = _cohort(store, imported, [AGE])
+    ahead = DerivationLog(store.db, store.now, ids=Ulids(lambda: 2**47 * 1_000_000))
+    [first] = ahead.issue_all(_issues(cohort, written, 1))
+    behind = DerivationLog(store.db, store.now, ids=Ulids(lambda: 0))
+    [second] = behind.issue_all(_issues(cohort, written, 1))
+    assert first < second
+    assert ulid_milliseconds(second[4:]) == ulid_milliseconds(first[4:]) + 1
+    assert store.derivations.issuances(cohort.id) == [first, second]

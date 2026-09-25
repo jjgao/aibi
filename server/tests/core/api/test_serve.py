@@ -22,6 +22,7 @@ from aibi.core.api import logs, serve
 from aibi.core.api.config import BASE, ServerConfig
 from aibi.core.api.connections import GuardedProtocol
 from aibi.core.api.serve import WithoutSecrets, main, run, services_of, uvicorn_config
+from aibi.core.engine import worker
 from aibi.core.operator.auth import TOKEN_RE, hash_token, new_token
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.store.store import Store, StoreLockedError
@@ -307,7 +308,7 @@ def test_a_real_server_s_access_log_holds_no_secret_from_a_path(
 def test_the_server_runs_under_umask_077(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[int] = []
 
-    def locked(path: Path) -> Store:
+    def locked(path: Path, **given: Any) -> Store:
         mask = os.umask(0o077)
         os.umask(mask)
         seen.append(mask)
@@ -415,3 +416,51 @@ def test_a_configuration_is_required_and_its_problems_are_listed(write_config: W
 @pytest.mark.usefixtures("tmp_path")
 def test_serve_needs_a_configuration() -> None:
     assert run_main("serve")[0] == 2
+
+
+def test_a_system_without_proc_serves_without_query_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No worker's memory could be watched, so none runs: ``count_cohort`` refuses as
+    ``NOT_SUPPORTED`` and the rest is served (D293, D300)."""
+    config = config_of(tmp_path)
+    assert serve.workers_of(config) is not None
+    monkeypatch.setattr(worker, "_resident", lambda pid: None)
+    assert serve.workers_of(config) is None
+
+
+class _Stopped:
+    """uvicorn's server, stopped as soon as it runs."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    def run(self) -> None:
+        return None
+
+
+def test_check_and_serve_say_that_count_cohort_is_disabled_without_query_workers(
+    write_config: Write, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'
+    path = write_config(text)
+    code, out, _ = run_main("check", "--config", str(path))
+    assert (code, serve.NO_WORKERS in out) == (0, False)
+    assert "query workers: 2; query seconds: 25" in out
+    monkeypatch.setattr(worker, "_resident", lambda pid: None)
+    code, out, _ = run_main("check", "--config", str(path))
+    assert (code, f"query workers: none; {serve.NO_WORKERS}\n" in out) == (0, True)
+    monkeypatch.setattr(serve.uvicorn, "Server", _Stopped)
+    err = io.StringIO()
+    assert run(config_of(tmp_path), stderr=err) == 0
+    assert err.getvalue() == f"aibi-server: {serve.NO_WORKERS}\n"
+
+
+def test_the_check_refuses_a_period_the_log_could_not_count_back(write_config: Write) -> None:
+    text = (
+        f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'
+        "[log]\nkeep_count_issuances_days = 36501\n"
+    )
+    code, _, err = run_main("check", "--config", str(write_config(text)))
+    assert code == 2
+    assert "log.keep_count_issuances_days" in err
