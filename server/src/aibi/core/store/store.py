@@ -42,10 +42,13 @@ descriptors are verified when read.
 cached results (M2). **Redaction** (§12.2, Erasure) runs once no pin holds a withdrawn manifest,
 or a blob of it that no live release references (a query on the new release does not hold it
 off); until then it waits in the app DB, and it runs when those pins are released. After it, the
-WAL is checkpointed; while a reader keeps the checkpoint from finishing, the redaction counts as
-pending, and the checkpoint is retried when the store opens and, at most once a second
+app DB is vacuumed, so that no page keeps a copy of a row as it was before (``AppDB.vacuum``), and
+the WAL is checkpointed. The vacuum is recorded as due in the redaction's own transaction and
+cleared only once a vacuum and the checkpoint after it finished (D223): while a reader keeps the
+checkpoint from finishing, or a vacuum or a checkpoint fails (a full disk), the redaction counts
+as pending, and both are retried when the store opens and, at most once a second
 (``CHECKPOINT_RETRY``), when a pin is released, so a long reader does not make every query wait
-on it.
+on it. A vacuum that finished is not run again for a checkpoint retried in the same process.
 """
 
 import fcntl
@@ -61,7 +64,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from types import TracebackType
-from typing import Literal, Self
+from typing import Literal, Self, cast
 
 from pydantic import JsonValue
 
@@ -75,6 +78,12 @@ from aibi.core.store import build, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
+from aibi.core.store.derivations import (
+    DerivationLog,
+    DerivationRecord,
+    IssuanceRecord,
+    stamp,
+)
 from aibi.core.store.gate import Mode
 from aibi.core.store.manifest import Manifest, hex_of
 from aibi.core.store.sources import RawSource
@@ -88,6 +97,24 @@ CHECKPOINT_RETRY = 1.0
 Status = Literal["published", "withdrawn", "draft", "discarded"]
 OperationKind = Literal["import", "reimport", "withdraw", "erase", "session"]
 _REFUSED_WHILE_OPEN: frozenset[OperationKind] = frozenset({"import", "reimport", "withdraw"})
+
+
+IdStatus = Literal[
+    "issued", "not_issued", "unknown", "withdrawn", "discarded", "unknown_release", "erased"
+]
+
+
+@dataclass(frozen=True)
+class Explained:
+    """What the derivation log says of an id (§7.6, §12.2, D289): a derivation id's record, or an
+    issuance id's with its derivation's. ``not_issued`` is a derivation id the log does not hold,
+    ``unknown`` an issuance id it does not (never issued, or pruned), and ``unknown_release`` a
+    derivation over a release the store has no record of, which no path of the store records."""
+
+    id: str
+    status: IdStatus
+    derivation: DerivationRecord | None = None
+    issuance: IssuanceRecord | None = None
 
 
 class StoreLockedError(RuntimeError):
@@ -185,6 +212,7 @@ class Store:
             self.blobs.clean()
             self.db = db = AppDB(root / APP_DB)
             self.lock: threading.RLock = self.db.lock
+            self.derivations = DerivationLog(self.db, self.now)
             self.pinned: Counter[str] = Counter()
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}
@@ -192,6 +220,7 @@ class Store:
             self._running: dict[str, OperationKind] = {}
             self._checkpoint_due = True
             self._checkpoint_tried: float | None = None
+            self._vacuumed = False
             # This process holds no pin yet: what a crash left pinned is swept now.
             self.sweep()
             self.run_pending_redactions()
@@ -207,7 +236,7 @@ class Store:
 
     def now(self) -> str:
         """RFC 3339 in UTC, as curation statuses write it."""
-        return self.clock().astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        return stamp(self.clock())
 
     # --- Releases ------------------------------------------------------------------------------
 
@@ -435,6 +464,34 @@ class Store:
             return Resolution(dataset, pin, None, "discarded")
         raise StoreRefused(RefusalCode.UNKNOWN_RELEASE, "No release of the dataset has that hash")
 
+    def explain(self, identifier: str) -> Explained:
+        """What the log holds for a derivation or issuance id, and what the id resolves to: a
+        derivation that erasure took is *erased*; one over a withdrawn release *withdrawn*; one
+        over a draft state that is no longer live *discarded*; one over a release the store has
+        no record of *unknown_release*; any other *issued* (§7.6, D289)."""
+        if identifier.startswith("iss:"):
+            issuance = self.derivations.issuance(identifier)
+            if issuance is None:
+                return Explained(identifier, "unknown")
+            found = self.explain(issuance.derivation)
+            return Explained(identifier, found.status, found.derivation, issuance)
+        derivation = self.derivations.derivation(identifier)
+        if derivation is None:
+            return Explained(identifier, "not_issued")
+        if derivation.erased:
+            return Explained(identifier, "erased", derivation)
+        statuses: set[str] = set()
+        for release in cast(list[dict[str, str]], derivation.releases):
+            try:
+                statuses.add(self.resolve(release["dataset"], release["manifest"]).status)
+            except StoreRefused:
+                statuses.add("unknown_release")
+        order: tuple[IdStatus, ...] = ("withdrawn", "discarded", "unknown_release")
+        for status in order:
+            if status in statuses:
+                return Explained(identifier, status, derivation)
+        return Explained(identifier, "issued", derivation)
+
     def withdraw(self, dataset: str, release: int | str, by: str) -> list[int]:
         """Withdraw a release, by label or manifest hash: every label of its manifest (§12.3),
         in the dataset's operation slot. Returns those labels."""
@@ -545,19 +602,22 @@ class Store:
         return {int(row[0]): redaction.Terms.loads(row[1]) for row in rows}
 
     def redacted(self, requests: Collection[int]) -> bool:
-        """Whether the redactions ``requests`` ran and the WAL checkpoint after them finished."""
+        """Whether the redactions ``requests`` ran, and the vacuum and the WAL checkpoint after
+        them finished."""
         with self.lock:
             waiting = self.db.connection.execute(
                 "SELECT count(*) FROM pending_redactions WHERE id IN "
                 "(SELECT value FROM json_each(?))",
                 (json.dumps(sorted(requests)),),
             ).fetchone()[0]
-            return waiting == 0 and not self._checkpoint_due
+            return waiting == 0 and not self._checkpoint_due and not self.db.vacuum_is_due()
 
     def run_pending_redactions(self) -> int:
-        """Run the waiting redactions no pin blocks, then checkpoint the WAL; how many ran and
-        were checkpointed. A checkpoint that a reader kept from finishing is retried here, at
-        most once every ``CHECKPOINT_RETRY`` seconds unless a redaction ran."""
+        """Run the waiting redactions no pin blocks, each recording in its transaction that a
+        vacuum is due, then vacuum the app DB and checkpoint the WAL (``_finish``); how many ran
+        and were vacuumed and checkpointed. A vacuum or checkpoint that failed, or that a reader
+        kept from finishing, is retried here, at most once every ``CHECKPOINT_RETRY`` seconds
+        unless a redaction ran."""
         ran = 0
         with self.lock:
             pending = self.db.connection.execute(
@@ -569,15 +629,41 @@ class Store:
                 with self.db.transaction() as db:
                     redaction.redact(db, dataset, redaction.Terms.loads(terms))
                     db.execute("DELETE FROM pending_redactions WHERE id = ?", (identifier,))
+                    self.db.due_vacuum(db)
                 ran += 1
+            if ran:
+                self._checkpoint_due = True
+                self._vacuumed = False
             now = monotonic()
             retry = self._checkpoint_due and (
-                self._checkpoint_tried is None or now - self._checkpoint_tried >= CHECKPOINT_RETRY
+                ran > 0
+                or self._checkpoint_tried is None
+                or now - self._checkpoint_tried >= CHECKPOINT_RETRY
             )
-            if ran or retry:
+            if retry:
                 self._checkpoint_tried = now
-                self._checkpoint_due = not self.db.checkpoint()
+                self._checkpoint_due = not self._finish()
         return 0 if self._checkpoint_due else ran
+
+    def _finish(self) -> bool:
+        """Vacuum the app DB if a redaction left that due and this process has not vacuumed it
+        since, then checkpoint the WAL, and clear the vacuum's record once both finished (and
+        checkpoint that too); whether they finished. A vacuum or a checkpoint that fails
+        (``sqlite3.OperationalError``: a full disk, say) leaves the vacuum due, to be retried
+        (D223)."""
+        try:
+            due = self.db.vacuum_is_due()
+            if due and not self._vacuumed:
+                self.db.vacuum()
+                self._vacuumed = True
+            if not self.db.checkpoint():
+                return False
+            if not due:
+                return True
+            self.db.vacuumed()
+            return self.db.checkpoint()
+        except sqlite3.OperationalError:
+            return False
 
     def _holds(self, manifest: str) -> bool:
         """Whether a pin holds the manifest, or a blob it references that nothing live does."""

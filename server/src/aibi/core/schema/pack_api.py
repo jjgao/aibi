@@ -39,6 +39,7 @@ from aibi.core.schema.ids import (
     is_pack_code,
 )
 from aibi.core.schema.jsonio import is_text
+from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.jsonschemas import problems as schema_problems
 from aibi.core.schema.limits import MAX_DEPTH, ImportLimits
 from aibi.core.schema.output import Output, Segment
@@ -289,7 +290,9 @@ class Validator(Protocol):
 
 class LeafKind(Protocol):
     """A pack leaf kind (SPEC §7.3). ``compile`` is pure and deterministic, reads no data, and
-    returns core clauses with no pack, ``ids`` or ``cohort`` leaves, or raises ``Refused``."""
+    returns core clauses with no pack, ``ids`` or ``cohort`` leaves, or raises ``Refused``. It
+    and ``summary`` get a copy of the leaf, and ``compile`` a view whose ``label`` it may not
+    read, since ids do not hash it; anything else they raise refuses the leaf (D285)."""
 
     @property
     def schema(self) -> JsonSchema:
@@ -330,7 +333,8 @@ RequirementPredicate = Callable[[ReleaseView], bool]
 Facet = Callable[[ReleaseView], Mapping[str, Sequence[str]]]
 """Catalogue facets of a release: facet name to values (SPEC §11.1)."""
 CaveatRule = Callable[[ReleaseView, Mapping[str, JsonValue]], Sequence[str]]
-"""Caveat codes for a canonical cohort or view; static, with no access to data."""
+"""Caveat codes for a canonical cohort or view; static, with no access to data. It reads a copy
+of the form and a view whose ``label`` it may not read (D287)."""
 
 
 @dataclass(frozen=True)
@@ -592,6 +596,30 @@ def _snapshot(pack: Pack) -> tuple[Pack, list[str]]:
     return snapshot, problems
 
 
+def _leaf_schemas(pack: Pack) -> tuple[dict[str, JsonSchema], list[str]]:
+    """The schemas of a pack's leaf kinds as they are when it is registered, checked as its
+    extension schemas are (D285), and what is wrong with them."""
+    schemas: dict[str, JsonSchema] = {}
+    problems: list[str] = []
+    for kind, leaf in pack.leaf_kinds.items():
+        given = cast(object, leaf.schema)
+        if not isinstance(given, Mapping):
+            problems.append(f"{pack.id}: the schema of leaf kind {kind} is not a JSON object")
+            continue
+        try:
+            schemas[kind] = cast(dict[str, JsonValue], _plain(cast(object, given)))
+        except _NotJsonError as error:
+            problems.append(
+                f"{pack.id}: the schema of leaf kind {kind} is not a JSON value: it holds {error}"
+            )
+            continue
+        problems.extend(
+            f"{pack.id}: the schema of leaf kind {kind} is refused: {found}"
+            for found in schema_problems(schemas[kind])
+        )
+    return schemas, problems
+
+
 def _handed_out(pack: Pack) -> Pack:
     """A registered pack as the registry hands it out: its concepts and schemas copied, so that
     changing them changes nothing registered (analyses copy their entries themselves)."""
@@ -616,9 +644,13 @@ class PackRegistry:
             raise PackError([f"core version {core_version!r} is not a PEP 440 version"]) from None
         problems: list[str] = []
         snapshots: list[Pack] = []
+        leaf_schemas: dict[str, JsonSchema] = {}
         for given in packs:
             snapshot, found = _snapshot(given)
             snapshots.append(snapshot)
+            problems.extend(found)
+            schemas, found = _leaf_schemas(snapshot)
+            leaf_schemas.update(schemas)
             problems.extend(found)
         packs = snapshots
         by_id: dict[str, Pack] = {}
@@ -652,6 +684,8 @@ class PackRegistry:
         self._analyses = {
             analysis.entry.id: analysis for pack in packs for analysis in pack.analyses
         }
+        self._leaf_checkers = {kind: Checker(schema) for kind, schema in leaf_schemas.items()}
+        """The checker of each leaf kind's schema as registered."""
 
     # --- Packs ---
 
@@ -736,6 +770,15 @@ class PackRegistry:
         """The leaf kind ``<pack id>.<name>``, from the pack its namespace names: ``None`` if
         that pack has no such kind, and ``UnknownPack`` if no such pack is registered (A3)."""
         return self._registered(kind.partition(".")[0]).leaf_kinds.get(kind)
+
+    def leaf_checker(self, kind: str) -> Checker:
+        """The checker of a registered leaf kind's schema, as the kind had it when its pack was
+        registered (D285)."""
+        return self._leaf_checkers[kind]
+
+    def leaf_kinds(self) -> list[str]:
+        """Every registered leaf kind, sorted."""
+        return sorted(self._leaf_checkers)
 
     def translator(self, format: str) -> Translator | None:
         """As ``leaf_kind``, for a document format ``<pack id>.<name>``."""

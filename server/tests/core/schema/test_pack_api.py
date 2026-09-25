@@ -16,6 +16,7 @@ from aibi.core.schema.descriptors import (
     ConceptFields,
 )
 from aibi.core.schema.document import Clause, PackLeaf, ValueLeaf
+from aibi.core.schema.jsonschemas import OUT_OF_STEPS, Checker, StepBudget
 from aibi.core.schema.output import Segment, text
 from aibi.core.schema.pack_api import (
     AnalysisInputs,
@@ -589,3 +590,58 @@ def test_a_dropped_schema_or_wording_still_has_its_other_problem_reported() -> N
 def test_an_ontology_system_name_is_unicode_text() -> None:
     pack = replace(LIBRARY, ontology_systems={"a" + chr(0xDCE9): lambda code: True})
     assert any("not Unicode text" in p for p in _problems_of(pack))
+
+
+class _Shaped:
+    """A leaf kind whose schema is whatever it is given, which it may change later."""
+
+    def __init__(self, schema: Any) -> None:
+        self.given = schema
+
+    @property
+    def schema(self) -> Any:
+        return self.given
+
+    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+        return []
+
+    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+        return []
+
+
+def test_leaf_kind_schemas_are_checked_and_kept_as_they_were_when_registered() -> None:
+    shaped = _Shaped({"type": "object", "properties": {"worst": {"type": "integer"}}})
+    pack = Pack(manifest=manifest(), leaf_kinds={"library.shaped": shaped, **LIBRARY.leaf_kinds})
+    packs = registry(pack)
+    assert packs.leaf_kinds() == ["library.overdue", "library.shaped"]
+    shaped.given = {"type": "string"}
+    checker = packs.leaf_checker("library.shaped")
+    assert checker.failures({"kind": "library.shaped", "worst": 3}) == []
+    assert [f.keyword for f in checker.failures({"kind": "library.shaped", "worst": "x"})] == [
+        "type"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("schema", "problem"),
+    [
+        ({"type": "string", "pattern": "^a"}, "is refused"),
+        ({"type": "object", "maxProperties": math.inf}, "not a JSON value"),
+        (["not", "an", "object"], "not a JSON object"),
+    ],
+)
+def test_a_leaf_kind_s_schema_is_refused_as_an_extension_schema_would_be(
+    schema: Any, problem: str
+) -> None:
+    pack = Pack(manifest=manifest(), leaf_kinds={"library.shaped": _Shaped(schema)})
+    with pytest.raises(PackError, match=problem):
+        registry(pack)
+
+
+def test_evaluations_that_share_a_step_budget_spend_it_together() -> None:
+    checker = Checker({"type": "array", "items": {"type": "integer"}})
+    budget = StepBudget(60)
+    assert checker.failures(list(range(20)), budget=budget) == []
+    left = budget.left
+    assert 0 < left < 60
+    assert [f.keyword for f in checker.failures(list(range(200)), budget=budget)] == [OUT_OF_STEPS]

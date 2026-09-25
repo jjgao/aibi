@@ -253,6 +253,16 @@ def _no_constant(name: str) -> object:
     raise ValueError(f"{name} is not a JSON number")
 
 
+def typed(value: SourceValue, datatype: str | None) -> Value | None:
+    """The value a cell of a column of the datatype, with no missing codes, reads from a source
+    value, or ``None`` when it reads none (a null or a token that does not parse); what erasure
+    compares a person's values by (§12.2, D290)."""
+    token = canonical_string(value)
+    if token is None:
+        return None
+    return _CONVERTERS.get(datatype, _text)(value, token)
+
+
 class ColumnCells:
     """Turns one column's source values into cells, counting states and unparsed tokens."""
 
@@ -331,4 +341,4 @@ class ColumnCells:
         return Cell(PRESENT, tuple(cells))
 
 
-__all__ = ["MAX_LIST_TEXT", "UNPARSED_ROWS", "ColumnCells"]
+__all__ = ["MAX_LIST_TEXT", "UNPARSED_ROWS", "ColumnCells", "typed"]
