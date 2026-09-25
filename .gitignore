@@ -14,8 +14,10 @@ dist/
 .coverage
 htmlcov/
 
-# Local data written by a running server
+# Local data written by a running server, and a local configuration and its import directory
 server/data/
+server/aibi.toml
+server/imports/
 /data/
 coverage.xml
 .coverage.*

@@ -290,6 +290,14 @@ class AppDB:
             (dataset, label, manifest, at, by),
         )
 
+    def datasets(self) -> list[str]:
+        """The datasets that have a label, in order."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT DISTINCT dataset FROM labels ORDER BY dataset"
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def labels(self, dataset: str) -> list[Label]:
         with self.lock:
             rows = self.connection.execute(

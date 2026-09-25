@@ -391,6 +391,10 @@ class Store:
             )
         return found
 
+    def datasets(self) -> list[str]:
+        """The datasets that have a label, published or withdrawn, in order."""
+        return self.db.datasets()
+
     def labels(self, dataset: str) -> list[Label]:
         return self.db.labels(dataset)
 
