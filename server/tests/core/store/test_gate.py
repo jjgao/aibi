@@ -299,6 +299,21 @@ def test_nulls_in_the_named_columns_of_each_coverage_form_stop_the_import(
     assert ("COVERAGE_NULL", path) in [(code, where) for code, where, _ in found]
 
 
+def test_a_scope_cell_that_is_not_assessed_stops_the_import(store: Store) -> None:
+    """No release holds a listing whose scope cell is missing, which the SQL compiler reads as
+    the evaluator does, as listing no whole scope tuple."""
+    descriptors = [
+        build.column("audited.crop", "category", missing_codes={"?": "NOT_ASSESSED"})
+        if descriptor.id == "audited.crop"
+        else descriptor
+        for descriptor in _tended(DIRECT)
+    ]
+    found = _refused(store, descriptors, _tending_rows(audited=(("p1", "?"),)))
+    assert ("COVERAGE_NULL", "/25/fields/parents/scope_columns/crop") in [
+        (code, where) for code, where, _ in found
+    ]
+
+
 def test_a_value_outside_a_record_filter_or_not_applicable_stops_the_import(
     store: Store,
 ) -> None:

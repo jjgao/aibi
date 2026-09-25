@@ -46,6 +46,12 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # upload_min_bytes_per_second = 32768  # with its length, sets an upload's deadline
 # import_bytes = 1073741824 # and every other limit of an import (D233)
 
+[queries]
+# query_seconds = 25        # a document's queries run at most this long in their worker
+# query_memory = 2147483648 # the memory a worker may hold; DuckDB has half of it
+# query_workers = 2         # workers that run at once; a query waits query_seconds for one
+# query_threads = 1         # DuckDB's threads in a worker
+
 [disclosure]
 # min_cell_count_floor = 5
 

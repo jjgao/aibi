@@ -183,6 +183,16 @@ UPLOAD_SECONDS = "upload_seconds"
 length at the slowest rate the server accepts (D266, D278)."""
 TOOL_SECONDS = "tool_seconds"
 """Seconds a tool call may take, waiting for its place included (D278)."""
+QUERY_SECONDS = "query_seconds"
+"""Seconds a query worker may run a document's queries for, its start included (D293)."""
+QUERY_MEMORY = "query_memory"
+"""Bytes of resident memory a query worker may hold; DuckDB's memory limit is half of it
+(D293)."""
+QUERY_WORKERS = "query_workers"
+"""Query workers that run at once in a server; a query waits for one at most
+``query_seconds`` (D293)."""
+QUERY_ANSWER_BYTES = "query_answer_bytes"
+"""Bytes of the rows a query worker answers with (D293)."""
 TOOL_CALLS = "tool_calls"
 """Tool calls that run at once in a server; a call that gets no place within ``tool_seconds`` is
 refused (D278)."""
@@ -224,6 +234,32 @@ class ImportLimits:
             raise ValueError(
                 f"reader_workers is at least 1, not {self.reader_workers}: an import reads its "
                 "workbooks and Parquet files in a worker"
+            )
+
+
+MIN_QUERY_MEMORY = 512 << 20
+"""The least ``query_memory``: an interpreter with DuckDB loaded, and room to query."""
+MAX_QUERY_ANSWER_BYTES = 64 << 20
+"""``query_answer_bytes``: the largest answer the server reads from a query worker, its rows'
+integers packed column by column (D293)."""
+
+
+@dataclass(frozen=True)
+class QueryLimits:
+    """The limits of the workers that run queries (SPEC §14, D293), and their DuckDB threads."""
+
+    query_seconds: int = 25
+    query_memory: int = 2 << 30
+    query_workers: int = 2
+    query_threads: int = 1
+
+    def __post_init__(self) -> None:
+        for name in ("query_seconds", "query_memory", "query_workers", "query_threads"):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} is at least 1, not {getattr(self, name)}")
+        if self.query_memory < MIN_QUERY_MEMORY:
+            raise ValueError(
+                f"query_memory is at least {MIN_QUERY_MEMORY} bytes, what a worker needs to start"
             )
 
 
@@ -313,6 +349,7 @@ __all__ = [
     "MAX_POINTER",
     "MAX_POINTERS",
     "MAX_PROPOSAL_BYTES",
+    "MAX_QUERY_ANSWER_BYTES",
     "MAX_QUEUE_BYTES",
     "MAX_QUEUE_ITEMS",
     "MAX_REFUSALS",
@@ -322,6 +359,7 @@ __all__ = [
     "MAX_VALUES",
     "MAX_VIEWS",
     "MEMBER_BYTES",
+    "MIN_QUERY_MEMORY",
     "NAME_CHARACTERS",
     "NESTING_DEPTH",
     "NOTE_CHARACTERS",
@@ -336,6 +374,10 @@ __all__ = [
     "POINTER_CHARACTERS",
     "PROPOSAL_BYTES",
     "PROPOSAL_REQUESTS",
+    "QUERY_ANSWER_BYTES",
+    "QUERY_MEMORY",
+    "QUERY_SECONDS",
+    "QUERY_WORKERS",
     "QUEUE_BYTES",
     "QUEUE_ITEMS",
     "RATIO_FLOOR",
@@ -357,5 +399,6 @@ __all__ = [
     "VIEWS",
     "ImportLimits",
     "LimitName",
+    "QueryLimits",
     "map_cap",
 ]
