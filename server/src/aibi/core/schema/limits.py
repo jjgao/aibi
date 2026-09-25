@@ -118,6 +118,29 @@ least 1. They bound the workers, not the imports, whose memory in the server add
 DECODED_BYTES = "decoded_bytes"
 """Bytes of the strings read from an import's workbooks and Parquet files, together, in UTF-8."""
 
+OPEN_PROPOSALS = "open_proposals"
+"""Open proposals of one dataset (SPEC §14, D248)."""
+PROPOSAL_BYTES = "proposal_bytes"
+"""Bytes of one proposal's value, in RFC 8785 form (D248)."""
+CHANGE_EDITS = "change_edits"
+"""Edits in one change to a draft (D245)."""
+QUEUE_ITEMS = "queue_items"
+"""Items of one curation queue (D250)."""
+QUEUE_BYTES = "queue_bytes"
+"""Bytes of the items of one curation queue, in JSON (D250)."""
+EXTENSION_STEPS = "extension_steps"
+"""Steps of evaluating one extension object against its pack's schema (D247)."""
+MAX_OPEN_PROPOSALS = 10_000
+MAX_PROPOSAL_BYTES = 64 * 1024
+"""Bytes of a proposed value in RFC 8785 form, so that ``MAX_OPEN_PROPOSALS`` bounds the queue's
+size too; less than a field can hold (a ``permissible_values`` list of ``MAX_LIST`` entries), which
+an operator's session or an importer writes instead (D248)."""
+MAX_CHANGE_EDITS = 256
+MAX_QUEUE_ITEMS = 10_000
+MAX_QUEUE_BYTES = 8 * 2**20
+"""Bytes of a curation queue's items in JSON: four descriptors of ``descriptor_bytes``, or about a
+hundred proposals of ``MAX_PROPOSAL_BYTES`` with their evidence (D250)."""
+
 RATIO_FLOOR = 1 << 20
 """Uncompressed bytes from which ``archive_ratio`` applies, to a member or to the total."""
 
@@ -182,6 +205,7 @@ __all__ = [
     "ARCHIVE_BYTES",
     "ARCHIVE_MEMBERS",
     "ARCHIVE_RATIO",
+    "CHANGE_EDITS",
     "CLAUSES",
     "CLAUSE_DEPTH",
     "COHORTS",
@@ -192,6 +216,7 @@ __all__ = [
     "DESCRIPTOR_BYTES",
     "DOCUMENT_BYTES",
     "ENTRIES",
+    "EXTENSION_STEPS",
     "IDENTIFIER_CHARACTERS",
     "IMPORT_BYTES",
     "IMPORT_CELLS",
@@ -200,6 +225,7 @@ __all__ = [
     "KEY_COLUMNS",
     "LEAVES",
     "LIST_MEMBERS",
+    "MAX_CHANGE_EDITS",
     "MAX_CLAUSES",
     "MAX_CLAUSE_DEPTH",
     "MAX_COHORTS",
@@ -213,11 +239,15 @@ __all__ = [
     "MAX_LEAVES",
     "MAX_LIST",
     "MAX_NAME",
+    "MAX_OPEN_PROPOSALS",
     "MAX_PACKS",
     "MAX_PARAMS",
     "MAX_PATH_STEPS",
     "MAX_POINTER",
     "MAX_POINTERS",
+    "MAX_PROPOSAL_BYTES",
+    "MAX_QUEUE_BYTES",
+    "MAX_QUEUE_ITEMS",
     "MAX_REFUSALS",
     "MAX_STRING",
     "MAX_TEXT",
@@ -227,11 +257,15 @@ __all__ = [
     "NAME_CHARACTERS",
     "NESTING_DEPTH",
     "NOTE_CHARACTERS",
+    "OPEN_PROPOSALS",
     "PACKS",
     "PARAMETERS",
     "PATH_SEARCH",
     "PATH_STEPS",
     "POINTER_CHARACTERS",
+    "PROPOSAL_BYTES",
+    "QUEUE_BYTES",
+    "QUEUE_ITEMS",
     "RATIO_FLOOR",
     "READER_MEMORY",
     "READER_SECONDS",

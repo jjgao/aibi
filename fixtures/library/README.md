@@ -1,6 +1,7 @@
 # A lending library
 
-A made-up library, for the file importer's tests (`server/tests/core/importers/test_library.py`).
+A made-up library, for the file importer's tests (`server/tests/core/importers/test_library.py`);
+`../library_next` is its next export, for the re-import tests.
 Importing this directory gives six tables; `formats/` is a subdirectory, so it is skipped and
 noted.
 
