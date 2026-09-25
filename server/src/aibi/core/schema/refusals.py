@@ -195,6 +195,11 @@ SECRET_ALONE_RE = re.compile(
 does where a secret is pasted or swapped in. What input is refused for (D262, D265, D268)."""
 SECRET_BLANK = "<secret>"
 """What stands for a secret's shape in a refusal, a log line or a usage error."""
+BIDI_FORMATTING = frozenset(
+    chr(point) for point in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+)
+"""The bidi formatting characters: the Arabic letter mark, the marks, the embeddings and
+overrides, and the isolates, which a self-declared name may not hold (D262)."""
 SECRET_DECODINGS = 3
 """How many times a text is percent-decoded when a secret is looked for in it: a server decodes
 a URL once, and a proxy, a log or a client may once more."""

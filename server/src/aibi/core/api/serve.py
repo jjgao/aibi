@@ -27,6 +27,7 @@ import getpass
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -41,7 +42,10 @@ from aibi.core.api.config import ConfigError, ServerConfig, load_config
 from aibi.core.api.connections import guarded_protocol
 from aibi.core.api.logs import WithoutSecrets
 from aibi.core.api.protection import Policy
+from aibi.core.api.rates import Buckets, Rate, client_key
+from aibi.core.catalog.service import Catalog
 from aibi.core.importers.uploads import UploadArea
+from aibi.core.mcp.calls import Calls
 from aibi.core.operator.auth import hash_token, new_token, token_digest
 from aibi.core.operator.router import Services
 from aibi.core.schema.pack_api import PackRegistry
@@ -64,6 +68,44 @@ def services_of(config: ServerConfig, store: Store, registry: PackRegistry) -> S
         upload_min_bytes_per_second=config.imports.upload_min_bytes_per_second,
         max_body_bytes=config.server.max_body_bytes,
         token_digest=token_digest(config.curator.token_hash),
+    )
+
+
+@dataclass(frozen=True)
+class Proposals:
+    """The rate of ``propose_descriptor`` calls per client (D277), keyed as request protection
+    keys its rates (``client_key``)."""
+
+    buckets: Buckets
+
+    @property
+    def per_minute(self) -> int:
+        return self.buckets.rate.per_minute
+
+    def take(self, client: str) -> float | None:
+        return self.buckets.take(client_key(client))
+
+
+def tools_of(config: ServerConfig, store: Store, registry: PackRegistry | None) -> Calls:
+    """The server's tool calls (D277, D278): its catalogue, with the floor and the model cards of
+    the configuration; its bodies' deadlines, ``tool_body_idle_seconds`` and an upload's rate
+    (D266); the rate of proposals per client; and clients keyed as the rates key them (D259), for
+    their share of the places and of agents' proposals."""
+    catalog = Catalog(
+        store,
+        registry=registry,
+        floor=config.disclosure.min_cell_count_floor,
+        models=tuple(config.models),
+        token_digest=token_digest(config.curator.token_hash),
+    )
+    proposals = config.server.rates.proposals
+    return Calls(
+        catalog,
+        body_idle_seconds=config.server.tool_body_idle_seconds,
+        body_min_bytes_per_second=config.imports.upload_min_bytes_per_second,
+        max_body_bytes=config.server.max_body_bytes,
+        proposals=Proposals(Buckets(Rate(proposals.per_minute, proposals.burst))),
+        client_key=client_key,
     )
 
 
@@ -108,7 +150,11 @@ def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
             return 1
         try:
             registry = PackRegistry((), core_version=aibi.__version__)
-            app = create_app(Policy.of(config), services_of(config, store, registry))
+            app = create_app(
+                Policy.of(config),
+                services_of(config, store, registry),
+                tools=tools_of(config, store, registry),
+            )
             logging_config = logs.logging_config(copy.deepcopy(uvicorn.config.LOGGING_CONFIG))
             uvicorn.Server(uvicorn_config(config, app, logging_config=logging_config)).run()
         finally:
@@ -136,11 +182,13 @@ def check(config: ServerConfig) -> list[str]:
         f"concurrent imports: {config.imports.concurrent}; upload idle seconds: "
         f"{config.imports.upload_idle_seconds}; upload min bytes per second: "
         f"{config.imports.upload_min_bytes_per_second}",
+        f"tool body idle seconds: {server.tool_body_idle_seconds}",
     ]
     for name, rate in (
         ("operator", server.rates.operator),
         ("api", server.rates.api),
         ("token failures", server.rates.token_failures),
+        ("proposals", server.rates.proposals),
     ):
         lines.append(f"rate, {name}: {rate.per_minute} a minute, bursts of {rate.burst}")
     floor = config.disclosure.min_cell_count_floor
@@ -215,10 +263,12 @@ def main(
 
 __all__ = [
     "GRACEFUL_SHUTDOWN",
+    "Proposals",
     "WithoutSecrets",
     "check",
     "main",
     "run",
     "services_of",
+    "tools_of",
     "uvicorn_config",
 ]

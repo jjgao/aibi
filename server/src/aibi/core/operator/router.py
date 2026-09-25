@@ -14,15 +14,15 @@ the route checks this once it has read the body and taken its place, so that a b
 or one place too many, is answered as on any dataset.
 
 **Changes** are ``POST``: uploads, imports and re-imports, withdrawals, erasures, running the
-curation proposers, rejecting a proposal, and opening, changing, publishing, discarding and taking
-over a session (accepting a proposal is an ``accept`` edit, D248). Each is one synchronous
-request whose service call runs in a worker thread, which a dropped connection does not cancel.
-A body is a JSON object (``{}`` when empty), received within the deadlines of an upload (below,
-its length at most ``max_body_bytes`` when it declares none) and read by ``load_request`` in a
-worker thread, so that parsing a large body never holds up the event loop, and never by the
-framework; a body refused, or one whose stored text holds a secret's shape (``stored_secrets``),
-is answered 422 with its refusals. The service functions raise the core's refusals, which
-``api.errors`` answers.
+curation proposers, rejecting a proposal or every open proposal of one proposer or kind of proposer
+(D277), and opening, changing, publishing, discarding and taking over a session (accepting a
+proposal is an ``accept`` edit, D248). Each is one synchronous request whose service call runs in a
+worker thread, which a dropped connection does not cancel. A body is a JSON object (``{}`` when
+empty), received within the deadlines of an upload (below, its length at most ``max_body_bytes``
+when it declares none) and read by ``load_request`` in a worker thread, so that parsing a large body
+never holds up the event loop, and never by the framework; a body refused, or one whose stored text
+holds a secret's shape (``stored_secrets``), is answered 422 with its refusals. The service
+functions raise the core's refusals, which ``api.errors`` answers.
 
 Uploads, imports, re-imports and erasures each take one of ``concurrent_imports`` places, and one
 more is refused at once, never queued (``LIMIT_EXCEEDED`` naming ``concurrent_imports``, D266):
@@ -39,9 +39,8 @@ so is one that has not ended by its deadline, ``upload_idle_seconds`` and its de
 for its gaps alone, and a trickle cannot hold a place for longer than its deadline.
 """
 
-import math
 import threading
-from collections.abc import AsyncIterator, Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
@@ -56,6 +55,7 @@ from fastapi import Path as PathParameter
 from pydantic import BaseModel
 from starlette.responses import Response
 
+from aibi.core.bodies import Deadlines, declared_length
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.run import Published, import_dataset, reimport_dataset
 from aibi.core.importers.uploads import UploadArea
@@ -66,8 +66,6 @@ from aibi.core.schema.limits import (
     CONCURRENT_IMPORTS,
     MAX_BODY_BYTES,
     MAX_IDENTIFIER,
-    UPLOAD_IDLE_SECONDS,
-    UPLOAD_SECONDS,
     ImportLimits,
 )
 from aibi.core.schema.loading import RequestResult, load_request
@@ -86,9 +84,11 @@ from aibi.core.schema.operator import (
     LabelState,
     OpenSession,
     PathSource,
+    ProposalsRejected,
     ProposersRan,
     Refusals,
     Rejected,
+    RejectProposals,
     SessionChange,
     SessionEnd,
     SessionEnded,
@@ -109,6 +109,7 @@ from aibi.core.store.proposals import (
     ProposersRun,
     curation_queue,
     reject_proposal,
+    reject_proposals,
     run_proposers,
 )
 from aibi.core.store.sessions import Opened
@@ -180,18 +181,16 @@ def _loaded[M: BaseModel](source: bytes, model: type[M], digest: bytes | None) -
 
 
 async def _body[M: BaseModel](services: Services, request: Request, model: type[M]) -> M | Response:
-    """The body, received within its deadlines (``_Deadlines``) and read as ``model`` in a worker
-    thread, or the response that refuses it (422)."""
-    length = _declared(request)
-    deadlines = _Deadlines.of(services, services.max_body_bytes if length is None else length)
+    """The body, received within its deadlines (``bodies.Deadlines``) and read as ``model`` in a
+    worker thread, or the response that refuses it (422)."""
+    length = declared_length(request.headers.raw)
+    deadlines = _deadlines(services, services.max_body_bytes if length is None else length)
     stream = request.stream()
-    source = bytearray()
     try:
-        while (chunk := await deadlines.next_chunk(stream)) is not None:
-            source += chunk
+        source = await deadlines.read(stream)
     finally:
         await stream.aclose()
-    loaded = await anyio.to_thread.run_sync(_loaded, bytes(source), model, services.token_digest)
+    loaded = await anyio.to_thread.run_sync(_loaded, source, model, services.token_digest)
     if loaded.value is None:
         body = Refusals(refusals=loaded.refusals).model_dump_json()
         return Response(body, status_code=422, media_type="application/json")
@@ -254,60 +253,8 @@ def _known(store: Store, dataset: str) -> None:
         raise StoreRefused(RefusalCode.UNKNOWN_DATASET, "No release of the dataset was published")
 
 
-def _stalled(seconds: float) -> StoreRefused:
-    return StoreRefused(
-        RefusalCode.LIMIT_EXCEEDED,
-        f"The request's body sent nothing for {seconds:g} seconds",
-        limit=Limit(name=UPLOAD_IDLE_SECONDS, max=max(1, round(seconds))),
-    )
-
-
-def _overdue(seconds: float) -> StoreRefused:
-    return StoreRefused(
-        RefusalCode.LIMIT_EXCEEDED,
-        f"The request's body did not end within {seconds:g} seconds, the time its length allows "
-        "at the slowest rate the server accepts",
-        limit=Limit(name=UPLOAD_SECONDS, max=max(1, math.ceil(seconds))),
-    )
-
-
-def _declared(request: Request) -> int | None:
-    """The body's length, if it declares one in one ``Content-Length`` and is not framed by
-    ``Transfer-Encoding``, which h11 lets override it."""
-    if "transfer-encoding" in request.headers:
-        return None
-    given = request.headers.getlist("content-length")
-    return int(given[0]) if len(given) == 1 and given[0].isdigit() else None
-
-
-@dataclass(frozen=True)
-class _Deadlines:
-    """A body's deadlines (D266): it is refused if it sends nothing for ``idle`` seconds
-    (``upload_idle_seconds``), or has not ended ``allowed`` seconds after it began: ``idle`` and
-    its length at the slowest rate the server accepts (``upload_seconds``)."""
-
-    idle: float
-    allowed: float
-    ends: float
-
-    @classmethod
-    def of(cls, services: Services, length: int) -> "_Deadlines":
-        idle = services.upload_idle_seconds
-        allowed = idle + length / services.upload_min_bytes_per_second
-        return cls(idle, allowed, anyio.current_time() + allowed)
-
-    async def next_chunk(self, stream: AsyncIterator[bytes]) -> bytes | None:
-        """The body's next chunk, ``None`` at its end, or the refusal of a deadline passed."""
-        left = self.ends - anyio.current_time()
-        if left <= 0:
-            raise _overdue(self.allowed)
-        try:
-            with anyio.fail_after(min(self.idle, left)):
-                return await anext(stream)
-        except StopAsyncIteration:
-            return None
-        except TimeoutError:
-            raise (_stalled(self.idle) if self.idle < left else _overdue(self.allowed)) from None
+def _deadlines(services: Services, length: int) -> Deadlines:
+    return Deadlines.of(services.upload_idle_seconds, services.upload_min_bytes_per_second, length)
 
 
 def _state(store: Store, dataset: str) -> DatasetState:
@@ -430,14 +377,14 @@ def operator_router(services: Services) -> APIRouter:
     async def upload(
         dataset: DatasetParameter, extension: ExtensionQuery, request: Request
     ) -> Response:
-        length = _declared(request)
+        length = declared_length(request.headers.raw)
         if length is None:
             raise StoreRefused(
                 RefusalCode.LENGTH_REQUIRED,
                 "An upload declares its length in one Content-Length header, without "
                 "Transfer-Encoding",
             )
-        deadlines = _Deadlines.of(services, length)
+        deadlines = _deadlines(services, length)
         stream = request.stream()
         size = 0
 
@@ -562,6 +509,19 @@ def operator_router(services: Services) -> APIRouter:
             return body
         await run_known(dataset, partial(reject_proposal, store, dataset, proposal, by))
         return _json(Rejected(dataset=dataset, proposal=proposal))
+
+    def rejecting(dataset: str, request: RejectProposals, by: str) -> ProposalsRejected:
+        rejected, kept = reject_proposals(
+            store, dataset, by, proposer=request.proposer, kind=request.kind
+        )
+        return ProposalsRejected(dataset=dataset, rejected=rejected, kept=kept)
+
+    @router.post("/datasets/{dataset}/proposals/reject", response_model=ProposalsRejected)
+    async def reject_all(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
+        body = await _body(services, request, RejectProposals)
+        if isinstance(body, Response):
+            return body
+        return _json(await run_known(dataset, partial(rejecting, dataset, body, by)))
 
     # --- Sessions ------------------------------------------------------------------------
 

@@ -25,6 +25,10 @@ rebuilt, and on the columns the gate reads of each table it reused, read from it
 pack importer reshaped (``source.kind`` ``pack``) is not rebuilt in a change until packs can
 rebuild (M4, #19): a change that would rebuild it is refused (``NOT_SUPPORTED``).
 
+Every build writes the release's catalogue statistics (``statistics``, D270): counted on each
+table it built, carried from the base for a table a change reused while what they are computed
+from is unchanged, and otherwise counted again from the table's blob.
+
 Each blob is pinned through ``holder`` before it is written, so that a sweep leaves it alone
 until the operation commits or fails (§12.2, Deletion).
 """
@@ -49,7 +53,7 @@ from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
-from aibi.core.store import gate, tables
+from aibi.core.store import gate, statistics, tables
 from aibi.core.store.blobs import BlobStore, Holder
 from aibi.core.store.gate import GateResult, Mode
 from aibi.core.store.manifest import Manifest, SourceColumn, SourceEntry, TableEntry
@@ -97,7 +101,6 @@ def import_release(
     layouts: Mapping[str, Layout],
     *,
     holder: Holder | None = None,
-    statistics: str | None = None,
     tombstones: str | None = None,
     notes: Sequence[ImportNote] = (),
     revise: Callable[[tuple[Descriptor, ...]], Sequence[Descriptor]] | None = None,
@@ -143,7 +146,7 @@ def import_release(
     builder.index = _Index(kept)
     found = sorted_notes([*notes, *_gate_notes(result), *_unparsed_notes(builder.reports)])
     report = blobs.put(report_bytes(found), holder)
-    return builder.finish(dataset, tuple(entries), statistics, tombstones, report, result, found)
+    return builder.finish(dataset, tuple(entries), tombstones, report, result, found)
 
 
 def change_release(
@@ -153,7 +156,6 @@ def change_release(
     descriptors: Sequence[Descriptor],
     *,
     holder: Holder | None = None,
-    statistics: str | None = None,
     tombstones: str | None = None,
     keep_tombstones: bool = True,
     gate_mode: Mode | None = "change",
@@ -206,8 +208,16 @@ def change_release(
         result = gate.check(descriptors, typed, mode=gate_mode)
         _refuse_if(result.refusals)
         builder.index = _Index(result.descriptors)
+    if base.statistics is not None:
+        carried = statistics.decode(blobs.read(base.statistics))
+        marked = statistics.identifiers(base_descriptors)
+        for entry in reused:
+            if entry.id in carried:
+                columns = before.column_fields(entry.id)
+                read = statistics.inputs(columns, marked.get(entry.id, ()), entry.hash)
+                builder.carried[entry.id] = (read, carried[entry.id])
     kept = base.tombstones if keep_tombstones and tombstones is None else tombstones
-    return builder.finish(base.dataset, base.sources, statistics, kept, base.report, result)
+    return builder.finish(base.dataset, base.sources, kept, base.report, result)
 
 
 def descriptors_bytes(descriptors: Sequence[Descriptor]) -> bytes:
@@ -403,6 +413,11 @@ class _Builder:
         self.reports: dict[str, Mapping[str, ColumnReport]] = {}
         self.rebuilt: set[str] = set()
         self.typed: dict[str, TypedTable] = {}
+        self.counted: dict[str, statistics.TableStatistics] = {}
+        """The statistics of each table built, before identifier columns lose their
+        distributions, which the descriptors written decide (D270)."""
+        self.carried: dict[str, tuple[bytes, statistics.TableStatistics]] = {}
+        """A reused table's statistics in the base, by what they were computed from."""
 
     def reuse(self, entry: TableEntry) -> None:
         self.entries.append(entry)
@@ -440,16 +455,41 @@ class _Builder:
         self.entries.append(TableEntry(id=table, hash=digest, source=source, columns=laid_out))
         self.reports[table] = typed.report
         self.rebuilt.add(table)
+        self.counted[table] = statistics.table_statistics(typed.rows, typed.cells, fields, ())
         if self.keep is not None:
             kept = self.keep.get(table, set())
             cells = {name: found for name, found in typed.cells.items() if name in kept}
             self.typed[table] = TypedTable(table, typed.columns, cells, typed.rows, {})
 
+    def _statistics(self) -> str:
+        """The statistics blob (D270): each table's, identifier columns without distributions;
+        a reused table's carried from the base when what they are computed from is unchanged,
+        and otherwise counted again from its blob."""
+        marked = statistics.identifiers(self.index.descriptors)
+        found: dict[str, statistics.TableStatistics] = {}
+        for entry in self.entries:
+            columns = self.index.column_fields(entry.id)
+            identifying = marked.get(entry.id, set())
+            built = self.counted.get(entry.id)
+            if built is not None:
+                found[entry.id] = statistics.without_distributions(built, identifying)
+                continue
+            carried = self.carried.get(entry.id)
+            if carried is not None and carried[0] == statistics.inputs(
+                columns, identifying, entry.hash
+            ):
+                found[entry.id] = carried[1]
+                continue
+            typed = tables.decode_cells(entry.id, self.blobs.read(entry.hash), list(columns))
+            found[entry.id] = statistics.table_statistics(
+                typed.rows, typed.cells, columns, identifying
+            )
+        return self.blobs.put(statistics.encode(found), self.holder)
+
     def finish(
         self,
         dataset: str,
         sources: tuple[SourceEntry, ...],
-        statistics: str | None,
         tombstones: str | None,
         report: str | None = None,
         result: GateResult | None = None,
@@ -461,7 +501,7 @@ class _Builder:
             descriptors=described,
             sources=sources,
             tables=tuple(sorted(self.entries, key=lambda entry: entry.id)),
-            statistics=statistics,
+            statistics=self._statistics(),
             tombstones=tombstones,
             report=report,
         )

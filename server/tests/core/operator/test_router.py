@@ -264,6 +264,27 @@ def test_a_proposal_is_rejected_and_an_unknown_one_is_not_found(
     assert (unknown.status_code, codes(unknown)) == (404, [("UNKNOWN_PROPOSAL", None)])
 
 
+def test_every_open_proposal_of_a_proposer_is_rejected_at_once(
+    make_server: MakeServer, surveys: Any
+) -> None:
+    server = make_server(registry=surveys)
+    (server.imports / "sites.csv").write_bytes(b"site_id,name\ns1,North\n")
+    body = {"source": {"path": str(server.imports / "sites.csv")}, "pack": "surveys"}
+    [proposal] = server.post("/operator/datasets/d/import", body).json()["proposers"]["proposals"]
+    [stored] = server.store.db.proposals("d")
+    both = server.post(
+        "/operator/datasets/d/proposals/reject", {"proposer": stored.proposer, "kind": "importer"}
+    )
+    assert (both.status_code, codes(both)) == (422, [("INVALID_VALUE", None)])
+    rejected = server.post("/operator/datasets/d/proposals/reject", {"proposer": stored.proposer})
+    assert rejected.json() == {"dataset": "d", "rejected": 1, "kept": 0}
+    assert [p.id for p in server.store.db.proposals("d", status="rejected")] == [proposal]
+    again = server.post("/operator/datasets/d/proposals/reject", {"kind": "importer"})
+    assert again.json() == {"dataset": "d", "rejected": 0, "kept": 0}
+    unknown = server.post("/operator/datasets/d/proposals/reject", {"kind": "operator"})
+    assert unknown.status_code == 422
+
+
 def test_the_proposers_and_queue_of_an_unknown_dataset_are_refused(
     server: Server, sites: Path
 ) -> None:
@@ -292,6 +313,7 @@ HANDLE_BODY = {"handle": "ses_" + "h" * 43, "expected": "sha256:" + "0" * 64}
         ("POST", "/erase", {"table": "sites", "key": ["s1"]}),
         ("POST", "/proposers", {}),
         ("POST", "/proposals/1/reject", {}),
+        ("POST", "/proposals/reject", {"kind": "agent"}),
         ("POST", "/session/open", {}),
         ("POST", "/session/change", {**HANDLE_BODY, "edits": [{"op": "accept", "proposal": 1}]}),
         ("POST", "/session/publish", HANDLE_BODY),
