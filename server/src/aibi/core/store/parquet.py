@@ -17,7 +17,8 @@ without one as naive datetimes, both truncated to microseconds; decimals as thei
 text; times of day as their ISO text; lists of strings as the text of a JSON array; a column of
 nulls as nulls. Any other type is refused, and the cells are counted from the file's metadata
 before any is read. What the values decode to is not bounded by the file's bytes (one dictionary
-string in every row, say), so an import calls it in its worker process (D225).
+string in every row, say), so an import calls it in its worker process (D225). ``from_arrow``
+reads the Arrow table of a database snapshot's query as ``read_source`` reads a file's (D306).
 """
 
 import io
@@ -228,22 +229,48 @@ def read_source(data: bytes, max_cells: int) -> ParquetSource:
         raise UnreadableParquetError(f"reading it raised {name}") from None
 
 
-def _read_source(data: bytes, max_cells: int) -> ParquetSource:
-    file = pq.ParquetFile(pa.BufferReader(data))
-    schema = file.schema_arrow
+def _schema(schema: pa.Schema) -> tuple[tuple[str, ...], tuple[ArrowKind, ...]]:
+    """The columns' names and kinds; raises ``UnreadableParquetError`` for two columns of one
+    name and ``UnsupportedTypeError`` for a type that is not read."""
     names = tuple(field.name for field in schema)
     if len(set(names)) != len(names):
         raise UnreadableParquetError("two columns have the same name")
-    cells = file.metadata.num_rows * len(schema)
     kinds: list[ArrowKind] = []
     for index, field in enumerate(schema):
         kind = _kind(field.type)
         if kind is None:
             raise UnsupportedTypeError(index, str(field.type))
         kinds.append(kind)
+    return names, tuple(kinds)
+
+
+def _read_source(data: bytes, max_cells: int) -> ParquetSource:
+    file = pq.ParquetFile(pa.BufferReader(data))
+    names, kinds = _schema(file.schema_arrow)
+    cells = file.metadata.num_rows * len(names)
     if cells > max_cells:
         raise CellLimitError(cells, max_cells)
-    table = file.read()
+    return _values(file.read(), names, kinds)
+
+
+def from_arrow(table: pa.Table) -> ParquetSource:
+    """An Arrow table's column names, kinds and rows of source values, read as ``read_source``
+    reads a Parquet file's: the same types, and the same values. A database snapshot reads its
+    tables so (D306).
+
+    Raises ``UnsupportedTypeError`` or ``UnreadableParquetError``, as ``read_source`` does;
+    ``MemoryError`` is raised as it is."""
+    try:
+        names, kinds = _schema(table.schema)
+        return _values(table, names, kinds)
+    except (UnsupportedTypeError, UnreadableParquetError, MemoryError):
+        raise
+    except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as error:
+        name = type(error).__name__
+        raise UnreadableParquetError(f"reading it raised {name}") from None
+
+
+def _values(table: pa.Table, names: tuple[str, ...], kinds: tuple[ArrowKind, ...]) -> ParquetSource:
     columns: list[list[object]] = []
     for index, (field, kind) in enumerate(zip(table.schema, kinds, strict=True)):
         column = table.column(index)
@@ -255,7 +282,7 @@ def _read_source(data: bytes, max_cells: int) -> ParquetSource:
         values = cast(list[object], column.to_pylist())
         columns.append([_value(kind, value) for value in values])
     rows = tuple(zip(*columns, strict=True)) if columns else ()
-    return ParquetSource(names, tuple(kinds), rows)
+    return ParquetSource(names, kinds, rows)
 
 
 def _value(kind: ArrowKind, value: object) -> object:
@@ -285,6 +312,7 @@ __all__ = [
     "PhysicalType",
     "UnreadableParquetError",
     "UnsupportedTypeError",
+    "from_arrow",
     "names",
     "read",
     "read_columns",

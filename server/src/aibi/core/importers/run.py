@@ -5,10 +5,13 @@ D235–D242).
 
 1. The importer reads the source: the core's ``FileImporter``, or the importer of the pack the
    operator names, through the same ``Importer`` protocol and ``ImportOptions``, whose reader is
-   the only way either opens a file (§14). An entry by the importer without an ``inferred`` value
+   the only way either opens a file (§14); or, for a named connection resolved by
+   ``databases.resolve``, the core's ``DatabaseImporter``, and never a pack's (a pack named with
+   one is ``CONFLICTING_MEMBERS``, D305). An entry by the importer without an ``inferred`` value
    takes its field's value as one, as the core's importer writes it (D227, D239).
 2. The validators of the importing pack and of the packs in the dataset's ``packs`` check the
-   source (``validate_source``); any refusal stops the import.
+   source (``validate_source``, given a database's ``DatabaseSource``); any refusal stops the
+   import.
 3. The descriptors pass the pack checks of every descriptor write (``check_writes``, D247), within
    the step ceiling of an importer's write, refused at ``/descriptors/<id>/…``.
 4. The store builds the release through the gate (§13.2), with the importer's notes in its import
@@ -39,6 +42,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from aibi.core.importers.databases import DatabaseImporter, Resolved
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
 from aibi.core.importers.files import FileImporter
 from aibi.core.schema.descriptors import Descriptor, TableDescriptor
@@ -169,7 +173,7 @@ def _validators(registry: PackRegistry | None, consulted: set[str]) -> list[Vali
 
 
 def _read(
-    source: ConfinedPath,
+    source: ConfinedPath | Resolved,
     options: ImportOptions,
     registry: PackRegistry | None,
     pack: str | None,
@@ -177,15 +181,24 @@ def _read(
 ) -> tuple[ImportResult, list[Validator]]:
     """What the importer read, with an inference in every entry of its own, once the validators
     of the importing pack and the dataset's packs accept the source."""
-    importer = _importer(registry, pack)
     try:
-        read = importer.import_source(source, options)
+        if isinstance(source, Resolved):
+            if pack is not None:
+                raise refused(
+                    RefusalCode.CONFLICTING_MEMBERS,
+                    "A named connection is read by the core's importer, never a pack's: name no "
+                    "pack with it (D305)",
+                )
+            read = DatabaseImporter().import_database(source, options)
+        else:
+            read = _importer(registry, pack).import_source(source, options)
     except MemoryError:
         raise out_of_memory(IMPORT_BYTES, options.limits.import_bytes) from None
     result = replace(read, descriptors=with_inferences(read.descriptors))
     consulted = {*packs_of(result.descriptors), *packs, *([pack] if pack is not None else [])}
     found = _validators(registry, consulted)
-    refusals = [r for validator in found for r in validator.validate_source(source, result)]
+    given = source.source if isinstance(source, Resolved) else source
+    refusals = [r for validator in found for r in validator.validate_source(given, result)]
     if refusals:
         raise ImportRefused(refusals)
     return result, found
@@ -215,15 +228,15 @@ def _check(
 def build_import(
     store: Store,
     pin: Pin,
-    source: ConfinedPath,
+    source: ConfinedPath | Resolved,
     options: ImportOptions,
     *,
     registry: PackRegistry | None = None,
     pack: str | None = None,
 ) -> Imported:
     """Import ``source`` as a new, unpublished release of ``options.dataset``, with the core's
-    file importer, or the importer of ``pack`` in ``registry``; its blobs stay pinned by ``pin``.
-    Raises ``ImportRefused``."""
+    file importer, its database importer for a named connection, or the importer of ``pack`` in
+    ``registry``; its blobs stay pinned by ``pin``. Raises ``ImportRefused``."""
     result, validators = _read(source, options, registry, pack)
     refusals = check_writes(result.descriptors, registry, ceiling=WRITE_STEPS_MAX)
     if refusals:
@@ -274,7 +287,7 @@ def _by(by: str) -> None:
 
 def import_dataset(
     store: Store,
-    source: ConfinedPath,
+    source: ConfinedPath | Resolved,
     options: ImportOptions,
     by: str,
     *,
@@ -306,7 +319,7 @@ def _unchanged(new: Manifest, latest: Manifest) -> bool:
 
 def reimport_dataset(
     store: Store,
-    source: ConfinedPath,
+    source: ConfinedPath | Resolved,
     options: ImportOptions,
     by: str,
     *,

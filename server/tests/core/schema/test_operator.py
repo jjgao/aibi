@@ -16,6 +16,7 @@ from aibi.core.schema.limits import MAX_CHANGE_EDITS
 from aibi.core.schema.loading import load_request
 from aibi.core.schema.operator import (
     UPLOAD_EXTENSIONS,
+    ConnectionSource,
     Empty,
     EraseRequest,
     ImportRequest,
@@ -52,6 +53,16 @@ def test_a_valid_body_is_loaded() -> None:
     assert isinstance(uploaded.source, UploadSource)
 
 
+def test_a_named_connection_is_a_source_by_its_identifier_alone() -> None:
+    loaded = load_request(json.dumps({"source": {"connection": "archive"}}).encode(), ImportRequest)
+    assert loaded.value is not None
+    assert loaded.value.source == ConnectionSource(connection="archive")
+    for given in ({"connection": "Archive"}, {"connection": "a/b"}, {"connection": 1}):
+        assert refusals(ImportRequest, {"source": given})[0][1] == "/source/connection"
+    extra = {"source": {"connection": "archive", "url": "postgresql://h/d"}}
+    assert refusals(ImportRequest, extra) == [("UNKNOWN_MEMBER", "/source/url")]
+
+
 def test_refusals_point_into_the_body_as_written() -> None:
     edits = [LABEL, LABEL, LABEL, {**LABEL, "pointer": "label"}]
     body = {"handle": HANDLE, "expected": DRAFT, "edits": edits}
@@ -75,7 +86,7 @@ def test_refusals_point_into_the_body_as_written() -> None:
             "/edits/0",
             ["set", "remove", "confirm", "put", "remove_descriptor", "accept"],
         ),
-        (ImportRequest, {"source": "/x"}, "/source", ["path", "upload"]),
+        (ImportRequest, {"source": "/x"}, "/source", ["path", "upload", "connection"]),
     ],
 )
 def test_an_unknown_kind_lists_its_union_s_own_members(

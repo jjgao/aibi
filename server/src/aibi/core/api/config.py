@@ -40,9 +40,10 @@ closed, so an unknown key is refused, and every problem is reported at once with
   an operator prunes), and ``log_bytes``, the most the log may take, counting the pages of all
   that pruning can free (D300).
 - ``[disclosure] min_cell_count_floor``: the deployment's floor for *k* (§8.4), 2 or more.
-- ``[databases.<identifier>]``: named connections, by shape only until database snapshots use
-  them (#13): a SQLite or DuckDB file inside an import directory, or for Postgres and MySQL the
-  name of the environment variable that holds the URL. Credentials are never in the file (§14).
+- ``[databases.<identifier>]``: named connections, which an import names (D305): a SQLite or
+  DuckDB file inside an import directory, or for Postgres and MySQL the name of the environment
+  variable that holds the URL, read when an import runs; and for Postgres and DuckDB the
+  ``schema`` read (``public`` and ``main`` by default). Credentials are never in the file (§14).
 - ``[[models]]``: model cards (§5.9), validated as descriptors, each id once.
 
 Binding (D254): a bind other than the loopback interface needs both TLS files, and a key file
@@ -74,6 +75,7 @@ from pydantic import (
 from pydantic_core import ErrorDetails, PydanticCustomError
 
 from aibi.core.api.origins import LOOPBACK_HOSTS, hostname, is_loopback, origin
+from aibi.core.importers.databases import Connection
 from aibi.core.schema.descriptors import ModelCardDescriptor
 from aibi.core.schema.ids import Identifier
 from aibi.core.schema.limits import (
@@ -159,6 +161,10 @@ def _bind(value: object) -> object:
 Hostname = Annotated[str, BeforeValidator(_hostname)]
 Origin = Annotated[str, BeforeValidator(_origin)]
 EnvName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")]
+SchemaName = Annotated[
+    str, StringConstraints(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f-\x9f]+$")
+]
+"""A database schema's name, as the database writes it, without control characters."""
 
 
 class Rate(_Config):
@@ -287,12 +293,14 @@ class Disclosure(_Config):
 
 
 class DatabaseConnection(_Config):
-    """A named connection's shape (§14): a file for SQLite and DuckDB, the name of the variable
-    that holds the URL for Postgres and MySQL; never a credential."""
+    """A named connection's shape (§14, D305): a file for SQLite and DuckDB, the name of the
+    variable that holds the URL for Postgres and MySQL; never a credential. ``schema`` is for
+    Postgres and DuckDB, whose databases hold several."""
 
     kind: Literal["postgres", "mysql", "sqlite", "duckdb"]
     path: ConfigPath | None = None
     url_env: EnvName | None = None
+    schema_: SchemaName | None = Field(default=None, alias="schema")
 
     @model_validator(mode="after")
     def _shape(self) -> Self:
@@ -307,7 +315,15 @@ class DatabaseConnection(_Config):
                 "A Postgres or MySQL connection names url_env, the environment variable that "
                 "holds its URL, and no path",
             )
+        if self.schema_ is not None and self.kind not in ("postgres", "duckdb"):
+            raise PydanticCustomError(
+                "connection", "Only a Postgres or DuckDB connection names a schema"
+            )
         return self
+
+    def connection(self, name: str) -> Connection:
+        """The connection an import resolves (``databases.resolve``)."""
+        return Connection(name, self.kind, self.path, self.url_env, self.schema_)
 
 
 class ServerConfig(_Config):

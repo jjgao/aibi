@@ -1,11 +1,14 @@
-"""Reading workbooks and Parquet files in a worker process that can be killed (SPEC §14, D225).
+"""Reading workbooks, Parquet files and databases in a worker process that can be killed (SPEC
+§14, D225, D306).
 
 python-calamine and pyarrow read bytes an import does not trust, and what they allocate is not
 bounded by those bytes: a workbook's sheet from A1 to a far cell, a shared string that every
 cell names, an ODS cell repeated, a Parquet dictionary decoded into every row; and a malformed
 ODS can keep calamine busy forever. Neither can be stopped from inside once it runs, so they
 never run in the server's process. An import's workbooks and Parquet files are read in one
-child process (``Reader``), started for the first of them and stopped when the import ends:
+child process (``Reader``), started for the first of them and stopped when the import ends; a
+database snapshot is read in one of its own, whose DuckDB session, for Postgres and MySQL,
+attaches the connection it is given and nothing else (``snapshot``, D306):
 
 - It is a fresh interpreter, executed as ``spawn`` would start one, never a fork of the server,
   which holds threads and locks; unlike ``spawn`` it does not import the server's main module,
@@ -29,7 +32,8 @@ child process (``Reader``), started for the first of them and stopped when the i
   UTF-8 together, counted before it answers.
 - The server reads each answer's frame itself, under the same deadline, and refuses one longer
   than ``reader_memory`` bytes; it unpickles the answer allowing no class but those a read
-  returns (``Sheet``, ``TypedSource``, ``ParquetSource``) and ``datetime``'s ``date``,
+  returns (``Sheet``, ``TypedSource``, ``ParquetSource``, and a snapshot's ``Snapshot``,
+  ``SnapshotTable``, ``ForeignKey`` and ``Skipped``) and ``datetime``'s ``date``,
   ``datetime``, ``timedelta`` and ``timezone``, looked up in a fixed table without importing
   anything.
 
@@ -76,6 +80,7 @@ from typing import IO, Any, Self, cast
 import aibi
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
 from aibi.core.importers.sheets import Sheet
+from aibi.core.importers.snapshot import ForeignKey, Skipped, Snapshot, SnapshotTable
 from aibi.core.schema.limits import (
     DECODED_BYTES,
     IMPORT_BYTES,
@@ -90,7 +95,19 @@ from aibi.core.store.sources import TypedSource
 
 _ALLOWED: dict[tuple[str, str], type] = {
     (kind.__module__, kind.__qualname__): kind
-    for kind in (date, datetime, timedelta, timezone, Sheet, TypedSource, ParquetSource)
+    for kind in (
+        date,
+        datetime,
+        timedelta,
+        timezone,
+        Sheet,
+        TypedSource,
+        ParquetSource,
+        Snapshot,
+        SnapshotTable,
+        ForeignKey,
+        Skipped,
+    )
 }
 """The only classes an answer may name: what a read returns, and the values of ``datetime``."""
 _KINDS = frozenset({"value", "refused", "memory", "decoded", "error", "panic"})
@@ -504,7 +521,8 @@ class _Workers:
                 raise refused(
                     RefusalCode.LIMIT_EXCEEDED,
                     ("1 import was" if workers == 1 else f"{workers} imports were")
-                    + f" reading workbooks or Parquet files for more than {seconds} seconds",
+                    + f" reading workbooks, Parquet files or databases for more than {seconds} "
+                    "seconds",
                     limit=(READER_WORKERS, workers),
                 )
             self._running += 1

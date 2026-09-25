@@ -382,6 +382,10 @@ def test_model_cards_are_descriptors_each_registered_once(write_config: Write) -
         ('[databases.old]\nkind = "sqlite"\npath = "elsewhere/old.sqlite"', "databases.old.path"),
         ('[databases.old]\nkind = "sqlite"', "databases.old"),
         ('[databases."Bad Name"]\nkind = "postgres"\nurl_env = "X"', 'databases."Bad Name"'),
+        ('[databases.old]\nkind = "sqlite"\npath = "imports/old.sqlite"\nschema = "s"', "old"),
+        ('[databases.sales]\nkind = "mysql"\nurl_env = "X"\nschema = "s"', "databases.sales"),
+        ('[databases.sales]\nkind = "postgres"\nurl_env = "X"\nschema = "a\\nb"', "schema"),
+        ('[databases.sales]\nkind = "postgres"\nurl_env = "X"\nschema = ""', "schema"),
     ],
 )
 def test_database_connections_are_named_shapes_without_credentials(
@@ -395,6 +399,25 @@ def test_database_connections_are_named_shapes_without_credentials(
 def test_a_sqlite_file_inside_an_import_directory_is_accepted(write_config: Write) -> None:
     text = minimal() + '[databases.old]\nkind = "duckdb"\npath = "imports/old.duckdb"\n'
     assert load_config(write_config(text)).databases["old"].kind == "duckdb"
+
+
+def test_a_connection_names_the_schema_an_import_reads(write_config: Write) -> None:
+    text = minimal() + (
+        '[databases.old]\nkind = "duckdb"\npath = "imports/old.duckdb"\nschema = "archive"\n'
+        '[databases.sales]\nkind = "postgres"\nurl_env = "SALES_URL"\nschema = "Ledger 2"\n'
+    )
+    config = load_config(write_config(text))
+    old = config.databases["old"].connection("old")
+    sales = config.databases["sales"].connection("sales")
+    assert (old.name, old.kind, old.schema, old.url_env) == ("old", "duckdb", "archive", None)
+    assert old.path is not None
+    assert old.path.name == "old.duckdb"
+    assert (sales.kind, sales.schema, sales.url_env, sales.path) == (
+        "postgres",
+        "Ledger 2",
+        "SALES_URL",
+        None,
+    )
 
 
 def test_the_disclosure_floor_is_at_least_2(write_config: Write) -> None:
