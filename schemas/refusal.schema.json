@@ -1786,7 +1786,17 @@
         "NO_SESSION",
         "NO_CHANGE",
         "UNKNOWN_PROPOSAL",
-        "INVALID_EXTENSION"
+        "INVALID_EXTENSION",
+        "HOST_NOT_ALLOWED",
+        "ORIGIN_NOT_ALLOWED",
+        "TOKEN_REQUIRED",
+        "OPERATOR_REQUIRED",
+        "CSRF_REQUIRED",
+        "NOT_FOUND",
+        "METHOD_NOT_ALLOWED",
+        "UNSUPPORTED_MEDIA_TYPE",
+        "LENGTH_REQUIRED",
+        "INTERNAL_ERROR"
       ],
       "title": "RefusalCode",
       "type": "string"

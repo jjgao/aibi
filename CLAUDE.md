@@ -20,8 +20,12 @@ workbooks and Parquet (read in a worker process that can be killed), the importe
 or a pack's, and `reimport_dataset`, which carries curation forward with tombstones. The release
 lifecycle is the store's (M1): per-dataset operation slots, curation sessions with handles, edits
 checked by the gate and the pack checks on every change, the proposal queue, curation proposers and
-the curation queue. The operator router and CLI, tool calls and database snapshots come next (M1,
-M2).
+the curation queue. `core/api/` holds the HTTP application (M1): its configuration, one request
+protection middleware in front of every router and mount (Host and Origin allow-lists, CORS off
+unless configured, rate limits, body limits, security headers), refusals as the one error shape,
+and `aibi-server`. `core/operator/` holds the operator surface (M1): the operator router behind the
+curator token, operator names and CSRF tokens, and `aibi`, the operator CLI, which talks to it over
+HTTP only. Tool calls, the MCP transport and database snapshots come next (M1, M2).
 
 ## Non-negotiables
 
@@ -42,7 +46,11 @@ These come from SPEC.md and are the easiest to break by accident:
 - **No user-chosen name survives canonicalisation** (§7.6). Ids and digests never depend on
   cohort names, notes, JSON key order or rendered text.
 - **Operator operations are never tools** (§11.2): import, curation sessions, accepting
-  proposals and withdrawal go through the operator router or CLI with the curator token.
+  proposals, withdrawal and erasure go through the operator router or CLI with the curator token.
+- **Secrets stay put** (D261, D267, D269): the curator token, session handles, erasure keys and
+  the CSRF key never appear in URLs, logs, refusals, responses (but the handle `open` and
+  `take-over` return), `repr`s or exception messages. The token travels only in `Authorization`,
+  handles and keys only in request bodies; tests scan for them.
 - **Every result carries its derivation** (§8). Every proportion is an object with numerator,
   denominator and denominator definition, never a bare number.
 - **Refuse rather than approximate.** Unsupported input fails with an error that lists what is
@@ -76,9 +84,17 @@ Python ≥ 3.12 with uv. Before pushing, run from `server/`:
 ```bash
 uv run ruff check . && uv run ruff format --check .
 uv run pyright
-uv run lint-imports      # core must not import packs
+uv run lint-imports      # core must not import packs; the service layers no web framework
 uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
+```
+
+Run a server and operate it (see `server/aibi.example.toml`):
+
+```bash
+uv run aibi-server new-token                        # a curator token, and the hash to configure
+uv run aibi-server serve --config aibi.toml
+AIBI_TOKEN=… AIBI_OPERATOR="Your Name" uv run aibi status
 ```
 
 After changing a model in `core/schema/`, regenerate the checked-in JSON Schemas with

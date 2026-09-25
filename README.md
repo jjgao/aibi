@@ -29,3 +29,31 @@ uv run pytest                             # everything
 
 CI runs the same checks on every pull request. See [CLAUDE.md](CLAUDE.md) for the conventions
 that agents and people follow when changing the code.
+
+## Running the server
+
+The server reads one configuration file at start; `server/aibi.example.toml` is a commented
+example. It binds to `127.0.0.1:8000` by default, and needs TLS on any other address.
+
+```bash
+cd server
+cp aibi.example.toml aibi.toml && chmod 600 aibi.toml   # group and others must not write it
+mkdir -p imports                                       # the directories imports may read
+uv run aibi-server new-token        # prints a curator token once, and the token_hash to paste
+uv run aibi-server check --config aibi.toml            # what the file resolves to
+uv run aibi-server serve --config aibi.toml
+```
+
+Operators work through `aibi`, which talks to the server over HTTP. It reads the curator token
+from `AIBI_TOKEN` (or asks for it on a terminal) and never takes it as an argument; the name
+recorded in the audit trail comes from `--operator` or `AIBI_OPERATOR`.
+
+```bash
+export AIBI_TOKEN=…  AIBI_OPERATOR="Ada Lovelace"
+uv run aibi import library /absolute/path/in/imports/library
+uv run aibi queue library
+uv run aibi session open library
+uv run aibi session confirm library members /fields/primary_key
+uv run aibi session publish library
+uv run aibi status
+```

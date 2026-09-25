@@ -50,6 +50,18 @@ def test_publishing_gives_the_next_label_and_resolution_finds_it(
             store.resolve("lib", missing)
 
 
+def test_the_datasets_are_those_with_a_label_withdrawn_or_not(
+    store: Store, library: Library, imported: str
+) -> None:
+    assert store.datasets() == ["lib"]
+    store.withdraw("lib", 1, "operator:ada")
+    assert store.datasets() == ["lib"]
+
+
+def test_a_store_without_labels_has_no_dataset(store: Store) -> None:
+    assert store.datasets() == []
+
+
 def test_withdrawal_applies_to_every_label_of_a_manifest(
     store: Store, library: Library, imported: str
 ) -> None:

@@ -1,9 +1,20 @@
 """Refusals (SPEC §8.6).
 
 A refusal names the problem, where it is and what is available instead (A3). Its messages are
-segments (SPEC §8.1).
+segments (SPEC §8.1). A refusal never writes a curator token or a session handle (D265):
+``blank_secrets`` blanks anything of their shapes (``SECRET_RE``) that a refusal took from a
+request, such as a member name, even inside a longer word, and each word that holds one once
+percent-decoded. Input is refused only for a shape that stands alone (``SECRET_ALONE_RE``,
+``holds_secret``), so that an ordinary long name that happens to hold one, such as ``courses_``
+and 43 more letters, can be stored and named; and for the configured curator token wherever it
+sits (``holds_token_of``), which only the token itself matches.
 """
 
+import hashlib
+import hmac
+import re
+import urllib.parse
+from collections.abc import Iterator
 from enum import StrEnum
 from typing import Annotated
 
@@ -11,7 +22,7 @@ from pydantic import Field
 
 from aibi.core.schema.ids import JsonPointer, PackCode
 from aibi.core.schema.limits import MAX_REFUSALS, REFUSALS
-from aibi.core.schema.output import DATA_MARK, LAX, Count, Output, Segment, text
+from aibi.core.schema.output import DATA_MARK, LAX, Count, DataSegment, Output, Segment, data, text
 from aibi.core.schema.results import CohortCount
 
 
@@ -125,6 +136,29 @@ class RefusalCode(StrEnum):
     """No open proposal of the dataset has that id."""
     INVALID_EXTENSION = "INVALID_EXTENSION"
     """An extension object its pack's JSON Schema refuses, or has none for (§10.1, D247)."""
+    # Request protection and the operator router over HTTP (§11.2, §14, D255–D265):
+    HOST_NOT_ALLOWED = "HOST_NOT_ALLOWED"
+    """A request whose ``Host`` is missing, repeated, malformed or not allowed (D256)."""
+    ORIGIN_NOT_ALLOWED = "ORIGIN_NOT_ALLOWED"
+    """A request from an origin that is not allowed, or a cross-site one without an allowed
+    ``Origin``, or a CORS preflight that is not answered (D257, D258)."""
+    TOKEN_REQUIRED = "TOKEN_REQUIRED"
+    """An operator request without the curator token as a bearer token (D261)."""
+    OPERATOR_REQUIRED = "OPERATOR_REQUIRED"
+    """An operator request that does not name its operator in one valid header (D262)."""
+    CSRF_REQUIRED = "CSRF_REQUIRED"
+    """A browser's operator request without the CSRF token (D263)."""
+    NOT_FOUND = "NOT_FOUND"
+    """No route, or nothing at the route, has that path."""
+    METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
+    """The route does not take that method; the alternatives list those it takes."""
+    UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
+    """A request body of a content type the route does not read (D263)."""
+    LENGTH_REQUIRED = "LENGTH_REQUIRED"
+    """An upload that does not declare its length in one ``Content-Length``, or that
+    ``Transfer-Encoding`` frames (D266)."""
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    """The server failed; the refusal says no more, and the server logs the rest (D265)."""
 
 
 class Limit(Output):
@@ -148,6 +182,96 @@ class Refusal(Output):
     limit: Limit | None = None
     counts: list[CohortCount] | None = None
     """Cohort counts, with their ids, where a refusal reports numbers (e.g. an overlap, §7.4)."""
+
+
+SECRET_RE = re.compile(r"(?:aibi|ses)_[A-Za-z0-9_-]{43}")
+"""A curator token (``aibi_``, D261) or a session handle (``ses_``, D267), anywhere in a text,
+inside a longer word too: what logs, refusals and usage errors blank."""
+_BASE64URL = "A-Za-z0-9_-"
+SECRET_ALONE_RE = re.compile(
+    rf"(?<![{_BASE64URL}])(?:aibi|ses)_[{_BASE64URL}]{{43}}(?![{_BASE64URL}])"
+)
+"""A token or a handle that stands alone: no base64url character touches either end, as none
+does where a secret is pasted or swapped in. What input is refused for (D262, D265, D268)."""
+SECRET_BLANK = "<secret>"
+"""What stands for a secret's shape in a refusal, a log line or a usage error."""
+SECRET_DECODINGS = 3
+"""How many times a text is percent-decoded when a secret is looked for in it: a server decodes
+a URL once, and a proxy, a log or a client may once more."""
+
+
+def _decodings(value: str) -> Iterator[str]:
+    """``value``, then percent-decoded, up to ``SECRET_DECODINGS`` times, while that changes it."""
+    yield value
+    for _ in range(SECRET_DECODINGS):
+        decoded = urllib.parse.unquote(value)
+        if decoded == value:
+            return
+        value = decoded
+        yield value
+
+
+def holds_secret(value: str) -> bool:
+    """Whether ``value`` holds a token's or a handle's shape standing alone
+    (``SECRET_ALONE_RE``), as written or percent-decoded up to ``SECRET_DECODINGS`` times."""
+    return any(SECRET_ALONE_RE.search(found) is not None for found in _decodings(value))
+
+
+_TOKEN_WINDOW = re.compile(r"(?=(aibi_[A-Za-z0-9_-]{43}))")
+"""Every ``aibi_`` window of a token's length, overlapping ones too."""
+
+
+def holds_token_of(value: str, digest: bytes) -> bool:
+    """Whether ``value`` holds the curator token whose SHA-256 is ``digest`` anywhere, inside a
+    longer word too, as written or percent-decoded up to ``SECRET_DECODINGS`` times (D261,
+    D265): each ``aibi_`` window of 48 characters is hashed and compared in constant time, so
+    the real token touching ``_`` or ``-`` is found while a name that only holds its shape is
+    not."""
+    for found in _decodings(value):
+        for window in _TOKEN_WINDOW.finditer(found):
+            hashed = hashlib.sha256(window.group(1).encode("ascii")).digest()
+            if hmac.compare_digest(hashed, digest):
+                return True
+    return False
+
+
+_WORD = re.compile(r"[^\s/]+")
+"""A word of a text, or a segment of a pointer: what is blanked whole when it holds a secret's
+shape only once percent-decoded."""
+
+
+def _encoded_secret(word: re.Match[str]) -> str:
+    found = any(SECRET_RE.search(decoded) is not None for decoded in _decodings(word.group()))
+    return SECRET_BLANK if found else word.group()
+
+
+def blank(value: str) -> str:
+    """``value`` with every curator token or session handle shape in it blanked, and each word
+    (or pointer segment) that holds one percent-decoded up to ``SECRET_DECODINGS`` times written
+    ``SECRET_BLANK`` whole, as ``blank_path`` blanks a logged path's segment."""
+    blanked = SECRET_RE.sub(SECRET_BLANK, value)
+    return _WORD.sub(_encoded_secret, blanked) if "%" in blanked else blanked
+
+
+def _blank_segment(segment: Segment) -> Segment:
+    if isinstance(segment, DataSegment):
+        blanked = blank(segment.data)
+        return segment if blanked == segment.data else data(blanked)
+    blanked = blank(segment.text)
+    return segment if blanked == segment.text else text(blanked)
+
+
+def blank_secrets(refusal: Refusal) -> Refusal:
+    """``refusal`` with every token or handle shape in its path, message and alternatives
+    blanked (D265): a member name or a value it took from a request is not written back."""
+    path = None if refusal.path is None else blank(refusal.path)
+    message = [_blank_segment(segment) for segment in refusal.message]
+    alternatives = [_blank_segment(segment) for segment in refusal.alternatives]
+    if path == refusal.path and message == refusal.message and alternatives == refusal.alternatives:
+        return refusal
+    return refusal.model_copy(
+        update={"path": path, "message": message, "alternatives": alternatives}
+    )
 
 
 def sort_refusals(refusals: list[Refusal]) -> list[Refusal]:

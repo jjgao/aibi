@@ -5,12 +5,19 @@ description = "AI-native cohort exploration over related tables"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+    "fastapi>=0.141",
+    "httpx>=0.28",
     "jsonschema>=4.23",
     "packaging>=24",
     "pyarrow>=20",
     "pydantic>=2.11",
     "python-calamine>=0.8.2",
+    "uvicorn>=0.53,<0.54",  # api.connections reads its h11 protocol's internals: a test pins them
 ]
+
+[project.scripts]
+aibi = "aibi.core.operator.cli:main"
+aibi-server = "aibi.core.api.serve:main"
 
 [dependency-groups]
 dev = [
@@ -56,10 +63,16 @@ strict = ["src/aibi/core"]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # Starlette's TestClient prefers httpx2 and warns once, on import, when it runs on httpx, which
+    # the operator CLI uses (D268); the tests hand the CLI a TestClient.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.importlinter]
 root_package = "aibi"
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "The core does not import packs (SPEC P8)"
@@ -72,3 +85,54 @@ name = "The store does not import the importers, so the gate stays with the stor
 type = "forbidden"
 source_modules = ["aibi.core.store"]
 forbidden_modules = ["aibi.core.importers"]
+
+[[tool.importlinter.contracts]]
+name = "The service layers know no HTTP layer or web framework (SPEC §12.1)"
+type = "forbidden"
+source_modules = [
+    "aibi.core.schema",
+    "aibi.core.store",
+    "aibi.core.importers",
+    "aibi.core.engine",
+]
+forbidden_modules = [
+    "aibi.core.api",
+    "aibi.core.operator",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+    "httpx",
+    "anyio",
+]
+
+[[tool.importlinter.contracts]]
+name = "The operator CLI talks to the server over HTTP only (SPEC §11.2, D268)"
+type = "forbidden"
+source_modules = [
+    "aibi.core.operator.cli",
+    "aibi.core.operator.client",
+    "aibi.core.operator.auth",
+]
+forbidden_modules = [
+    "aibi.core.store",
+    "aibi.core.importers",
+    "aibi.core.engine",
+    "aibi.core.api",
+    "aibi.core.operator.router",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+]
+# Annotations under TYPE_CHECKING, which the CLI never runs; tests/core/operator/test_cli.py
+# checks in a fresh interpreter that the CLI loads none of the forbidden modules.
+ignore_imports = [
+    "aibi.core.schema.pack_api -> aibi.core.engine.data",
+    "aibi.core.schema.pack_api -> aibi.core.store.build",
+    "aibi.core.schema.pack_api -> aibi.core.store.sources",
+]
+
+[[tool.importlinter.contracts]]
+name = "The HTTP application imports the operator surface, never the reverse (SPEC §12.5)"
+type = "forbidden"
+source_modules = ["aibi.core.operator"]
+forbidden_modules = ["aibi.core.api"]
