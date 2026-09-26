@@ -57,7 +57,10 @@ fixture in `tests/core/analyses/reference/`), the disclosure of a predicate's co
 `core/engine/variables.py` gives a view's variables (columns and aggregates) their values by the
 reference evaluator, `sql.compile_materialised` counts them by SQL, and
 `core/analyses/distribution.py` is `summary.distribution`, `core/analyses/common.py` what the
-core's descriptive analyses share.
+core's descriptive analyses share. From M3.2b, `core/engine/members.py` lists a cohort's members'
+unit keys by the reference evaluator and orders them as the canonical form does,
+`sql.compile_members` lists them by SQL, and `core/analyses/members.py` is `summary.members`,
+refused under any disclosure setting.
 
 ## Non-negotiables
 

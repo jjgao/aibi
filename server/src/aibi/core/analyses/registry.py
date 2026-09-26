@@ -3,8 +3,9 @@
 The registry holds the core's analyses, each an entry (a descriptor of kind ``analysis``) with its
 parameters' model and its implementation, and the analyses of the installed packs, each an entry
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
-path computes a result. The core's are ``compare.existence`` (D319) and ``summary.distribution``
-(D328); the rest of §9.5 follows in the later slices of M3 (D315, D324).
+path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
+(D328) and ``summary.members`` (D331); the rest of §9.5 follows in the later slices of M3 (D315,
+D324).
 
 A pack's analysis is registered, listed and matched for applicability like the core's; the core
 runs it from the slice that hands it the inputs its ``requires`` name, materialised (the columns,
@@ -29,9 +30,9 @@ once for all of them.
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aibi.core.analyses import distribution, existence
+from aibi.core.analyses import distribution, existence, members
 from aibi.core.engine.resolve import UNCONFIRMED, DescriptorCopies, PackView, pack_failed
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.catalog import ApplicableAnalysis
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
@@ -57,11 +58,11 @@ class CoreAnalysis:
 CORE: Mapping[str, CoreAnalysis] = {
     existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams),
     distribution.ENTRY.id: CoreAnalysis(distribution.ENTRY, DistributionParams),
+    members.ENTRY.id: CoreAnalysis(members.ENTRY, MembersParams),
 }
 """The core's analyses, by id."""
 
 LATER: Mapping[str, str] = {
-    "summary.members": "M3.2b",
     "compare.columns": "M3.2c",
     "survival.km": "M3.3",
     "survival.cox": "M3.3",

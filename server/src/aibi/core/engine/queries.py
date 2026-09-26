@@ -9,7 +9,8 @@ each unit's truth value, made as it is read from the answer (``TruthValues``, D2
 number of units, and ``run_views`` materialises variables over cohorts in that run too
 (``sql.compile_materialised``), whose answers grow with the distinct values and, for ``max``,
 ``min`` and ``mean``, with the units, which the answer cap bounds: what ``run_analysis`` runs
-(D318, D327). Rows the
+(D318, D327); and it lists cohorts' members' unit keys in that run too (``sql.compile_members``),
+a row per member, which the server orders as the canonical form orders keys (D333). Rows the
 queries do not give are a fault, ``QueryError``. It returns the SQL as run and its parameters
 beside them, which the derivation log records for an issuance (§12.2): blob paths are recorded
 as their digests, so the log names what was read and not where the server keeps it.
@@ -21,11 +22,12 @@ blob as ``Store.load`` does, D221) and until the run ends (§12.2), and gives it
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from pydantic import JsonValue
 
+from aibi.core.engine.members import Key, ordered
 from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
 from aibi.core.engine.sql import (
     Accounting,
@@ -34,6 +36,7 @@ from aibi.core.engine.sql import (
     compile_cohort,
     compile_crossing,
     compile_materialised,
+    compile_members,
 )
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import Query, QueryError, Workers
@@ -126,10 +129,22 @@ class MaterialisedRun:
 
 
 @dataclass(frozen=True)
+class MembersRun:
+    """A cohort's members' unit keys by SQL (``sql.compile_members``), in the canonical form's
+    order (``members.ordered``), with the statement as run and its parameters, as ``Counted`` has
+    them."""
+
+    keys: tuple[Key, ...]
+    sql: tuple[str, ...]
+    parameters: Mapping[str, JsonValue]
+
+
+@dataclass(frozen=True)
 class ViewsRun:
     counted: list[Counted]
     crossed: list[CrossingRun]
     materialised: list[MaterialisedRun]
+    listed: list[MembersRun] = field(default_factory=list[MembersRun])
 
 
 def run_views(
@@ -139,11 +154,13 @@ def run_views(
     sources: Mapping[str, Mapping[str, TableSource]],
     workers: Workers,
     *,
+    members: Sequence[ResolvedCohort] = (),
     ends: float | None = None,
 ) -> ViewsRun:
-    """Each cohort counted, each crossing counted and each materialisation (its cohorts and
-    variables) read, in one worker run (D318, D327), the server's reading of a materialisation's
-    rows held to ``ends`` as the worker is. Raises as ``run_cohorts`` does."""
+    """Each cohort counted, each crossing counted, each materialisation (its cohorts and
+    variables) read and each of ``members``' members' keys listed, in one worker run (D318,
+    D327, D333), the server's reading of a materialisation's rows and of the keys, and its
+    ordering of the keys, held to ``ends`` as the worker is. Raises as ``run_cohorts`` does."""
     compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
     crossed = [
         compile_crossing(members, asked, sources[members[0].release.manifest])
@@ -153,6 +170,7 @@ def run_views(
         compile_materialised(members, variables, sources[members[0].release.manifest])
         for members, variables in materialisations
     ]
+    listing = [compile_members(cohort, sources[cohort.release.manifest]) for cohort in members]
     queries = [Query(c.counts_sql, c.parameters, c.counts_columns) for c in compiled]
     for crossing in crossed:
         queries += [
@@ -169,10 +187,12 @@ def run_views(
                 strict=True,
             )
         ]
+    queries += [Query(m.statement, m.parameters, m.columns, m.values) for m in listing]
     paths = sorted(
         {path for c in compiled for path in c.paths}
         | {p for x in crossed for p in x.paths}
         | {p for m in made for p in m.paths}
+        | {p for m in listing for p in m.paths}
     )
     rows = workers.run(paths, queries, ends=ends)
     counted: list[Counted] = []
@@ -210,13 +230,22 @@ def run_views(
                 MappingProxyType(materialisation.parameters_json()),
             )
         )
-    return ViewsRun(counted, found, materialised)
+    listed = [
+        MembersRun(
+            tuple(ordered(compiled_members.read(rows[at + index], ends), ends)),
+            (compiled_members.statement,),
+            MappingProxyType(compiled_members.parameters_json()),
+        )
+        for index, compiled_members in enumerate(listing)
+    ]
+    return ViewsRun(counted, found, materialised, listed)
 
 
 __all__ = [
     "Counted",
     "CrossingRun",
     "MaterialisedRun",
+    "MembersRun",
     "ViewsRun",
     "run_cohorts",
     "run_crossed",

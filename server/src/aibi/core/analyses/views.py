@@ -11,18 +11,22 @@ A view is checked in two steps, around phase 1:
    its parameters holds no ``ids`` and no ``cohort`` leaf (``LEAF_NOT_ALLOWED``: a predicate is
    asked of every unit, and those belong in a cohort) and at most as many pack leaves as a
    cohort; and the ``where`` of each variable of its parameters holds no ``ids`` or ``cohort``
-   leaf either (``LEAF_NOT_ALLOWED``) and no pack leaf (``NOT_SUPPORTED`` until M3.2d, D324).
-   Its predicates and variables are then handed to ``canonicalise`` (``ViewPredicate``,
+   leaf either (``LEAF_NOT_ALLOWED``) and no pack leaf (``NOT_SUPPORTED`` until M3.2d, D324);
+   and a view of ``summary.members`` names exactly one cohort, listed in its ``cohorts`` (else
+   ``INVALID_VALUE`` there) or the document's only one (else ``MISSING_MEMBER`` at ``cohorts``)
+   (D331). Its predicates and variables are then handed to ``canonicalise`` (``ViewPredicate``,
    ``ViewVariable``), resolved with the cohorts in the release of the view's cohorts, on the
    unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates and variables all canonicalised, and
    whose variables its analysis takes (``summary.distribution``'s: categories or numbers, ``bins``
    only for numbers, under *k* a number's histogram edges from ``bins`` or a declared range, and
-   under *k* one set of edges for a column's values across the call's views, D328, D329), gets its
-   canonical form and ids (``ViewIdentity``): its cohorts in view order, or by computation id when
-   it lists none (D284); its reference's position, for an analysis that declares ``uses_reference``,
-   the first cohort's by default; ``overlap``, for one that declares ``assumes_independent_groups``;
-   its canonical parameters, every default written, every predicate as its canonical clause tree and
+   under *k* one set of edges for a column's values across the call's views, D328, D329), and, for
+   ``summary.members``, whose dataset allows row ids and which no disclosure setting covers
+   (``ROW_IDS_NOT_ALLOWED`` at ``analysis`` otherwise, D332), gets its canonical form and ids
+   (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none (D284);
+   its reference's position, for an analysis that declares ``uses_reference``, the first cohort's
+   by default; ``overlap``, for one that declares ``assumes_independent_groups``; its canonical
+   parameters, every default written, every predicate as its canonical clause tree and
    every variable as its canonical form; the effective *k* over its cohorts and predicates and the
    floor; and the results versions of the packs of its analysis, cohorts and predicates. A view one
    of whose cohorts or predicates was refused is left out; their refusals say why. A view whose
@@ -41,7 +45,7 @@ from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
-from aibi.core.analyses import distribution, existence
+from aibi.core.analyses import distribution, existence, members
 from aibi.core.analyses.registry import CORE, LATER, PACK_ANALYSES, Analyses, Registered
 from aibi.core.engine.canonical import (
     CanonicalCohort,
@@ -49,8 +53,8 @@ from aibi.core.engine.canonical import (
     CanonicalVariable,
     ViewIdentity,
 )
-from aibi.core.engine.resolve import ViewPredicate, ViewVariable
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.engine.resolve import FieldRead, ViewPredicate, ViewVariable
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.document import (
     PARSED,
@@ -220,6 +224,8 @@ def parse(
             predicates = _predicates(params, index, reference, refusals)
         elif isinstance(params, DistributionParams):
             variables = _variables(params, index, reference, refusals)
+        elif isinstance(params, MembersParams):
+            _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
         if len(refusals.found) > before or params is None:
             continue
         parsed.append(
@@ -235,6 +241,27 @@ def parse(
             )
         )
     return parsed, refusals.found
+
+
+def _one_cohort(
+    listed: Sequence[str] | None, cohorts: int, index: int, refusals: _Refusals
+) -> None:
+    """``summary.members`` lists the keys of exactly one cohort (D331): the one its view lists,
+    or the document's only one."""
+    if listed is not None and len(listed) != 1:
+        refusals.add(
+            RefusalCode.INVALID_VALUE,
+            ("views", index, "cohorts"),
+            text(f"summary.members lists the keys of exactly one cohort, and {len(listed)} are "),
+            text("listed: list one, in a view of its own for each"),
+        )
+    elif listed is None and cohorts != 1:
+        refusals.add(
+            RefusalCode.MISSING_MEMBER,
+            ("views", index, "cohorts"),
+            text("summary.members lists the keys of exactly one cohort, and the document has "),
+            text(f"{cohorts}: list one in cohorts"),
+        )
 
 
 def _predicates(
@@ -352,18 +379,23 @@ class CheckedView:
             return existence.view_readback(
                 len(self.cohorts), self.reference, self.predicates, self.params
             )
+        if isinstance(self.params, MembersParams):
+            return members.view_readback(self.cohorts[0], self.params)
         assert isinstance(self.params, DistributionParams), "the core's analyses are known"
         return distribution.view_readback(len(self.cohorts), self.variables)
 
     def static_caveats(self) -> list[Caveat]:
-        """The caveats its result carries that need no data (module docstring)."""
-        return static_caveats(self.cohorts, self.predicates, self.variables)
+        """The caveats its result carries that need no data (module docstring): for
+        ``summary.members``, the key's fields too, which set how its values are carried."""
+        reads = members.key_reads(self.cohorts[0]) if isinstance(self.params, MembersParams) else []
+        return static_caveats(self.cohorts, self.predicates, self.variables, reads)
 
 
 def static_caveats(
     cohorts: Sequence[CanonicalCohort],
     predicates: Sequence[CanonicalCohort],
     variables: Sequence[CanonicalVariable] = (),
+    reads: Sequence[FieldRead] = (),
 ) -> list[Caveat]:
     found: list[Caveat] = []
     groups = (
@@ -373,6 +405,7 @@ def static_caveats(
             [
                 *(read for cohort in predicates for read in cohort.resolved.unconfirmed),
                 *(read for variable in variables for read in variable.resolved.unconfirmed),
+                *reads,
             ],
         ),
     )
@@ -459,6 +492,11 @@ def checked(
             wrong = _distributed(view.index, view.params, variables, disclosure, edges_of)
             if wrong:
                 refusals += wrong
+                continue
+        if isinstance(view.params, MembersParams):
+            listing = _listed_members(view.index, cohorts[0], disclosure)
+            if listing is not None:
+                refusals.append(listing)
                 continue
         identity = ViewIdentity(
             analysis=view.analysis.id,
@@ -583,6 +621,40 @@ def _counted(form: JsonValue) -> JsonValue:
     return {key: member for key, member in form.items() if key not in ("column", "lookup")}
 
 
+def _listed_members(index: int, cohort: CanonicalCohort, k: int | None) -> Refusal | None:
+    """What ``summary.members`` refuses of its resolved cohort (D332): a dataset that allows no
+    row ids, and any disclosure setting, the floor's included, whatever the cohort's size, since
+    a key is held by one unit and lists give each other's units by difference."""
+    dataset = cohort.resolved.release.dataset_descriptor
+    settings = None if dataset is None else dataset.fields.disclosure
+    at = pointer(["views", index, "analysis"])
+    alternatives: list[Segment] = [
+        data(name) for name in ("count_cohort", *sorted(set(CORE) - {members.ANALYSIS_ID}))
+    ]
+    if settings is not None and not settings.allow_row_ids:
+        return Refusal(
+            code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+            path=at,
+            message=[
+                text("The dataset does not allow row ids, so no unit's key is listed (§8.4): "),
+                data(cohort.release.dataset),
+            ],
+            alternatives=alternatives,
+        )
+    if k is not None:
+        return Refusal(
+            code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+            path=at,
+            message=[
+                text(f"Under the disclosure settings (min_cell_count {k}) no unit's key is "),
+                text("listed, whatever the cohort's size: a key is held by one unit, and two "),
+                text("lists give by difference the units of a set of any size (§8.4, D332)"),
+            ],
+            alternatives=alternatives,
+        )
+    return None
+
+
 def _canonical_params(
     params: DocModel,
     predicates: Sequence[CanonicalCohort],
@@ -604,6 +676,8 @@ def _canonical_params(
                 form["bins"] = None if given.bins is None else list[JsonValue](given.bins)
             columns.append(form)
         return {"columns": columns}
+    if isinstance(params, MembersParams):
+        return {"limit": params.limit, "offset": params.offset}
     raise ValueError("the canonical parameters of an analysis the core does not run")
 
 

@@ -34,6 +34,10 @@ compared as the evaluator compares them (numbers by value, exactly; nothing else
 **Determinism (D294).** The counts come from ``COUNT``, and flags and reasons from ``BIT_OR``
 and ``BOOL_OR`` over integers; no aggregate over a double enters a digest (§9.3). Rows are
 returned by ``rid``.
+
+**Members (D333).** ``compile_members`` lists a cohort's members' unit keys, one row per member,
+each key column as it is stored, dates and datetimes as integers; the server orders them as the
+canonical form orders keys (``members.ordered``), since DuckDB's collation is not that order.
 """
 
 import json
@@ -833,6 +837,105 @@ def compile_materialised(
     return _Compiler(merged, sources).materialised(cohorts, variables)
 
 
+_KEY_VALUES: tuple[PhysicalType, ...] = ("float64", "string")
+"""The stored types of key columns a members query answers as value columns (D327): doubles and
+text; the others it answers as integers (``CompiledMembers``)."""
+_EPOCH_DAY = date(1970, 1, 1)
+
+
+@dataclass(frozen=True)
+class CompiledMembers:
+    """The query that lists a cohort's members' unit keys (``compile_members``, D333): one row per
+    member, by ``rid``, its key columns in key order, each as it is stored but a date as its days
+    since 1970-01-01 and a datetime as its microseconds since the epoch (integers), a boolean as
+    0 or 1; doubles and text are value columns (``Query.values``, D327). The rows are not in the
+    keys' order: the server orders them (``members.ordered``), never DuckDB's collation."""
+
+    statement: str
+    parameters: Mapping[str, Parameter]
+    kinds: tuple[PhysicalType, ...]
+    """Each key column's stored type, in key order."""
+    blobs: frozenset[str] = frozenset()
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        """The blobs the query reads, the only files it may open (D293)."""
+        return tuple(sorted(str(self.parameters[name]) for name in self.blobs))
+
+    @property
+    def columns(self) -> int:
+        return len(self.kinds)
+
+    @property
+    def values(self) -> frozenset[int]:
+        """The value columns: those of doubles and of text."""
+        return frozenset(at for at, kind in enumerate(self.kinds) if kind in _KEY_VALUES)
+
+    def parameters_json(self) -> dict[str, JsonValue]:
+        """The parameters as the derivation log records them (``CompiledCohort``'s)."""
+        return {
+            name: PurePath(str(value)).name if name in self.blobs else _json(value)
+            for name, value in self.parameters.items()
+        }
+
+    def read(self, rows: Rows, ends: float | None = None) -> tuple[tuple[Constant, ...], ...]:
+        """The query's rows read, one key per member in the stored types the reference evaluator
+        reads (``members.keys``). Raises ``QueryError`` for rows the query does not give, and
+        ``CallerDeadline`` once ``time.monotonic()`` passes ``ends``, looked at every
+        ``_DEADLINE_ROWS`` rows (a key per member, read after the worker has answered)."""
+        if rows.width != self.columns:
+            raise QueryError("a members query gave rows of another width")
+        columns = [
+            rows.value_column(at) if kind in _KEY_VALUES else rows.integer_column(at)
+            for at, kind in enumerate(self.kinds)
+        ]
+        found: list[tuple[Constant, ...]] = []
+        for index in range(len(rows)):
+            if ends is not None and not index % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            found.append(
+                tuple(
+                    _key_value(column[index], kind)
+                    for column, kind in zip(columns, self.kinds, strict=True)
+                )
+            )
+        return tuple(found)
+
+
+def _key_value(raw: object, kind: PhysicalType) -> Constant:
+    """A key's value as a members query answers it, in its stored type (``CompiledMembers``)."""
+    if kind == "string":
+        if not isinstance(raw, str):
+            raise QueryError("a members query gave a key it cannot give")
+        return raw
+    if kind == "float64":
+        if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
+            raise QueryError("a members query gave a key it cannot give")
+        return float(raw)
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise QueryError("a members query gave a key it cannot give")
+    if kind == "int64":
+        return raw
+    if kind == "bool":
+        if raw not in (0, 1):
+            raise QueryError("a members query gave a key it cannot give")
+        return bool(raw)
+    try:
+        if kind == "date32":
+            return _EPOCH_DAY + timedelta(days=raw)
+        if kind == "timestamp":
+            return _EPOCH + raw * _MICROSECOND
+    except OverflowError:
+        raise QueryError("a members query gave a key it cannot give") from None
+    raise QueryError("a members query gave a key of a type no key has")
+
+
+def compile_members(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> CompiledMembers:
+    """The query that lists a cohort's members' keys over its release's table blobs (D333).
+    Raises ``CompileError``."""
+    return _Compiler(cohort, sources).members()
+
+
 def compile_cohort(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> CompiledCohort:
     """A resolved cohort's queries over its release's table blobs, ``sources`` by table id.
     Raises ``CompileError``."""
@@ -1358,6 +1461,47 @@ class _Compiler:
             marks=self.marks,
             cohorts=len(members),
             shapes=shapes,
+            blobs=frozenset(self.blobs),
+        )
+
+    def members(self) -> CompiledMembers:
+        """A cohort's members' keys (``CompiledMembers``)."""
+        cohort = self.cohort
+        unit = cohort.unit
+        columns = self.release.primary_key(unit)
+        if not columns:
+            raise CompileError(f"table {unit} has no declared key")
+        member = cast(str, self.part(cohort))
+        base = self.base(unit).name
+        kinds: list[PhysicalType] = []
+        read: list[Expression] = []
+        for at, column in enumerate(columns):
+            kind = self.physical(unit, column)
+            if kind == "strings":
+                raise CompileError(f"the key column {unit}.{column} holds lists")
+            value: Expression = _col("u", cast(str, self.slot(unit, column)))
+            if kind == "timestamp":
+                value = _fn("epoch_us", value)
+            elif kind == "date32":
+                value = _fn(
+                    "date_diff", exp.Literal.string("day"), self.parameter(_EPOCH_DAY), value
+                )
+            kinds.append(kind)
+            read.append(_as(value, f"k{at}"))
+        select = _select(*read).from_(_table(member, "c"), copy=False)
+        select = select.join(
+            _table(base, "u"), on=_eq(_col("u", "rid"), _col("c", "rid")), copy=False
+        )
+        select = select.where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+        select = select.order_by(exp.Ordered(this=_col("c", "rid")), copy=False)
+        ctes = [self.base_cte(one) for one in self.bases.values()]
+        ctes += [
+            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
+        ]
+        return CompiledMembers(
+            statement=self.with_ctes(select, ctes).sql(dialect="duckdb"),
+            parameters=MappingProxyType(dict(self.parameters)),
+            kinds=tuple(kinds),
             blobs=frozenset(self.blobs),
         )
 
@@ -3083,6 +3227,7 @@ __all__ = [
     "CompiledCohort",
     "CompiledCrossing",
     "CompiledMaterialised",
+    "CompiledMembers",
     "Crossed",
     "CrossedSplit",
     "Crossing",
@@ -3091,6 +3236,7 @@ __all__ = [
     "compile_cohort",
     "compile_crossing",
     "compile_materialised",
+    "compile_members",
     "cross",
     "pairs",
 ]

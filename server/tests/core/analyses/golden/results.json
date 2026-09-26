@@ -416,5 +416,37 @@
     "id": "drv:1a703fe8694ccdc2ad8ade9e89433f93fdd5f8edcd4500fbe74ec0b91f2f3d38",
     "computation_id": "drv:11bf77f5b4b0f7f2eba8f598048b4d4ffd288ee209b039d49b3ab2c57b9d825f",
     "digest": "sha256:ff6a3a4442a5fddb654e50778add3c12e698362549005e27097b3a83eebcd526"
+  },
+  "members_page": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 50
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.members",
+          "params": {
+            "offset": 2,
+            "limit": 5
+          }
+        }
+      ]
+    },
+    "id": "drv:5da45aa20da262ef6b9e055c724968b9825d3397a14eeb54848d33e07f2dc964",
+    "computation_id": "drv:bafbe131acbea8410a589ed53cb8580cb8e1323f2ef85a17fcd00809f584672e",
+    "digest": "sha256:6e3108246e22ffdcb063334b2dafd52262a5049e7b9fe04c35696dbddc4783c0"
   }
 }

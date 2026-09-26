@@ -48,6 +48,7 @@ from aibi.core.engine.sql import (
     compile_cohort,
     compile_crossing,
     compile_materialised,
+    compile_members,
 )
 from aibi.core.engine.truth import TruthValue
 from aibi.core.engine.variables import Joint, Materialised
@@ -516,6 +517,24 @@ def materialised(
     return lambda cohorts, variables, ends=None: run_materialised(
         cohorts, variables, directory, sessions, ends
     )
+
+
+def run_members(
+    cohort: ResolvedCohort, directory: Path, sessions: Sessions, ends: float | None = None
+) -> tuple[tuple[Any, ...], ...]:
+    """A cohort's members' keys by the SQL compiler, run in a helper's session and read by the
+    server by ``ends``, in the rows' order."""
+    compiled = compile_members(cohort, release_blobs(cohort.release, directory))
+    [(columns, rows)] = sessions.run(compiled.paths, [(compiled.statement, compiled.parameters)])
+    return compiled.read(packed_values(columns, rows, compiled.values), ends)
+
+
+@pytest.fixture(scope="session")
+def listed(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[..., tuple[tuple[Any, ...], ...]]:
+    directory = tmp_path_factory.mktemp("members")
+    return lambda cohort, ends=None: run_members(cohort, directory, sessions, ends)
 
 
 def resolve_variables(
