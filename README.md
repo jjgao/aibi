@@ -57,3 +57,7 @@ uv run aibi session confirm library members /fields/primary_key
 uv run aibi session publish library
 uv run aibi status
 ```
+
+The server's read-only catalogue page, at `http://127.0.0.1:8000/`, lists the published datasets
+and shows each one's descriptors and table graph; it takes no token and shows what the public
+tools show.

@@ -22,8 +22,8 @@ closed, so an unknown key is refused, and every problem is reported at once with
   ``send_seconds``, how long a client may take too little of the answers waiting for it (D254,
   ``api.connections``); ``tool_body_idle_seconds``, how long the body of a tool call at ``/mcp``
   or ``/api/tools``, which takes no token, may send nothing (D278); and ``[server.rates]``, the
-  requests a client may make per minute, in bursts (D259), and its ``propose_descriptor`` calls
-  (``proposals``, D277).
+  requests a client may make per minute, in bursts (D259), its ``propose_descriptor`` calls
+  (``proposals``, D277), and its requests to the catalogue page's paths (``page``, D314).
 - ``[curator] token_hash``: ``sha256:<hex>`` of the curator token, never the token (D261).
 - ``[storage]``: ``data``, the store's directory, which holds the upload area (D234), and
   ``imports``, the import directories (D232).
@@ -181,6 +181,9 @@ class Rates(_Config):
     token_failures: Rate = Rate(per_minute=10, burst=10)
     proposals: Rate = Rate(per_minute=30, burst=10)
     """``propose_descriptor`` calls, over either transport (D277)."""
+    page: Rate = Rate(per_minute=120, burst=30)
+    """Requests to the catalogue page's paths, a bucket of their own so that page views never
+    spend the ``api`` bucket agents use (D314)."""
 
 
 class ServerSection(_Config):

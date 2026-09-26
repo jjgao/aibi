@@ -1,6 +1,7 @@
 """No count the disclosure settings suppress is given back by anything public (SPEC §8.4, D271,
-D276, D277, D279): every tool over MCP and over HTTP, every resource and the curation queue, for
-the published release and the draft, are scanned for each suppressed count.
+D276, D277, D279, D311): every tool over MCP and over HTTP, every resource, the curation queue and
+the catalogue page, for the published release and the draft, are scanned for each suppressed
+count.
 
 The ledger is made so that its suppressed counts are numbers nothing else in an answer holds:
 197 unparsed amounts (UNKNOWN), and so 4124 PRESENT ones, suppressed with them; categories of
@@ -65,6 +66,10 @@ def _answers(served: Served, release: Any = None) -> list[str]:
             both("describe_column", {"dataset": "ledger", "column": column["id"], **pinned})
     if release is None:
         both("curation_queue", {"dataset": "ledger"})
+        for path in ("/", "/datasets/ledger"):
+            shown = served.client.get(path)
+            assert shown.status_code == 200, shown.text
+            found.append(shown.text)
     listed = served.rpc("resources/list")
     found.append(listed.text)
     label = "draft" if release == "draft" else described["release"]["label"]

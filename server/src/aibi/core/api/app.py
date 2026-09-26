@@ -1,15 +1,17 @@
 """The application (SPEC §11, §12.1, D255, D264, D278, D280).
 
 ``create_app`` builds one FastAPI application: the public API's routes, the operator router at
-``/operator``, and, given the server's tool calls, the tools over HTTP at ``/api/tools`` and the
-MCP transport at ``/mcp``, whose session manager the application's lifespan runs; and the mounts
-it is given. All of it is behind one ``RequestProtection``, which the application adds as its
+``/operator``, and, given the server's tool calls, the tools over HTTP at ``/api/tools``, the
+MCP transport at ``/mcp``, whose session manager the application's lifespan runs, and the
+read-only catalogue page at ``/`` and ``/datasets/<dataset>`` (``api.page``, D311), whose paths
+request protection and the error handlers then answer with pages (``pages``, D311, D314); and the
+mounts it is given. All of it is behind one ``RequestProtection``, which the application adds as its
 outermost middleware. It serves no documentation pages and no OpenAPI document (the pages load
 scripts from a CDN; the document is generated, for types, but not served), and redirects no
 trailing slash. A mount at ``/``, or at or below ``/api``, ``/operator`` or, with the tools,
-``/mcp``, is refused: it would take paths from the routers, or put a path under the operator
-router's protection that its routes do not serve. The operator router is included once, and
-never by a mount; the MCP transport answers ``POST`` at ``/mcp`` alone.
+``/mcp`` or ``/datasets``, is refused: it would take paths from the routers, or put a path under
+the operator router's protection that its routes do not serve. The operator router is included
+once, and never by a mount; the MCP transport answers ``POST`` at ``/mcp`` alone.
 """
 
 import time
@@ -22,7 +24,9 @@ from starlette.routing import Route
 from starlette.types import ASGIApp
 
 import aibi
+from aibi.core.api.chrome import DATASETS_PREFIX
 from aibi.core.api.errors import install
+from aibi.core.api.page import page_router
 from aibi.core.api.protection import Policy, RequestProtection
 from aibi.core.api.routes import API_PREFIX, api_router
 from aibi.core.api.tools import tools_router
@@ -38,7 +42,7 @@ def _mount_path(path: str, reserved: tuple[str, ...]) -> str:
     if not path.startswith("/") or path == "/" or path.endswith("/"):
         raise ValueError(f"a mount is at a path below /, without a trailing slash: {path!r}")
     if any(path == taken or path.startswith(taken + "/") for taken in reserved):
-        raise ValueError(f"a mount at {path!r} would lie under the API or the operator router")
+        raise ValueError(f"a mount at {path!r} would lie under a path the application serves")
     return path
 
 
@@ -65,8 +69,12 @@ def create_app(
     clock: Callable[[], float] = time.monotonic,
 ) -> FastAPI:
     """The application, every route and mount behind request protection under ``policy``;
-    with ``tools``, the tools over HTTP and MCP."""
-    reserved = (API_PREFIX, OPERATOR_PREFIX, *((MCP_PATH,) if tools is not None else ()))
+    with ``tools``, the tools over HTTP and MCP and the catalogue page."""
+    reserved = (
+        API_PREFIX,
+        OPERATOR_PREFIX,
+        *((MCP_PATH, DATASETS_PREFIX) if tools is not None else ()),
+    )
     paths = [_mount_path(path, reserved) for path in mounts]
     transport = None if tools is None else McpTransport(tools, max_body_bytes=policy.max_body_bytes)
     app = FastAPI(
@@ -78,15 +86,16 @@ def create_app(
         redirect_slashes=False,
         lifespan=_lifespan(transport),
     )
-    install(app)
+    install(app, pages=tools is not None)
     app.include_router(api_router())
     if tools is not None and transport is not None:
         app.include_router(tools_router(tools))
         app.router.routes.append(Route(MCP_PATH, transport, methods=["POST"]))
+        app.include_router(page_router(tools))
     app.include_router(operator_router(services))
     for path in paths:
         app.mount(path, mounts[path])
-    app.add_middleware(RequestProtection, policy=policy, clock=clock)
+    app.add_middleware(RequestProtection, policy=policy, clock=clock, pages=tools is not None)
     return app
 
 

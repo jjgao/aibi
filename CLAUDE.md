@@ -45,7 +45,10 @@ process never does; `core/engine/queries.py` joins them for a caller, and
 readbacks from templates, `core/engine/suppression.py` runs the disclosure pass over cohort counts,
 `core/schema/digests.py` hashes and digests (outputs check their own), and `core/catalog/cohorts.py`
 holds the query tools' service functions (`validate_document`, `count_cohort`, `explain`), served
-beside the catalogue's. The read-only catalogue page (M1) comes next.
+beside the catalogue's. `core/api/page.py` renders the read-only catalogue page (M1) at `/` and
+`/datasets/<id>` from `search_catalog`'s and `describe_dataset`'s answers, as HTML without a
+script, its text written by `core/api/markup.py`; `core/api/chrome.py` holds what the pages share,
+and every answer at their paths, a refusal included, is a page.
 
 ## Non-negotiables
 
