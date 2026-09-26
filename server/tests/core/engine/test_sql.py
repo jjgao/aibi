@@ -6,6 +6,7 @@ rules the queries keep: identifiers from descriptors only, constants bound, inte
 only (D291–D294)."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,8 @@ from aibi.core.engine import sql as compiler
 from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
-from aibi.core.engine.sql import CompileError, compile_cohort
+from aibi.core.engine.resolved import flipped
+from aibi.core.engine.sql import CompileError, Crossing, TruthValues, compile_cohort, cross
 from aibi.core.schema.semantics import Flag
 
 City = Callable[..., Release]
@@ -28,6 +30,7 @@ Doc = Callable[..., dict[str, Any]]
 Runner = Callable[..., Any]
 Sql = Callable[..., Any]
 Canon = Callable[..., Any]
+Crossed = Callable[..., Crossing]
 
 OWNER = "rel:establishments.owner"
 INSPECTED = "rel:inspections.establishment"
@@ -357,7 +360,7 @@ def clauses(scoped: bool, size: int = 6) -> st.SearchStrategy[Any]:
     )
 
 
-def _resolved(run: Runner, doc: Doc, release: Release, written: list[Any]) -> Any:
+def _resolved(run: Runner, doc: Doc, release: Release, written: list[Any] | dict[str, Any]) -> Any:
     result = run(doc(written), release)
     limits = {refusal.limit.name for refusal in result.resolution.refusals if refusal.limit}
     assume(not limits & {"clause_depth", "leaves_per_cohort"})
@@ -437,6 +440,88 @@ def test_count_digests_from_the_compiler_equal_the_evaluators(
     cohort = result.cohorts["c"]
     expected = count_parts(cohort, evaluate(cohort.resolved))
     assert count_parts(cohort, sql(cohort.resolved).accounting) == expected
+
+
+@FEWER
+@given(data=city_data(), extra=st.data())
+def test_a_crossing_by_the_compiler_counts_what_the_evaluator_s_truth_values_give(
+    run: Runner, city: City, doc: Doc, crossed: Crossed, data: Any, extra: st.DataObject
+) -> None:
+    """Cohorts crossed with predicates (D318): each predicate's split of each cohort's units, by
+    reason, with its lift and flags, the units for which no predicate is known by reason, and
+    the units two cohorts share, counted in SQL as ``cross`` counts them from each unit's truth
+    value; with one flag to a word, so that every word is read."""
+    rows, options = data
+    release = city(rows, **options)
+    scoped = options["violations"].get("parents") is GROUPED
+    written = {
+        f"c{index}": extra.draw(st.lists(clauses(scoped, 4), min_size=0, max_size=2))
+        for index in range(extra.draw(st.integers(min_value=1, max_value=3)))
+    }
+    written |= {
+        f"p{index}": [extra.draw(clauses(scoped, 4))]
+        for index in range(extra.draw(st.integers(min_value=1, max_value=3)))
+    }
+    result = _resolved(run, doc, release, written)
+    cohorts = [result.resolution.cohorts[name] for name in written if name.startswith("c")]
+    predicates = [result.resolution.cohorts[name] for name in written if name.startswith("p")]
+    values = {
+        name: TruthValues.of(result.results[name].values) for name in result.resolution.cohorts
+    }
+    lifted = [evaluated_lift(predicate) for predicate in predicates]
+    expected = cross(
+        [values[c.name] for c in cohorts],
+        [values[p.name] for p in predicates],
+        [None if other is None else TruthValues.of(other) for other in lifted],
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(compiler, "MARK_BITS", 1)
+        assert crossed(cohorts, predicates) == expected
+
+
+def test_a_crossing_counts_a_lift_s_one_changed_unit_and_no_unknown_unit_as_shared(
+    run: Runner, city: City, doc: Doc, crossed: Crossed
+) -> None:
+    """Fixed cases of the property above (D318): a predicate whose other lift rule changes one
+    unit (UNKNOWN under ``strict``, an unassessed inspection; FALSE under ``assessed``), and two
+    cohorts whose one such unit is TRUE in the first and UNKNOWN in the second, which they do
+    not share."""
+    pest = _value("violations.code", values=["pest"])
+    rows: dict[str, list[dict[str, Any]]] = {
+        "establishments": [{"establishment_id": f"e{index}"} for index in range(3)],
+        "inspections": [
+            {"inspection_id": "i0", "establishment_id": "e0", "kind": "routine"},
+            {"inspection_id": "i1", "establishment_id": "e0", "kind": "routine"},
+            {"inspection_id": "i2", "establishment_id": "e1", "kind": "routine"},
+        ],
+        "inspection_checklists": [
+            {"inspection_id": "i0", "checklist": "basic"},
+            {"inspection_id": "i2", "checklist": "basic"},
+        ],
+        "checklist_items": [{"checklist": "basic", "code": "pest", "all_codes": False}],
+    }
+    result = run(doc({"every": [], "pest": [pest], "asked": [pest]}), city(rows))
+    assert result.refusals == []
+    cohorts = [result.resolution.cohorts[name] for name in ("every", "pest")]
+    predicate = result.resolution.cohorts["asked"]
+    found = crossed(cohorts, [predicate])
+    assert found.shared == (0,)
+    assert [split.lift_differs for split in found.cohorts[0].splits] == [1]
+    other = evaluated_lift(predicate)
+    assert other is not None
+    assert found == cross(
+        [TruthValues.of(result.results[c.name].values) for c in cohorts],
+        [TruthValues.of(result.results["asked"].values)],
+        [TruthValues.of(other)],
+    )
+
+
+def evaluated_lift(cohort: Any) -> Any:
+    """A cohort's truth values under the other lift rule, or ``None`` when it holds no lift."""
+    other = tuple(flipped(clause) for clause in cohort.clauses)
+    if other == cohort.clauses:
+        return None
+    return evaluate(replace(cohort, clauses=other)).values
 
 
 # --- Exactness ------------------------------------------------------------------------------------

@@ -36,14 +36,15 @@ output is the tool result's structured content, and the same JSON its text; a re
 error (``isError``) whose structured content is ``{"refusals": […]}``, blanked of token and
 handle shapes (D265). No handler raises: the SDK would quote an exception's message. The read-only
 tools are idempotent; ``propose_descriptor`` is not, since a proposal accepted or rejected meanwhile
-is made again, and neither is ``count_cohort``, which records a new issuance every time (D300).
+is made again, and neither are ``count_cohort`` and ``run_analysis``, which record new issuances
+every time (D300, D318).
 
 **Resources** (D279): every descriptor is a resource, ``aibi://dataset/<id>@<n | sha256:hex |
-draft>/<descriptor id>``, ``aibi://concept/<id>``, ``aibi://analysis/<id>@<version>`` (none until
-M3) and ``aibi://model/<id>``, read as its RFC 8785 JSON; the list names each dataset's
-descriptor in its latest release, the concepts and the model cards, and the templates name the
-rest. A resource that cannot be read is a JSON-RPC error (``RESOURCE_NOT_FOUND``, -32002, or
-``INTERNAL_ERROR``) with its refusals as data.
+draft>/<descriptor id>``, ``aibi://concept/<id>``, ``aibi://analysis/<id>@<version>`` (the
+registry's entries, D316) and ``aibi://model/<id>``, read as its RFC 8785 JSON; the list names
+each dataset's descriptor in its latest release, the concepts, the analyses and the model cards,
+and the templates name the rest. A resource that cannot be read is a JSON-RPC error
+(``RESOURCE_NOT_FOUND``, -32002, or ``INTERNAL_ERROR``) with its refusals as data.
 """
 
 import json

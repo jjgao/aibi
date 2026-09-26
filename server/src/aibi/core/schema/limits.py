@@ -54,6 +54,9 @@ MAX_DATASETS = 64
 MAX_PACKS = 16
 """Packs a document names."""
 MAX_VIEWS = 8
+MAX_PREDICATES = 16
+"""Predicates of one view (``compare.existence``'s ``predicates``, D319): each is resolved and
+queried like a cohort."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -94,6 +97,7 @@ COHORTS = "cohorts"
 DATASETS = "datasets"
 PACKS = "packs"
 VIEWS = "views"
+PREDICATES = "predicates"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
@@ -271,17 +275,22 @@ class QueryLimits:
 
 @dataclass(frozen=True)
 class LogLimits:
-    """How long the derivation log keeps ``count_cohort``'s issuances, and how large it may grow
-    (SPEC §12.2, §14, D300): ``keep_count_issuances_days`` (``None`` keeps them until an
-    operator prunes) and ``log_bytes``."""
+    """How long the derivation log keeps the issuances of counts and of results, and how large it
+    may grow (SPEC §12.2, §14, D300, D318): ``keep_count_issuances_days`` and
+    ``keep_result_issuances_days`` (``None`` keeps them until an operator prunes) and
+    ``log_bytes``. A result is kept longer than a count, since it is the id a finding cites; both
+    expire, so that pruning can always free the log (a document run again gives the same ids and
+    digests)."""
 
     keep_count_issuances_days: int | None = 30
     log_bytes: int = 8 << 30
+    keep_result_issuances_days: int | None = 365
 
     def __post_init__(self) -> None:
-        days = self.keep_count_issuances_days
-        if days is not None and not 1 <= days <= MAX_KEEP_DAYS:
-            raise ValueError(f"keep_count_issuances_days is from 1 to {MAX_KEEP_DAYS}, not {days}")
+        for name in ("keep_count_issuances_days", "keep_result_issuances_days"):
+            days = getattr(self, name)
+            if days is not None and not 1 <= days <= MAX_KEEP_DAYS:
+                raise ValueError(f"{name} is from 1 to {MAX_KEEP_DAYS}, not {days}")
         if self.log_bytes < MIN_LOG_BYTES:
             raise ValueError(f"log_bytes is at least {MIN_LOG_BYTES}, not {self.log_bytes}")
 
@@ -289,8 +298,8 @@ class LogLimits:
 MIN_LOG_BYTES = 1 << 20
 """The least ``log_bytes``: room for a few documents at their limits."""
 MAX_KEEP_DAYS = 36500
-"""The most ``keep_count_issuances_days``: a century, whose start the store's clock can still
-write."""
+"""The most ``keep_count_issuances_days`` and ``keep_result_issuances_days``: a century, whose
+start the store's clock can still write."""
 
 
 @dataclass(frozen=True)
@@ -380,6 +389,7 @@ __all__ = [
     "MAX_PATH_STEPS",
     "MAX_POINTER",
     "MAX_POINTERS",
+    "MAX_PREDICATES",
     "MAX_PROPOSAL_BYTES",
     "MAX_QUERY_ANSWER_BYTES",
     "MAX_QUEUE_BYTES",
@@ -406,6 +416,7 @@ __all__ = [
     "PATH_SEARCH",
     "PATH_STEPS",
     "POINTER_CHARACTERS",
+    "PREDICATES",
     "PROPOSAL_BYTES",
     "PROPOSAL_REQUESTS",
     "QUERY_ANSWER_BYTES",

@@ -90,6 +90,13 @@ class RefusalCode(StrEnum):
     """A pack's leaf compiler, summary or caveat rule gave what the core refuses: clauses that
     are no expansion, text that is no segments, or a code the pack does not declare (D285,
     D287)."""
+    # Views and analyses (§7.4, §9; D317, D318):
+    UNKNOWN_ANALYSIS = "UNKNOWN_ANALYSIS"
+    """A view names an analysis the registry does not hold; the alternatives list those it
+    holds."""
+    COHORTS_OVERLAP = "COHORTS_OVERLAP"
+    """Cohorts of a view share units, for an analysis that assumes independent groups, without
+    ``overlap: "allow"``; ``counts`` reports each shared part as a cohort count (§7.4)."""
     # Building a release from its raw snapshots (§12.2, §13.2):
     UNPARSEABLE_SOURCE = "UNPARSEABLE_SOURCE"
     """A raw snapshot its parse settings cannot read; the message names the line."""

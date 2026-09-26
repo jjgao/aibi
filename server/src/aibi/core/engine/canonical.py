@@ -23,21 +23,30 @@ form, and each leaf as written the keys of the clauses it became part of (``sour
 The packs involved in a cohort run their caveat rules on its canonical form (D287); what they
 raise is static, like ``UNCONFIRMED_SEMANTICS``, and joins its caveats.
 
-Phase 2 waits for the registry (M3): until then views are syntax-checked by the loader and
-reported unchecked, with no id (D284). ``ViewIdentity`` is the canonical view and its result and
-computation ids from their parts, as M3 will fill them.
+Phase 2 is the registry's (``aibi.core.analyses.views``, D317): it checks each view against its
+analysis, and hands the clauses of its parameters (``ViewPredicate``) to ``canonicalise``, which
+resolves them with the cohorts, in one resolution, and canonicalises each as a cohort of one
+clause over the view's release: ``Canonicalisation.predicates``. ``ViewIdentity`` is the
+canonical view and its result and computation ids from their parts.
 """
 
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, cast
+from typing import cast
 
 from pydantic import JsonValue
 
 from aibi.core.engine.data import Release
 from aibi.core.engine.ids import derivation_id, leaf_key, sorted_unique
-from aibi.core.engine.resolve import Label, PackView, ResolvedCohort, pack_failed, resolve
+from aibi.core.engine.resolve import (
+    Label,
+    PackView,
+    ResolvedCohort,
+    ViewPredicate,
+    pack_failed,
+    resolve,
+)
 from aibi.core.engine.resolved import (
     RAll,
     RAny,
@@ -49,15 +58,17 @@ from aibi.core.engine.resolved import (
     RNot,
     RValue,
     document,
+    measure,
 )
 from aibi.core.schema.caveats import Severity
 from aibi.core.schema.document import Document
 from aibi.core.schema.jsonio import canonical, pointer
+from aibi.core.schema.limits import LEAVES, MAX_LEAVES
 from aibi.core.schema.loading import as_written
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.schema.params import Position
-from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
+from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.results import PackVersion, ReleaseRef
 from aibi.core.schema.semantics import SEMANTICS_VERSION
 
@@ -215,20 +226,12 @@ class CanonicalCohort:
 
 
 @dataclass(frozen=True)
-class UncheckedView:
-    """A view of the document, syntax-checked only until M3 (§15, D284)."""
-
-    position: int
-    analysis: str
-    status: Literal["unchecked"] = "unchecked"
-
-
-@dataclass(frozen=True)
 class Canonicalisation:
     cohorts: Mapping[str, CanonicalCohort]
     """The cohorts canonicalised, by name; one refused, or that depends on one, is left out."""
-    views: tuple[UncheckedView, ...]
     refusals: list[Refusal]
+    predicates: Mapping[str, CanonicalCohort] = field(default_factory=dict[str, CanonicalCohort])
+    """The views' predicates canonicalised, by key, each as a cohort of one clause (D317)."""
 
 
 def canonicalise(
@@ -240,8 +243,10 @@ def canonicalise(
     floor: int | None = None,
     floors: Mapping[str, int | None] | None = None,
     positions: Mapping[Position, str] | None = None,
+    predicates: Sequence[ViewPredicate] = (),
 ) -> Canonicalisation:
-    """Canonicalise a loaded document's cohorts (phase 1) against its releases.
+    """Canonicalise a loaded document's cohorts (phase 1) against its releases, and the views'
+    ``predicates`` with them (D317).
 
     ``releases`` maps each dataset reference as written to its release, ``labels`` each release's
     manifest hash to its label (``"draft"`` for a session's draft), ``registry`` holds the
@@ -250,22 +255,24 @@ def canonicalise(
     that a session cannot lower it before it publishes, D275, D300), and ``positions`` are the
     loader's, so that pointers lead into the document as written."""
     given = positions or {}
-    resolution = resolve(written, releases, given, registry=registry)
+    resolution = resolve(written, releases, given, registry=registry, predicates=predicates)
     refusals = list(resolution.refusals)
-    cohorts: dict[str, CanonicalCohort] = {}
     own = floors or {}
-    for name, resolved in resolution.cohorts.items():
-        manifest = resolved.release.manifest
-        least = _effective(floor, own.get(manifest))
-        found = _cohort(name, resolved, labels, registry, least, given)
-        if isinstance(found, Refusal):
-            refusals.append(found)
-        else:
-            cohorts[name] = found
-    views = tuple(
-        UncheckedView(index, view.analysis) for index, view in enumerate(written.views or [])
-    )
-    return Canonicalisation(cohorts, views, finish_refusals(refusals))
+    found: dict[str, dict[str, CanonicalCohort]] = {"cohorts": {}, "predicates": {}}
+    places = {predicate.key: predicate.at for predicate in predicates}
+    for kind, resolved_by in (
+        ("cohorts", resolution.cohorts),
+        ("predicates", resolution.predicates),
+    ):
+        for name, resolved in resolved_by.items():
+            least = _effective(floor, own.get(resolved.release.manifest))
+            at = ("cohorts", name, "all") if kind == "cohorts" else places[name]
+            made = _cohort(name, resolved, labels, registry, least, given, at)
+            if isinstance(made, Refusal):
+                refusals.append(made)
+            else:
+                found[kind][name] = made
+    return Canonicalisation(found["cohorts"], finish_refusals(refusals), found["predicates"])
 
 
 def _cohort(
@@ -275,6 +282,7 @@ def _cohort(
     registry: PackRegistry | None,
     floor: int | None,
     positions: Mapping[Position, str],
+    place: Position,
 ) -> CanonicalCohort | Refusal:
     release = resolved.release
     clauses = tuple(canonical_clause(clause) for clause in resolved.clauses)
@@ -303,14 +311,17 @@ def _cohort(
     label = labels[release.manifest]
     caveats = _ruled(registry, involved, release, identity.form)
     if caveats is None:
-        at, _ = as_written(("cohorts", name, "all"), positions)
+        at, _ = as_written(place, positions)
         return Refusal(
             code=RefusalCode.PACK_FAILED,
             path=pointer(list(at)),
             message=[
                 text("A pack's caveat rule failed, or gave what is not a list of the codes it "),
-                text("declares, for cohort "),
-                data(name),
+                *(
+                    [text("declares, for cohort "), data(name)]
+                    if place[0] == "cohorts"
+                    else [text("declares, for this predicate")]
+                ),
             ],
         )
     leaves: dict[str, set[str]] = {}
@@ -338,6 +349,50 @@ def _cohort(
         packs=packs,
         caveats=caveats,
         summaries=summaries,
+    )
+
+
+def intersection(
+    first: CanonicalCohort, second: CanonicalCohort, *, registry: PackRegistry | None
+) -> CanonicalCohort | Refusal:
+    """The cohort of the units two cohorts of one release share: their top-level clauses
+    together, each once, under their effective *k*, as ``count_cohort`` would count ``{"all":
+    [{"kind": "cohort", "cohort": <first>}, {"kind": "cohort", "cohort": <second>}]}`` (§7.4,
+    §8.6; D318). It has no leaf as written. It is held to a cohort's cap on leaves (§7.1),
+    which two cohorts within it can pass together: ``LIMIT_EXCEEDED``, with no path, which the
+    caller gives. Its depth is its deeper cohort's, within the cap on depth."""
+    one, other = first.resolved, second.resolved
+    clauses: dict[bytes, RClause] = {}
+    for clause in (*one.clauses, *other.clauses):
+        clauses.setdefault(canonical(canonical_clause(clause)), clause)
+    _, _, leaves = measure(tuple(clauses.values()))
+    if leaves > MAX_LEAVES:
+        return Refusal(
+            code=RefusalCode.LIMIT_EXCEEDED,
+            path=None,
+            message=[
+                text("Two cohorts of this view share units, and the cohort of the units they "),
+                text(f"share would pass the caps of a cohort ({LEAVES}: {leaves} of "),
+                text(f"{MAX_LEAVES}), so it is not counted; make the cohorts' forms smaller"),
+            ],
+            limit=Limit(name=LEAVES, max=MAX_LEAVES),
+        )
+    resolved = ResolvedCohort(
+        f"{first.name} and {second.name}",
+        one.dataset,
+        one.release,
+        one.unit,
+        tuple(clauses.values()),
+        {},
+        tuple(sorted({*one.fields, *other.fields})),
+        dict(sorted({**one.coverage, **other.coverage}.items())),
+        one.packs | other.packs,
+    )
+    labels: dict[str, Label] = {one.release.manifest: first.release.label}
+    settings = [k for k in (first.identity.disclosure, second.identity.disclosure) if k is not None]
+    floor = max(settings) if settings else None
+    return _cohort(
+        resolved.name, resolved, labels, registry, floor, {}, ("cohorts", first.name, "all")
     )
 
 
@@ -470,9 +525,9 @@ __all__ = [
     "Canonicalisation",
     "CohortIdentity",
     "RuledCaveat",
-    "UncheckedView",
     "ViewIdentity",
     "as_document",
     "canonical_clause",
     "canonicalise",
+    "intersection",
 ]

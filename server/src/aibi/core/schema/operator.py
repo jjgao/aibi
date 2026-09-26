@@ -208,9 +208,9 @@ class IssuanceRequest(_Request):
 
 
 class PruneRequest(_Request):
-    """A pruning of ``count_cohort``'s issuances recorded before ``before``, an RFC 3339 time
-    with its offset; without it, before the configured period (``keep_count_issuances_days``,
-    D300)."""
+    """A pruning of every issuance recorded before ``before``, an RFC 3339 time with its offset;
+    without it, of those of counts and of results before their configured periods
+    (``keep_count_issuances_days``, ``keep_result_issuances_days``; D300, D318)."""
 
     before: Annotated[str, StringConstraints(max_length=64)] | None = None
 
@@ -448,12 +448,15 @@ class DescriptorShown(Output):
 
 
 class Pruned(Output):
-    """What a pruning of the derivation log did (§12.2, D300): the issuances it removed, the
-    time before which it removed them, and the bytes the log holds now (``log_bytes``)."""
+    """What a pruning of the derivation log did (§12.2, D300, D318): the issuances it removed,
+    the time before which it removed those of counts (``before``) and those of results
+    (``results_before``), each absent when they are kept until an operator prunes, and the
+    bytes the log holds now (``log_bytes``)."""
 
     pruned: Count
-    before: Annotated[str, StringConstraints(pattern=TIME_RE)]
+    before: Annotated[str, StringConstraints(pattern=TIME_RE)] | None = None
     log_bytes: Count
+    results_before: Annotated[str, StringConstraints(pattern=TIME_RE)] | None = None
 
 
 class LoggedIssuance(Output):

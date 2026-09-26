@@ -578,21 +578,25 @@ def operator_router(services: Services) -> APIRouter:
 
     def pruning(request: PruneRequest) -> Pruned:
         log = store.derivations
-        before = log.expired() if request.before is None else request.before
-        if before is None:
-            raise StoreRefused(
-                RefusalCode.MISSING_MEMBER,
-                "The configuration keeps count_cohort's issuances until an operator prunes: "
-                "give before, the time to prune before",
-            )
+        if request.before is None:
+            before, results = log.expired("cohort"), log.expired("result")
+            if before is None and results is None:
+                raise StoreRefused(
+                    RefusalCode.MISSING_MEMBER,
+                    "The configuration keeps every issuance until an operator prunes: give "
+                    "before, the time to prune every issuance before",
+                )
+        else:
+            before = results = request.before
         try:
-            cutoff = utc(before)
+            cutoff = None if before is None else utc(before)
+            results = None if results is None else utc(results)
         except ValueError:
             raise StoreRefused(
                 RefusalCode.INVALID_VALUE, "before is an RFC 3339 time with its offset"
             ) from None
-        pruned = log.prune(cutoff)
-        return Pruned(pruned=pruned, before=cutoff, log_bytes=log.usage())
+        pruned = log.prune(cutoff, results_before=results)
+        return Pruned(pruned=pruned, before=cutoff, results_before=results, log_bytes=log.usage())
 
     @router.post("/log/prune", response_model=Pruned)
     async def prune(request: Request) -> Response:

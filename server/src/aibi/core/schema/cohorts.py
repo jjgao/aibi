@@ -1,5 +1,5 @@
-"""The requests and outputs of the query tools of M2: ``validate_document``, ``count_cohort`` and
-``explain`` (SPEC §7.7, §8.1, §11.1; D299–D302).
+"""The requests and outputs of the query tools: ``validate_document``, ``count_cohort`` and
+``explain`` (M2; SPEC §7.7, §8.1, §11.1; D299–D302), and ``run_analysis`` (M3, D318).
 
 A request carries the document as written (``document``), which the server loads as §7.1 says:
 its refusals point into that document, not into the request (§8.6, D299). ``validate_document``
@@ -48,7 +48,14 @@ from aibi.core.schema.output import (
     Segment,
 )
 from aibi.core.schema.refusals import Refusal
-from aibi.core.schema.results import CohortCount, Disclosure, PackVersion, ReleaseRef
+from aibi.core.schema.results import (
+    AnalysisRef,
+    CohortCount,
+    Disclosure,
+    PackVersion,
+    ReleaseRef,
+    ResultEnvelope,
+)
 
 DOCUMENT_MARK = "x-aibi-document"
 """Marks a request's ``document`` in its schema; the export puts the schema of a document as
@@ -130,12 +137,8 @@ class Explain(_Request):
 # --- Outputs -------------------------------------------------------------------------------------
 
 
-class UncheckedView(Output):
-    """A view of the document: syntax-checked only until M3 (§15, D284)."""
-
-    position: Count
-    analysis: Data
-    status: Literal["unchecked"]
+class RunAnalysis(_Request):
+    document: RequestDocument
 
 
 class Parameters(Output):
@@ -192,6 +195,25 @@ class CohortCheck(Output):
     """The caveats its count will carry that need no data, as the count carries them."""
 
 
+class ViewCheck(Output):
+    """A view that checked against its analysis (§7.4, §7.6, D317): its canonical form, its ids
+    as the log knows them, its readback and the caveats of its result that need no data."""
+
+    position: Count
+    """Its index in the document's ``views``."""
+    analysis: AnalysisRef
+    id: DerivationId
+    computation_id: DerivationId
+    status: IdStatus
+    """What the derivation log says of the result id: ``not_issued`` until ``run_analysis``
+    issues it."""
+    form: DataObject
+    """The canonical view: its analysis, its cohorts' ids in view order, its reference and
+    overlap where its analysis has them, and its canonical parameters (§7.6)."""
+    readback: list[Segment]
+    caveats: list[Caveat]
+
+
 class DocumentValidation(Output):
     """What ``validate_document`` gives (§8.6, §11.1): every refusal, sorted, and every cohort
     that canonicalised."""
@@ -203,7 +225,9 @@ class DocumentValidation(Output):
     cohorts: list[CohortCheck]
     """The cohorts that canonicalised, by name; one refused, or that depends on one, is left
     out."""
-    views: list[UncheckedView]
+    views: list[ViewCheck]
+    """The views that checked, in document order; one refused, or one of whose cohorts or
+    predicates was, is left out."""
     params: Parameters | None = None
     """Absent when the document did not load."""
 
@@ -223,7 +247,15 @@ class CohortCounts(Output):
     """What ``count_cohort`` gives (§8.1, D300): each cohort's count, by name."""
 
     counts: Annotated[list[NamedCount], Field(min_length=1)]
-    views: list[UncheckedView]
+    views: list[ViewCheck]
+    params: Parameters
+
+
+class AnalysisResults(Output):
+    """What ``run_analysis`` gives (§8.1, §11.1, D318): one result envelope per view, in
+    document order, and the parameters used."""
+
+    results: Annotated[list[ResultEnvelope], Field(min_length=1)]
     params: Parameters
 
 
@@ -271,6 +303,7 @@ __all__ = [
     "DOCUMENT_MARK",
     "ENGINE_RE",
     "TIME_RE",
+    "AnalysisResults",
     "CohortCheck",
     "CohortCounts",
     "CountCohort",
@@ -285,8 +318,9 @@ __all__ = [
     "NamedCount",
     "Parameters",
     "RecordJson",
+    "RunAnalysis",
     "Translation",
     "TranslationNote",
-    "UncheckedView",
     "ValidateDocument",
+    "ViewCheck",
 ]

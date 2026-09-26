@@ -52,6 +52,7 @@ from aibi.core.store.derivations import (
     Issue,
     LogFullError,
     NotAdmittedError,
+    Pruning,
     Ulids,
     WithdrawnReleaseError,
     new_issuance_id,
@@ -278,19 +279,34 @@ def test_the_log_changes_only_by_erasure_redaction_and_pruning(
         db.execute(statement)
 
 
-def test_pruning_s_permit_admits_removing_old_count_issuances_only(
+def test_pruning_s_permit_admits_removing_issuances_recorded_before_its_time_only(
     store: Store, imported: str
 ) -> None:
+    """Whichever tool issued them (D318)."""
     cohort, written = _cohort(store, imported, [AGE])
     counted = _issue(store, cohort, written)
     analysed = _issue(store, cohort, written, tool="run_analysis")
+    cutoff = store.now()
+    late = _issue(store, cohort, written, tool="run_analysis")
     with store.db.transaction() as db:
-        db.execute("INSERT INTO log_permits VALUES ('pruning', '9999')")
+        db.execute("INSERT INTO log_permits VALUES ('pruning', ?)", (cutoff,))
     with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
-        db.execute("DELETE FROM issuances WHERE id = ?", (analysed,))
+        db.execute("DELETE FROM issuances WHERE id = ?", (late,))
     with store.db.transaction() as db:
-        db.execute("DELETE FROM issuances WHERE id = ?", (counted,))
-    assert store.derivations.issuances(cohort.id) == [analysed]
+        db.execute("DELETE FROM issuances WHERE id IN (?, ?)", (counted, analysed))
+    assert store.derivations.issuances(cohort.id) == [late]
+
+
+def test_pruning_s_permit_admits_no_removal_of_an_issuance_recorded_at_its_time(
+    store: Store, imported: str
+) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    issued = _issue(store, cohort, written)
+    [(at,)] = store.db.connection.execute("SELECT at FROM issuances WHERE id = ?", (issued,))
+    with store.db.transaction() as db:
+        db.execute("INSERT INTO log_permits VALUES ('pruning', ?)", (at,))
+    with pytest.raises(sqlite3.DatabaseError), store.db.transaction() as db:
+        db.execute("DELETE FROM issuances WHERE id = ?", (issued,))
 
 
 def test_pruning_s_permit_admits_no_removal_of_a_count_issuance_a_kept_one_names(
@@ -430,11 +446,10 @@ def test_pruning_removes_old_count_issuances_but_those_a_kept_one_names(
     cohort, written = _cohort(store, imported, [AGE])
     named = _issue(store, cohort, written)
     old = _issue(store, cohort, written)
-    analysis = _issue(store, cohort, written, tool="run_analysis")
     cutoff = store.now()
     hit = _issue(store, cohort, written, values_from=named)
     assert store.derivations.prune(cutoff) == 1
-    assert store.derivations.issuances(cohort.id) == [named, analysis, hit]
+    assert store.derivations.issuances(cohort.id) == [named, hit]
     assert store.derivations.issuance(old) is None
     assert store.explain(old).status == "unknown"
     assert store.derivations.derivation(cohort.id) is not None
@@ -3569,8 +3584,9 @@ def test_pruning_takes_the_derivations_and_texts_no_issuance_names_any_more(
     cohort, written = _cohort(store, imported, [AGE])
     other, other_written = _cohort(store, imported, [])
     store.derivations.issue_all(_issues(cohort, written, 2))
+    cutoff = store.now()
     kept = _issue(store, other, other_written, tool="run_analysis")
-    assert store.derivations.prune("9999-01-01T00:00:00Z") == 2
+    assert store.derivations.prune(cutoff) == 2
     assert store.derivations.issuances(cohort.id) == []
     assert store.derivations.derivation(cohort.id) is None
     assert store.explain(cohort.id).status == "not_issued"
@@ -3654,6 +3670,68 @@ def test_the_log_s_thread_prunes_what_expires_every_period(store: Store, importe
     assert log.expired() == "2026-01-02T00:00:00.000000Z"
 
 
+def _result_issues(store: Store, cohort: CanonicalCohort, written: JsonValue) -> list[Issue]:
+    view = ViewIdentity(
+        analysis="lib.tally",
+        version="1",
+        cohorts=(cohort.identity,),
+        params={},
+        packs={},
+        disclosure=None,
+    )
+    return [
+        Issue(
+            derivation=view.id,
+            kind="result",
+            hashed=view.hashed(),
+            releases=[cohort.release.model_dump(mode="json")],
+            tool="run_analysis",
+            written=written,
+            params={},
+            sql=SQL,
+            engine="aibi 0.0.1",
+            packs={},
+        ),
+        *(replace(issue, tool="run_analysis") for issue in _issues(cohort, written, 1)),
+    ]
+
+
+def test_a_result_s_issuance_outlives_the_count_period_and_expires_after_its_own(
+    store: Store, imported: str
+) -> None:
+    """The issuances of a ``run_analysis`` call: its result's kept for
+    ``keep_result_issuances_days``, and its cohort's count with it, past
+    ``keep_count_issuances_days``, so that ``explain`` resolves the cohort id the result names;
+    a count of another call goes after its own period (D318)."""
+    cohort, written = _cohort(store, imported, [AGE])
+    now = ["2026-01-01T00:00:00.000000Z"]
+    limits = LogLimits(keep_count_issuances_days=1, keep_result_issuances_days=10)
+    log = DerivationLog(store.db, lambda: now[0], limits=limits)
+    result, count = log.issue_all(_result_issues(store, cohort, written))
+    other = _issue(store, cohort, {**cast(dict[str, Any], written), "notes": "another"}, log=log)
+    now[0] = "2026-01-03T00:00:00.000000Z"
+    assert log.prune_expired() == Pruning(1, True)
+    assert log.issuance(other) is None
+    assert log.issuance(result) is not None
+    assert log.issuance(count) is not None
+    assert store.explain(cohort.id).status == "issued"
+    now[0] = "2026-01-12T00:00:00.000000Z"
+    assert log.prune_expired() == Pruning(2, True)
+    assert (log.issuance(result), log.issuance(count)) == (None, None)
+    assert log.usage() == log.measured() == 0
+
+
+def test_an_operator_prunes_results_with_counts_or_keeps_them(store: Store, imported: str) -> None:
+    cohort, written = _cohort(store, imported, [AGE])
+    log = store.derivations
+    result, count = log.issue_all(_result_issues(store, cohort, written))
+    assert log.prune("9999-01-01T00:00:00Z", results_before=None) == 0
+    assert log.issuance(result) is not None
+    assert log.issuance(count) is not None
+    assert log.prune("9999-01-01T00:00:00Z") == 2
+    assert log.usage() == log.measured() == 0
+
+
 def test_pruning_takes_the_app_db_one_batch_at_a_time(
     store: Store, imported: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3668,7 +3746,7 @@ def test_pruning_takes_the_app_db_one_batch_at_a_time(
         assert store.derivations.prune("9999-01-01T00:00:00Z") == 5
     finally:
         store.db.connection.set_trace_callback(None)
-    assert len(began) == 3
+    assert len(began) == 4, "one that finds no result's issuance, and three batches of counts"
     assert store.derivations.derivation(cohort.id) is None
 
 

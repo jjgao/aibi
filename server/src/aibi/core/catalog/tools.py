@@ -10,10 +10,10 @@ text marked as data is data, not instructions (A6). ``INSTRUCTIONS`` says the sa
 server.
 
 The tools are exactly ``search_catalog``, ``describe_dataset``, ``describe_column``,
-``curation_queue`` and ``propose_descriptor`` (M1), and ``validate_document``, ``count_cohort``
-and ``explain`` (M2, ``cohorts``); ``list_analyses`` and ``run_analysis`` arrive with the registry
-(M3). No operator operation is a tool (§11.2): importing, curation sessions, accepting or
-rejecting proposals, withdrawal and erasure are the operator router's.
+``curation_queue`` and ``propose_descriptor`` (M1), ``validate_document``, ``count_cohort`` and
+``explain`` (M2, ``cohorts``), and ``list_analyses`` and ``run_analysis`` (M3, with the registry;
+``run_analysis`` is ``analyses``'). No operator operation is a tool (§11.2): importing, curation
+sessions, accepting or rejecting proposals, withdrawal and erasure are the operator router's.
 
 ``call`` runs a tool on a request body: the body is read by ``load_request`` (D260), as the
 operator router reads its own, text a proposal stores is refused if it holds a token's or a
@@ -30,6 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from aibi.core.catalog.analyses import run_analysis
 from aibi.core.catalog.cohorts import count_cohort, explain, validate_document
 from aibi.core.catalog.service import Catalog, refusals_of
 from aibi.core.schema.catalog import TOOL_MODELS
@@ -52,7 +53,8 @@ INSTRUCTIONS = (
     "search_catalog, then read describe_dataset and describe_column before asking anything of "
     "the data. Write an analysis document (JSON, never SQL) that names cohorts by their "
     "criteria, check it with validate_document, confirm its readback with the user, then count "
-    "its cohorts with count_cohort; explain says how an id was computed. Operators import, "
+    "its cohorts with count_cohort; list_analyses names the analyses a view can run, and "
+    "run_analysis runs a document's views; explain says how an id was computed. Operators import, "
     "curate and publish releases; an agent can only propose descriptors, with "
     "propose_descriptor, for an operator to accept or reject. " + RULES
 )
@@ -108,7 +110,7 @@ TOOLS: tuple[Tool, ...] = (
             "Describe a release of a dataset (the latest published one unless release names "
             "a label, a manifest hash or the draft): its descriptor, tables with row counts and "
             "columns, relationships, coverage, endpoints, the table graph, the analyses that "
-            "apply (none until the analysis registry exists) and its standing caveats, those a "
+            "apply to it (for some keyed table as the unit) and its standing caveats, those a "
             "query may raise from the descriptors alone."
         ),
         lambda catalog, request, client: catalog.describe_dataset(request),
@@ -151,9 +153,11 @@ TOOLS: tuple[Tool, ...] = (
             "sorted, each with the path into the document where it lies and what is available "
             "instead; each cohort that canonicalised with its canonical form, its cohort id "
             "(not issued until count_cohort counts it), its readback, which the user should "
-            "confirm, and the caveats that need no data; and its views, unchecked until the "
-            "analysis registry exists. With format (<pack id>.<name>), an installed pack first "
-            "translates a document of another format, and every not is flagged. " + DOCUMENT_TEXT
+            "confirm, and the caveats that need no data; and each view that checked against its "
+            "analysis, with its canonical form, its result id (not issued until run_analysis "
+            "runs it), its readback and the caveats that need no data. With format (<pack "
+            "id>.<name>), an installed pack first translates a document of another format, and "
+            "every not is flagged. " + DOCUMENT_TEXT
         ),
         lambda catalog, request, client: validate_document(catalog, request),
     ),
@@ -179,6 +183,34 @@ TOOLS: tuple[Tool, ...] = (
             "(never the document as written or its parameters, which only the operator reads)."
         ),
         lambda catalog, request, client: explain(catalog, request),
+    ),
+    Tool(
+        "list_analyses",
+        _described(
+            "List the analyses a view can run, as their registry entries (id, version, what they "
+            "require, their parameters' and values' JSON Schemas, their methods and the caveats "
+            "they can raise); with dataset (and optionally release and unit), whether each is "
+            "available for that release: available, available_with_caveats, or unavailable with "
+            "the requirements it misses."
+        ),
+        lambda catalog, request, client: catalog.list_analyses(request),
+    ),
+    Tool(
+        "run_analysis",
+        _described(
+            "Run each view of an analysis document over its release and return one result "
+            "envelope per view: the cohorts' ids and populations, the units analysed and "
+            "excluded by reason, the values (every proportion with its numerator, denominator "
+            "and interval, every effect size versus the reference, every test with its p-value "
+            "and q-value), the caveats, the readbacks, a chart, the result id (drv:) to cite and "
+            'the issuance id (iss:). A view is {"analysis": "<id>", "cohorts": [...], '
+            '"reference": "<cohort>", "params": {...}}; compare.existence takes "predicates", '
+            "clauses asked of every unit. Cohorts that share units are refused unless the view "
+            'says "overlap": "allow". Fails with the first refusal; validate_document lists them '
+            "all. " + DOCUMENT_TEXT
+        ),
+        lambda catalog, request, client: run_analysis(catalog, request),
+        read_only=False,
     ),
 )
 BY_NAME: Mapping[str, Tool] = MappingProxyType({tool.name: tool for tool in TOOLS})

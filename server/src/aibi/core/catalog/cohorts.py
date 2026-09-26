@@ -59,6 +59,8 @@ from typing import cast
 from pydantic import JsonValue
 
 import aibi
+from aibi.core.analyses import views
+from aibi.core.analyses.views import CheckedView
 from aibi.core.catalog.service import ALTERNATIVES, DEADLINE, Catalog, Deadline, ToolRefused
 from aibi.core.engine.canonical import CanonicalCohort, Canonicalisation, canonicalise
 from aibi.core.engine.counts import CountParts, count_parts, static_caveats
@@ -82,8 +84,8 @@ from aibi.core.schema.cohorts import (
     Parameters,
     Translation,
     TranslationNote,
-    UncheckedView,
     ValidateDocument,
+    ViewCheck,
 )
 from aibi.core.schema.document import Document
 from aibi.core.schema.ids import JSON_POINTER_RE
@@ -95,13 +97,14 @@ from aibi.core.schema.pack_api import TranslationNote as PackNote
 from aibi.core.schema.pack_api import UnknownPack
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
-from aibi.core.schema.results import CohortCount, Disclosure, Issuance, ReleaseRef
+from aibi.core.schema.results import AnalysisRef, CohortCount, Disclosure, Issuance, ReleaseRef
 from aibi.core.store.blobs import MissingBlobError
 from aibi.core.store.derivations import (
     ErasedMeanwhileError,
     Issue,
     LogFullError,
     NotAdmittedError,
+    Tool,
     WithdrawnReleaseError,
 )
 from aibi.core.store.store import Pin, StoreRefused
@@ -117,20 +120,34 @@ NEGATION_MESSAGE = (
 """The core's note on every negation of a translated document (§7.1, D303)."""
 
 
-def _by_name(cohorts: Mapping[str, CanonicalCohort]) -> list[CanonicalCohort]:
+def by_name(cohorts: Mapping[str, CanonicalCohort]) -> list[CanonicalCohort]:
     """Cohorts in the order of their names as UTF-16 code units: JSON object key order is never
     used for anything (§7.4)."""
     return [cohorts[name] for name in sorted(cohorts, key=utf16_key)]
 
 
-def _views(document: Document | None) -> list[UncheckedView]:
-    return [
-        UncheckedView(position=index, analysis=Data(data=view.analysis), status="unchecked")
-        for index, view in enumerate((document.views or []) if document is not None else [])
-    ]
+def _views(catalog: Catalog, views: Sequence[CheckedView]) -> list[ViewCheck]:
+    """The views that checked, with their ids as the derivation log knows them (D317): a result
+    id the log does not hold is ``not_issued``, never issued or pruned since."""
+    found: list[ViewCheck] = []
+    for view in views:
+        status = catalog.store.explain(view.identity.id).status
+        found.append(
+            ViewCheck(
+                position=view.index,
+                analysis=AnalysisRef(id=view.analysis.id, version=view.analysis.entry.version),
+                id=view.identity.id,
+                computation_id=view.identity.computation_id,
+                status="not_issued" if status == "unknown" else status,
+                form=view.identity.view(),
+                readback=view.readback(),
+                caveats=view.static_caveats(),
+            )
+        )
+    return found
 
 
-def _parameters(loaded: DocumentResult) -> Parameters:
+def parameters(loaded: DocumentResult) -> Parameters:
     return Parameters(
         used=dict(loaded.params_used),
         unused=[Data(data=name) for name in loaded.params_unused],
@@ -213,7 +230,7 @@ def _release(catalog: Catalog, pin: Pin, reference: str, found: _Releases) -> Re
     except StoreRefused as refused:
         return refused.refusal.model_copy(update={"alternatives": _listed(labels)})
     if resolution.status == "withdrawn":
-        return _withdrawn(labels)
+        return withdrawn(labels)
     if resolution.status == "discarded" or resolution.label is None:
         return Refusal(
             code=RefusalCode.UNKNOWN_RELEASE,
@@ -224,7 +241,7 @@ def _release(catalog: Catalog, pin: Pin, reference: str, found: _Releases) -> Re
     try:
         pin.manifest(resolution.manifest)
     except MissingBlobError:
-        return _withdrawn(labels)
+        return withdrawn(labels)
     found.releases[reference] = store.outline(resolution.manifest)
     found.labels[resolution.manifest] = resolution.label
     if resolution.label == "draft":
@@ -232,7 +249,7 @@ def _release(catalog: Catalog, pin: Pin, reference: str, found: _Releases) -> Re
     return None
 
 
-def _withdrawn(labels: Sequence[str]) -> Refusal:
+def withdrawn(labels: Sequence[str]) -> Refusal:
     return Refusal(
         code=RefusalCode.RELEASE_WITHDRAWN,
         path=None,
@@ -252,20 +269,32 @@ def _listed(names: Sequence[str]) -> list[Segment]:
 
 
 @dataclass(frozen=True)
-class _Canonical:
+class Canonical:
     loaded: DocumentResult
     canonical: Canonicalisation | None
     """``None`` when the document did not load."""
     refusals: list[Refusal]
+    views: list[CheckedView] = field(default_factory=list[CheckedView])
+    """The views that checked (phase 2, D317)."""
+    deferred: list[Refusal] = field(default_factory=list[Refusal])
+    """The views of analyses a later slice implements (``views.deferred``), which
+    ``count_cohort`` passes over (D317)."""
+
+    def every_refusal(self) -> list[Refusal]:
+        """The refusals and the deferred views', sorted."""
+        return finish_refusals([*self.refusals, *self.deferred])
 
 
-def _canonical(catalog: Catalog, pin: Pin, written: Mapping[str, JsonValue]) -> _Canonical:
-    """The document as written, loaded, its releases resolved and pinned, and canonicalised."""
+def canonical_document(catalog: Catalog, pin: Pin, written: Mapping[str, JsonValue]) -> Canonical:
+    """The document as written, loaded, its releases resolved and pinned, and canonicalised:
+    its cohorts, then its views against their analyses, whose predicates are resolved with the
+    cohorts (D317)."""
     loaded = load_document(json.dumps(written, ensure_ascii=False, allow_nan=False))
     document = loaded.document
     if document is None:
-        return _Canonical(loaded, None, list(loaded.refusals))
+        return Canonical(loaded, None, list(loaded.refusals))
     releases = _releases(catalog, pin, document, loaded.positions)
+    parsed, view_refusals = views.parse(document, loaded.positions, catalog.analyses)
     canonical = canonicalise(
         document,
         releases.releases,
@@ -274,6 +303,7 @@ def _canonical(catalog: Catalog, pin: Pin, written: Mapping[str, JsonValue]) -> 
         floor=catalog.floor,
         floors=releases.floors,
         positions=loaded.positions,
+        predicates=[predicate for view in parsed for predicate in view.predicates],
     )
     # A reference refused here is refused again, as unknown, by resolution: once is enough.
     kept = [
@@ -281,7 +311,14 @@ def _canonical(catalog: Catalog, pin: Pin, written: Mapping[str, JsonValue]) -> 
         for refusal in canonical.refusals
         if not (refusal.code == RefusalCode.UNKNOWN_DATASET and refusal.path in releases.refused)
     ]
-    return _Canonical(loaded, canonical, finish_refusals([*releases.refusals, *kept]))
+    checked, mixed = views.checked(document, parsed, canonical)
+    return Canonical(
+        loaded,
+        canonical,
+        finish_refusals([*releases.refusals, *view_refusals, *kept, *mixed]),
+        checked,
+        views.deferred(document, loaded.positions),
+    )
 
 
 # --- Translation -----------------------------------------------------------------------------
@@ -433,17 +470,19 @@ def validate_document(catalog: Catalog, request: ValidateDocument) -> DocumentVa
         written, notes = translated
         translation = Translation(format=request.format, document=dict(written), notes=notes)
     with catalog.store.pin(background=True) as pin:
-        found = _canonical(catalog, pin, written)
-        cohorts = [] if found.canonical is None else _by_name(found.canonical.cohorts)
+        found = canonical_document(catalog, pin, written)
+        cohorts = [] if found.canonical is None else by_name(found.canonical.cohorts)
         checks = [_check(catalog, cohort) for cohort in cohorts]
+        checked = _views(catalog, found.views)
     loaded = found.loaded
+    refusals = found.every_refusal()
     return DocumentValidation(
-        valid=not found.refusals,
-        refusals=found.refusals,
+        valid=not refusals,
+        refusals=refusals,
         translation=translation,
         cohorts=checks,
-        views=_views(loaded.document),
-        params=None if loaded.document is None else _parameters(loaded),
+        views=checked,
+        params=None if loaded.document is None else parameters(loaded),
     )
 
 
@@ -477,7 +516,7 @@ ANSWER_SECONDS = 1.0
 release of its pins and the answer: a call records none unless this much is left (D300)."""
 
 
-def _late(deadline: Deadline) -> ToolRefused:
+def late(deadline: Deadline) -> ToolRefused:
     seconds = max(1, round(deadline.seconds))
     return ToolRefused(
         [
@@ -508,25 +547,25 @@ def count_cohort(catalog: Catalog, request: CountCohort) -> CohortCounts:
     store = catalog.store
     erasures = store.derivations.erasure_mark()
     with store.pin(background=True) as pin:
-        found = _canonical(catalog, pin, request.document)
+        found = canonical_document(catalog, pin, request.document)
         if found.refusals or found.canonical is None:
             raise ToolRefused(found.refusals[:1])
-        cohorts = _by_name(found.canonical.cohorts)
+        cohorts = by_name(found.canonical.cohorts)
         manifests = sorted({cohort.release.manifest for cohort in cohorts})
         sources = {manifest: store.sources(manifest) for manifest in manifests}
         ends = None if deadline is None else deadline.at - RECORD_SECONDS
         if ends is not None and time.monotonic() >= ends:
-            raise _late(cast(Deadline, deadline))
+            raise late(cast(Deadline, deadline))
         try:
             runs = run_cohorts([cohort.resolved for cohort in cohorts], sources, workers, ends=ends)
         except CallerDeadline:
-            raise _late(cast(Deadline, deadline)) from None
+            raise late(cast(Deadline, deadline)) from None
         except QueryRefused as refused:
             raise ToolRefused([refused.refusal]) from None
         written = dict(request.document)
         params = dict(found.loaded.params_used)
         counted = [
-            _counted(cohort, run.accounting, run.sql, run.parameters, written, params)
+            counted_cohort(cohort, run.accounting, run.sql, run.parameters, written, params)
             for cohort, run in zip(cohorts, runs, strict=True)
         ]
 
@@ -538,24 +577,25 @@ def count_cohort(catalog: Catalog, request: CountCohort) -> CohortCounts:
                 [issue for _, issue in counted], admit=admit, erasures_after=erasures
             )
         except WithdrawnReleaseError:
-            raise ToolRefused([_withdrawn([])]) from None
+            raise ToolRefused([withdrawn([])]) from None
         except ErasedMeanwhileError:
-            raise ToolRefused([_erased_meanwhile()]) from None
+            raise ToolRefused([erased_meanwhile()]) from None
         except LogFullError as full:
-            raise ToolRefused([_full(full.log_bytes)]) from None
+            raise ToolRefused([log_full(full.log_bytes)]) from None
         except NotAdmittedError:
-            raise _late(cast(Deadline, deadline)) from None
+            raise late(cast(Deadline, deadline)) from None
+        checked = _views(catalog, found.views)
     return CohortCounts(
         counts=[
-            _named(cohort, parts, identifier)
+            named_count(cohort, parts, identifier)
             for cohort, (parts, _), identifier in zip(cohorts, counted, issued, strict=True)
         ],
-        views=_views(found.loaded.document),
-        params=_parameters(found.loaded),
+        views=checked,
+        params=parameters(found.loaded),
     )
 
 
-def _erased_meanwhile() -> Refusal:
+def erased_meanwhile() -> Refusal:
     """An erasure of a dataset the document names was recorded while the call ran, so it records
     nothing (D290): its releases' rows may be what the erasure took."""
     return Refusal(
@@ -570,7 +610,7 @@ def _erased_meanwhile() -> Refusal:
     )
 
 
-def _full(log_bytes: int) -> Refusal:
+def log_full(log_bytes: int) -> Refusal:
     return Refusal(
         code=RefusalCode.LIMIT_EXCEEDED,
         path=None,
@@ -584,13 +624,15 @@ def _full(log_bytes: int) -> Refusal:
     )
 
 
-def _counted(
+def counted_cohort(
     cohort: CanonicalCohort,
     accounting: Accounting,
     sql: Sequence[str],
     parameters: Mapping[str, JsonValue],
     written: dict[str, JsonValue],
     params: dict[str, JsonValue],
+    *,
+    tool: Tool = "count_cohort",
 ) -> tuple[CountParts, Issue]:
     """A cohort's count, disclosed, and the issuance that records it (D300): the call's
     request, which the log stores once for all its cohorts, and the cohort's SQL."""
@@ -602,7 +644,7 @@ def _counted(
         kind="cohort",
         hashed=cohort.identity.hashed(),
         releases=[release],
-        tool="count_cohort",
+        tool=tool,
         written=written,
         params=params,
         sql={"statements": list(sql), "parameters": dict(parameters)},
@@ -612,7 +654,7 @@ def _counted(
     return parts, issue
 
 
-def _named(cohort: CanonicalCohort, parts: CountParts, issuance: str) -> NamedCount:
+def named_count(cohort: CanonicalCohort, parts: CountParts, issuance: str) -> NamedCount:
     """A cohort's count as ``count_cohort`` returns it, naming the issuance that recorded it."""
     count = CohortCount(
         id=cohort.id,
@@ -679,7 +721,17 @@ __all__ = [
     "ENGINE",
     "NEGATION_MESSAGE",
     "RECORD_SECONDS",
+    "Canonical",
+    "by_name",
+    "canonical_document",
     "count_cohort",
+    "counted_cohort",
+    "erased_meanwhile",
     "explain",
+    "late",
+    "log_full",
+    "named_count",
+    "parameters",
     "validate_document",
+    "withdrawn",
 ]

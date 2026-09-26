@@ -160,7 +160,7 @@ its object, and every issuance, each with the pages its rows and index entries c
 that the pages the log adds to the app DB as it grows are at most what it counts (a row is
 charged its cell twice over and its overflow pages, ``stored_sql``). That is what pruning can
 free (an erased derivation, which only erasure makes, is kept and not counted), so pruning
-before now brings it down to what ``run_analysis``'s issuances hold; the pages pruning leaves
+before now brings it down to 0 (D318); the pages pruning leaves
 partly full are SQLite's to reuse. ``log_usage`` keeps it, by triggers; the constants are part
 of migration 5's triggers, so changing them needs a migration."""
 _TEXT = _text("NEW.")
@@ -542,6 +542,27 @@ MIGRATIONS: tuple[str, ...] = (
                         SELECT 1 FROM issuances k
                         WHERE k.values_from = OLD.id AND k.id IS NOT OLD.id
                             AND NOT (k.tool = 'count_cohort' AND k.at < p.before)
+                    )
+            )
+        )
+        BEGIN SELECT RAISE(ABORT, 'an issuance is removed only by erasure or pruning'); END;
+    """,
+    # 6: M3 (#18), the issuances of results and of every count pruned (D318)
+    """
+    DROP TRIGGER issuances_removed_by_erasure_or_pruning;
+    CREATE TRIGGER issuances_removed_by_erasure_or_pruning BEFORE DELETE ON issuances
+        WHEN NOT (
+            (
+                (SELECT hashed FROM derivations WHERE id = OLD.derivation) IS NULL
+                AND EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+            )
+            OR EXISTS (
+                SELECT 1 FROM log_permits p
+                WHERE p.kind = 'pruning' AND OLD.at < p.before
+                    AND NOT EXISTS (
+                        SELECT 1 FROM issuances k
+                        WHERE k.values_from = OLD.id AND k.id IS NOT OLD.id
+                            AND NOT k.at < p.before
                     )
             )
         )
