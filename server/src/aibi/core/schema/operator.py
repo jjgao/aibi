@@ -58,6 +58,7 @@ from aibi.core.schema.ids import (
     MAX_COLUMNS,
     DatasetId,
     DerivationId,
+    Identifier,
     IssuanceId,
     PackId,
     Sha256,
@@ -112,7 +113,14 @@ class UploadSource(_Request):
     upload: UploadName
 
 
-_SOURCES = {"path": PathSource, "upload": UploadSource}
+class ConnectionSource(_Request):
+    """A named connection of the server's configuration, by its name (§14, D305): never a
+    host, a path or a credential."""
+
+    connection: Identifier
+
+
+_SOURCES = {"path": PathSource, "upload": UploadSource, "connection": ConnectionSource}
 
 
 def _source(value: object) -> str | None:
@@ -123,19 +131,24 @@ def _source(value: object) -> str | None:
 
 
 Source = Annotated[
-    Annotated[PathSource, Tag("path")] | Annotated[UploadSource, Tag("upload")],
+    Annotated[PathSource, Tag("path")]
+    | Annotated[UploadSource, Tag("upload")]
+    | Annotated[ConnectionSource, Tag("connection")],
     Discriminator(
         _source,
         custom_error_type="unknown_kind",
-        custom_error_message="A source is a path on the server (path) or an upload (upload)",
+        custom_error_message=(
+            "A source is a path on the server (path), an upload (upload) or a named connection "
+            "(connection)"
+        ),
     ),
 ]
 
 
 class ImportRequest(_Request):
     """An import or a re-import (D266). ``original_name`` is an upload's file name, which names
-    the dataset and its tables (D226); ``pack`` names the pack whose importer reads the source.
-    The limits are the server's, never a request's (D253)."""
+    the dataset and its tables (D226); ``pack`` names the pack whose importer reads the source,
+    never a named connection's (D305). The limits are the server's, never a request's (D253)."""
 
     source: Source
     name: Label | None = None
@@ -471,6 +484,7 @@ __all__ = [
     "UPLOAD_EXTENSIONS",
     "UPLOAD_NAME_RE",
     "ChangeNote",
+    "ConnectionSource",
     "Csrf",
     "DatasetState",
     "Datasets",

@@ -74,6 +74,9 @@ def services_of(config: ServerConfig, store: Store, registry: PackRegistry) -> S
         upload_min_bytes_per_second=config.imports.upload_min_bytes_per_second,
         max_body_bytes=config.server.max_body_bytes,
         token_digest=token_digest(config.curator.token_hash),
+        connections={
+            name: connection.connection(name) for name, connection in config.databases.items()
+        },
     )
 
 
@@ -235,7 +238,11 @@ def check(config: ServerConfig) -> list[str]:
     )
     floor = config.disclosure.min_cell_count_floor
     lines.append(f"disclosure floor: {'none' if floor is None else floor}")
-    lines += [f"database {name}: {found.kind}" for name, found in config.databases.items()]
+    lines += [
+        f"database {name}: {found.kind}"
+        + ("" if found.schema_ is None else f", schema {found.schema_}")
+        for name, found in config.databases.items()
+    ]
     lines += [f"model card: {card.id}" for card in config.models]
     return lines
 

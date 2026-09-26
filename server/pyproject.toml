@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
     "duckdb>=1.5.5,<1.6",  # a new DuckDB can change a digest: bump the versions it changes (§7.6)
+    # The scanners a Postgres or MySQL snapshot loads, DuckDB's own signed builds, one per DuckDB
+    # version, which DuckDB checks the signature of when it loads them (D306).
+    "duckdb-extension-mysql-scanner==1.5.5",
+    "duckdb-extension-postgres-scanner==1.5.5",
     "fastapi>=0.141",
     "httpx>=0.28",
     "jsonschema>=4.23",
@@ -66,6 +70,9 @@ strict = ["src/aibi/core"]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+markers = [
+    "databases: needs a Postgres or MySQL server, named by AIBI_TEST_POSTGRES_URL or AIBI_TEST_MYSQL_URL",
+]
 filterwarnings = [
     "error",
     # Starlette's TestClient prefers httpx2 and warns once, on import, when it runs on httpx, which
@@ -110,11 +117,14 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Only a query worker's child loads DuckDB (SPEC §14, D293)"
+name = "Only a query worker's child and an import's snapshot load DuckDB (SPEC §14, D293, D306)"
 type = "forbidden"
 source_modules = ["aibi.core", "aibi.packs"]
 forbidden_modules = ["duckdb"]
-ignore_imports = ["aibi.core.engine.duck -> duckdb"]
+# importers.snapshot imports DuckDB inside the functions its import's worker calls, and only for
+# type checking at its top: tests/core/importers/test_databases.py checks that the server's
+# process never loads it.
+ignore_imports = ["aibi.core.engine.duck -> duckdb", "aibi.core.importers.snapshot -> duckdb"]
 
 [[tool.importlinter.contracts]]
 name = "Operator operations are never tools (SPEC §11.2, A4, D278)"
