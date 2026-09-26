@@ -8,7 +8,8 @@ rules differ (§6.5).
 
 - ``shop`` builds the release from rows (``rows`` the default rows, ``customers`` of them).
 - ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates and
-  variables, runs each by the reference evaluator (``evaluate``, ``evaluate_variable``) and
+  variables, runs each by the reference evaluator (``evaluate``, ``evaluate_variable``,
+  ``members.keys``) and
   makes its result envelope as ``run_analysis`` does, returning each view's ``Analysed``.
   ``shop(extended=True)`` adds an order's amount, a number with a declared range, and declares
   the customers' ages' range, for ``summary.distribution``.
@@ -32,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import distribution, views
+from aibi.core.analyses import distribution, members, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome as AnyOutcome
@@ -42,12 +43,13 @@ from aibi.core.engine import build
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
+from aibi.core.engine.members import keys, ordered
 from aibi.core.engine.resolve import Label, ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import Accounting, Crossing, TruthValues, cross
 from aibi.core.engine.truth import Truth, TruthValue
 from aibi.core.engine.variables import Joint, Materialised, evaluate_variable, joint, materialise
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.refusals import Refusal
@@ -217,6 +219,12 @@ def analyse_document(
         positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
         if isinstance(view.params, DistributionParams):
             found.append(_result(view, _summarised_by_evaluator(view, positions), written))
+            continue
+        if isinstance(view.params, MembersParams):
+            [position] = positions
+            listed = ordered(keys(position.cohort.resolved))
+            outcome = members.list_members(position, listed, view.params, k=view.disclosure)
+            found.append(_result(view, outcome, written))
             continue
         crossing = cross(
             [TruthValues.of(evaluate(cohort.resolved).values) for cohort in view.cohorts],

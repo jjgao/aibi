@@ -65,6 +65,8 @@ MAX_BINS = 64
 MAX_CATEGORIES = 150
 """Distinct values a column's categories may have, in catalogue statistics and in a result: the
 cap on categorical levels (§14; D270, D328)."""
+MAX_MEMBERS = 1_000
+"""Unit keys one page of ``summary.members`` lists (D331)."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -392,6 +394,7 @@ __all__ = [
     "MAX_KEEP_DAYS",
     "MAX_LEAVES",
     "MAX_LIST",
+    "MAX_MEMBERS",
     "MAX_NAME",
     "MAX_OPEN_PROPOSALS",
     "MAX_PACKS",

@@ -20,11 +20,11 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import distribution, existence
+from aibi.core.analyses import distribution, existence, members
 from aibi.core.analyses.charts import distribution_charts, existence_chart
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.readback import readback
-from aibi.core.schema.analyses import ExistenceValues
+from aibi.core.schema.analyses import DistributionValues, ExistenceValues
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.digests import RESULT_MEMBERS, output_digest
 from aibi.core.schema.numbers import NotEstimableReason
@@ -67,15 +67,18 @@ def document_of(view: CheckedView) -> dict[str, JsonValue]:
     }
 
 
-Outcome = existence.Outcome | distribution.Outcome
+Outcome = existence.Outcome | distribution.Outcome | members.Outcome
 """An analysis's digested parts and caveats, as the core's analyses give them."""
 
 
 def charts(outcome: Outcome, labels: list[str]) -> list[dict[str, JsonValue]]:
-    """The charts of an outcome's values (``charts``)."""
+    """The charts of an outcome's values (``charts``); ``summary.members`` has none, since a
+    list of keys holds no number to draw (D331)."""
     if isinstance(outcome.values, ExistenceValues):
         return [existence_chart(outcome.values, labels)]
-    return distribution_charts(outcome.values, labels)
+    if isinstance(outcome.values, DistributionValues):
+        return distribution_charts(outcome.values, labels)
+    return []
 
 
 def envelope(

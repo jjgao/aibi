@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 from pydantic import JsonValue
 
-from aibi.core.analyses import distribution, views
+from aibi.core.analyses import distribution, members, views
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome, envelope
@@ -24,13 +24,14 @@ from aibi.core.engine import sql as sql_module
 from aibi.core.engine import worker as worker_module
 from aibi.core.engine.canonical import canonicalise
 from aibi.core.engine.evaluate import evaluate
+from aibi.core.engine.members import keys, ordered
 from aibi.core.engine.queries import run_cohorts
 from aibi.core.engine.resolve import ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import TruthValues, cross
 from aibi.core.engine.variables import evaluate_variable, joint, materialise
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.catalog import AnalysisListing, DatasetDescription
 from aibi.core.schema.caveats import CaveatCode
 from aibi.core.schema.cohorts import (
@@ -138,17 +139,32 @@ def evaluated(
     for view in views.checked(loaded.document, parsed, canonical)[0]:
         positions = [CohortAt(c, evaluate(c.resolved)) for c in view.cohorts]
         outcome: Outcome
+        if isinstance(view.params, MembersParams):
+            [position] = positions
+            listed = ordered(keys(position.cohort.resolved))
+            outcome = members.list_members(position, listed, view.params, k=view.disclosure)
+            found.append(
+                envelope(
+                    view,
+                    outcome,
+                    issuance="iss:01J0000000000000000000000A",
+                    written=dict(written),
+                    params={},
+                    engine="aibi test",
+                )
+            )
+            continue
         if isinstance(view.params, DistributionParams):
             values = [evaluate_variable(variable.resolved) for variable in view.variables]
             materialised = []
             for cohort in view.cohorts:
-                members = [
+                units = [
                     row
                     for row, value in enumerate(evaluate(cohort.resolved).values)
                     if value.is_true
                 ]
-                together = joint(values, members) if len(values) > 1 else None
-                materialised.append((tuple(materialise(v, members) for v in values), together))
+                together = joint(values, units) if len(values) > 1 else None
+                materialised.append((tuple(materialise(v, units) for v in values), together))
             outcome = distribution.summarise(
                 positions, view.variables, materialised, view.params, k=view.disclosure
             )
@@ -301,6 +317,101 @@ def test_under_a_floor_a_number_without_bins_or_a_declared_range_is_refused(
     positions: Any = result.values.positions
     height = positions[0]["columns"][0]
     assert height["histogram"]["edges_from"] == "data"
+
+
+def members_document(**view: Any) -> dict[str, Any]:
+    return document(view={"analysis": "summary.members", "cohorts": ["apple"], **view})
+
+
+def test_members_listed_by_sql_are_the_reference_evaluator_s_page_for_page(
+    world: World, orchard: Orchard
+) -> None:
+    published = world.publish("orchard", orchard(40))
+    for params in ({}, {"offset": 3, "limit": 4}, {"offset": 12, "limit": 5}, {"offset": 99}):
+        written = members_document(params=params)
+        [result] = run(catalog_of(world), written).results
+        [expected] = evaluated(world, published.manifest, written)
+        assert result.digest == expected.digest
+        assert result.derivation.id == expected.derivation.id
+        assert result.values == expected.values
+        assert result.charts == []
+    [whole] = run(catalog_of(world), members_document(params={"limit": 1000})).results
+    [position] = whole.values.model_dump(mode="json")["positions"]
+    assert len(position["keys"]) == whole.population[0].n_true
+    assert position["columns"] == [{"data": "trees.tree_id"}]
+
+
+def test_a_members_issuance_records_its_cohort_s_count_then_a_listing_that_holds_no_key(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    [result] = run(catalog, members_document(params={"limit": 1000})).results
+    [position] = result.values.model_dump(mode="json")["positions"]
+    listed = {key[0]["data"] for key in position["keys"]}
+    assert listed
+    issuance = explained(catalog, result.issuance.id).issuance
+    assert issuance is not None
+    assert isinstance(issuance.sql, dict)
+    queries = cast(list[dict[str, Any]], issuance.sql["queries"])
+    assert [len(query["statements"]) for query in queries] == [1, 1]
+    recorded = json.dumps(issuance.model_dump(mode="json"))
+    assert [key for key in listed if f'"{key}"' in recorded] == []
+
+
+def test_views_that_list_one_cohort_s_members_share_its_listing(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    listings: list[int] = []
+    given = analyses_module.run_views
+
+    def counted(*args: Any, **kw: Any) -> Any:
+        listings.append(len(kw["members"]))
+        return given(*args, **kw)
+
+    monkeypatch.setattr(analyses_module, "run_views", counted)
+    written = members_document()
+    written["views"].append({"analysis": "summary.members", "cohorts": ["apple"]})
+    written["views"].append(
+        {"analysis": "summary.members", "cohorts": ["apple"], "params": {"offset": 1}}
+    )
+    first, second, third = run(catalog_of(world), written).results
+    assert listings == [1]
+    assert first.digest == second.digest
+    assert third.derivation.id != first.derivation.id
+
+
+@pytest.mark.parametrize("floor", [2, 3, 5])
+def test_under_a_floor_no_tool_lists_or_names_a_member_s_key(
+    world: World, orchard: Orchard, floor: int
+) -> None:
+    world.publish("orchard", orchard())
+    written = members_document()
+    catalog = catalog_of(world, floor=floor)
+    for tool in ("validate_document", "count_cohort", "run_analysis"):
+        found = answer(catalog, tool, {"document": written})
+        dumped = json.dumps(
+            [refusal.model_dump(mode="json") for refusal in found]
+            if isinstance(found, list)
+            else found.model_dump(mode="json")
+        )
+        assert "tree1" not in dumped
+        assert "ROW_IDS_NOT_ALLOWED" in dumped
+        assert '"/views/0/analysis"' in dumped
+    [result] = run(catalog_of(world), written).results
+    assert result.values.model_dump(mode="json")["positions"][0]["keys"]
+
+
+def test_an_answer_over_the_cap_names_the_first_view_that_lists_keys(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    monkeypatch.setattr(worker_module, "MAX_QUERY_ANSWER_BYTES", 64)
+    written = distribution_document(COLUMNS[:2])
+    written["views"].append({"analysis": "summary.members", "cohorts": ["pear"]})
+    refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (RefusalCode.LIMIT_EXCEEDED, "/views/1")
 
 
 def test_run_analysis_computes_what_the_reference_evaluator_computes(
@@ -623,6 +734,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     assert [entry["id"] for entry in found.analyses] == [
         "compare.existence",
         "summary.distribution",
+        "summary.members",
     ]
     assert found.applicable is None
     found = answer(catalog, "list_analyses", {"dataset": "orchard", "unit": "trees"})
@@ -631,6 +743,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     assert [(a.analysis, a.status) for a in found.applicable] == [
         ("compare.existence", "available"),
         ("summary.distribution", "available_with_caveats"),
+        ("summary.members", "available"),
     ]
     assert found.release is not None
     assert found.release.label == 1
@@ -647,6 +760,7 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
     assert [a.analysis for a in found.applicable_analyses] == [
         "compare.existence",
         "summary.distribution",
+        "summary.members",
     ]
 
 

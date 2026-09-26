@@ -29,8 +29,13 @@ values, per position and column in parameter order: for categories, the cohort's
 category over those for which the value is known, categories merged under a disclosure setting
 and a category column's undeclared values one ``other_values`` row there (D329); for numbers, n,
 mean, standard deviation, median, quartiles, minimum, maximum and a histogram, and under a
-disclosure setting only the histogram's merged bins and the quartiles' bins. ``summary.members``
-comes with M3.2b (D324).
+disclosure setting only the histogram's merged bins and the quartiles' bins.
+
+``summary.members`` (D331) takes ``offset`` and ``limit``, a page of the unit keys of the view's one
+cohort. Its values, at its one position: the unit table's key columns, and at most ``limit`` of
+its members' keys from the ``offset``-th, each its values in key order as they are stored, in the
+canonical form's order (§7.6, step 8), and whether more follow. It lists no key under a disclosure
+setting (D332).
 """
 
 from itertools import pairwise
@@ -57,11 +62,14 @@ from aibi.core.schema.document import (
     ValueList,
     Via,
 )
+from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER
 from aibi.core.schema.limits import (
     BINS,
     MAX_BINS,
     MAX_CATEGORIES,
     MAX_COHORTS,
+    MAX_COLUMNS,
+    MAX_MEMBERS,
     MAX_PREDICATES,
     MAX_VARIABLES,
     PREDICATES,
@@ -347,10 +355,76 @@ class DistributionValues(Output):
     view: NoViewValues
 
 
+# --- summary.members (D331) --------------------------------------------------------------------
+
+MEMBERS_PAGE = 100
+"""The keys a page of ``summary.members`` lists when its view gives no ``limit``."""
+
+
+class MembersParams(DocModel):
+    """``summary.members``'s parameters (D331): a page of the cohort's keys."""
+
+    offset: Annotated[StrictInt, Field(ge=0, le=MAX_SAFE_INTEGER)] = 0
+    """The members passed over, in the keys' order, before the page's first."""
+    limit: Annotated[StrictInt, Field(ge=1, le=MAX_MEMBERS)] = MEMBERS_PAGE
+    """The most keys the page lists, at most ``MAX_MEMBERS``."""
+
+
+def _large_integer(value: str) -> str:
+    if not DECIMAL_INTEGER_RE.fullmatch(value) or abs(int(value)) <= MAX_SAFE_INTEGER:
+        raise PydanticCustomError(
+            "large_integer", "A decimal string holds an integer beyond ±(2^53 - 1) alone"
+        )
+    return value
+
+
+LargeInteger = Annotated[str, AfterValidator(_large_integer)]
+"""An integer beyond ±(2^53 − 1), as a decimal string (§5.1, §8.2)."""
+
+KeyPart = (
+    StrictBool
+    | Annotated[StrictInt, Field(ge=-MAX_SAFE_INTEGER, le=MAX_SAFE_INTEGER)]
+    | (Finite | LargeInteger | Data)
+)
+"""One value of a unit key, as its column stores it (D331): a boolean, an integer (beyond
+±(2^53 − 1) a decimal string), a double (an integral one written as an integer, as the canonical
+form writes it), or text, a date or a datetime as data, as the canonical form writes them."""
+
+
+class MembersPosition(Output):
+    """``summary.members`` at its one position (D331)."""
+
+    columns: Annotated[list[Data], Field(min_length=1, max_length=MAX_COLUMNS)]
+    """The unit table's key columns, by descriptor id, in key order."""
+    keys: Annotated[
+        list[Annotated[list[KeyPart], Field(min_length=1, max_length=MAX_COLUMNS)]],
+        Field(max_length=MAX_MEMBERS),
+    ]
+    """The page: members' keys, each its values in key order, in the canonical form's order."""
+    offset: Count
+    """The members passed over before the page's first key."""
+    more: StrictBool
+    """Whether members follow the page's last key."""
+
+    @model_validator(mode="after")
+    def _check_widths(self) -> Self:
+        if any(len(key) != len(self.columns) for key in self.keys):
+            raise PydanticCustomError("key_width", "Each key has a value per key column")
+        return self
+
+
+class MembersValues(Output):
+    """``summary.members``'s ``values`` (§8.1): its one position, and nothing for the view."""
+
+    positions: Annotated[list[MembersPosition], Field(min_length=1, max_length=1)]
+    view: NoViewValues
+
+
 __all__ = [
     "BINS_OF_A_RANGE",
     "EXCLUDE",
     "EXISTENCE_AGGREGATES",
+    "MEMBERS_PAGE",
     "NUMERIC_AGGREGATES",
     "Aggregate",
     "CategoryDistribution",
@@ -367,6 +441,11 @@ __all__ = [
     "Family",
     "Histogram",
     "HistogramBin",
+    "KeyPart",
+    "LargeInteger",
+    "MembersParams",
+    "MembersPosition",
+    "MembersValues",
     "NoViewValues",
     "NumberDistribution",
     "PredicateContrast",

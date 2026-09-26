@@ -93,7 +93,12 @@ def test_the_core_s_entry_is_generated_from_its_models() -> None:
 
 def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     analyses = Analyses(shelves([{"role": "orders", "kind": "table"}]))
-    assert analyses.ids() == ["compare.existence", "shelves.restock", "summary.distribution"]
+    assert analyses.ids() == [
+        "compare.existence",
+        "shelves.restock",
+        "summary.distribution",
+        "summary.members",
+    ]
     found = analyses.get("shelves.restock")
     assert found is not None
     assert found.pack == "shelves"
