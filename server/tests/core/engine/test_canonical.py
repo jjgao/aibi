@@ -1,7 +1,7 @@
 """Canonical forms, cohort ids, leaf keys and cohort-count digests (§7.6, §13.4; D281–D284)."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -12,12 +12,17 @@ from aibi.core.engine.canonical import (
     CohortIdentity,
     ViewIdentity,
     as_document,
+    canonicalise,
 )
 from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.ids import derivation_id, hashed, leaf_key
+from aibi.core.engine.resolve import ViewPredicate
+from aibi.core.schema.analyses import ExistenceParams
 from aibi.core.schema.jsonio import canonical
+from aibi.core.schema.loading import load_document
+from aibi.core.schema.refusals import RefusalCode
 from aibi.core.schema.semantics import SEMANTICS_VERSION
 
 City = Callable[..., Release]
@@ -48,6 +53,7 @@ def value(column: str, **predicate: Any) -> dict[str, Any]:
 THAI = value("establishments.cuisine", values=["thai"])
 SEATS = value("establishments.seats", range={"gt": 10})
 TEMP = value("violations.code", values=["temp"])
+UNKNOWN_COLUMN = value("establishments.stars", values=[5])
 
 
 def only(result: Canonicalisation) -> CanonicalCohort:
@@ -302,13 +308,36 @@ def test_a_leaf_that_became_no_clause_maps_to_none(canon: Canon, city: City, doc
     assert cohort.leaves == {"/cohorts/c/all/1": cohort.keys}
 
 
-def test_views_are_reported_unchecked_until_m3_and_get_no_id(
-    canon: Canon, city: City, doc: Doc
+def _predicates(written: Mapping[str, Any], *clauses: Any) -> list[ViewPredicate]:
+    params = ExistenceParams.model_validate({"predicates": list(clauses)})
+    return [
+        ViewPredicate(
+            f"0/{index}", written["dataset"], ("views", 0, "params", "predicates", index), clause
+        )
+        for index, clause in enumerate(params.predicates)
+    ]
+
+
+def test_a_view_s_predicate_is_canonicalised_as_the_cohort_of_its_one_clause(
+    city: City, doc: Doc
 ) -> None:
-    written = doc([THAI], views=[{"analysis": "summary.distribution", "cohorts": ["c"]}])
-    result = canon(written, city(ROWS))
-    assert [(view.position, view.analysis, view.status) for view in result.views] == [
-        (0, "summary.distribution", "unchecked")
+    written = doc([THAI])
+    loaded = load_document(json.dumps(written))
+    assert loaded.document is not None
+    release = city(ROWS)
+    result = canonicalise(
+        loaded.document,
+        {"d": release},
+        labels={release.manifest: 1},
+        predicates=_predicates(written, THAI, UNKNOWN_COLUMN),
+    )
+    predicate = result.predicates["0/0"]
+    assert predicate.form == result.cohorts["c"].form
+    assert predicate.id == result.cohorts["c"].id
+    assert predicate.leaves == {"/views/0/params/predicates/0": predicate.keys}
+    assert "0/1" not in result.predicates
+    assert [(r.code, r.path) for r in result.refusals] == [
+        (RefusalCode.UNKNOWN_COLUMN, "/views/0/params/predicates/1/column")
     ]
 
 

@@ -851,7 +851,7 @@ def _text_key(value: str) -> str:
 ParamKey = Annotated[
     str, Field(max_length=MAX_STRING), LimitName(CONSTANT_CHARACTERS), AfterValidator(_text_key)
 ]
-"""A key of a view's ``params``: fixed by the analysis's parameter schema (M3)."""
+"""A key of a view's ``params``: fixed by the analysis's parameters (D317)."""
 
 
 class View(DocModel):
@@ -870,7 +870,7 @@ class View(DocModel):
     overlap: Literal["allow"] | None = None
     unmapped: Literal["allow"] | None = None
     params: dict[ParamKey, DocumentJson] | None = None
-    """Checked against the analysis's parameter schema once the registry exists (M3)."""
+    """Checked against the analysis's parameters in phase 2 of canonicalisation (§7.6, D317)."""
     note: Notes | None = None
 
 

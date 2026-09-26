@@ -7,7 +7,9 @@ The ledger is made so that its suppressed counts are numbers nothing else in an 
 197 unparsed amounts (UNKNOWN), and so 4124 PRESENT ones, suppressed with them; categories of
 123 and 198 rows, pooled into 321, which suppresses the distribution with its 3011 and 989; and
 tables of 157 and 263 rows. The importer's evidence quotes each of them, and the unparsed note
-counts 197, as a control without a floor shows.
+counts 197, as a control without a floor shows. ``run_analysis`` asks of every account whether its
+amount is known (4124 are, 197 not) and whether its kind is ``z`` (123) or not, and of the accounts
+of low and high amounts whether their kind is ``w`` (D320).
 """
 
 import json
@@ -42,6 +44,43 @@ def ledger() -> dict[str, bytes]:
     }
 
 
+KIND_Z = {"kind": "value", "column": "accounts.kind", "values": ["z"]}
+AMOUNT = "accounts.amount"
+
+
+def analysis(dataset: str) -> dict[str, Any]:
+    return {
+        "aibi": "1",
+        "dataset": dataset,
+        "unit": "accounts",
+        "cohorts": {
+            "every": {"all": []},
+            "low": {"all": [{"kind": "value", "column": AMOUNT, "range": {"lt": 25}}]},
+            "high": {"all": [{"kind": "value", "column": AMOUNT, "range": {"gte": 25}}]},
+        },
+        "views": [
+            {
+                "analysis": "compare.existence",
+                "cohorts": ["every"],
+                "params": {
+                    "predicates": [
+                        {"kind": "value", "column": AMOUNT, "range": {"gte": 0}},
+                        KIND_Z,
+                        {"not": KIND_Z},
+                    ]
+                },
+            },
+            {
+                "analysis": "compare.existence",
+                "cohorts": ["low", "high"],
+                "params": {
+                    "predicates": [{"kind": "value", "column": "accounts.kind", "values": ["w"]}]
+                },
+            },
+        ],
+    }
+
+
 def _numbers(text: str) -> set[int]:
     return {int(found) for found in re.findall(r"(?<![0-9A-Za-z.])[0-9]+(?![0-9A-Za-z])", text)}
 
@@ -60,6 +99,7 @@ def _answers(served: Served, release: Any = None) -> list[str]:
         return result["structuredContent"]
 
     both("search_catalog", {})
+    both("run_analysis", {"document": analysis("ledger@draft" if release == "draft" else "ledger")})
     described = both("describe_dataset", {"dataset": "ledger", **pinned})
     for table in described["tables"]:
         for column in table["columns"]:
@@ -106,6 +146,8 @@ def test_without_a_floor_the_same_answers_quote_the_counts(
     assert set(QUOTED) <= quoted
     queue = served.tool("curation_queue", {"dataset": "ledger"})["structuredContent"]
     assert [n["count"] for n in queue["queue"]["notes"] if n["kind"] == "unparsed"] == [197]
+    analysed = served.tool("run_analysis", {"document": analysis("ledger")})
+    assert {197, 4124, 123} <= _numbers(json.dumps(analysed["structuredContent"]))
     column = served.tool("describe_column", {"dataset": "ledger", "column": "accounts.amount"})
     evidence = column["structuredContent"]["descriptor"]["curation"]["/fields/datatype"]
     assert "4124 of 4321" in json.dumps(evidence)

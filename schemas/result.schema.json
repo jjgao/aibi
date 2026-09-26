@@ -1805,7 +1805,7 @@
     },
     "Values": {
       "additionalProperties": false,
-      "description": "Analysis values: per position in view order, and for the view as a whole.\n\nTheir shape is the analysis entry's ``returns`` (M3); until then the whole of it is data\n(A6), and only its ``not_estimable`` maps are checked.",
+      "description": "Analysis values: per position in view order, and for the view as a whole.\n\nTheir shape is the analysis entry's ``returns``, which the analysis checks when it makes\nthem (D319); here the whole of it is data (A6), and only its ``not_estimable`` maps are\nchecked.",
       "properties": {
         "positions": {
           "items": {

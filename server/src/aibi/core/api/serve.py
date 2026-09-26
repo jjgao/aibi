@@ -227,9 +227,14 @@ def check(config: ServerConfig) -> list[str]:
     ):
         lines.append(f"rate, {name}: {rate.per_minute} a minute, bursts of {rate.burst}")
     log = config.log.limits()
-    days = log.keep_count_issuances_days
-    kept = "until pruned" if days is None else f"{days} days"
-    lines.append(f"count issuances kept: {kept}; log bytes: {log.log_bytes}")
+    kept = [
+        "until pruned" if days is None else f"{days} days"
+        for days in (log.keep_count_issuances_days, log.keep_result_issuances_days)
+    ]
+    lines.append(
+        f"count issuances kept: {kept[0]}; result issuances kept: {kept[1]}; "
+        f"log bytes: {log.log_bytes}"
+    )
     queries = config.queries.limits()
     lines.append(
         f"query workers: {queries.query_workers}; query seconds: {queries.query_seconds}; "

@@ -14,12 +14,14 @@ stay on the operator router.
   suppressed count matches no threshold. Hits are in dataset order, a page at a time.
 - ``describe_dataset`` gives a release's dataset descriptor, its tables with their row counts and
   brief columns (a page of them), its relationships, coverage and endpoints, the table graph, the
-  applicable analyses (none until the registry exists, §9.4) and the standing caveats (D275).
+  applicable analyses over its keyed tables (§9.4, D316) and the standing caveats (D275).
+- ``list_analyses`` gives the registry's entries, and for a dataset their applicability (D316).
 - ``describe_column`` gives a column's descriptor with its observation-state counts and value
   distribution, disclosed (D276).
 - ``curation_queue`` gives the queue of §11.1 (D250), its counts disclosed and referenced (D277).
 - ``propose_descriptor`` records an agent's proposal (D248), attributed to ``agent:<name>``.
-- ``resources`` and ``read_resource`` serve every descriptor as an MCP resource (D279).
+- ``resources`` and ``read_resource`` serve every descriptor as an MCP resource (D279), the
+  registry's entries included (``aibi://analysis/<id>@<version>``).
 
 Refusals are raised as ``ToolRefused``, the store's ``StoreRefused`` or the proposal checks'
 ``EditRefused``; ``refusals_of`` gives the refusals of any of them. They name what is available
@@ -35,6 +37,7 @@ from typing import Literal, cast
 
 from pydantic import JsonValue, TypeAdapter
 
+from aibi.core.analyses.registry import Analyses
 from aibi.core.catalog.disclosure import (
     DisclosedTable,
     References,
@@ -52,6 +55,7 @@ from aibi.core.catalog.index import (
 from aibi.core.engine.worker import Workers
 from aibi.core.schema.catalog import (
     MAX_HIT_TABLES,
+    AnalysisListing,
     CatalogHit,
     CatalogHits,
     ColumnBrief,
@@ -61,6 +65,7 @@ from aibi.core.schema.catalog import (
     DescribeDataset,
     DisclosureOut,
     GraphEdge,
+    ListAnalyses,
     OntologyTerm,
     Proposed,
     ProposeDescriptor,
@@ -321,6 +326,11 @@ class Catalog:
     """The query workers that ``count_cohort`` runs a document's queries in (§14, D293); a
     catalogue without them counts nothing."""
 
+    @property
+    def analyses(self) -> Analyses:
+        """The analysis registry over the server's packs (§9, D316)."""
+        return Analyses(self.registry)
+
     def _references(self, manifest: str) -> References:
         return References(manifest, self.floor)
 
@@ -559,7 +569,9 @@ class Catalog:
                     for d in relationships
                 ],
             ),
-            applicable_analyses=[],
+            applicable_analyses=self.analyses.applicable(
+                descriptors, dataset=release.dataset, manifest=release.manifest
+            ),
             caveats=sort_caveats(caveats),
             columns_total=position,
             columns_next=end if end < position else None,
@@ -708,6 +720,37 @@ class Catalog:
             by=by,
         )
 
+    # --- list_analyses (§9.1, §9.4, D316) -----------------------------------------------------
+
+    def list_analyses(self, request: ListAnalyses) -> AnalysisListing:
+        """Every registry entry, by id, and for a dataset each one's applicability to the release
+        the request pins, for its unit or for each of the release's keyed tables."""
+        analyses = self.analyses
+        entries = [_dumped(analysis.entry) for analysis in analyses.all()]
+        if request.dataset is None:
+            return AnalysisListing(analyses=entries)
+        release = self._release(request.dataset, request.release)
+        with self.store.pin() as pin:
+            self._held(pin, release)
+            descriptors = self.store.descriptors(release.manifest)
+        tables = [d.id for d in descriptors if isinstance(d, TableDescriptor)]
+        if request.unit is not None and request.unit not in tables:
+            raise _refused(
+                RefusalCode.UNKNOWN_TABLE, "/unit", "The release has no such table", tables
+            )
+        return AnalysisListing(
+            analyses=entries,
+            dataset=release.dataset,
+            release=release.out,
+            unit=request.unit,
+            applicable=analyses.applicable(
+                descriptors,
+                dataset=release.dataset,
+                manifest=release.manifest,
+                unit=request.unit,
+            ),
+        )
+
     # --- Resources (§11.1, D279) ---------------------------------------------------------------
 
     def _concepts(self) -> list[ConceptDescriptor]:
@@ -723,6 +766,9 @@ class Catalog:
             if latest is not None:
                 found.append((f"aibi://dataset/{dataset}@{latest.label}/dataset", dataset))
         found.extend((f"aibi://concept/{c.id}", c.id) for c in self._concepts())
+        found.extend(
+            (f"aibi://analysis/{a.id}@{a.entry.version}", a.id) for a in self.analyses.all()
+        )
         found.extend((f"aibi://model/{m.id}", m.id) for m in self.models)
         return found[:MAX_RESOURCES]
 
@@ -760,12 +806,20 @@ class Catalog:
                 known = [m.id for m in self.models]
                 raise _refused(RefusalCode.NOT_FOUND, None, "No such model card", known)
             return canonical(_dumped(model)).decode("utf-8")
-        if _ANALYSIS_URI.fullmatch(uri) is not None:
-            raise _refused(
-                RefusalCode.NOT_FOUND,
+        if (match := _ANALYSIS_URI.fullmatch(uri)) is not None:
+            analyses = self.analyses.all()
+            analysis = next(
+                (
+                    a
+                    for a in analyses
+                    if a.id == match["id"] and a.entry.version == match["version"]
+                ),
                 None,
-                "No analysis is registered until the analysis registry exists (M3)",
             )
+            if analysis is None:
+                known = [f"{a.id}@{a.entry.version}" for a in analyses]
+                raise _refused(RefusalCode.NOT_FOUND, None, "No such analysis version", known)
+            return canonical(_dumped(analysis.entry)).decode("utf-8")
         raise _refused(
             RefusalCode.NOT_FOUND,
             None,

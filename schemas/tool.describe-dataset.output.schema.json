@@ -2,7 +2,7 @@
   "$defs": {
     "ApplicableAnalysis": {
       "additionalProperties": false,
-      "description": "An analysis's applicability (§9.4); the list is empty until the registry exists (M3).",
+      "description": "An analysis's applicability to a release (§9.4, D316): ``missing`` names the roles of the\nrequirements it does not meet, and ``unconfirmed`` those met only by descriptors with a\nfield an operator has not confirmed.",
       "properties": {
         "analysis": {
           "maxLength": 129,
@@ -20,6 +20,18 @@
           "title": "Analysis",
           "type": "string"
         },
+        "missing": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
         "status": {
           "enum": [
             "available",
@@ -28,11 +40,31 @@
           ],
           "title": "Status",
           "type": "string"
+        },
+        "unconfirmed": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Unconfirmed",
+          "type": "array"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
         }
       },
       "required": [
         "analysis",
-        "status"
+        "version",
+        "status",
+        "missing",
+        "unconfirmed"
       ],
       "title": "ApplicableAnalysis",
       "type": "object"

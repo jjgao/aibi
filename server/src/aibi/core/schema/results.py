@@ -12,7 +12,8 @@ here, so an output that breaks them cannot be built:
   or parameters, which hold user text): ``NOT_ESTIMABLE`` exactly when a number other than a
   suppressed one is not estimable, ``SUPPRESSED`` whenever something was suppressed (it may
   also be carried when categories were pooled or bins merged, which leave no ``null``),
-  ``LIFT_DIFFERS`` exactly when a ``lift_differs`` count is above zero or suppressed,
+  ``LIFT_DIFFERS`` exactly when a ``lift_differs`` count, of the population or among the values
+  (D323), is above zero or suppressed,
   ``DRAFT_RELEASE`` exactly when a release is a draft, and ``UNKNOWN_EXCLUDED``,
   ``INVALID_EXCLUDED``, ``COHORTS_OVERLAP`` and ``CONFOUNDED_WITH_DATASET`` whenever the counts
   or reasons that raise them are there;
@@ -29,8 +30,9 @@ here, so an output that breaks them cannot be built:
 - the ``digest`` is the digest of the digested members the output carries (§7.6, D298).
 
 Cohort counts carry their effective ``min_cell_count`` so that the same rules can be checked.
-Proportions inside ``values`` are checked for their ``not_estimable`` maps only, until their
-shape is typed (M3).
+``values`` is typed by its analysis's entry (``returns``), and its models check themselves when the
+analysis makes them (D319); here only its ``not_estimable`` maps and its ``lift_differs`` counts
+are read.
 """
 
 import re
@@ -444,8 +446,9 @@ class Analysed(AnalysedCounts):
 class Values(Output):
     """Analysis values: per position in view order, and for the view as a whole.
 
-    Their shape is the analysis entry's ``returns`` (M3); until then the whole of it is data
-    (A6), and only its ``not_estimable`` maps are checked.
+    Their shape is the analysis entry's ``returns``, which the analysis checks when it makes
+    them (D319); here the whole of it is data (A6), and only its ``not_estimable`` maps are
+    checked.
     """
 
     model_config = ConfigDict(json_schema_extra=DATA_MARK)
@@ -555,6 +558,24 @@ def _envelope_schema(schema: dict[str, Any]) -> None:
 
 
 _UNKNOWN_REASONS = frozenset(reason.value for reason in Reason)
+
+
+def _lift_differs(values: JsonValue) -> bool:
+    """Whether a ``lift_differs`` count among the values is above zero or suppressed (``null``):
+    an analysis counts there the units whose answer to one of its predicates the other lift rule
+    would change (D323)."""
+    pending = [values]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, dict):
+            if "lift_differs" in current:
+                count = current["lift_differs"]
+                if count is None or (isinstance(count, int) and count > 0):
+                    return True
+            pending.extend(current.values())
+    return False
 
 
 def _under(path: str, prefixes: tuple[str, ...]) -> bool:
@@ -872,7 +893,8 @@ class ResultEnvelope(Output):
                 ),
                 CaveatCode.LIFT_DIFFERS: any(
                     p.lift_differs_or_suppressed() for p in self.population
-                ),
+                )
+                or _lift_differs(digested["values"]),
                 CaveatCode.DRAFT_RELEASE: draft,
                 # A suppressed count is never 0: a count of 0 is shown (SPEC §8.4).
                 CaveatCode.UNKNOWN_EXCLUDED: any(

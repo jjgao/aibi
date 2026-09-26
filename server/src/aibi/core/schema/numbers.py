@@ -16,7 +16,7 @@ from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, JsonValue, model
 from aibi.core.schema.errors import problem
 from aibi.core.schema.ids import MAX_SAFE_INTEGER, Identifier, LeafKey
 from aibi.core.schema.jsonio import MISSING, escape_token, lookup
-from aibi.core.schema.limits import MAX_POINTER
+from aibi.core.schema.limits import MAX_COHORTS, MAX_POINTER
 from aibi.core.schema.output import COMPUTED, DATA_MARK, LAX, Count, Finite, Output, Segment
 from aibi.core.schema.semantics import ExclusionReason
 
@@ -408,6 +408,36 @@ class EffectSize(Estimable):
         return self
 
 
+Probability = Annotated[float, AllowInfNan(False), Field(ge=0, le=1)]
+"""A p-value or a q-value: from 0 to 1."""
+
+
+class HypothesisTest(Estimable):
+    """A test between cohorts (SPEC §8.2, §9.5; D319): ``method`` as the analysis entry names
+    it, the positions whose cohorts it used, in view order, and its p-value; its statistic and
+    degrees of freedom where the method has them, and its q-value while it is in its view's
+    multiple-testing family."""
+
+    method: Identifier
+    positions: Annotated[list[Position], Field(max_length=MAX_COHORTS)]
+    statistic: Annotated[Finite | None, COMPUTED] = None
+    df: Annotated[int, Field(ge=1, le=MAX_SAFE_INTEGER)] | None = None
+    p: Annotated[Probability | None, COMPUTED]
+    q: Annotated[Probability | None, COMPUTED] = None
+
+    @model_validator(mode="after")
+    def _check_test(self) -> Self:
+        if self.positions != sorted(set(self.positions)):
+            raise problem("test_positions", "A test's positions are distinct, in view order")
+        if self.p is not None and len(self.positions) < 2:
+            raise problem("test_positions", "A test that was computed used two cohorts or more")
+        if self.q is not None and self.p is not None and self.q < self.p:
+            raise problem("test_q", "A q-value is never below its p-value")
+        if "q" in self.model_fields_set and self.p is None:
+            raise problem("test_q", "A test that was not computed is not in its family")
+        return self
+
+
 __all__ = [
     "RATIO_MEASURES",
     "RELATIVE_POINTER",
@@ -417,10 +447,12 @@ __all__ = [
     "EffectSize",
     "Estimable",
     "ExclusionCounts",
+    "HypothesisTest",
     "Interval",
     "NotEstimableReason",
     "Number",
     "Position",
+    "Probability",
     "Proportion",
     "RelativePointer",
     "computed_nulls",

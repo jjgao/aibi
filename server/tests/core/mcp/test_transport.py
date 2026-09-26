@@ -51,13 +51,15 @@ def test_the_server_lists_exactly_the_catalogue_and_query_tools(served: Served) 
         "validate_document",
         "count_cohort",
         "explain",
+        "list_analyses",
+        "run_analysis",
     ]
     assert list(TOOL_MODELS) == [tool.name for tool in TOOLS]
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"
         assert tool["outputSchema"]["type"] == "object"
         assert RULES in tool["description"]
-        writes = tool["name"] in ("propose_descriptor", "count_cohort")
+        writes = tool["name"] in ("propose_descriptor", "count_cohort", "run_analysis")
         assert tool["annotations"]["readOnlyHint"] is not writes
         assert tool["annotations"]["idempotentHint"] is tool["annotations"]["readOnlyHint"]
 

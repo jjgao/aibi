@@ -284,6 +284,21 @@ class Resolution:
     cohorts: Mapping[str, ResolvedCohort]
     """The cohorts resolved; a cohort with a refusal, or that depends on one, is left out."""
     refusals: list[Refusal]
+    predicates: Mapping[str, ResolvedCohort] = field(default_factory=dict[str, ResolvedCohort])
+    """The views' predicates resolved, by key; one with a refusal is left out (D317)."""
+
+
+@dataclass(frozen=True)
+class ViewPredicate:
+    """A clause a view's parameters ask of every unit of its cohorts (§7.4, D317): resolved on
+    the document's unit table in the release of ``reference``, as a cohort's clauses are, and
+    refused where it is written, ``at``."""
+
+    key: str
+    reference: str
+    """The dataset reference as written of the view's cohorts."""
+    at: Position
+    clause: ClauseModel
 
 
 def resolve(
@@ -292,11 +307,14 @@ def resolve(
     positions: Mapping[Position, str] | None = None,
     *,
     registry: PackRegistry | None = None,
+    predicates: Sequence[ViewPredicate] = (),
 ) -> Resolution:
     """Resolve a loaded document. ``releases`` maps each dataset reference as written (``d``,
     ``d@3``) to its release; ``positions`` are the loader's, so that refusals point into the
-    document as written. ``registry`` holds the packs whose leaves may be expanded."""
-    return _Resolver(document, releases, positions or {}, registry).run()
+    document as written. ``registry`` holds the packs whose leaves may be expanded.
+    ``predicates`` are resolved after the cohorts, in the same resolution, so that their pack
+    leaves share the document's budget of steps (D285, D317)."""
+    return _Resolver(document, releases, positions or {}, registry).run(predicates)
 
 
 def check_parent_scopes(release: Release) -> list[Refusal]:
@@ -569,13 +587,18 @@ class _Resolver:
 
     # --- Documents and cohorts -------------------------------------------------------------
 
-    def run(self) -> Resolution:
+    def run(self, predicates: Sequence[ViewPredicate] = ()) -> Resolution:
         self._document_packs()
         self._mixed_releases()
         for name in self._order():
             self.resolved[name] = self._cohort(name)
         cohorts = {name: cohort for name, cohort in self.resolved.items() if cohort is not None}
-        return Resolution(cohorts, finish_refusals(self.refusals))
+        found: dict[str, ResolvedCohort] = {}
+        for predicate in predicates:
+            resolved = self._view_predicate(predicate)
+            if resolved is not None:
+                found[predicate.key] = resolved
+        return Resolution(cohorts, finish_refusals(self.refusals), found)
 
     def _order(self) -> list[str]:
         """Cohorts after those they reference, in document order otherwise."""
@@ -722,19 +745,50 @@ class _Resolver:
         unit = self._unit(release)
         if unit is None or not self._dataset_packs(release, at):
             return None
+        written = [(clause, (*base, "all", index)) for index, clause in enumerate(cohort.all)]
+        return self._of_clauses(name, reference, release, unit, written, (*base, "all"))
+
+    def _view_predicate(self, predicate: ViewPredicate) -> ResolvedCohort | None:
+        """A view's predicate, resolved on the unit table as a cohort of one clause (D317); the
+        refusals of its release and unit are its cohorts'."""
+        release = self.releases.get(predicate.reference)
+        if (
+            release is None
+            or ":" in self.document.unit
+            or release.table(self.document.unit) is None
+        ):
+            return None
+        return self._of_clauses(
+            predicate.key,
+            predicate.reference,
+            release,
+            self.document.unit,
+            [(predicate.clause, predicate.at)],
+            predicate.at,
+        )
+
+    def _of_clauses(
+        self,
+        name: str,
+        reference: str,
+        release: Release,
+        unit: str,
+        written: Sequence[tuple[ClauseModel, Position]],
+        top_at: Position,
+    ) -> ResolvedCohort | None:
         graph = self.graphs.get(id(release))
         if graph is None:
             graph = self.graphs[id(release)] = Graph.of(release)
         context = _Cohort(name, reference, release, graph, unit)
         self._read(context, release.table(unit), unit, "/fields/primary_key")
         clauses: list[RClause] = []
-        for index, clause in enumerate(cohort.all):
-            resolved = self._clause(context, clause, (*base, "all", index), unit, False)
+        for clause, position in written:
+            resolved = self._clause(context, clause, position, unit, False)
             if resolved is not None:
                 clauses.append(resolved)
         if context.failed:
             return None
-        top = self._within_caps(context, (*base, "all"), tuple(clauses))
+        top = self._within_caps(context, top_at, tuple(clauses))
         if top is None:
             return None
         # Every leaf of the cohort as written maps to the top-level clauses it became part of;
@@ -2189,6 +2243,7 @@ __all__ = [
     "PackView",
     "Resolution",
     "ResolvedCohort",
+    "ViewPredicate",
     "check_parent_scopes",
     "pack_failed",
     "resolve",

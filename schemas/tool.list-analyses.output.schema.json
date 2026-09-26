@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "ApplicableAnalysis": {
+      "additionalProperties": false,
+      "description": "An analysis's applicability to a release (§9.4, D316): ``missing`` names the roles of the\nrequirements it does not meet, and ``unconfirmed`` those met only by descriptors with a\nfield an operator has not confirmed.",
+      "properties": {
+        "analysis": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Analysis",
+          "type": "string"
+        },
+        "missing": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "available_with_caveats"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "unconfirmed": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Unconfirmed",
+          "type": "array"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "analysis",
+        "version",
+        "status",
+        "missing",
+        "unconfirmed"
+      ],
+      "title": "ApplicableAnalysis",
+      "type": "object"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "ReleaseOut": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "manifest",
+        "status"
+      ],
+      "title": "ReleaseOut",
+      "type": "object"
+    }
+  },
+  "$id": "tool.list-analyses.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What ``list_analyses`` gives (§9.1, §9.4, §11.1; D316): each registry entry, by id, and,\nfor a dataset, each one's applicability.",
+  "properties": {
+    "analyses": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/OutputJson"
+        },
+        "type": "object",
+        "x-aibi-data": true
+      },
+      "title": "Analyses",
+      "type": "array"
+    },
+    "applicable": {
+      "items": {
+        "$ref": "#/$defs/ApplicableAnalysis"
+      },
+      "title": "Applicable",
+      "type": "array"
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "release": {
+      "$ref": "#/$defs/ReleaseOut"
+    },
+    "unit": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "analyses"
+  ],
+  "title": "AnalysisListing",
+  "type": "object"
+}

@@ -1,0 +1,243 @@
+{
+  "two_tiers": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.existence",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "predicates": [
+              {
+                "kind": "value",
+                "column": "customers.age",
+                "range": {
+                  "gte": 45
+                }
+              },
+              {
+                "kind": "exists",
+                "table": "orders",
+                "where": [
+                  {
+                    "kind": "value",
+                    "column": "orders.channel",
+                    "values": [
+                      "web"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "id": "drv:e4b3735c4d2be07522eb1edf90dfe8b5180267c1638c9b833e5018268bf169b6",
+    "computation_id": "drv:717fbd54eb1ef7a933cca50a7070d7aba264651efc23b5cf82a0853bfaa1cbcc",
+    "digest": "sha256:8c070667f0d12316cfd5e668c3e852907e8cf299d8d3d17b910ec957b1326acf"
+  },
+  "two_tiers_under_k": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.existence",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "predicates": [
+              {
+                "kind": "value",
+                "column": "customers.age",
+                "range": {
+                  "gte": 45
+                }
+              },
+              {
+                "kind": "exists",
+                "table": "orders",
+                "where": [
+                  {
+                    "kind": "value",
+                    "column": "orders.channel",
+                    "values": [
+                      "web"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "floor": 3,
+    "id": "drv:6320a9ab16ed7453946a4a2cba1d15658fbb025ada48152b0d78f70866b38f10",
+    "computation_id": "drv:717fbd54eb1ef7a933cca50a7070d7aba264651efc23b5cf82a0853bfaa1cbcc",
+    "digest": "sha256:bbd1b773d374fa8542b0d29bca58eb1c8d4d0ea85bbbb66f7f1b3e6441343bdd"
+  },
+  "three_tiers": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        },
+        "bronze": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "bronze"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.existence",
+          "cohorts": [
+            "bronze",
+            "silver",
+            "gold"
+          ],
+          "reference": "silver",
+          "params": {
+            "predicates": [
+              {
+                "kind": "value",
+                "column": "customers.age",
+                "range": {
+                  "gte": 45
+                }
+              }
+            ],
+            "level": 0.9
+          }
+        }
+      ]
+    },
+    "id": "drv:80dfaee8aad700f1ec434d93f43bd547a880a617863e98f34fa94b6586d275dc",
+    "computation_id": "drv:38af277a0b303559c56f89a9ab2dbfd817c542333edc54c0c8f85f7328b40241",
+    "digest": "sha256:0c3ee280314ac53f332247efc1e6ca1b221bb0eba65d3d6a1f0d3035726d0e66"
+  },
+  "returns_through_orders": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "all": {
+          "all": []
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.existence",
+          "cohorts": [
+            "all"
+          ],
+          "params": {
+            "predicates": [
+              {
+                "kind": "exists",
+                "table": "orders",
+                "where": [
+                  {
+                    "kind": "exists",
+                    "table": "returns",
+                    "where": []
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "id": "drv:6f67367ff9264a3ca8f05a8392f6414a55257a5c06090488f7f62ea3622e3435",
+    "computation_id": "drv:b46eb193206747db43c74cc72a9b969238e38276d627d943e037a294c162c321",
+    "digest": "sha256:e10c2b5524e46105d995587253f7b4c647f67a96bce7ff2a9ccd0431a6ab3ad8"
+  }
+}

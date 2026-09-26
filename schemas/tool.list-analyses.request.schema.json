@@ -1,0 +1,46 @@
+{
+  "$id": "tool.list-analyses.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``list_analyses``' request (§11.1, D316): every analysis, and with ``dataset`` its\napplicability to a release of it, for ``unit`` or, with none, for its keyed tables.",
+  "properties": {
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "release": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "const": "draft",
+          "type": "string"
+        },
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      ],
+      "title": "Release"
+    },
+    "unit": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "title": "ListAnalyses",
+  "type": "object"
+}

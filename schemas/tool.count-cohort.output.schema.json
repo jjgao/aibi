@@ -1,5 +1,37 @@
 {
   "$defs": {
+    "AnalysisRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "AnalysisRef",
+      "type": "object"
+    },
     "Caveat": {
       "additionalProperties": false,
       "allOf": [
@@ -1920,12 +1952,37 @@
       "title": "TextSegment",
       "type": "object"
     },
-    "UncheckedView": {
+    "ViewCheck": {
       "additionalProperties": false,
-      "description": "A view of the document: syntax-checked only until M3 (§15, D284).",
+      "description": "A view that checked against its analysis (§7.4, §7.6, D317): its canonical form, its ids\nas the log knows them, its readback and the caveats of its result that need no data.",
       "properties": {
         "analysis": {
-          "$ref": "#/$defs/Data"
+          "$ref": "#/$defs/AnalysisRef"
+        },
+        "caveats": {
+          "items": {
+            "$ref": "#/$defs/Caveat"
+          },
+          "title": "Caveats",
+          "type": "array"
+        },
+        "computation_id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Computation Id",
+          "type": "string"
+        },
+        "form": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Form",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
         },
         "position": {
           "maximum": 9007199254740991,
@@ -1933,8 +1990,29 @@
           "title": "Position",
           "type": "integer"
         },
+        "readback": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Readback",
+          "type": "array"
+        },
         "status": {
-          "const": "unchecked",
+          "enum": [
+            "issued",
+            "not_issued",
+            "withdrawn",
+            "discarded",
+            "unknown_release",
+            "erased"
+          ],
           "title": "Status",
           "type": "string"
         }
@@ -1942,9 +2020,14 @@
       "required": [
         "position",
         "analysis",
-        "status"
+        "id",
+        "computation_id",
+        "status",
+        "form",
+        "readback",
+        "caveats"
       ],
-      "title": "UncheckedView",
+      "title": "ViewCheck",
       "type": "object"
     }
   },
@@ -1966,7 +2049,7 @@
     },
     "views": {
       "items": {
-        "$ref": "#/$defs/UncheckedView"
+        "$ref": "#/$defs/ViewCheck"
       },
       "title": "Views",
       "type": "array"

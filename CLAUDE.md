@@ -8,7 +8,7 @@ the same PR or don't make the change.
 
 ## Status
 
-Milestones M1 and M2 (SPEC.md §15) are in progress; the roadmap issue lists the work order. The
+Milestones M1, M2 and M3 (SPEC.md §15) are in progress; the roadmap issue lists the work order. The
 server package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
 analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
 `core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases held
@@ -48,7 +48,12 @@ holds the query tools' service functions (`validate_document`, `count_cohort`, `
 beside the catalogue's. `core/api/page.py` renders the read-only catalogue page (M1) at `/` and
 `/datasets/<id>` from `search_catalog`'s and `describe_dataset`'s answers, as HTML without a
 script, its text written by `core/api/markup.py`; `core/api/chrome.py` holds what the pages share,
-and every answer at their paths, a refusal included, is a page.
+and every answer at their paths, a refusal included, is a page. From M3.1, `core/analyses/`
+holds the analysis registry and applicability (`registry.py`), phase 2 of canonicalisation
+(`views.py`), `compare.existence` (`existence.py`) with its methods held to R (`stats.py`, the
+fixture in `tests/core/analyses/reference/`), the disclosure of a predicate's counts in a result
+(`disclosure.py`), charts (`charts.py`) and result envelopes (`results.py`);
+`core/catalog/analyses.py` serves `run_analysis`, and the catalogue `list_analyses`.
 
 ## Non-negotiables
 

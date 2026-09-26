@@ -31,21 +31,24 @@ from pydantic_core import PydanticCustomError
 
 from aibi.core.schema.caveats import Caveat
 from aibi.core.schema.cohorts import (
+    AnalysisResults,
     CohortCounts,
     CountCohort,
     DocumentValidation,
     Explain,
     Explanation,
+    RunAnalysis,
     ValidateDocument,
 )
 from aibi.core.schema.curation import CurationQueue, ProposalInput
-from aibi.core.schema.descriptors import By, Datatype, PositiveInt
+from aibi.core.schema.descriptors import By, Datatype, PositiveInt, SemVer
 from aibi.core.schema.ids import (
     MAX_SAFE_INTEGER,
     AnalysisId,
     ColumnRef,
     ConceptId,
     DatasetId,
+    Identifier,
     PackId,
     RelationshipId,
     Sha256,
@@ -403,10 +406,43 @@ class TableGraph(Output):
 
 
 class ApplicableAnalysis(Output):
-    """An analysis's applicability (§9.4); the list is empty until the registry exists (M3)."""
+    """An analysis's applicability to a release (§9.4, D316): ``missing`` names the roles of the
+    requirements it does not meet, and ``unconfirmed`` those met only by descriptors with a
+    field an operator has not confirmed."""
 
     analysis: AnalysisId
+    version: SemVer
     status: Literal["available", "unavailable", "available_with_caveats"]
+    missing: list[Identifier]
+    unconfirmed: list[Identifier]
+
+
+class ListAnalyses(_Request):
+    """``list_analyses``' request (§11.1, D316): every analysis, and with ``dataset`` its
+    applicability to a release of it, for ``unit`` or, with none, for its keyed tables."""
+
+    dataset: DatasetId | None = None
+    release: ReleasePin | None = None
+    unit: TableId | None = None
+
+    @model_validator(mode="after")
+    def _dataset(self) -> Self:
+        if self.dataset is None and (self.release is not None or self.unit is not None):
+            raise PydanticCustomError(
+                "conflicting_members", "release and unit are a dataset's: give dataset too"
+            )
+        return self
+
+
+class AnalysisListing(Output):
+    """What ``list_analyses`` gives (§9.1, §9.4, §11.1; D316): each registry entry, by id, and,
+    for a dataset, each one's applicability."""
+
+    analyses: list[DescriptorJson]
+    dataset: DatasetId | None = None
+    release: ReleaseOut | None = None
+    unit: TableId | None = None
+    applicable: list[ApplicableAnalysis] | None = None
 
 
 class DatasetDescription(Output):
@@ -495,6 +531,8 @@ TOOL_MODELS: dict[str, tuple[type[BaseModel], type[Output]]] = {
     "validate_document": (ValidateDocument, DocumentValidation),
     "count_cohort": (CountCohort, CohortCounts),
     "explain": (Explain, Explanation),
+    "list_analyses": (ListAnalyses, AnalysisListing),
+    "run_analysis": (RunAnalysis, AnalysisResults),
 }
 """Each tool's request and output models, from which every schema of the tool is generated."""
 
@@ -508,6 +546,7 @@ __all__ = [
     "MAX_SEARCH_TEXT",
     "TOOL_MODELS",
     "AgentName",
+    "AnalysisListing",
     "ApplicableAnalysis",
     "Bin",
     "CatalogHit",
@@ -527,6 +566,7 @@ __all__ = [
     "FacetName",
     "GraphEdge",
     "HistogramOut",
+    "ListAnalyses",
     "NoDistribution",
     "NoneReason",
     "OntologyCode",
