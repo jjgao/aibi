@@ -31,6 +31,7 @@ port = 8000
 # api = { per_minute = 3000, burst = 200 }
 # token_failures = { per_minute = 10, burst = 10 }
 # proposals = { per_minute = 30, burst = 10 }   # propose_descriptor calls a client makes
+# page = { per_minute = 120, burst = 30 }       # requests to the catalogue page's paths
 
 [curator]
 # Replace with the hash `aibi-server new-token` prints; no token hashes to this one.

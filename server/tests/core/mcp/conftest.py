@@ -1,4 +1,5 @@
-"""The MCP tests' server: the whole application, with the tools, over a store in ``tmp_path``.
+"""The MCP tests' server, and the catalogue page's: the whole application, with the tools,
+over a store in ``tmp_path``.
 
 - ``make_served`` builds a ``Store`` with a ticking clock, a curator token, a configuration whose
   import directory is under ``tmp_path``, and the application with the tool calls
