@@ -4,42 +4,53 @@ A view is checked in two steps, around phase 1:
 
 1. ``parse``, before the cohorts are resolved: its ``analysis`` is one the registry holds
    (``UNKNOWN_ANALYSIS``, listing those it holds; a pack's analysis is ``NOT_SUPPORTED`` until
-   M3.2, D316; a core analysis of §9.5 a later slice implements is passed over, and
+   M3.2d, D316, D324; a core analysis of §9.5 a later slice implements is passed over, and
    ``deferred`` gives its ``NOT_SUPPORTED``, D317); its ``params`` are the analysis's
    parameters, refused where they are written in the document; an analysis that declares
    ``uses_reference`` has its ``cohorts`` listed (``MISSING_MEMBER``); and each predicate of
    its parameters holds no ``ids`` and no ``cohort`` leaf (``LEAF_NOT_ALLOWED``: a predicate is
    asked of every unit, and those belong in a cohort) and at most as many pack leaves as a
-   cohort. Its predicates are then handed to ``canonicalise`` (``ViewPredicate``), resolved with
-   the cohorts in the release of the view's cohorts, on the unit table.
-2. ``checked``, after phase 1: a view whose cohorts and predicates all canonicalised gets its
-   canonical form and ids (``ViewIdentity``): its cohorts in view order, or by computation id
-   when it lists none (D284); its reference's position, for an analysis that declares
-   ``uses_reference``, the first cohort's by default; ``overlap``, for one that declares
-   ``assumes_independent_groups``; its canonical parameters, every default written and every
-   predicate as its canonical clause tree; the effective *k* over its cohorts and predicates and
-   the floor; and the results versions of the packs of its analysis, cohorts and predicates. A
-   view one of whose cohorts or predicates was refused is left out; their refusals say why. A
-   view whose cohorts are of more than one release is ``MIXED_RELEASES``, which resolution
-   refuses first.
+   cohort; and the ``where`` of each variable of its parameters holds no ``ids`` or ``cohort``
+   leaf either (``LEAF_NOT_ALLOWED``) and no pack leaf (``NOT_SUPPORTED`` until M3.2d, D324).
+   Its predicates and variables are then handed to ``canonicalise`` (``ViewPredicate``,
+   ``ViewVariable``), resolved with the cohorts in the release of the view's cohorts, on the
+   unit table.
+2. ``checked``, after phase 1: a view whose cohorts, predicates and variables all canonicalised, and
+   whose variables its analysis takes (``summary.distribution``'s: categories or numbers, ``bins``
+   only for numbers, under *k* a number's histogram edges from ``bins`` or a declared range, and
+   under *k* one set of edges for a column's values across the call's views, D328, D329), gets its
+   canonical form and ids (``ViewIdentity``): its cohorts in view order, or by computation id when
+   it lists none (D284); its reference's position, for an analysis that declares ``uses_reference``,
+   the first cohort's by default; ``overlap``, for one that declares ``assumes_independent_groups``;
+   its canonical parameters, every default written, every predicate as its canonical clause tree and
+   every variable as its canonical form; the effective *k* over its cohorts and predicates and the
+   floor; and the results versions of the packs of its analysis, cohorts and predicates. A view one
+   of whose cohorts or predicates was refused is left out; their refusals say why. A view whose
+   cohorts are of more than one release is ``MIXED_RELEASES``, which resolution refuses first.
 
-A view's readback is its analysis's, rendered from its canonical form and the release's
-descriptors (§7.7); its static caveats are those its result carries that need no data: the
-fields its cohorts and predicates read that are not confirmed, a draft release, and what the
-packs' caveat rules raised for its cohorts and predicates, which are the canonical parts of a
-view a pack can read (D287, D317).
+A view's readback is its analysis's, rendered from its canonical form and the release's descriptors
+(§7.7); its static caveats are those its result carries that need no data: the fields its cohorts,
+predicates and variables read that are not confirmed, a draft release, and what the packs' caveat
+rules raised for its cohorts and predicates, which are the canonical parts of a view a pack can read
+(D287, D317).
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
-from aibi.core.analyses.existence import view_readback
-from aibi.core.analyses.registry import LATER, Analyses, Registered
-from aibi.core.engine.canonical import CanonicalCohort, Canonicalisation, ViewIdentity
-from aibi.core.engine.resolve import ViewPredicate
-from aibi.core.schema.analyses import ExistenceParams
+from aibi.core.analyses import distribution, existence
+from aibi.core.analyses.registry import CORE, LATER, PACK_ANALYSES, Analyses, Registered
+from aibi.core.engine.canonical import (
+    CanonicalCohort,
+    Canonicalisation,
+    CanonicalVariable,
+    ViewIdentity,
+)
+from aibi.core.engine.resolve import ViewPredicate, ViewVariable
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.document import (
     PARSED,
@@ -50,7 +61,7 @@ from aibi.core.schema.document import (
     PackLeaf,
     walk,
 )
-from aibi.core.schema.jsonio import pointer
+from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import MAX_PACK_LEAVES, PACK_LEAVES
 from aibi.core.schema.loading import as_written, refusal_from_error
 from aibi.core.schema.output import Segment, data, text
@@ -74,6 +85,7 @@ class ParsedView:
     reference: str | None
     overlap: bool
     predicates: tuple[ViewPredicate, ...]
+    variables: tuple[ViewVariable, ...] = ()
 
 
 class _Refusals:
@@ -151,7 +163,7 @@ def deferred(document: Document, positions: Mapping[Position, str]) -> list[Refu
                 text("The core's analysis "),
                 data(view.analysis),
                 text(f" (§9.5) is run from {slice_}; this server runs "),
-                data("compare.existence"),
+                *_listed(sorted(CORE)),
             )
     return refusals.found
 
@@ -181,8 +193,8 @@ def parse(
             refusals.add(
                 RefusalCode.NOT_SUPPORTED,
                 (*at, "analysis"),
-                text("A pack's analysis is run from M3.2, which gives it the inputs its "),
-                text("requirements name; this one is listed, not run: "),
+                text(f"A pack's analysis is run from {PACK_ANALYSES}, which gives it the inputs "),
+                text("its requirements name; this one is listed, not run: "),
                 data(view.analysis),
             )
             continue
@@ -201,10 +213,13 @@ def parse(
                 text("in view order, the reference first or named by reference"),
             )
         predicates: tuple[ViewPredicate, ...] = ()
+        variables: tuple[ViewVariable, ...] = ()
+        first = view.cohorts[0] if view.cohorts else next(iter(document.cohorts), None)
+        reference = _reference_of(document, first)
         if isinstance(params, ExistenceParams):
-            first = view.cohorts[0] if view.cohorts else next(iter(document.cohorts), None)
-            reference = _reference_of(document, first)
             predicates = _predicates(params, index, reference, refusals)
+        elif isinstance(params, DistributionParams):
+            variables = _variables(params, index, reference, refusals)
         if len(refusals.found) > before or params is None:
             continue
         parsed.append(
@@ -216,6 +231,7 @@ def parse(
                 reference=view.reference,
                 overlap=view.overlap == "allow",
                 predicates=predicates,
+                variables=variables,
             )
         )
     return parsed, refusals.found
@@ -259,6 +275,51 @@ def _predicates(
     )
 
 
+def _variables(
+    params: DistributionParams, index: int, reference: str | None, refusals: _Refusals
+) -> tuple[ViewVariable, ...]:
+    """A view's variables to resolve (D325): the ``where`` of each holds no ``ids`` and no
+    ``cohort`` leaf, as a predicate holds none, and no pack leaf, which the slice that runs
+    packs' analyses expands (D324)."""
+    base: list[str | int] = ["views", index, "params", "columns"]
+    before = len(refusals.found)
+    for position, variable in enumerate(params.columns):
+        if variable.count is not None:
+            refusals.add(
+                RefusalCode.NOT_SUPPORTED,
+                (*base, position, "count"),
+                text('Counting rows (count: "rows", §9.2) comes with M3.2c; a variable counts '),
+                text("units until then"),
+            )
+        where: list[str | int] = [*base, position, "where"]
+        for leaf, path, _ in walk(list(variable.where or []), where):
+            if isinstance(leaf, IdsLeaf | CohortLeaf):
+                refusals.add(
+                    RefusalCode.LEAF_NOT_ALLOWED,
+                    tuple(path),
+                    text(f"A column's where holds no {leaf.kind} leaf: it is asked of the rows a "),
+                    text("column aggregates, and a list of units or a cohort belongs in a cohort"),
+                )
+            elif isinstance(leaf, PackLeaf):
+                refusals.add(
+                    RefusalCode.NOT_SUPPORTED,
+                    tuple(path),
+                    text(f"A pack leaf in a column's where is expanded from {PACK_ANALYSES}; "),
+                    text("write its conditions with the core's leaves"),
+                )
+    if reference is None or len(refusals.found) > before:
+        return ()
+    return tuple(
+        ViewVariable(
+            key=f"{index}/{position}",
+            reference=reference,
+            at=(*base, position),
+            variable=variable,
+        )
+        for position, variable in enumerate(params.columns)
+    )
+
+
 @dataclass(frozen=True)
 class CheckedView:
     """A view in canonical form, with what its result is computed from (module docstring)."""
@@ -276,6 +337,7 @@ class CheckedView:
     predicates: tuple[CanonicalCohort, ...]
     identity: ViewIdentity
     packs: Mapping[str, PackVersion]
+    variables: tuple[CanonicalVariable, ...] = ()
 
     @property
     def release(self) -> ReleaseRef:
@@ -286,20 +348,36 @@ class CheckedView:
         return self.identity.disclosure
 
     def readback(self) -> list[Segment]:
-        assert isinstance(self.params, ExistenceParams), "the core's analyses are known"
-        return view_readback(len(self.cohorts), self.reference, self.predicates, self.params)
+        if isinstance(self.params, ExistenceParams):
+            return existence.view_readback(
+                len(self.cohorts), self.reference, self.predicates, self.params
+            )
+        assert isinstance(self.params, DistributionParams), "the core's analyses are known"
+        return distribution.view_readback(len(self.cohorts), self.variables)
 
     def static_caveats(self) -> list[Caveat]:
         """The caveats its result carries that need no data (module docstring)."""
-        return static_caveats(self.cohorts, self.predicates)
+        return static_caveats(self.cohorts, self.predicates, self.variables)
 
 
 def static_caveats(
-    cohorts: Sequence[CanonicalCohort], predicates: Sequence[CanonicalCohort]
+    cohorts: Sequence[CanonicalCohort],
+    predicates: Sequence[CanonicalCohort],
+    variables: Sequence[CanonicalVariable] = (),
 ) -> list[Caveat]:
     found: list[Caveat] = []
-    for group, affects in ((cohorts, "/population"), (predicates, "/values")):
-        reads = sorted({read for cohort in group for read in cohort.resolved.unconfirmed})
+    groups = (
+        (cohorts, [read for cohort in cohorts for read in cohort.resolved.unconfirmed]),
+        (
+            predicates,
+            [
+                *(read for cohort in predicates for read in cohort.resolved.unconfirmed),
+                *(read for variable in variables for read in variable.resolved.unconfirmed),
+            ],
+        ),
+    )
+    for (group, unconfirmed), affects in zip(groups, ("/population", "/values"), strict=True):
+        reads = sorted(set(unconfirmed))
         if reads:
             message: list[Segment] = [text("These fields were read but are not confirmed: ")]
             for position, read in enumerate(reads):
@@ -343,11 +421,14 @@ def checked(
     one release (``MIXED_RELEASES``), which resolution refuses first (§7.4)."""
     found: list[CheckedView] = []
     refusals: list[Refusal] = []
+    edges_of: dict[tuple[str, ...], JsonValue] = {}
     for view in parsed:
         names = view.names if view.names is not None else tuple(document.cohorts)
         if any(name not in canonical.cohorts for name in names):
             continue
         if any(predicate.key not in canonical.predicates for predicate in view.predicates):
+            continue
+        if any(variable.key not in canonical.variables for variable in view.variables):
             continue
         cohorts = [canonical.cohorts[name] for name in names]
         if view.names is None:
@@ -365,6 +446,7 @@ def checked(
             )
             continue
         predicates = tuple(canonical.predicates[p.key] for p in view.predicates)
+        variables = tuple(canonical.variables[v.key] for v in view.variables)
         fields = view.analysis.entry.fields
         reference = names.index(view.reference) if view.reference in names else 0
         packs: dict[str, PackVersion] = {}
@@ -372,13 +454,19 @@ def checked(
             packs.update(part.packs)
         settings = [part.identity.disclosure for part in (*cohorts, *predicates)]
         given = [k for k in settings if k is not None]
+        disclosure = max(given) if given else None
+        if isinstance(view.params, DistributionParams):
+            wrong = _distributed(view.index, view.params, variables, disclosure, edges_of)
+            if wrong:
+                refusals += wrong
+                continue
         identity = ViewIdentity(
             analysis=view.analysis.id,
             version=view.analysis.entry.version,
             cohorts=tuple(cohort.identity for cohort in cohorts),
-            params=_canonical_params(view.params, predicates),
+            params=_canonical_params(view.params, predicates, variables),
             packs={pack: version.results_version for pack, version in sorted(packs.items())},
-            disclosure=max(given) if given else None,
+            disclosure=disclosure,
             reference=reference if fields.uses_reference else None,
             overlap=view.overlap if fields.assumes_independent_groups else None,
         )
@@ -393,19 +481,129 @@ def checked(
                 predicates=predicates,
                 identity=identity,
                 packs=dict(sorted(packs.items())),
+                variables=variables,
             )
         )
     return found, refusals
 
 
-def _canonical_params(params: DocModel, predicates: Sequence[CanonicalCohort]) -> JsonValue:
-    """A view's canonical parameters: every default written, and each predicate as its
-    canonical clause tree (§7.6)."""
+def _distributed(
+    index: int,
+    params: DistributionParams,
+    variables: Sequence[CanonicalVariable],
+    k: int | None,
+    edges_of: dict[tuple[str, ...], JsonValue],
+) -> list[Refusal]:
+    """What ``summary.distribution`` refuses of its resolved variables (D328, D329): a column
+    whose values are neither categories nor numbers, ``bins`` for categories, under *k* a
+    number's histogram whose edges only the data would give (§8.4), and, under *k*, a histogram
+    of a column that the call, in this view or an earlier one, reads already with other edges
+    (``edges_of``, shared by the call's views; the edges it takes, from ``bins`` or the declared
+    range, so that writing the range's own edges is no conflict): a column's values by any
+    variable over it (the column itself, or ``max``, ``min`` or ``mean`` of it, whatever rows),
+    a ``count`` by the rows it counts (``_counted``), since two histograms of one quantity give
+    by difference the counts that merging hides. Without *k* every count is shown, so there is
+    nothing to difference. The key holds the release's manifest: columns of two datasets are
+    two quantities, which only views over several datasets (M6) can meet."""
+    found: list[Refusal] = []
+    for position, (variable, given) in enumerate(zip(variables, params.columns, strict=True)):
+        at: list[str | int] = ["views", index, "params", "columns", position]
+        if not distribution.summarised(variable):
+            found.append(
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=pointer([*at, "column"]),
+                    message=[
+                        text("summary.distribution summarises categories and numbers, and "),
+                        text("this column's values are neither: "),
+                        data(variable.resolved.column),
+                    ],
+                    alternatives=[
+                        data(name)
+                        for name in ("category", "boolean", "number", "integer", "time_offset")
+                    ],
+                )
+            )
+            continue
+        if distribution.categorical(variable):
+            if given.bins is not None:
+                found.append(
+                    Refusal(
+                        code=RefusalCode.INVALID_VALUE,
+                        path=pointer([*at, "bins"]),
+                        message=[
+                            text("bins divide numbers, and this column's values are categories")
+                        ],
+                    )
+                )
+            continue
+        if k is not None and distribution.needs_edges(variable, given.bins):
+            found.append(
+                Refusal(
+                    code=RefusalCode.MISSING_MEMBER,
+                    path=pointer([*at, "bins"]),
+                    message=[
+                        text("Under the disclosure settings a histogram's edges never come from "),
+                        text("the data (§8.4), and this column declares no range: give bins"),
+                    ],
+                )
+            )
+            continue
+        if k is None:
+            continue
+        resolved = variable.resolved
+        quantity = (
+            (resolved.release.manifest, "count", canonical(_counted(variable.form)).decode())
+            if resolved.function == "count"
+            else (resolved.release.manifest, "values", resolved.column)
+        )
+        bins: JsonValue = list[JsonValue](distribution.effective_edges(variable, given.bins) or [])
+        if quantity in edges_of and edges_of[quantity] != bins:
+            found.append(
+                Refusal(
+                    code=RefusalCode.CONFLICTING_MEMBERS,
+                    path=pointer([*at, "bins"]),
+                    message=[
+                        text("The call reads these values already with other bins, and "),
+                        text("two histograms of one column give by difference the counts that "),
+                        text("merging hides (§8.4): "),
+                        data(resolved.column),
+                    ],
+                )
+            )
+            continue
+        edges_of.setdefault(quantity, bins)
+    return found
+
+
+def _counted(form: JsonValue) -> JsonValue:
+    """What a ``count`` counts: its canonical form without the column it names and the lookups
+    to it, which a count does not read (D326), so that counts of one set of rows are one."""
+    assert isinstance(form, dict)
+    return {key: member for key, member in form.items() if key not in ("column", "lookup")}
+
+
+def _canonical_params(
+    params: DocModel,
+    predicates: Sequence[CanonicalCohort],
+    variables: Sequence[CanonicalVariable],
+) -> JsonValue:
+    """A view's canonical parameters: every default written, each predicate as its canonical
+    clause tree, and each variable as its canonical form, with a number's ``bins`` (``null``
+    for none) (§7.6, D325)."""
     if isinstance(params, ExistenceParams):
         return {
             "level": params.level,
             "predicates": [p.form[p.release.manifest] for p in predicates],
         }
+    if isinstance(params, DistributionParams):
+        columns: list[JsonValue] = []
+        for variable, given in zip(variables, params.columns, strict=True):
+            form = dict(cast(dict[str, JsonValue], variable.form))
+            if not distribution.categorical(variable):
+                form["bins"] = None if given.bins is None else list[JsonValue](given.bins)
+            columns.append(form)
+        return {"columns": columns}
     raise ValueError("the canonical parameters of an analysis the core does not run")
 
 

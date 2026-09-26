@@ -270,7 +270,8 @@ def test_a_dataset_is_described_with_its_tables_columns_graph_and_its_analyses(
     assert found.graph.tables == ["harvests", "trees"]
     assert [(e.child, e.parent) for e in found.graph.edges] == [("harvests", "trees")]
     assert [(a.analysis, a.version, a.status, a.missing) for a in found.applicable_analyses] == [
-        ("compare.existence", "1.0.0", "available", [])
+        ("compare.existence", "1.0.0", "available", []),
+        ("summary.distribution", "1.0.0", "available_with_caveats", []),
     ]
     assert found.columns_total == 9
     assert found.columns_next is None
@@ -676,7 +677,7 @@ def test_every_descriptor_reads_as_a_resource_by_label_hash_or_draft(
         "aibi://dataset/orchard@1/a__b",
         "aibi://concept/core:colour",
         "aibi://model/model:nobody",
-        "aibi://analysis/summary.distribution@1.0.0",
+        "aibi://analysis/summary.distribution@9.0.0",
         "https://example.org/dataset",
         "aibi://dataset/orchard/trees",
         "aibi://dataset/orchard@1/" + "t" * 3000,

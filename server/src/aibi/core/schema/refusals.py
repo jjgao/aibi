@@ -97,6 +97,17 @@ class RefusalCode(StrEnum):
     COHORTS_OVERLAP = "COHORTS_OVERLAP"
     """Cohorts of a view share units, for an analysis that assumes independent groups, without
     ``overlap: "allow"``; ``counts`` reports each shared part as a cohort count (§7.4)."""
+    AGGREGATE_REQUIRED = "AGGREGATE_REQUIRED"
+    """A variable that is multi-valued for the unit, a column below it or a list column, without
+    the ``aggregate`` that takes it to one value per unit (§9.2, D325)."""
+    AGGREGATE_NOT_ALLOWED = "AGGREGATE_NOT_ALLOWED"
+    """An aggregate its column does not take: ``mean`` of what is not a number, ``max`` or
+    ``min`` of what is neither a number nor an ordered category, or one on a column that holds
+    one value per unit (§9.2, D325)."""
+    OPEN_SCOPE = "OPEN_SCOPE"
+    """A numeric aggregate over rows whose coverage has scope columns that its ``where`` does
+    not restrict to a finite set of values, so no unit is closed for all of them (§9.2,
+    D325)."""
     # Building a release from its raw snapshots (§12.2, §13.2):
     UNPARSEABLE_SOURCE = "UNPARSEABLE_SOURCE"
     """A raw snapshot its parse settings cannot read; the message names the line."""

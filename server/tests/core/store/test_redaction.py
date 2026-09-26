@@ -5,6 +5,7 @@ reading where it may name the person and by its text alone where it names no one
 import re
 import time
 from datetime import UTC, date, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -594,3 +595,103 @@ def test_the_reprs_of_places_and_of_what_names_the_person_rows_name_none_of_thei
         repr(terms),
     ]
     assert [text for text in shown if "4711" in text] == []
+
+
+def test_a_variable_s_values_and_empty_are_erased_as_constants_on_its_column() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "cohorts": {"all": {"all": []}},
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "params": {
+                    "columns": [
+                        {"column": "loans.loan_id", "aggregate": "some", "values": [2, 17]},
+                        {"column": "loans.days", "aggregate": "max", "empty": 3, "bins": [0, 3]},
+                        {"column": "loans.days", "aggregate": "mean", "empty": "exclude"},
+                    ]
+                },
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    some, most, mean = found["views"][0]["params"]["columns"]
+    assert some["values"] == [MARK, 17]
+    assert (most["empty"], most["bins"]) == (MARK, [0, MARK])
+    assert mean["empty"] == "exclude"
+
+
+def _distribution(columns: list[JsonValue]) -> JsonValue:
+    return {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "cohorts": {"all": {"all": []}},
+        "views": [{"analysis": "summary.distribution", "params": {"columns": columns}}],
+    }
+
+
+def test_a_bin_that_isolates_the_person_s_identifier_value_is_erased() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written = _distribution([{"column": "loans.days", "aggregate": "max", "bins": [3, 3.0000001]}])
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"]["columns"][0]["bins"] == [MARK, 3.0000001]
+
+
+def test_a_bin_that_isolates_the_person_s_loan_key_is_erased() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written = _distribution([{"column": "loans.loan_id", "aggregate": "max", "bins": [2, 2.5]}])
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"]["columns"][0]["bins"] == [MARK, 2.5]
+
+
+def test_a_variable_s_bin_that_names_the_person_on_another_column_only_is_kept() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written = _distribution(
+        [
+            {"column": "loans.days", "aggregate": "max", "bins": [1.0, 5]},
+            {"column": "loans.loan_id", "aggregate": "max", "via": [], "bins": [1, 3]},
+        ]
+    )
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    days, loans = found["views"][0]["params"]["columns"]
+    assert (days["bins"], loans["bins"]) == ([1.0, 5], [1, MARK])
+
+
+def test_the_bins_of_a_count_bound_numbers_of_rows_and_are_kept() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written = _distribution([{"column": "loans.loan_id", "aggregate": "count", "bins": [2, 3]}])
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"]["columns"][0]["bins"] == [2, 3]
+
+
+def test_a_result_s_canonical_variable_holds_its_empty_constant() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}
+    held: JsonValue = {
+        "columns": [{"aggregate": "max", "column": "loans.days", "rows": rows, "empty": 3}]
+    }
+    kept: JsonValue = {
+        "columns": [{"aggregate": "max", "column": "loans.days", "rows": rows, "empty": 5}]
+    }
+    assert redaction._params_hold(held, terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._params_hold(kept, terms)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_result_s_canonical_variable_holds_a_bin_edge_on_its_column() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}
+    variable: dict[str, JsonValue] = {"aggregate": "max", "column": "loans.days", "rows": rows}
+    held: JsonValue = {"columns": [{**variable, "empty": "exclude", "bins": [3, 4]}]}
+    kept: JsonValue = {"columns": [{**variable, "empty": "exclude", "bins": [4, 5]}]}
+    counted: JsonValue = {
+        "columns": [{"aggregate": "count", "column": "loans.days", "rows": rows, "bins": [3, 4]}]
+    }
+    assert redaction._params_hold(held, terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._params_hold(kept, terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._params_hold(counted, terms)  # pyright: ignore[reportPrivateUsage]
+    elsewhere: JsonValue = {"columns": [{**variable, "empty": "exclude", "bins": [1, 5]}]}
+    assert not redaction._params_hold(elsewhere, terms)  # pyright: ignore[reportPrivateUsage]

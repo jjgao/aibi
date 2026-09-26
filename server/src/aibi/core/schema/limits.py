@@ -57,6 +57,14 @@ MAX_VIEWS = 8
 MAX_PREDICATES = 16
 """Predicates of one view (``compare.existence``'s ``predicates``, D319): each is resolved and
 queried like a cohort."""
+MAX_VARIABLES = 8
+"""Columns of one view (``summary.distribution``'s ``columns``, D325, D328): each is resolved,
+queried and materialised for every cohort of the view."""
+MAX_BINS = 64
+"""Bins of a histogram a view's parameters give, so edges one more (D328)."""
+MAX_CATEGORIES = 150
+"""Distinct values a column's categories may have, in catalogue statistics and in a result: the
+cap on categorical levels (§14; D270, D328)."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -98,6 +106,9 @@ DATASETS = "datasets"
 PACKS = "packs"
 VIEWS = "views"
 PREDICATES = "predicates"
+VARIABLES = "variables"
+BINS = "bins"
+CATEGORIES = "categories"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"

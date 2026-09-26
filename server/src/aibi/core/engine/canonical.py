@@ -38,12 +38,15 @@ from typing import cast
 from pydantic import JsonValue
 
 from aibi.core.engine.data import Release
+from aibi.core.engine.graph import Path
 from aibi.core.engine.ids import derivation_id, leaf_key, sorted_unique
 from aibi.core.engine.resolve import (
     Label,
     PackView,
     ResolvedCohort,
+    ResolvedVariable,
     ViewPredicate,
+    ViewVariable,
     pack_failed,
     resolve,
 )
@@ -57,6 +60,7 @@ from aibi.core.engine.resolved import (
     RKnown,
     RNot,
     RValue,
+    constant_json,
     document,
     measure,
 )
@@ -226,12 +230,28 @@ class CanonicalCohort:
 
 
 @dataclass(frozen=True)
+class CanonicalVariable:
+    """A view's variable in canonical form (D325): resolved, and its form, which the view's
+    canonical parameters hold."""
+
+    key: str
+    resolved: ResolvedVariable
+    form: JsonValue
+    """The variable's canonical form (``variable_form``)."""
+    leaves: Mapping[str, tuple[str, ...]]
+    """Each leaf of its ``where`` as written, by pointer, and the leaf key of the form it became
+    part of (§8.1)."""
+
+
+@dataclass(frozen=True)
 class Canonicalisation:
     cohorts: Mapping[str, CanonicalCohort]
     """The cohorts canonicalised, by name; one refused, or that depends on one, is left out."""
     refusals: list[Refusal]
     predicates: Mapping[str, CanonicalCohort] = field(default_factory=dict[str, CanonicalCohort])
     """The views' predicates canonicalised, by key, each as a cohort of one clause (D317)."""
+    variables: Mapping[str, CanonicalVariable] = field(default_factory=dict[str, CanonicalVariable])
+    """The views' variables canonicalised, by key (D325)."""
 
 
 def canonicalise(
@@ -244,9 +264,10 @@ def canonicalise(
     floors: Mapping[str, int | None] | None = None,
     positions: Mapping[Position, str] | None = None,
     predicates: Sequence[ViewPredicate] = (),
+    variables: Sequence[ViewVariable] = (),
 ) -> Canonicalisation:
     """Canonicalise a loaded document's cohorts (phase 1) against its releases, and the views'
-    ``predicates`` with them (D317).
+    ``predicates`` and ``variables`` with them (D317, D325).
 
     ``releases`` maps each dataset reference as written to its release, ``labels`` each release's
     manifest hash to its label (``"draft"`` for a session's draft), ``registry`` holds the
@@ -255,7 +276,9 @@ def canonicalise(
     that a session cannot lower it before it publishes, D275, D300), and ``positions`` are the
     loader's, so that pointers lead into the document as written."""
     given = positions or {}
-    resolution = resolve(written, releases, given, registry=registry, predicates=predicates)
+    resolution = resolve(
+        written, releases, given, registry=registry, predicates=predicates, variables=variables
+    )
     refusals = list(resolution.refusals)
     own = floors or {}
     found: dict[str, dict[str, CanonicalCohort]] = {"cohorts": {}, "predicates": {}}
@@ -272,7 +295,21 @@ def canonicalise(
                 refusals.append(made)
             else:
                 found[kind][name] = made
-    return Canonicalisation(found["cohorts"], finish_refusals(refusals), found["predicates"])
+    read = {key: _variable(key, variable, given) for key, variable in resolution.variables.items()}
+    return Canonicalisation(found["cohorts"], finish_refusals(refusals), found["predicates"], read)
+
+
+def _variable(
+    key: str, resolved: ResolvedVariable, positions: Mapping[Position, str]
+) -> CanonicalVariable:
+    form = variable_form(resolved)
+    clause = form.get("rows", form.get("question"))
+    keys = () if clause is None else (leaf_key(clause),)
+    leaves = {
+        pointer(list(as_written(position, positions)[0])): keys
+        for position in sorted(resolved.leaves)
+    }
+    return CanonicalVariable(key, resolved, form, dict(sorted(leaves.items())) if keys else {})
 
 
 def _cohort(
@@ -452,6 +489,42 @@ def _copy(value: JsonValue) -> JsonValue:
     return value
 
 
+# --- Variables (§7.6, phase 2; D325) ------------------------------------------------------------
+
+
+def _via(path: Path) -> list[JsonValue]:
+    return [{"rel": step.rel, "dir": step.dir} for step in path]
+
+
+def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
+    """A variable's canonical form: descriptor ids and explicit paths, every default written
+    (D325). A column: ``column`` and its lookups ``via`` (if any); a question: ``aggregate``
+    and its canonical clause tree ``question``; an aggregate: ``aggregate``, ``column``, the
+    canonical question of its rows ``rows``, the lookups from each row ``lookup`` (if any) and,
+    for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value)."""
+    if variable.kind == "column":
+        found: dict[str, JsonValue] = {"column": variable.column}
+        if variable.via:
+            found["via"] = _via(variable.via)
+        return found
+    if variable.kind == "question":
+        assert variable.question is not None
+        assert variable.aggregate is not None
+        return {"aggregate": variable.aggregate, "question": canonical_clause(variable.question)}
+    assert variable.rows is not None
+    assert variable.function is not None
+    found = {
+        "aggregate": variable.function,
+        "column": variable.column,
+        "rows": canonical_clause(variable.rows),
+    }
+    if variable.lookup:
+        found["lookup"] = _via(variable.lookup)
+    if variable.function != "count":
+        found["empty"] = "exclude" if variable.empty is None else constant_json(variable.empty)
+    return found
+
+
 # --- Phase 2 (M3) -------------------------------------------------------------------------------
 
 
@@ -522,6 +595,7 @@ class ViewIdentity:
 
 __all__ = [
     "CanonicalCohort",
+    "CanonicalVariable",
     "Canonicalisation",
     "CohortIdentity",
     "RuledCaveat",
@@ -530,4 +604,5 @@ __all__ = [
     "canonical_clause",
     "canonicalise",
     "intersection",
+    "variable_form",
 ]

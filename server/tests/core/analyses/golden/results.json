@@ -239,5 +239,182 @@
     "id": "drv:6f67367ff9264a3ca8f05a8392f6414a55257a5c06090488f7f62ea3622e3435",
     "computation_id": "drv:b46eb193206747db43c74cc72a9b969238e38276d627d943e037a294c162c321",
     "digest": "sha256:e10c2b5524e46105d995587253f7b4c647f67a96bce7ff2a9ccd0431a6ab3ad8"
+  },
+  "tiers_distribution": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.distribution",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "columns": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "customers.age",
+                "bins": [
+                  20,
+                  35,
+                  50,
+                  70
+                ]
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "count",
+                "bins": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "where": [
+                  {
+                    "kind": "value",
+                    "column": "orders.channel",
+                    "values": [
+                      "web",
+                      "shop"
+                    ]
+                  }
+                ]
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "some",
+                "values": [
+                  "o1",
+                  "o2",
+                  "o3"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "id": "drv:e7d4278631256b31a94920fb92adf22ea3f9b14afae357c107fd35e24ac2c39e",
+    "computation_id": "drv:11bf77f5b4b0f7f2eba8f598048b4d4ffd288ee209b039d49b3ab2c57b9d825f",
+    "digest": "sha256:b26fe9957f6f68a9c0317842cece758e2cb10b8bb71620d331c259419ef9970a"
+  },
+  "tiers_distribution_under_k": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.distribution",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "columns": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "customers.age",
+                "bins": [
+                  20,
+                  35,
+                  50,
+                  70
+                ]
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "count",
+                "bins": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "where": [
+                  {
+                    "kind": "value",
+                    "column": "orders.channel",
+                    "values": [
+                      "web",
+                      "shop"
+                    ]
+                  }
+                ]
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "some",
+                "values": [
+                  "o1",
+                  "o2",
+                  "o3"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "floor": 3,
+    "id": "drv:1a703fe8694ccdc2ad8ade9e89433f93fdd5f8edcd4500fbe74ec0b91f2f3d38",
+    "computation_id": "drv:11bf77f5b4b0f7f2eba8f598048b4d4ffd288ee209b039d49b3ab2c57b9d825f",
+    "digest": "sha256:ff6a3a4442a5fddb654e50778add3c12e698362549005e27097b3a83eebcd526"
   }
 }

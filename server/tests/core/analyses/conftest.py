@@ -7,9 +7,14 @@ orders (a parent scope), so that a question about returns through orders is one 
 rules differ (§6.5).
 
 - ``shop`` builds the release from rows (``rows`` the default rows, ``customers`` of them).
-- ``analyse`` loads a document, checks its views, canonicalises its cohorts and predicates, runs
-  each by the reference evaluator (``evaluate``) and makes its result envelope as
-  ``run_analysis`` does, returning each view's ``Analysed``.
+- ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates and
+  variables, runs each by the reference evaluator (``evaluate``, ``evaluate_variable``) and
+  makes its result envelope as ``run_analysis`` does, returning each view's ``Analysed``.
+  ``shop(extended=True)`` adds an order's amount, a number with a declared range, and declares
+  the customers' ages' range, for ``summary.distribution``.
+- ``distributed`` checks a ``summary.distribution`` view of the extended shop over cohorts of the
+  pattern document, and ``summarised`` runs it over variables materialised as given, under a
+  *k*, each cohort's size given, for checks that run one view many times.
 - ``patterned`` makes cohorts and predicates whose units' truth values are given as strings, one
   character per unit (``T``, ``F``, or a reason's letter for UNKNOWN: ``I`` NO_INFORMATION, ``A``
   NOT_ASSESSED, ``C`` NOT_COVERED), each over a canonical cohort of the shop, and runs
@@ -27,9 +32,10 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import views
+from aibi.core.analyses import distribution, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
+from aibi.core.analyses.results import Outcome as AnyOutcome
 from aibi.core.analyses.results import envelope
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine import build
@@ -40,7 +46,8 @@ from aibi.core.engine.resolve import Label, ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import Accounting, Crossing, TruthValues, cross
 from aibi.core.engine.truth import Truth, TruthValue
-from aibi.core.schema.analyses import ExistenceParams
+from aibi.core.engine.variables import Joint, Materialised, evaluate_variable, joint, materialise
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.refusals import Refusal
@@ -52,8 +59,16 @@ RETURNS = "rel:returns.order"
 ENGINE = "aibi test"
 
 
-def shop_descriptors(*, disclosure: Mapping[str, Any] | None = None) -> list[Descriptor]:
+def shop_descriptors(
+    *,
+    disclosure: Mapping[str, Any] | None = None,
+    extended: bool = False,
+    extras: Sequence[Descriptor] = (),
+) -> list[Descriptor]:
     column, table, relationship = build.column, build.table, build.relationship
+    ages: dict[str, Any] = {"range": {"min": 18, "max": 98}} if extended else {}
+    amounts = [column("orders.amount", "number", range={"min": 0, "max": 200})] if extended else []
+    amounts += extras
     return [
         build.dataset(**({} if disclosure is None else {"disclosure": dict(disclosure)})),
         table("customers", ["customer_id"]),
@@ -64,7 +79,7 @@ def shop_descriptors(*, disclosure: Mapping[str, Any] | None = None) -> list[Des
             permissible_values={"values": [{"value": v} for v in ("gold", "silver", "bronze")]},
             missing_codes={"?": "NOT_ASSESSED"},
         ),
-        column("customers.age", "integer", units="a"),
+        column("customers.age", "integer", units="a", **ages),
         table("orders", ["order_id"], role="event"),
         column("orders.order_id", "string"),
         column("orders.customer_id", "string"),
@@ -73,6 +88,7 @@ def shop_descriptors(*, disclosure: Mapping[str, Any] | None = None) -> list[Des
             "category",
             permissible_values={"values": [{"value": v} for v in ("shop", "web", "phone")]},
         ),
+        *amounts,
         relationship("orders", ["customer_id"], "customers", role="customer"),
         build.coverage(ORDERS, "all"),
         table("returns", ["return_id"], role="event"),
@@ -94,10 +110,11 @@ def shop_descriptors(*, disclosure: Mapping[str, Any] | None = None) -> list[Des
     ]
 
 
-def shop_rows(customers: int = 24) -> dict[str, list[dict[str, object]]]:
+def shop_rows(customers: int = 24, *, extended: bool = False) -> dict[str, list[dict[str, object]]]:
     """Customers of three tiers, every fifth tier not assessed, of ages 20 to 69; each places
     an order or two, one in four through the phone; every other order is checked for returns,
-    and one in three of the checked ones has one."""
+    and one in three of the checked ones has one. ``extended``: every order has an amount but
+    every seventh, whose amount is empty."""
     rows: dict[str, list[dict[str, object]]] = {
         "customers": [],
         "orders": [],
@@ -112,9 +129,14 @@ def shop_rows(customers: int = 24) -> dict[str, list[dict[str, object]]]:
         for _ in range(1 + n % 2):
             order += 1
             channel = "phone" if order % 4 == 0 else ("shop", "web")[order % 2]
-            rows["orders"].append(
-                {"order_id": f"o{order}", "customer_id": f"c{n}", "channel": channel}
-            )
+            placed: dict[str, object] = {
+                "order_id": f"o{order}",
+                "customer_id": f"c{n}",
+                "channel": channel,
+            }
+            if extended:
+                placed["amount"] = None if order % 7 == 0 else (order * 37) % 150 + 0.5
+            rows["orders"].append(placed)
             if order % 2:
                 rows["checked_orders"].append({"order_id": f"o{order}"})
                 if order % 3 == 0:
@@ -127,7 +149,9 @@ def shop_rows(customers: int = 24) -> dict[str, list[dict[str, object]]]:
 def shop_release(
     rows: Mapping[str, Sequence[Mapping[str, object]]] | None = None, **options: Any
 ) -> Release:
-    return build.release(shop_descriptors(**options), rows if rows is not None else shop_rows())
+    extended = bool(options.get("extended"))
+    given = rows if rows is not None else shop_rows(extended=extended)
+    return build.release(shop_descriptors(**options), given)
 
 
 @dataclass(frozen=True)
@@ -135,7 +159,7 @@ class Analysed:
     """A view run by the reference evaluator, and its result envelope."""
 
     view: CheckedView
-    outcome: Outcome
+    outcome: AnyOutcome
     result: ResultEnvelope
 
 
@@ -167,6 +191,7 @@ def check_document(
         floor=floor,
         positions=loaded.positions,
         predicates=[p for view in parsed for p in view.predicates],
+        variables=[v for view in parsed for v in view.variables],
     )
     checked, mixed = views.checked(loaded.document, parsed, canonical)
     deferred = views.deferred(loaded.document, loaded.positions)
@@ -190,6 +215,9 @@ def analyse_document(
     found: list[Analysed] = []
     for view in checked.views:
         positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
+        if isinstance(view.params, DistributionParams):
+            found.append(_result(view, _summarised_by_evaluator(view, positions), written))
+            continue
         crossing = cross(
             [TruthValues.of(evaluate(cohort.resolved).values) for cohort in view.cohorts],
             [TruthValues.of(evaluate(p.resolved).values) for p in view.predicates],
@@ -205,16 +233,44 @@ def analyse_document(
             overlap=bool(crossing.overlapping()) and view.overlap,
             k=view.disclosure,
         )
-        result = envelope(
-            view,
-            outcome,
-            issuance="iss:01J0000000000000000000000A",
-            written=dict(written),
-            params={},
-            engine=ENGINE,
-        )
-        found.append(Analysed(view, outcome, result))
+        found.append(_result(view, outcome, written))
     return found
+
+
+def _result(view: CheckedView, outcome: AnyOutcome, written: Mapping[str, Any]) -> Analysed:
+    result = envelope(
+        view,
+        outcome,
+        issuance="iss:01J0000000000000000000000A",
+        written=dict(written),
+        params={},
+        engine=ENGINE,
+    )
+    return Analysed(view, outcome, result)
+
+
+def materialise_by_evaluator(
+    view: CheckedView,
+) -> list[tuple[tuple[Materialised, ...], Joint | None]]:
+    """A view's variables materialised over its cohorts by the reference evaluator, as
+    ``run_analysis`` reads them by SQL (D327)."""
+    values = [evaluate_variable(variable.resolved) for variable in view.variables]
+    found: list[tuple[tuple[Materialised, ...], Joint | None]] = []
+    for cohort in view.cohorts:
+        truth = evaluate(cohort.resolved).values
+        members = [row for row, value in enumerate(truth) if value.is_true]
+        together = joint(values, members) if len(values) > 1 else None
+        found.append((tuple(materialise(value, members) for value in values), together))
+    return found
+
+
+def _summarised_by_evaluator(
+    view: CheckedView, positions: Sequence[CohortAt]
+) -> distribution.Outcome:
+    assert isinstance(view.params, DistributionParams)
+    return distribution.summarise(
+        positions, view.variables, materialise_by_evaluator(view), view.params, k=view.disclosure
+    )
 
 
 _REASONS = {"I": Reason.NO_INFORMATION, "A": Reason.NOT_ASSESSED, "C": Reason.NOT_COVERED}
@@ -375,6 +431,73 @@ def patterned_run(
         engine=ENGINE,
     )
     return Analysed(view, outcome, result)
+
+
+def distribution_view(
+    columns: Sequence[Mapping[str, Any]],
+    *,
+    cohorts: int = 1,
+    k: int | None = None,
+    extras: Sequence[Descriptor] = (),
+) -> CheckedView:
+    """A checked ``summary.distribution`` view of ``columns`` over ``cohorts`` cohorts of the
+    pattern document, over the extended shop with ``extras`` among its descriptors."""
+    written = {
+        **PATTERN_DOCUMENT,
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "cohorts": list(PATTERN_DOCUMENT["cohorts"])[:cohorts],
+                "params": {"columns": [dict(column) for column in columns]},
+            }
+        ],
+    }
+    release = shop_release(
+        {"customers": [{"customer_id": "c1", "age": 30}]}, extended=True, extras=extras
+    )
+    checked = check_document(written, release, floor=k)
+    assert checked.refusals == [], checked.refusals
+    [view] = checked.views
+    return view
+
+
+def summarise_materialised(
+    view: CheckedView,
+    sizes: Sequence[int],
+    materialised: Sequence[tuple[Sequence[Materialised], Joint | None]],
+    *,
+    k: int | None = None,
+    outside: int = 0,
+    ends: float | None = None,
+) -> distribution.Outcome:
+    """``summary.distribution`` over ``view``, its cohorts of ``sizes`` units, all members, and
+    its variables materialised over them as given, under ``k`` and by ``ends``; ``outside`` more
+    units of the unit table are no member of any cohort."""
+    positions = [
+        CohortAt(cohort, _accounting(truth_values("T" * size + "F" * outside)))
+        for cohort, size in zip(view.cohorts, sizes, strict=True)
+    ]
+    assert isinstance(view.params, DistributionParams)
+    return distribution.summarise(
+        positions, view.variables, materialised, view.params, k=k, ends=ends
+    )
+
+
+@pytest.fixture(scope="session")
+def distributed() -> Callable[..., CheckedView]:
+    return distribution_view
+
+
+@pytest.fixture(scope="session")
+def summarised() -> Callable[..., distribution.Outcome]:
+    return summarise_materialised
+
+
+@pytest.fixture(scope="session")
+def materialised_by_evaluator() -> Callable[
+    ..., list[tuple[tuple[Materialised, ...], Joint | None]]
+]:
+    return materialise_by_evaluator
 
 
 @pytest.fixture(scope="session")

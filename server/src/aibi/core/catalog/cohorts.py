@@ -287,8 +287,8 @@ class Canonical:
 
 def canonical_document(catalog: Catalog, pin: Pin, written: Mapping[str, JsonValue]) -> Canonical:
     """The document as written, loaded, its releases resolved and pinned, and canonicalised:
-    its cohorts, then its views against their analyses, whose predicates are resolved with the
-    cohorts (D317)."""
+    its cohorts, then its views against their analyses, whose predicates and variables are
+    resolved with the cohorts (D317, D325)."""
     loaded = load_document(json.dumps(written, ensure_ascii=False, allow_nan=False))
     document = loaded.document
     if document is None:
@@ -304,6 +304,7 @@ def canonical_document(catalog: Catalog, pin: Pin, written: Mapping[str, JsonVal
         floors=releases.floors,
         positions=loaded.positions,
         predicates=[predicate for view in parsed for predicate in view.predicates],
+        variables=[variable for view in parsed for variable in view.variables],
     )
     # A reference refused here is refused again, as unknown, by resolution: once is enough.
     kept = [

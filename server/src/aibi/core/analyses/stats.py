@@ -1,4 +1,4 @@
-"""The statistical methods of ``compare.existence`` (SPEC §9.3, §9.5; D321).
+"""The statistical methods of the core's analyses (SPEC §9.3, §9.5; D321, D328).
 
 Each is a plain function of counts, deterministic as §9.3 requires: nothing here reads DuckDB's
 aggregates, every sum is correctly rounded (``math.fsum``), and the order of every operation is
@@ -23,11 +23,30 @@ fixed. The methods are those R computes with the calls the reference fixture nam
 - ``upper_gamma``: the regularised upper incomplete gamma function Q(a, x), by its series below
   a + 1 and by its continued fraction (modified Lentz) above.
 - ``benjamini_hochberg``: q-values as R's ``p.adjust(method = "BH")``.
+
+``summary.distribution``'s (D328) take a multiset of values, each distinct value in increasing
+order with the number of units that have it (``Weighted``), and agree with R's calls in the same
+fixture:
+
+- ``mean``: the exact mean, correctly rounded: the exact sum of integers divided once (Python's
+  division of integers is correctly rounded), or ``math.fsum`` of doubles divided once, which R's
+  ``mean`` matches but under catastrophic cancellation, where R's two passes are the inexact ones.
+- ``sd``: the sample standard deviation, as R's ``sd``: the square root of ``math.fsum`` of
+  each squared deviation from ``mean`` over n − 1; not estimable for fewer than two values or
+  every value the same (§9.5, ``zero_variance``).
+
+Sums and squares of doubles are taken over the values scaled by the power of two that brings the
+largest magnitude into [0.5, 1), and scaled back: that is exact, so it gives the same bits
+wherever the unscaled sums neither overflow nor underflow, and finite results where they would
+(a deviation of 1e200 squared).
+- ``quantile``: R's default (``type = 7``), as ``quantile.default`` writes it: the order
+  statistics at ``floor`` and ``ceiling`` of 1 + (n − 1)·p, weighted ``(1 − h)`` and ``h``.
 """
 
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import repeat
 from statistics import NormalDist
 
 _STANDARD = NormalDist()
@@ -241,13 +260,92 @@ def benjamini_hochberg(p: Sequence[float]) -> list[float]:
     return found
 
 
+# --- Descriptive statistics (D328) ------------------------------------------------------------
+
+Weighted = Sequence[tuple[int | float, int]]
+"""Values, each distinct value once in increasing order, with how many units have it (at least
+one each)."""
+
+
+def _count(values: Weighted) -> int:
+    return sum(times for _, times in values)
+
+
+def _scale(values: Weighted) -> int:
+    """The power of two that brings the largest magnitude among doubles into [0.5, 1): scaling
+    by it is exact, so sums and squares over the scaled values are those over the values,
+    scaled, without overflow (module docstring)."""
+    largest = max((abs(float(value)) for value, _ in values), default=0.0)
+    return math.frexp(largest)[1] if largest else 0
+
+
+def mean(values: Weighted) -> float:
+    """The mean of at least one value (module docstring)."""
+    n = _count(values)
+    if n <= 0:
+        raise ValueError("a mean is of at least one value")
+    if all(isinstance(value, int) for value, _ in values):
+        return sum(int(value) * times for value, times in values) / n
+    shift = _scale(values)
+    total = math.fsum(
+        v for value, times in values for v in repeat(math.ldexp(float(value), -shift), times)
+    )
+    return math.ldexp(total / n, shift)
+
+
+def sd(values: Weighted, centre: float) -> float | None:
+    """The sample standard deviation around the values' mean ``centre``; ``None`` for fewer
+    than two values or all of them the same (module docstring)."""
+    n = _count(values)
+    if n < 2 or len(values) < 2:
+        return None
+    shift = _scale(values)
+    middle = math.ldexp(centre, -shift)
+    squares = math.fsum(
+        square
+        for value, times in values
+        for square in repeat((math.ldexp(float(value), -shift) - middle) ** 2, times)
+    )
+    return math.ldexp(math.sqrt(squares / (n - 1)), shift)
+
+
+def order_statistic(values: Weighted, rank: int) -> int | float:
+    """The value at ``rank``, counted from 1, in the values' increasing order."""
+    seen = 0
+    for value, times in values:
+        seen += times
+        if rank <= seen:
+            return value
+    raise ValueError("a rank is at most the number of values")
+
+
+def quantile(values: Weighted, probability: float) -> float:
+    """The quantile at ``probability`` of at least one value, as R's ``quantile(type = 7)``."""
+    n = _count(values)
+    if n <= 0 or not 0 <= probability <= 1:
+        raise ValueError("a quantile is of at least one value, at a probability from 0 to 1")
+    index = 1 + (n - 1) * probability
+    low, high = math.floor(index), math.ceil(index)
+    found = float(order_statistic(values, low))
+    upper = float(order_statistic(values, high))
+    if index > low and upper != found:
+        weight = index - low
+        found = (1 - weight) * found + weight * upper
+    return found
+
+
 __all__ = [
     "ChiSquared",
+    "Weighted",
     "benjamini_hochberg",
     "chi_squared",
     "fisher",
     "katz",
+    "mean",
     "newcombe",
+    "order_statistic",
+    "quantile",
+    "sd",
     "upper_gamma",
     "wilson",
     "z",

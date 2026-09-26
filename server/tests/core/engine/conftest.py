@@ -25,7 +25,7 @@ from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hypothesis.control import currently_in_test_context
@@ -34,16 +34,25 @@ from aibi.core.engine import build
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
-from aibi.core.engine.resolve import Resolution, ResolvedCohort, resolve
+from aibi.core.engine.resolve import (
+    Resolution,
+    ResolvedCohort,
+    ResolvedVariable,
+    ViewVariable,
+    resolve,
+)
 from aibi.core.engine.sql import (
     Accounting,
     CompiledCohort,
     Crossing,
     compile_cohort,
     compile_crossing,
+    compile_materialised,
 )
 from aibi.core.engine.truth import TruthValue
-from aibi.core.engine.worker import Rows
+from aibi.core.engine.variables import Joint, Materialised
+from aibi.core.engine.worker import Column, Rows, Texts
+from aibi.core.schema.analyses import Variable
 from aibi.core.schema.descriptors import Descriptor, TableDescriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.pack_api import PackRegistry
@@ -119,6 +128,15 @@ def city_descriptors(
         ),
         column("inspections.score", "integer", units="1"),
         column("inspections.on", "date"),
+        column(
+            "inspections.rating",
+            "category",
+            permissible_values={
+                "values": [{"value": v} for v in ("low", "mid", "high")],
+                "ordered": True,
+            },
+            missing_codes={"later": "NOT_ASSESSED", "n/a": "NOT_APPLICABLE"},
+        ),
         relationship("inspections", ["establishment_id"], "establishments", role="establishment"),
         coverage(INSPECTED, **(inspections if inspections is not None else {"parents": "all"})),
         table("violations", ["violation_id"], role="event"),
@@ -383,6 +401,31 @@ def packed(columns: int, rows: Sequence[Sequence[int]]) -> Rows:
     return Rows(found, len(rows))
 
 
+def _value_column(values: Sequence[object]) -> Column:
+    """A value column as a worker's answer packs it: integers, doubles or text (D327)."""
+    if all(type(value) is int or type(value) is bool for value in values):
+        return memoryview(array("q", [int(cast(int, value)) for value in values]))
+    if all(type(value) is float or type(value) is int for value in values):
+        return memoryview(array("d", [float(cast(float, value)) for value in values]))
+    encoded = [cast(str, value).encode("utf-8") for value in values]
+    starts = array("q", [0])
+    for part in encoded:
+        starts.append(starts[-1] + len(part))
+    return Texts(memoryview(b"".join(encoded)), starts)
+
+
+def packed_values(columns: int, rows: Sequence[Sequence[object]], values: frozenset[int]) -> Rows:
+    """Rows as a worker's answer packs them, ``values`` their value columns."""
+    found: list[Column] = []
+    for at in range(columns):
+        column = [row[at] for row in rows]
+        if at in values:
+            found.append(_value_column(column))
+        else:
+            found.append(memoryview(array("q", [int(cast(int, value)) for value in column])))
+    return Rows(found, len(rows))
+
+
 def run_sql(cohort: ResolvedCohort, directory: Path, sessions: Sessions) -> SqlRun:
     """A resolved cohort's counts and values queries, run in a helper's session."""
     compiled = compile_cohort(cohort, release_blobs(cohort.release, directory))
@@ -439,6 +482,72 @@ def crossed(
 ) -> Callable[..., Crossing]:
     directory = tmp_path_factory.mktemp("crossings")
     return lambda cohorts, predicates: run_crossing(cohorts, predicates, directory, sessions)
+
+
+def run_materialised(
+    cohorts: Sequence[ResolvedCohort],
+    variables: Sequence[ResolvedVariable],
+    directory: Path,
+    sessions: Sessions,
+    ends: float | None = None,
+) -> tuple[tuple[tuple[Materialised, ...], Joint | None], ...]:
+    """Variables materialised over cohorts by the SQL compiler, run in a helper's session, and
+    read by the server by ``ends``."""
+    compiled = compile_materialised(
+        cohorts, variables, release_blobs(cohorts[0].release, directory)
+    )
+    answers = sessions.run(
+        compiled.paths, [(statement, compiled.parameters) for statement in compiled.statements]
+    )
+    return compiled.read(
+        [
+            packed_values(columns, rows, values)
+            for (columns, rows), values in zip(answers, compiled.values, strict=True)
+        ],
+        ends,
+    )
+
+
+@pytest.fixture(scope="session")
+def materialised(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[..., tuple[tuple[tuple[Materialised, ...], Joint | None], ...]]:
+    directory = tmp_path_factory.mktemp("materialised")
+    return lambda cohorts, variables, ends=None: run_materialised(
+        cohorts, variables, directory, sessions, ends
+    )
+
+
+def resolve_variables(
+    written: Mapping[str, Any],
+    release: Release,
+    variables: Sequence[Mapping[str, Any]],
+) -> Resolution:
+    """A document's cohorts resolved with variables, each as a view's column would be, at
+    ``/views/0/params/columns/<i>``; the loader must accept the document."""
+    loaded = load_document(json.dumps(written))
+    assert loaded.refusals == [], loaded.refusals
+    assert loaded.document is not None
+    given = [
+        ViewVariable(
+            f"0/{index}",
+            "d",
+            ("views", 0, "params", "columns", index),
+            Variable.model_validate(variable),
+        )
+        for index, variable in enumerate(variables)
+    ]
+    return resolve(loaded.document, {"d": release}, loaded.positions, variables=given)
+
+
+@pytest.fixture(scope="session")
+def packed_rows() -> Callable[..., Rows]:
+    return packed_values
+
+
+@pytest.fixture(scope="session")
+def variables_of() -> Callable[..., Resolution]:
+    return resolve_variables
 
 
 @pytest.fixture(scope="session")
