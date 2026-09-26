@@ -38,6 +38,8 @@ returned by ``rid``.
 
 import json
 import math
+import time
+from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -49,10 +51,16 @@ from pydantic import JsonValue
 from sqlglot import exp
 from sqlglot.expressions.core import Expression
 
-from aibi.core.engine.canonical import canonical_clause
+from aibi.core.engine.canonical import canonical_clause, variable_form
 from aibi.core.engine.data import KeyPart, Release, key_part
 from aibi.core.engine.graph import Path, Step
-from aibi.core.engine.resolve import Coverage, ResolvedCohort
+from aibi.core.engine.resolve import (
+    Coverage,
+    Function,
+    ResolvedCohort,
+    ResolvedVariable,
+    levels,
+)
 from aibi.core.engine.resolved import (
     Constant,
     RAll,
@@ -71,10 +79,11 @@ from aibi.core.engine.resolved import (
 )
 from aibi.core.engine.truth import Mark, Truth, TruthValue
 from aibi.core.engine.units import scale
-from aibi.core.engine.worker import QueryError, Rows
+from aibi.core.engine.variables import Joint, Materialised, Value, aggregated, normalised
+from aibi.core.engine.worker import CallerDeadline, QueryError, Rows
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.jsonio import canonical
-from aibi.core.schema.semantics import Flag, ObservationState, Reason
+from aibi.core.schema.semantics import ExclusionReason, Flag, ObservationState, Reason
 from aibi.core.store.parquet import PhysicalType
 from aibi.core.store.tables import ITEM_STATE, STATE, TableSource, physical
 
@@ -84,6 +93,13 @@ _CODES = {FALSE_CODE: Truth.FALSE, UNKNOWN_CODE: Truth.UNKNOWN, TRUE_CODE: Truth
 _CODE_OF = {truth: code for code, truth in _CODES.items()}
 REASON_BIT = {reason: 1 << index for index, reason in enumerate(Reason)}
 _ALL_REASONS = sum(REASON_BIT.values())
+EXCLUSION_BIT = {reason: 1 << index for index, reason in enumerate(ExclusionReason)}
+"""An exclusion's reasons as bits in ``ExclusionReason``'s order, whose first reasons are
+``Reason``'s in its order, so a truth value's reason bits are its exclusion bits (D327)."""
+_ALL_EXCLUSIONS = sum(EXCLUSION_BIT.values())
+assert all(
+    EXCLUSION_BIT[ExclusionReason(reason.value)] == bit for reason, bit in REASON_BIT.items()
+)
 MARK_BITS = 63
 """Flags per word: the bits of a signed 64-bit integer below its sign."""
 ROW_NUMBER = "file_row_number"
@@ -572,6 +588,251 @@ def compile_crossing(
     return _Compiler(merged, sources).crossing(cohorts, predicates)
 
 
+# --- Materialised variables (D326, D327) ----------------------------------------------------------
+
+_VALUE_ROWS, _EXCLUDED_ROWS, _UNIT_ROWS, _EMPTY_ROWS, _EXTREME_ROWS = 0, 1, 2, 3, 4
+"""The kinds of a materialised variable's rows (``CompiledMaterialised``)."""
+_DEADLINE_ROWS = 1 << 16
+"""How many rows the server reads of a materialisation between looks at the call's deadline."""
+_MATERIALISED_VALUE = 2
+"""The index of the value column of a materialised variable's rows."""
+
+
+@dataclass(frozen=True)
+class _Shape:
+    """What reading a materialised variable's rows needs of it."""
+
+    kind: str
+    datatype: str | None
+    function: str | None
+    order: tuple[str, ...] | None
+    empty: Value | None
+
+
+@dataclass(frozen=True)
+class CompiledMaterialised:
+    """The queries that materialise variables over cohorts of one release's unit table
+    (``compile_materialised``): for each cohort, one per variable, whose rows are tagged ``t``,
+    with ``r``, ``v``, ``x``, ``n`` and the flag words (``_ROWS`` kinds): the units of each
+    value (``_UNIT_ROWS``: ``v`` and ``n`` units), those excluded for each set of reasons
+    (``_EXCLUDED_ROWS``: ``x`` their bits, ``n`` units), those of an aggregate with no value to
+    aggregate that take ``empty`` (``_EMPTY_ROWS``), for ``max`` and ``min`` the units of each
+    greatest or least value (``_EXTREME_ROWS``: ``v`` and ``n`` units; an ordered category's by
+    listed position), which pick a value and so are exact in SQL, and for ``mean`` each unit's
+    pooled rows by value (``_VALUE_ROWS``: ``r`` the unit's row, ``v`` the value, ``n`` its
+    rows), which the server aggregates (§9.3); and, for two variables or more, one joint query
+    per cohort, whose rows count its units by whether some variable has a value (``k``) and, for
+    none, the bits of every reason (``b``). Every count is an integer ``COUNT`` and every flag a
+    ``BIT_OR``; values are grouped, and never summed or averaged, by DuckDB, whose ``MAX`` and
+    ``MIN`` only pick one of them (D294, D327)."""
+
+    statements: tuple[str, ...]
+    parameters: Mapping[str, Parameter]
+    marks: tuple[Mark, ...]
+    cohorts: int
+    shapes: tuple[_Shape, ...]
+    blobs: frozenset[str] = frozenset()
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        """The blobs the queries read, the only files they may open (D293)."""
+        return tuple(sorted(str(self.parameters[name]) for name in self.blobs))
+
+    @property
+    def joint(self) -> bool:
+        return len(self.shapes) > 1
+
+    @property
+    def columns(self) -> tuple[int, ...]:
+        """Each statement's columns: a variable's ``t``, ``r``, ``v``, ``x``, ``n`` and the flag
+        words, and a joint query's ``k``, ``b`` and ``n``."""
+        words = _words(len(self.marks))
+        found: list[int] = []
+        for _ in range(self.cohorts):
+            found += [5 + words] * len(self.shapes)
+            if self.joint:
+                found.append(3)
+        return tuple(found)
+
+    @property
+    def values(self) -> tuple[frozenset[int], ...]:
+        """Each statement's value columns: a variable's ``v``."""
+        found: list[frozenset[int]] = []
+        for _ in range(self.cohorts):
+            found += [frozenset({_MATERIALISED_VALUE})] * len(self.shapes)
+            if self.joint:
+                found.append(frozenset())
+        return tuple(found)
+
+    def parameters_json(self) -> dict[str, JsonValue]:
+        """The parameters as the derivation log records them (``CompiledCohort``'s)."""
+        return {
+            name: PurePath(str(value)).name if name in self.blobs else _json(value)
+            for name, value in self.parameters.items()
+        }
+
+    def read(
+        self, answers: Sequence[Rows], ends: float | None = None
+    ) -> "tuple[tuple[tuple[Materialised, ...], Joint | None], ...]":
+        """The queries' rows read: for each cohort, each variable materialised and, for two or
+        more, their joint accounting. Raises ``QueryError`` for rows the queries do not give,
+        and ``CallerDeadline`` once ``time.monotonic()`` passes ``ends`` (the call's deadline,
+        looked at every ``_DEADLINE_ROWS`` rows, and every ``_DEADLINE_ROWS`` units while a
+        ``mean``'s units are averaged: its rows are one per unit and value, read on the server
+        after the worker has answered)."""
+        if len(answers) != len(self.columns):
+            raise QueryError("a materialisation gave another number of answers")
+        for rows, width in zip(answers, self.columns, strict=True):
+            if rows.width != width:
+                raise QueryError("a materialisation's query gave rows of another width")
+        found: list[tuple[tuple[Materialised, ...], Joint | None]] = []
+        at = 0
+        for _ in range(self.cohorts):
+            read = tuple(
+                self._variable(answers[at + index], shape, ends)
+                for index, shape in enumerate(self.shapes)
+            )
+            at += len(self.shapes)
+            together: Joint | None = None
+            if self.joint:
+                together = self._joint(answers[at])
+                at += 1
+            found.append((read, together))
+        return tuple(found)
+
+    def _variable(self, rows: Rows, shape: _Shape, ends: float | None) -> Materialised:
+        tags, rids = rows.integer_column(0), rows.integer_column(1)
+        bits, counts = rows.integer_column(3), rows.integer_column(4)
+        words = [rows.integer_column(5 + at) for at in range(_words(len(self.marks)))]
+        raw = rows.value_column(_MATERIALISED_VALUE)
+        values: Counter[Value] = Counter()
+        excluded = dict.fromkeys(ExclusionReason, 0)
+        excluded_units = 0
+        flags = [0] * len(words)
+        by_unit: dict[int, list[tuple[Value, int]]] = {}
+        for index in range(len(rows)):
+            if ends is not None and not index % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            tag, count, bit = tags[index], counts[index], bits[index]
+            if count <= 0 or not 0 <= bit <= _ALL_EXCLUSIONS:
+                raise QueryError("a materialisation's query gave a row it cannot give")
+            for at, word in enumerate(words):
+                if word[index] < 0:
+                    raise QueryError("a materialisation's query gave a flag it cannot give")
+                flags[at] |= word[index]
+            if tag == _EXCLUDED_ROWS:
+                if not bit:
+                    raise QueryError("a materialisation's query gave a row it cannot give")
+                excluded_units += count
+                for reason, flag in EXCLUSION_BIT.items():
+                    if bit & flag:
+                        excluded[reason] += count
+            elif tag == _UNIT_ROWS and not bit:
+                values[self._value(raw[index], shape)] += count
+            elif tag == _EMPTY_ROWS and not bit and shape.empty is not None:
+                values[shape.empty] += count
+            elif tag == _EXTREME_ROWS and not bit and shape.function in ("max", "min"):
+                values[self._extreme(raw[index], shape)] += count
+            elif tag == _VALUE_ROWS and not bit and shape.function == "mean":
+                by_unit.setdefault(rids[index], []).append((self._value(raw[index], shape), count))
+            else:
+                raise QueryError("a materialisation's query gave a row it cannot give")
+        if not _words_fit(flags, self.marks):
+            raise QueryError("a materialisation's query gave a flag it cannot give")
+        for unit, groups in enumerate(by_unit.values()):
+            if ends is not None and not unit % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            values[self._aggregate(groups, shape)] += 1
+        return Materialised(
+            MappingProxyType(dict(values)),
+            excluded_units,
+            MappingProxyType(excluded),
+            _marks(self.marks, flags) if flags else frozenset(),
+        )
+
+    @staticmethod
+    def _value(raw: object, shape: _Shape) -> Value:
+        """A value as its query's rows hold it, in its stored type (``variables.normalised``)."""
+        if shape.kind == "question" or (shape.datatype == "boolean" and shape.function is None):
+            if raw not in (0, 1) or isinstance(raw, float):
+                raise QueryError("a materialisation's query gave a value it cannot give")
+            return bool(raw)
+        if shape.function == "count":
+            if not isinstance(raw, int) or raw < 0:
+                raise QueryError("a materialisation's query gave a value it cannot give")
+            return raw
+        if shape.order is not None:
+            if not isinstance(raw, int) or not 0 <= raw < len(shape.order):
+                raise QueryError("a materialisation's query gave a value it cannot give")
+            return raw
+        if shape.datatype in ("category", "string"):
+            if not isinstance(raw, str):
+                raise QueryError("a materialisation's query gave a value it cannot give")
+            return raw
+        if isinstance(raw, str) or (shape.datatype == "integer" and isinstance(raw, float)):
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        if isinstance(raw, float) and not math.isfinite(raw):
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        return normalised(cast(Value, raw), shape.datatype)
+
+    @classmethod
+    def _extreme(cls, raw: object, shape: _Shape) -> Value:
+        """A unit's ``max`` or ``min`` as SQL picked it: an ordered category's value at its
+        listed position, else the value normalised as ``aggregated``'s is."""
+        found = cls._value(raw, shape)
+        if shape.order is not None:
+            return shape.order[int(found)]
+        return normalised(found, shape.datatype, cast(Function, shape.function))
+
+    @staticmethod
+    def _aggregate(groups: Sequence[tuple[Value, int]], shape: _Shape) -> Value:
+        found = aggregated(
+            cast(Function, shape.function), groups, sum(times for _, times in groups)
+        )
+        assert found is not None, "a unit's value rows hold values"
+        if shape.order is not None:
+            return shape.order[int(found)]
+        return normalised(found, shape.datatype, cast(Function, shape.function))
+
+    @staticmethod
+    def _joint(rows: Rows) -> Joint:
+        known = none = 0
+        by_reason = dict.fromkeys(ExclusionReason, 0)
+        for k, b, n in rows:
+            if k not in (0, 1) or n <= 0 or not 0 <= b <= _ALL_EXCLUSIONS or (k == 1) != (b == 0):
+                raise QueryError("a materialisation's joint query gave a row it cannot give")
+            if k:
+                known += n
+                continue
+            none += n
+            for reason, flag in EXCLUSION_BIT.items():
+                if b & flag:
+                    by_reason[reason] += n
+        return Joint(known, none, MappingProxyType(by_reason))
+
+
+def compile_materialised(
+    cohorts: Sequence[ResolvedCohort],
+    variables: Sequence[ResolvedVariable],
+    sources: Mapping[str, TableSource],
+) -> CompiledMaterialised:
+    """The queries that materialise variables over cohorts of one release's unit table, their
+    parts compiled once each over one compiler. Raises ``CompileError``."""
+    if not cohorts or not variables:
+        raise CompileError("a materialisation has cohorts and variables")
+    first = cohorts[0]
+    if any(
+        part.release is not first.release or part.unit != first.unit
+        for part in (*cohorts, *variables)
+    ):
+        raise CompileError("a materialisation's parts share one release and one unit table")
+    coverage: dict[str, Coverage] = {}
+    for part in (*cohorts, *variables):
+        coverage.update(part.coverage)
+    merged = replace(first, coverage=dict(sorted(coverage.items())))
+    return _Compiler(merged, sources).materialised(cohorts, variables)
+
+
 def compile_cohort(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> CompiledCohort:
     """A resolved cohort's queries over its release's table blobs, ``sources`` by table id.
     Raises ``CompileError``."""
@@ -1057,6 +1318,536 @@ class _Compiler:
                 copy=False,
             )
         return select
+
+    # --- Materialised variables (D326, D327) ---------------------------------------------------
+
+    def materialised(
+        self, cohorts: Sequence[ResolvedCohort], variables: Sequence[ResolvedVariable]
+    ) -> CompiledMaterialised:
+        members = [cast(str, self.part(cohort)) for cohort in cohorts]
+        units = [self.variable(variable) for variable in variables]
+        selects: list[exp.Query] = []
+        for member in members:
+            selects += [
+                self.materialised_rows(member, variable, found)
+                for variable, found in zip(variables, units, strict=True)
+            ]
+            if len(variables) > 1:
+                selects.append(self.joint(member, [found[0] for found in units]))
+        ctes = [self.base_cte(base) for base in self.bases.values()]
+        ctes += [
+            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
+        ]
+        shapes = tuple(
+            _Shape(
+                variable.kind,
+                variable.datatype,
+                variable.function,
+                variable.order,
+                None
+                if variable.empty is None
+                else normalised(cast(Value, variable.empty), variable.datatype, variable.function),
+            )
+            for variable in variables
+        )
+        return CompiledMaterialised(
+            statements=tuple(
+                self.with_ctes(select, ctes).sql(dialect="duckdb") for select in selects
+            ),
+            parameters=MappingProxyType(dict(self.parameters)),
+            marks=self.marks,
+            cohorts=len(members),
+            shapes=shapes,
+            blobs=frozenset(self.blobs),
+        )
+
+    def variable(self, variable: ResolvedVariable) -> tuple[str, str | None]:
+        """A variable's relation over the unit table, one row per unit: ``rid``, ``x`` the bits of
+        the reasons it is excluded (0 for a unit with a value), ``e`` 1 for a unit of an
+        aggregate with no value to aggregate that takes ``empty``, ``val`` its value (a
+        ``count``'s rows; nothing for ``max``, ``min`` and ``mean``), and the flag words; and,
+        for ``max``, ``min`` and ``mean``, the relation of each unit's pooled rows by value
+        (``rid``, ``val``, ``n``)."""
+        key = ("variable", canonical(variable_form(variable)))
+        found = self.memo.get(key)
+        if found is not None:
+            return found, self.memo.get((*key, "groups"))
+        groups: str | None = None
+        if variable.kind == "column":
+            found = self.column_variable(variable)
+        elif variable.kind == "question":
+            assert variable.question is not None
+            question = self.node(variable.question, variable.unit)
+            unknown = _eq(_col("q", "v"), _num(UNKNOWN_CODE))
+            select = _select(
+                _as(_col("q", "rid"), "rid"),
+                _as(_case([(unknown, _col("q", "r"))], _num(0)), "x"),
+                _as(_num(0), "e"),
+                _as(_eq(_col("q", "v"), _num(TRUE_CODE)), "val"),
+                *(_as(word, f"m{at}") for at, word in enumerate(self.words_of("q"))),
+            )
+            found = self.cte(select.from_(_table(question, "q"), copy=False))
+        else:
+            found, groups = self.aggregate_variable(variable)
+        self.memo[key] = found
+        if groups is not None:
+            self.memo[(*key, "groups")] = groups
+        return found, groups
+
+    def column_variable(self, variable: ResolvedVariable) -> str:
+        """A column of the unit table, or of the row its up steps look up: its value, or the
+        exclusion its cell's state or a missing row gives."""
+        unit = variable.unit
+        table, column = variable.column.split(".", 1)
+        base = self.base(unit).name
+        select = _select().from_(_table(base, "u"), copy=False)
+        if variable.via:
+            lookup = self.lookup(unit, variable.via)
+            select = select.join(
+                _table(lookup, "l"), on=_eq(_col("l", "rid"), _col("u", "rid")), copy=False
+            )
+            target: Expression = _col("l", "target")
+        else:
+            target = _col("u", "rid")
+        select = select.join(
+            _table(self.base(table).name, "o"),
+            on=_eq(_col("o", "rid"), target),
+            join_type="left",
+            copy=False,
+        )
+        x = self.cell_exclusion(table, column, "o")
+        if variable.via:
+            missing = exp.Is(this=_col("l", "target"), expression=exp.Null())
+            x = _case([(missing, _num(EXCLUSION_BIT[ExclusionReason.NO_PARENT]))], x)
+        value = self.stored_value("o", table, column)
+        select = select.select(
+            _as(_col("u", "rid"), "rid"),
+            _as(x, "x"),
+            _as(_num(0), "e"),
+            _as(_zero(value, self.default_value(table, column)), "val"),
+            *(_as(word, f"m{at}") for at, word in enumerate(self.zeros())),
+            copy=False,
+        )
+        return self.cte(select)
+
+    def stored_value(self, alias: str, table: str, column: str) -> Expression:
+        """A column's stored value as a variable reads it."""
+        return _col(alias, cast(str, self.slot(table, column)))
+
+    def default_value(self, table: str, column: str) -> Expression:
+        """A value of a column's stored type that stands in the rows of a unit without one,
+        which no reader takes as a value."""
+        kind = self.physical(table, column)
+        if kind == "bool":
+            return exp.false()
+        if kind in ("string", "strings"):
+            return exp.Literal.string("")
+        return _num(0)
+
+    def cell_exclusion(self, table: str, column: str, alias: str) -> Expression:
+        """The bits of the reason a cell excludes its unit: none where it is PRESENT, and
+        ``NOT_APPLICABLE``, ``NOT_ASSESSED`` or ``NO_INFORMATION`` by its state (§6.2)."""
+        state = self.state_of(alias, table, column)
+        if state is None:
+            return _num(0)
+        present = _eq(state, exp.Literal.string(ObservationState.PRESENT.value))
+        applicable = _eq(state, exp.Literal.string(ObservationState.NOT_APPLICABLE.value))
+        assessed = _eq(state, exp.Literal.string(ObservationState.NOT_ASSESSED.value))
+        return _case(
+            [
+                (present, _num(0)),
+                (applicable, _num(EXCLUSION_BIT[ExclusionReason.NOT_APPLICABLE])),
+                (assessed, _num(EXCLUSION_BIT[ExclusionReason.NOT_ASSESSED])),
+            ],
+            _num(EXCLUSION_BIT[ExclusionReason.NO_INFORMATION]),
+        )
+
+    def aggregate_variable(self, variable: ResolvedVariable) -> tuple[str, str | None]:
+        """An aggregate (§9.2, D326): each unit's pooling, as a truth value (TRUE where it pooled
+        its rows, UNKNOWN for its reasons), its pooled rows, and their values."""
+        assert variable.rows is not None
+        function = variable.function
+        questions = levels(variable.rows, variable.depth)
+        status, pooled = self.pooled(questions, 0, variable.unit)
+        counted: list[Expression] = [
+            _as(_col("p", "rid"), "rid"),
+            _as(exp.Count(this=exp.Star()), "cnt"),
+        ]
+        groups: str | None = None
+        select = _select().from_(_table(pooled, "p"), copy=False)
+        if function != "count":
+            values = self.row_values(variable, questions[-1].table)
+            select = select.join(
+                _table(values, "w"), on=_eq(_col("w", "rid"), _col("p", "leaf")), copy=False
+            )
+            usable = _and(_eq(_col("w", "vr"), _num(0)), exp.Not(this=_col("w", "sk")))
+            counted += [
+                _as(
+                    exp.Filter(this=exp.Count(this=exp.Star()), expression=exp.Where(this=usable)),
+                    "nv",
+                ),
+                _as(_zero(_fn("bit_or", _col("w", "vr"))), "vr"),
+            ]
+            grouped = _select(
+                _as(_col("p", "rid"), "rid"),
+                _as(_col("w", "val"), "val"),
+                _as(exp.Count(this=exp.Star()), "n"),
+            ).from_(_table(pooled, "p"), copy=False)
+            grouped = grouped.join(
+                _table(values, "w"), on=_eq(_col("w", "rid"), _col("p", "leaf")), copy=False
+            )
+            grouped = grouped.where(usable.copy(), copy=False)
+            groups = self.cte(grouped.group_by(_col("p", "rid"), _col("w", "val"), copy=False))
+        else:
+            counted += [_as(_num(0), "nv"), _as(_num(0), "vr")]
+        tallied = self.cte(
+            select.select(*counted, copy=False).group_by(_col("p", "rid"), copy=False)
+        )
+        unknown = _eq(_col("s", "v"), _num(UNKNOWN_CODE))
+        value_reasons = _zero(_col("a", "vr"))
+        none = _eq(_zero(_col("a", "nv")), _num(0))
+        branches: list[tuple[Expression, Expression]] = [
+            (unknown, _col("s", "r")),
+            (exp.NEQ(this=value_reasons, expression=_num(0)), value_reasons.copy()),
+        ]
+        empty: Expression = _num(0)
+        if function != "count":
+            if variable.empty is None:
+                branches.append((none, _num(EXCLUSION_BIT[ExclusionReason.NO_ROWS])))
+            else:
+                empty = _case([(none.copy(), _num(1))], _num(0))
+        unit = _select(
+            _as(_col("s", "rid"), "rid"),
+            _as(_case(branches, _num(0)), "x"),
+            _as(empty, "e"),
+            _as(_zero(_col("a", "cnt")), "val"),
+            *(_as(word, f"m{at}") for at, word in enumerate(self.words_of("s"))),
+        ).from_(_table(status, "s"), copy=False)
+        unit = unit.join(
+            _table(tallied, "a"),
+            on=_eq(_col("a", "rid"), _col("s", "rid")),
+            join_type="left",
+            copy=False,
+        )
+        return self.cte(unit), groups
+
+    def row_values(self, variable: ResolvedVariable, table: str) -> str:
+        """Each row of the last step's table: its value read through the lookups after the last
+        down step (``val``), whether it is skipped, NOT_APPLICABLE (``sk``), and the bits of the
+        reasons it makes its unit unknown (``vr``): a cell not assessed or empty, a lookup that
+        reaches no row, or an ordered category outside its listed values (§6.4); a skipped row
+        has none, whatever its value, since §9.2 skips it (an ordered category's NOT_APPLICABLE
+        cell is outside its list, but is skipped, not NO_INFORMATION)."""
+        owner, column = variable.column.split(".", 1)
+        base = self.base(table).name
+        select = _select().from_(_table(base, "r"), copy=False)
+        if variable.lookup:
+            lookup = self.lookup(table, variable.lookup)
+            select = select.join(
+                _table(lookup, "l"), on=_eq(_col("l", "rid"), _col("r", "rid")), copy=False
+            )
+            target: Expression = _col("l", "target")
+        else:
+            target = _col("r", "rid")
+        select = select.join(
+            _table(self.base(owner).name, "o"),
+            on=_eq(_col("o", "rid"), target),
+            join_type="left",
+            copy=False,
+        )
+        cell = self.cell_exclusion(owner, column, "o")
+        applicable = EXCLUSION_BIT[ExclusionReason.NOT_APPLICABLE]
+        skipped: Expression = _eq(cell, _num(applicable))
+        reasons: Expression = _case([(skipped.copy(), _num(0))], cell.copy())
+        value = self.stored_value("o", owner, column)
+        if variable.order is not None:
+            position = exp.Sub(
+                this=_fn("list_position", self.parameter(variable.order), value),
+                expression=_num(1),
+            )
+            listed = exp.Not(this=exp.Is(this=position.copy(), expression=exp.Null()))
+            reasons = _case(
+                [
+                    (skipped.copy(), _num(0)),
+                    (exp.NEQ(this=reasons.copy(), expression=_num(0)), reasons.copy()),
+                    (listed, _num(0)),
+                ],
+                _num(EXCLUSION_BIT[ExclusionReason.NO_INFORMATION]),
+            )
+            value = position
+        if variable.lookup:
+            missing = exp.Is(this=_col("l", "target"), expression=exp.Null())
+            skipped = _and(exp.Not(this=missing), skipped)
+            reasons = _case(
+                [(missing.copy(), _num(EXCLUSION_BIT[ExclusionReason.NO_PARENT]))], reasons
+            )
+        select = select.select(
+            _as(_col("r", "rid"), "rid"),
+            _as(skipped, "sk"),
+            _as(reasons, "vr"),
+            _as(
+                _zero(
+                    value,
+                    _num(0) if variable.order is not None else self.default_value(owner, column),
+                ),
+                "val",
+            ),
+            copy=False,
+        )
+        return self.cte(select)
+
+    def pooled(self, questions: Sequence[RExists], index: int, table: str) -> tuple[str, str]:
+        """The pooling of an aggregate's chain from its ``index``-th question, for each row of
+        ``table``: a truth relation, TRUE where it pooled rows and UNKNOWN for its reasons, with
+        its flags; and the relation of its pooled rows (``rid``, ``leaf``), each row of the last
+        step's table reached through the children kept at every earlier step
+        (``variables``' module docstring states the rules, ``Evaluator.pool`` is held to)."""
+        node = questions[index]
+        key = ("pooled", canonical(canonical_clause(node)), index, len(questions), table)
+        found = self.memo.get(key)
+        if found is not None:
+            return found, self.memo[(*key, "rows")]
+        ups, step = node.via[:-1], node.step
+        coverage = self.coverage[step.rel]
+        child = coverage.child_table
+        parent = coverage.parent_table
+        up = self.lookup(child, (Step(step.rel, "up"),))
+        last = index == len(questions) - 1
+        if last:
+            value = self.combine("all", [self.node(clause, child) for clause in node.where], child)
+            if coverage.record_filter:
+                value = self.combine("all", [value, self.record_filter(coverage)], child)
+            stats = self.children(step.rel, value, None, 0, None)
+            kept_rows = _select(_as(_col("u", "target"), "pid"), _as(_col("w", "rid"), "leaf"))
+            kept_rows = kept_rows.from_(_table(value, "w"), copy=False).join(
+                _table(up, "u"), on=_eq(_col("u", "rid"), _col("w", "rid")), copy=False
+            )
+            kept_rows = kept_rows.where(
+                _and(
+                    _eq(_col("w", "v"), _num(TRUE_CODE)),
+                    exp.Not(this=exp.Is(this=_col("u", "target"), expression=exp.Null())),
+                ),
+                copy=False,
+            )
+        else:
+            below, below_rows = self.pooled(questions, index + 1, child)
+            drop = _DROP[node.lift or "strict"]
+            stats = self.children(step.rel, below, None, drop, None)
+            kept = exp.Not(
+                this=_and(
+                    _eq(_col("s", "v"), _num(UNKNOWN_CODE)),
+                    _eq(
+                        exp.Paren(
+                            this=exp.BitwiseAnd(
+                                this=_col("s", "r"), expression=_num(_ALL_REASONS ^ drop)
+                            )
+                        ),
+                        _num(0),
+                    ),
+                )
+            )
+            kept_rows = _select(_as(_col("u", "target"), "pid"), _as(_col("b", "leaf"), "leaf"))
+            kept_rows = kept_rows.from_(_table(below_rows, "b"), copy=False)
+            kept_rows = kept_rows.join(
+                _table(below, "s"), on=_eq(_col("s", "rid"), _col("b", "rid")), copy=False
+            )
+            kept_rows = kept_rows.join(
+                _table(up, "u"), on=_eq(_col("u", "rid"), _col("b", "rid")), copy=False
+            )
+            kept_rows = kept_rows.where(
+                _and(kept, exp.Not(this=exp.Is(this=_col("u", "target"), expression=exp.Null()))),
+                copy=False,
+            )
+        closed = self.closedness(coverage, "some", _admitted(node))
+        terms = _Terms(self, coverage)
+        partial = self.mark_words(
+            [Mark(Flag.SCOPE_PARTIAL, coverage.relationship)] if coverage.scope_columns else []
+        )
+        restricted = _and(terms.closed, _col("cl", "rs"))
+        reasons = _bits(terms.open(terms.crs), terms.ru)
+        if not last:
+            reasons = _bits(
+                reasons,
+                _case([(_eq(terms.nk, _num(0)), _num(REASON_BIT[Reason.NOT_COVERED]))], _num(0)),
+            )
+        words = tuple(
+            _bits(terms.prop[at], _case([(restricted.copy(), partial[at])], _num(0)), terms.ma[at])
+            for at in range(self.words)
+        )
+        answered = _Answer(
+            _case(
+                [(exp.NEQ(this=reasons.copy(), expression=_num(0)), _num(UNKNOWN_CODE))],
+                _num(TRUE_CODE),
+            ),
+            reasons,
+            words,
+        )
+        rows = _col("n", "rid")
+        answer = self.answer(
+            _table(self.base(parent).name, "n"),
+            rows,
+            _answered([terms.out_of_scope], answered),
+            [
+                (stats, "s", "aid", rows),
+                (self.scope(coverage), "sc", "rid", rows),
+                (closed, "cl", "rid", rows),
+            ],
+        )
+        at_parent = self.cte(kept_rows)
+        status = self.through(table, ups, parent, answer)
+        if ups:
+            lookup = self.lookup(table, ups)
+            reached = _select(_as(_col("l", "rid"), "rid"), _as(_col("k", "leaf"), "leaf"))
+            reached = reached.from_(_table(lookup, "l"), copy=False).join(
+                _table(at_parent, "k"), on=_eq(_col("k", "pid"), _col("l", "target")), copy=False
+            )
+            pooled_rows = self.cte(reached)
+        else:
+            pooled_rows = self.cte(
+                _select(_as(_col("k", "pid"), "rid"), _as(_col("k", "leaf"), "leaf")).from_(
+                    _table(at_parent, "k"), copy=False
+                )
+            )
+        self.memo[key] = status
+        self.memo[(*key, "rows")] = pooled_rows
+        return status, pooled_rows
+
+    def materialised_rows(
+        self, member: str, variable: ResolvedVariable, found: tuple[str, str | None]
+    ) -> exp.Query:
+        """One cohort's rows of one variable (``CompiledMaterialised``)."""
+        units, groups = found
+        words = self.words_of("u")
+        count = exp.Count(this=exp.Star())
+
+        def of(*columns: Expression) -> exp.Select:
+            select = _select(*columns).from_(_table(member, "c"), copy=False)
+            select = select.join(
+                _table(units, "u"), on=_eq(_col("u", "rid"), _col("c", "rid")), copy=False
+            )
+            return select
+
+        def ored() -> list[Expression]:
+            return [
+                _as(_zero(_fn("bit_or", word.copy())), f"m{at}") for at, word in enumerate(words)
+            ]
+
+        member_of = _eq(_col("c", "v"), _num(TRUE_CODE))
+        analysed = _and(member_of, _eq(_col("u", "x"), _num(0)))
+        default = self.default_of(variable)
+        excluded = of(
+            _as(_num(_EXCLUDED_ROWS), "t"),
+            _as(_num(0), "r"),
+            _as(default, "v"),
+            _as(_col("u", "x"), "x"),
+            _as(count.copy(), "n"),
+            *ored(),
+        )
+        excluded = excluded.where(
+            _and(member_of.copy(), exp.NEQ(this=_col("u", "x"), expression=_num(0))), copy=False
+        ).group_by(_col("u", "x"), copy=False)
+        parts: list[exp.Select] = [excluded]
+        if groups is None:
+            by_value = of(
+                _as(_num(_UNIT_ROWS), "t"),
+                _as(_num(0), "r"),
+                _as(_col("u", "val"), "v"),
+                _as(_num(0), "x"),
+                _as(count.copy(), "n"),
+                *ored(),
+            )
+            parts.append(
+                by_value.where(analysed.copy(), copy=False).group_by(_col("u", "val"), copy=False)
+            )
+        else:
+            empty = of(
+                _as(_num(_EMPTY_ROWS), "t"),
+                _as(_num(0), "r"),
+                _as(default.copy(), "v"),
+                _as(_num(0), "x"),
+                _as(count.copy(), "n"),
+                *ored(),
+            )
+            parts.append(
+                empty.where(
+                    _and(analysed.copy(), _eq(_col("u", "e"), _num(1))), copy=False
+                ).group_by(_col("u", "e"), copy=False)
+            )
+            pooled = _and(analysed.copy(), _eq(_col("u", "e"), _num(0)))
+            if variable.function in ("max", "min"):
+                pick = exp.Max if variable.function == "max" else exp.Min
+                picked = (
+                    _select(_col("g", "rid"), _as(pick(this=_col("g", "val")), "val"))
+                    .from_(_table(groups, "g"), copy=False)
+                    .group_by(_col("g", "rid"), copy=False)
+                )
+                extremes = of(
+                    _as(_num(_EXTREME_ROWS), "t"),
+                    _as(_num(0), "r"),
+                    _as(_col("p", "val"), "v"),
+                    _as(_num(0), "x"),
+                    _as(count.copy(), "n"),
+                    *ored(),
+                )
+                extremes = extremes.join(
+                    exp.Subquery(this=picked, alias=exp.TableAlias(this=_id("p"))),
+                    on=_eq(_col("p", "rid"), _col("u", "rid")),
+                    copy=False,
+                )
+                parts.append(
+                    extremes.where(pooled, copy=False).group_by(_col("p", "val"), copy=False)
+                )
+            else:
+                values = of(
+                    _as(_num(_VALUE_ROWS), "t"),
+                    _as(_col("g", "rid"), "r"),
+                    _as(_col("g", "val"), "v"),
+                    _as(_num(0), "x"),
+                    _as(_col("g", "n"), "n"),
+                    *(_as(word.copy(), f"m{at}") for at, word in enumerate(words)),
+                )
+                values = values.join(
+                    _table(groups, "g"), on=_eq(_col("g", "rid"), _col("u", "rid")), copy=False
+                )
+                parts.append(values.where(pooled, copy=False))
+        union: exp.Query = parts[0]
+        for part in parts[1:]:
+            union = exp.Union(this=union, expression=part, distinct=False)
+        return union
+
+    def default_of(self, variable: ResolvedVariable) -> Expression:
+        """The stand-in value of a variable's rows without one (``default_value``)."""
+        if variable.kind == "question":
+            return exp.false()
+        if variable.kind == "aggregate" and (variable.function == "count" or variable.order):
+            return _num(0)
+        table, column = variable.column.split(".", 1)
+        return self.default_value(table, column)
+
+    def joint(self, member: str, units: Sequence[str]) -> exp.Select:
+        """One cohort's joint rows: its units by whether some variable has a value, and, for
+        those for which none has, the bits of every reason (``CompiledMaterialised``)."""
+        conditions = [_eq(_col(f"u{index}", "x"), _num(0)) for index in range(len(units))]
+        known = conditions[0]
+        for condition in conditions[1:]:
+            known = exp.Or(this=known, expression=condition)
+        reasons = _bits(*(_col(f"u{index}", "x") for index in range(len(units))))
+        inner = _select(
+            _as(_case([(exp.Paren(this=known.copy()), _num(1))], _num(0)), "k"),
+            _as(_case([(exp.Paren(this=known.copy()), _num(0))], reasons), "b"),
+        ).from_(_table(member, "c"), copy=False)
+        for index, name in enumerate(units):
+            inner = inner.join(
+                _table(name, f"u{index}"),
+                on=_eq(_col(f"u{index}", "rid"), _col("c", "rid")),
+                copy=False,
+            )
+        inner = inner.where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+        outer = _select(_col("w", "k"), _col("w", "b"), _as(exp.Count(this=exp.Star()), "n"))
+        outer = outer.from_(
+            exp.Subquery(this=inner, alias=exp.TableAlias(this=_id("w"))), copy=False
+        )
+        return outer.group_by(_col("w", "k"), _col("w", "b"), copy=False)
 
     # --- Nodes ---------------------------------------------------------------------------------
 
@@ -2281,6 +3072,7 @@ def _bound(kind: PhysicalType, name: str, bound: Constant) -> object:
 
 
 __all__ = [
+    "EXCLUSION_BIT",
     "FALSE_CODE",
     "MARK_BITS",
     "REASON_BIT",
@@ -2290,6 +3082,7 @@ __all__ = [
     "CompileError",
     "CompiledCohort",
     "CompiledCrossing",
+    "CompiledMaterialised",
     "Crossed",
     "CrossedSplit",
     "Crossing",
@@ -2297,6 +3090,7 @@ __all__ = [
     "TruthValues",
     "compile_cohort",
     "compile_crossing",
+    "compile_materialised",
     "cross",
     "pairs",
 ]

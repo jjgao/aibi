@@ -100,6 +100,16 @@ class _Listing:
 
 
 @dataclass(frozen=True)
+class Pooled:
+    """What an aggregate's pooling found for a row (§9.2, D326): the rows of its last step's
+    table it pooled, or the reasons it is unknown, and the flags of what it read."""
+
+    rows: tuple[int, ...]
+    reasons: frozenset[Reason]
+    marks: frozenset[Mark]
+
+
+@dataclass(frozen=True)
 class CohortResult:
     """A cohort's truth value per unit, and its accounting (§6.6)."""
 
@@ -227,6 +237,11 @@ class Evaluator:
         return self._ids(node, table, row)
 
     # --- Lookups (§6.1) ----------------------------------------------------------------------
+
+    def follow(self, steps: Iterable[Step], table: str, row: int) -> tuple[str, int] | None:
+        """The row the up steps look up from a row of ``table``, or ``None`` for a null or
+        dangling key."""
+        return self._follow(steps, table, row)
 
     def _follow(self, steps: Iterable[Step], table: str, row: int) -> tuple[str, int] | None:
         """The row the up steps look up, or ``None`` for a null or dangling key."""
@@ -419,6 +434,60 @@ class Evaluator:
                 values = frozenset(key_part(value) for value in clause.predicate.values)
                 admitted[column] = admitted[column] & values if column in admitted else values
         return admitted
+
+    # --- Aggregates (§9.2, D326) --------------------------------------------------------------
+
+    def pool(self, questions: Sequence[RExists], index: int, table: str, row: int) -> Pooled:
+        """The rows an aggregate's chain of questions pools for a row of ``table``, from its
+        ``index``-th question on (``variables``' module docstring states the rules): the rows its
+        last question's conditions hold for, through the children kept at every earlier step;
+        or the reasons it is unknown, the closedness reasons of each parent row not closed, the
+        reasons of the kept children and the conditions that are unknown, and ``NOT_COVERED``
+        for an earlier step that keeps no child."""
+        node = questions[index]
+        found = self._follow(node.via[:-1], table, row)
+        if found is None:
+            return Pooled((), frozenset({Reason.NO_PARENT}), frozenset())
+        parent = found[1]
+        coverage = self.coverage[node.step.rel]
+        scope = self._scope(coverage, parent)
+        if scope.is_false:
+            return Pooled((), frozenset({Reason.OUT_OF_SCOPE}), frozenset())
+        marks: set[Mark] = set()
+        closedness = self._closed(coverage, parent, scope, self._admitted(node), "some")
+        reasons: set[Reason] = set()
+        marks.update(_proposed(coverage))
+        if not closedness.closed:
+            reasons.update(closedness.reasons)
+        elif closedness.restricted:
+            marks.update(_partial(coverage))
+        children = self.release.children(node.step.rel, parent)
+        child_table = coverage.child_table
+        rows: list[int] = []
+        if index < len(questions) - 1:
+            drop = _DROP[node.lift or "strict"]
+            kept = 0
+            for child in children:
+                below = self.pool(questions, index + 1, child_table, child)
+                marks.update(below.marks)
+                if below.reasons and below.reasons <= drop:
+                    continue
+                kept += 1
+                reasons.update(below.reasons)
+                rows.extend(below.rows)
+            if not kept:
+                reasons.add(Reason.NOT_COVERED)
+        else:
+            for child in children:
+                condition = all_of(self.truth(clause, child_table, child) for clause in node.where)
+                if coverage.record_filter:
+                    condition = all_of((condition, self._filter(coverage, child)))
+                marks.update(condition.marks)
+                if condition.is_true:
+                    rows.append(child)
+                elif condition.is_unknown:
+                    reasons.update(condition.reasons)
+        return Pooled(tuple(rows), frozenset(reasons), frozenset(marks))
 
     # --- Closedness (§6.5, step 4) -----------------------------------------------------------
 
@@ -699,4 +768,4 @@ def _within(value: Any, gt: Any, gte: Any, lt: Any, lte: Any) -> bool:
     )
 
 
-__all__ = ["CohortResult", "Evaluator", "evaluate"]
+__all__ = ["CohortResult", "Evaluator", "Pooled", "evaluate"]

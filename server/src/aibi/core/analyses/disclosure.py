@@ -24,6 +24,30 @@ one can be pinned, and a map of their reasons bounds a predicate's own map, supp
 each predicate's entry of ``variables`` carries its own. Whatever else a result carries
 (proportions' estimates and intervals, effects, tests, charts) is computed only from counts
 shown.
+
+**Variables** (D329). What a variable adds at a position is the split of the cohort's units into
+those it has a value for (``n``) and those it excludes (``excluded_units``), whose total is the
+cohort's ``n_true``, so the two are shown together or not at all (``split_hidden``); the units
+excluded by reason are shown only with them and when none of their counts is small. Of two or
+more variables, nothing that combines them is shown, as of predicates. Within ``n``:
+
+- **Categories and histogram bins** are merged as §8.4 has them (``merged``), categories in the
+  order they are listed: repeatedly, the leftmost with 1 to *k* − 1 units is merged with the
+  nearest non-empty one on its right (on its left when none is), empty ones between them
+  included, until none has 1 to *k* − 1 units or one non-empty one is left; the counts merged are
+  never shown apart. The rule reads left to right, so a merged row's parts are those of every
+  way of filling it that merges the same, and whatever it shows leaves each merged count two
+  values or more. The rule that merges the smallest first, toward the neighbour with fewer units,
+  gives the order it merged in away, and with it counts (3, 2, 2, 2 and 1 units in five bins
+  under *k* = 3 are the only ones it shows as 3, 4 and 3), as pooling small categories into one
+  row does whenever the row's count is read off: 1 each, or *k* − 1 each, or one category alone.
+
+What is computed from a variable's values rather than counted is never shown: values are not
+counts, so the rule that hides counts from 1 to *k* − 1 cannot protect them (a mean over coarse
+bins gives the counts finer bins hide, and a standard deviation of zero every unit's value). Each
+quartile is given as the bin that holds it, read off the merged bins' counts (``null`` where the
+two values it lies between are in two bins); a category column's undeclared values are one row
+that names none of them.
 """
 
 from collections.abc import Sequence
@@ -76,4 +100,29 @@ def hidden(size_shown: bool, splits: Sequence[Split], k: int) -> Hidden:
     return Hidden(tuple(true), tuple(unknown), unknown[0] if len(splits) == 1 else True)
 
 
-__all__ = ["Hidden", "Split", "hidden", "small"]
+def split_hidden(n: int, excluded_units: int, k: int) -> bool:
+    """Whether a variable's split of a cohort's shown ``n_true`` is suppressed: either part
+    from 1 to *k* − 1, which the other, beside ``n_true``, would give away."""
+    return small(k, n) or small(k, excluded_units)
+
+
+def merged(counts: Sequence[int], k: int) -> list[tuple[int, int]]:
+    """Categories' or histogram bins' counts merged under *k* (module docstring): each row of the
+    result as the span of those it merges, first and last included."""
+    spans = [(index, index) for index in range(len(counts))]
+    sizes = list(counts)
+    while True:
+        at = next((i for i, size in enumerate(sizes) if small(k, size)), None)
+        filled = [i for i, size in enumerate(sizes) if size > 0]
+        if at is None or len(filled) <= 1:
+            return spans
+        right = min((i for i in filled if i > at), default=None)
+        if right is None:
+            start, end = max(i for i in filled if i < at), at
+        else:
+            start, end = at, right
+        spans[start : end + 1] = [(spans[start][0], spans[end][1])]
+        sizes[start : end + 1] = [sum(sizes[start : end + 1])]
+
+
+__all__ = ["Hidden", "Split", "hidden", "merged", "small", "split_hidden"]

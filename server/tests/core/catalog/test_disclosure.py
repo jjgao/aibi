@@ -133,7 +133,7 @@ def test_a_list_column_s_pooled_row_has_no_count() -> None:
     assert _d(found)["categories"] == [["a", 20]]
 
 
-def test_small_bins_merge_the_smallest_first_toward_the_neighbour_with_fewer_values() -> None:
+def test_a_small_bin_merges_with_the_next_non_empty_bin_on_its_right() -> None:
     raw = _table(40, c=_column(_states(40), _histogram([0, 10, 2, 3, 20, 0, 5, 0])))
     found = disclose_table(raw, 5)
     bins = _d(found)["bins"]
@@ -200,17 +200,23 @@ def test_a_suppressed_count_is_null_with_its_reason() -> None:
     assert dumped["not_estimable"] == {"/count": "suppressed"}
 
 
-def test_the_smallest_bin_merges_first() -> None:
+def test_small_bins_merge_from_the_left() -> None:
     raw = _table(40, c=_column(_states(16), _histogram([0, 1, 6, 3, 6])))
     bins = _d(disclose_table(raw, 5))["bins"]
     assert [b["count"] for b in bins] == [0, 7, 9]
 
 
-def test_a_small_bin_between_neighbours_of_one_size_merges_to_the_left() -> None:
+def test_a_small_bin_merges_to_the_right_whatever_its_neighbours_hold() -> None:
     raw = _table(40, c=_column(_states(14), _histogram([0, 6, 2, 6])))
     bins = _d(disclose_table(raw, 5))["bins"]
-    assert [b["count"] for b in bins] == [0, 8, 6]
-    assert (bins[1]["low"], bins[1]["high"]) == (0.0, 2.0)
+    assert [b["count"] for b in bins] == [0, 6, 8]
+    assert (bins[2]["low"], bins[2]["high"]) == (1.0, None)
+
+
+def test_a_small_last_bin_merges_with_the_bin_before_it() -> None:
+    raw = _table(40, c=_column(_states(14), _histogram([0, 6, 6, 2])))
+    bins = _d(disclose_table(raw, 5))["bins"]
+    assert [b["count"] for b in bins] == [0, 6, 8]
 
 
 def test_the_open_bin_above_the_last_edge_holds_neither_edge() -> None:

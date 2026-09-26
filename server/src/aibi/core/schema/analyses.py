@@ -1,4 +1,5 @@
-"""The parameters and values of the core's analyses (SPEC §8.1, §8.2, §9.1, §9.5; D319).
+"""The parameters and values of the core's analyses (SPEC §8.1, §8.2, §9.1, §9.2, §9.5; D319,
+D325, D328, D330).
 
 An analysis's parameters are a view's ``params`` after substitution (§7.4): objects with fixed
 keys, whose clauses are the document's own. Its values are the ``values`` of its result
@@ -16,23 +17,67 @@ of every unit of the view's cohorts, and ``level``, the level of every interval.
   known (Fisher's exact test for two, chi-squared for more), and the risk difference and the
   risk ratio of every other position versus the reference; and the Benjamini–Hochberg family of
   those tests, with how many left it.
+
+A **variable** (``Variable``, D325) is a column a view reads one value per unit of: a column of the
+unit table or of a row it looks up, or an aggregate of the rows below it (§9.2): ``count``,
+``max``, ``min`` or ``mean`` of the rows reached at the last down step of its path (``where``
+their conditions, ``lift`` the rule of every earlier step, ``empty`` the value of a unit with no
+row to aggregate), or ``some`` or ``every`` with a ``values`` set, an existence question.
+
+``summary.distribution`` (D328) takes ``columns``, one to ``MAX_VARIABLES`` variables. Its
+values, per position and column in parameter order: for categories, the cohort's units per
+category over those for which the value is known, categories merged under a disclosure setting
+and a category column's undeclared values one ``other_values`` row there (D329); for numbers, n,
+mean, standard deviation, median, quartiles, minimum, maximum and a histogram, and under a
+disclosure setting only the histogram's merged bins and the quartiles' bins. ``summary.members``
+comes with M3.2b (D324).
 """
 
-from typing import Annotated
+from itertools import pairwise
+from typing import Annotated, Literal, Self, cast
 
-from pydantic import Field
+from pydantic import (
+    AfterValidator,
+    Discriminator,
+    Field,
+    StrictBool,
+    StrictInt,
+    Tag,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
-from aibi.core.schema.document import Clause, DocModel
-from aibi.core.schema.limits import MAX_COHORTS, MAX_PREDICATES, PREDICATES, LimitName
+from aibi.core.schema.document import (
+    Clause,
+    ClauseList,
+    ColumnOrConcept,
+    DocModel,
+    Lift,
+    Scalar,
+    ValueList,
+    Via,
+)
+from aibi.core.schema.limits import (
+    BINS,
+    MAX_BINS,
+    MAX_CATEGORIES,
+    MAX_COHORTS,
+    MAX_PREDICATES,
+    MAX_VARIABLES,
+    PREDICATES,
+    VARIABLES,
+    LimitName,
+)
 from aibi.core.schema.numbers import (
     ComputedCount,
     EffectSize,
     Estimable,
     HypothesisTest,
     Level,
+    Number,
     Proportion,
 )
-from aibi.core.schema.output import Count, Output
+from aibi.core.schema.output import COMPUTED, Count, Data, Finite, Output
 
 MAX_LEVEL = 1 - 1e-9
 """The highest level of an interval of the core's analyses: the normal quantile of a level within
@@ -102,12 +147,229 @@ class ExistenceValues(Output):
     view: ExistenceView
 
 
+# --- Variables (§9.2; D325) --------------------------------------------------------------------
+
+Aggregate = Literal["count", "max", "min", "mean", "some", "every"]
+"""How a variable takes one value per unit of the rows below it (§9.2): ``count``, ``max``,
+``min`` or ``mean`` of the rows its path reaches, or whether ``some`` or ``every`` row has a
+value in ``values``."""
+NUMERIC_AGGREGATES: tuple[Aggregate, ...] = ("count", "max", "min", "mean")
+EXISTENCE_AGGREGATES: tuple[Aggregate, ...] = ("some", "every")
+EXCLUDE = "exclude"
+"""``empty``'s default: a unit with no row to aggregate is excluded (``NO_ROWS``, §9.2)."""
+
+
+def _edges(value: list[float]) -> list[float]:
+    if any(later <= earlier for earlier, later in pairwise(value)):
+        raise PydanticCustomError("bins_order", "Histogram edges are strictly increasing")
+    return value
+
+
+Edges = Annotated[
+    list[Finite],
+    Field(min_length=2, max_length=MAX_BINS + 1),
+    LimitName(BINS),
+    AfterValidator(_edges),
+]
+"""A histogram's edges, e₀ < e₁ < … < e_B: bins [eᵢ, eᵢ₊₁), the last closed (§8.4)."""
+
+
+class Variable(DocModel):
+    """A column a view reads, one value per unit (§9.2; D325)."""
+
+    column: ColumnOrConcept
+    via: Via | None = None
+    """The path from the unit table to the column's table (§6.1)."""
+    aggregate: Aggregate | None = None
+    """Required for a column below the unit or a list column (§9.2)."""
+    values: ValueList | None = None
+    """With ``some`` and ``every``, and only with them."""
+    where: ClauseList | None = None
+    """With ``count``, ``max``, ``min`` and ``mean``: the conditions a row reached at the last
+    down step must meet to be aggregated, on the column's table as an ``exists`` leaf's
+    ``where`` is (§6.5)."""
+    lift: Lift | None = None
+    """The rule of every intermediate step, ``strict`` by default (§6.5, §9.2)."""
+    empty: Scalar | None = None
+    """With ``max``, ``min`` and ``mean``: the value of a unit whose rows hold none, or
+    ``"exclude"`` (the default), which leaves it out (``NO_ROWS``)."""
+    bins: Edges | None = None
+    """For numbers: a histogram's edges; without them, the column's declared ``range`` in
+    ``BINS`` equal bins, or, without a disclosure setting, the data's."""
+    count: Literal["rows"] | None = None
+    """``"rows"`` counts rows rather than units (§9.2): refused until M3.2c (D324)."""
+
+    @model_validator(mode="after")
+    def _check_members(self) -> Self:
+        aggregate = self.aggregate
+        if self.values is not None and aggregate not in EXISTENCE_AGGREGATES:
+            raise PydanticCustomError(
+                "conflicting_members", 'values goes with aggregate "some" or "every"'
+            )
+        if aggregate in EXISTENCE_AGGREGATES and self.values is None:
+            raise PydanticCustomError(
+                "conflicting_members", 'aggregate "some" or "every" asks about values: give them'
+            )
+        if self.where is not None and aggregate not in NUMERIC_AGGREGATES:
+            raise PydanticCustomError(
+                "conflicting_members",
+                'where goes with aggregate "count", "max", "min" or "mean"; for "some" and '
+                '"every", ask the question as a compare.existence predicate',
+            )
+        if self.empty is not None and aggregate not in ("max", "min", "mean"):
+            raise PydanticCustomError(
+                "conflicting_members", 'empty goes with aggregate "max", "min" or "mean"'
+            )
+        return self
+
+
+# --- summary.distribution (D328) ----------------------------------------------------------------
+
+BINS_OF_A_RANGE = 10
+"""*B*: the equal bins a declared ``range``, or without a disclosure setting the data, is
+divided into when a variable gives no ``bins`` (§8.4)."""
+
+
+class DistributionParams(DocModel):
+    """``summary.distribution``'s parameters (D328)."""
+
+    columns: Annotated[
+        list[Variable], Field(min_length=1, max_length=MAX_VARIABLES), LimitName(VARIABLES)
+    ]
+    """The variables, in the order the values give them."""
+
+
+class CategoryShare(Output):
+    """One category at one position, or under a disclosure setting several merged into one row
+    (§8.4, D329): its units, over the units for which the value is known."""
+
+    values: Annotated[list[Data], Field(max_length=MAX_CATEGORIES)]
+    """The category as data (a value of the column; ``"false"`` or ``"true"`` for a boolean one
+    or a ``some`` or ``every`` aggregate), or the categories merged, in their listed order."""
+    other_values: Literal[True] | None = None
+    """Under a disclosure setting, a category column's values that it does not declare, one row
+    that names none of them (D329), merged as the categories are; absent otherwise."""
+    proportion: Proportion
+
+    @model_validator(mode="after")
+    def _check_named(self) -> Self:
+        if not self.values and self.other_values is None:
+            raise PydanticCustomError("empty_row", "A row names a category or holds other values")
+        return self
+
+
+class CategoryDistribution(Estimable):
+    """A categorical variable at one position (D328, D329). ``categories`` lists the declared
+    permissible values in their order, zeros included, then the other values in canonical order,
+    or under a disclosure setting one row of them that names none (``other_values``), the rows
+    the disclosure settings merged in one row each; ``null`` when suppressed."""
+
+    kind: Literal["categories"]
+    categories: Annotated[list[CategoryShare] | None, COMPUTED, Field(max_length=MAX_CATEGORIES)]
+
+
+class HistogramBin(Output):
+    """A bin [low, high), or [low, high] for the last; ``low`` is ``null`` for the open bin
+    below the first edge and ``high`` for the one above the last."""
+
+    low: Finite | None
+    high: Finite | None
+    includes_low: StrictBool
+    includes_high: StrictBool
+    count: Count
+
+
+class Histogram(Output):
+    edges_from: Literal["params", "range", "data"]
+    """Where its edges came from: the view's ``bins``, the column's declared ``range``, or,
+    without a disclosure setting, the data (§8.4)."""
+    bins: Annotated[list[HistogramBin], Field(min_length=1, max_length=MAX_BINS + 2)]
+
+
+BinIndex = Annotated[StrictInt, Field(ge=0, le=MAX_BINS + 1)]
+
+
+class NumberDistribution(Estimable):
+    """A numeric variable at one position (D328, D329). Under a disclosure setting the minimum
+    and maximum are suppressed, the quartiles are given as the (merged) bin that holds each
+    (``q1_bin``, ``median_bin``, ``q3_bin``), and no statistic of the values themselves (mean,
+    standard deviation, median, quartiles) is shown."""
+
+    kind: Literal["numbers"]
+    n: ComputedCount
+    mean: Number
+    sd: Number
+    median: Number
+    q1: Number
+    q3: Number
+    min: Number
+    max: Number
+    histogram: Annotated[Histogram | None, COMPUTED]
+    q1_bin: Annotated[BinIndex | None, COMPUTED] = None
+    median_bin: Annotated[BinIndex | None, COMPUTED] = None
+    q3_bin: Annotated[BinIndex | None, COMPUTED] = None
+    """Given only under a disclosure setting: the index of the bin that holds each, ``null``
+    (``suppressed``) where the two values the quantile lies between are in two bins (D329)."""
+
+
+def _distribution_kind(value: object) -> str | None:
+    kind: object = (
+        cast(dict[str, object], value).get("kind")
+        if isinstance(value, dict)
+        else getattr(value, "kind", None)
+    )
+    return kind if isinstance(kind, str) and kind in ("categories", "numbers") else None
+
+
+ColumnDistribution = Annotated[
+    Annotated[CategoryDistribution, Tag("categories")]
+    | Annotated[NumberDistribution, Tag("numbers")],
+    Discriminator(
+        _distribution_kind,
+        custom_error_type="wrong_type",
+        custom_error_message='A column\'s distribution is of kind "categories" or "numbers"',
+    ),
+]
+
+
+class DistributionPosition(Output):
+    columns: Annotated[list[ColumnDistribution], Field(min_length=1, max_length=MAX_VARIABLES)]
+
+
+class NoViewValues(Output):
+    """The values of a view as a whole, for an analysis that gives none: descriptive only."""
+
+
+class DistributionValues(Output):
+    """``summary.distribution``'s ``values`` (§8.1): ``positions`` in view order."""
+
+    positions: Annotated[list[DistributionPosition], Field(min_length=1, max_length=MAX_COHORTS)]
+    view: NoViewValues
+
+
 __all__ = [
+    "BINS_OF_A_RANGE",
+    "EXCLUDE",
+    "EXISTENCE_AGGREGATES",
+    "NUMERIC_AGGREGATES",
+    "Aggregate",
+    "CategoryDistribution",
+    "CategoryShare",
+    "ColumnDistribution",
+    "DistributionParams",
+    "DistributionPosition",
+    "DistributionValues",
+    "Edges",
     "ExistenceParams",
     "ExistencePosition",
     "ExistenceValues",
     "ExistenceView",
     "Family",
+    "Histogram",
+    "HistogramBin",
+    "NoViewValues",
+    "NumberDistribution",
     "PredicateContrast",
     "PredicateShare",
+    "Variable",
 ]

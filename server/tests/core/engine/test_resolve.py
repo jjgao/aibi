@@ -295,7 +295,14 @@ def test_an_unknown_table_lists_the_graphs_tables(run: Runner, city: City, doc: 
 def test_an_unknown_column_lists_the_tables_columns(run: Runner, city: City, doc: Doc) -> None:
     refusal = refused(run, city, doc, value("inspections.kinds", values=["routine"]))
     assert (refusal.code, refusal.path) == ("UNKNOWN_COLUMN", "/cohorts/c/all/0/column")
-    assert alternatives(refusal) == ["establishment_id", "inspection_id", "kind", "on", "score"]
+    assert alternatives(refusal) == [
+        "establishment_id",
+        "inspection_id",
+        "kind",
+        "on",
+        "rating",
+        "score",
+    ]
 
 
 @pytest.mark.parametrize(

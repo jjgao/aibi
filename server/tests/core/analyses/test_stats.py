@@ -1,4 +1,5 @@
-"""The statistical methods of ``compare.existence`` against R (SPEC §9.3, §9.5, §13.4; D321).
+"""The statistical methods of ``compare.existence`` and ``summary.distribution`` against R (SPEC
+§9.3, §9.5, §13.4; D321, D328).
 
 ``reference/existence.json`` holds R's outputs, written once by ``reference/existence.R`` with
 the pinned calls it names; closed forms agree to 1e-10 relative, as §13.4 asks.
@@ -6,6 +7,7 @@ the pinned calls it names; closed forms agree to 1e-10 relative, as §13.4 asks.
 
 import json
 import math
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from aibi.core.analyses import stats
+from aibi.core.analyses.distribution import histogram
 
 REFERENCE: dict[str, Any] = json.loads(
     (Path(__file__).parent / "reference" / "existence.json").read_text()
@@ -159,3 +162,30 @@ def test_wilson_intervals_hold_their_estimate_within_zero_and_one(
 def test_levels_outside_zero_and_one_are_refused() -> None:
     with pytest.raises(ValueError, match="strictly between"):
         stats.z(1.0)
+
+
+def _weighted(values: list[float]) -> stats.Weighted:
+    return sorted(Counter(values).items())
+
+
+@pytest.mark.parametrize("case", REFERENCE["distribution"], ids=lambda c: str(c["values"][:3]))
+def test_a_distribution_s_mean_sd_quartiles_and_histogram_agree_with_r(
+    case: dict[str, Any],
+) -> None:
+    weighted = _weighted(case["values"])
+    centre = stats.mean(weighted)
+    spread = stats.sd(weighted, centre)
+    assert close(centre, case["mean"])
+    if case["sd"] in (None, 0):
+        assert spread is None
+    else:
+        assert spread is not None
+        assert close(spread, case["sd"])
+    for name, probability in (("q1", 0.25), ("median", 0.5), ("q3", 0.75)):
+        assert close(stats.quantile(weighted, probability), case[name])
+    assert [one.count for one in histogram(case["edges"], weighted)] == case["histogram"]
+
+
+def test_the_mean_of_integers_is_their_exact_sum_divided_once() -> None:
+    weighted = [(2**53 + 1, 1), (2**53 + 3, 1)]
+    assert stats.mean(weighted) == float(2**53 + 2)

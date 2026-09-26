@@ -4,6 +4,7 @@ transports call them. The SQL a query worker runs is held to the reference evalu
 digest: the same document run both ways gives one digest."""
 
 import json
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
@@ -11,13 +12,15 @@ from typing import Any, cast
 import pytest
 from pydantic import JsonValue
 
-from aibi.core.analyses import views
+from aibi.core.analyses import distribution, views
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.registry import Analyses
-from aibi.core.analyses.results import envelope
+from aibi.core.analyses.results import Outcome, envelope
 from aibi.core.catalog import analyses as analyses_module
-from aibi.core.catalog.service import Catalog
+from aibi.core.catalog.cohorts import RECORD_SECONDS
+from aibi.core.catalog.service import Catalog, Deadline, within
 from aibi.core.catalog.tools import BY_NAME, call
+from aibi.core.engine import sql as sql_module
 from aibi.core.engine import worker as worker_module
 from aibi.core.engine.canonical import canonicalise
 from aibi.core.engine.evaluate import evaluate
@@ -25,8 +28,9 @@ from aibi.core.engine.queries import run_cohorts
 from aibi.core.engine.resolve import ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import TruthValues, cross
-from aibi.core.engine.worker import QueryRefused, Workers
-from aibi.core.schema.analyses import ExistenceParams
+from aibi.core.engine.variables import evaluate_variable, joint, materialise
+from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams
 from aibi.core.schema.catalog import AnalysisListing, DatasetDescription
 from aibi.core.schema.caveats import CaveatCode
 from aibi.core.schema.cohorts import (
@@ -38,7 +42,7 @@ from aibi.core.schema.cohorts import (
 from aibi.core.schema.limits import QueryLimits
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.output import Output
-from aibi.core.schema.refusals import Refusal, RefusalCode
+from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 from aibi.core.schema.results import ResultEnvelope
 
 World = Any
@@ -128,10 +132,37 @@ def evaluated(
         floor=floor,
         positions=loaded.positions,
         predicates=[p for view in parsed for p in view.predicates],
+        variables=[v for view in parsed for v in view.variables],
     )
     found: list[ResultEnvelope] = []
     for view in views.checked(loaded.document, parsed, canonical)[0]:
         positions = [CohortAt(c, evaluate(c.resolved)) for c in view.cohorts]
+        outcome: Outcome
+        if isinstance(view.params, DistributionParams):
+            values = [evaluate_variable(variable.resolved) for variable in view.variables]
+            materialised = []
+            for cohort in view.cohorts:
+                members = [
+                    row
+                    for row, value in enumerate(evaluate(cohort.resolved).values)
+                    if value.is_true
+                ]
+                together = joint(values, members) if len(values) > 1 else None
+                materialised.append((tuple(materialise(v, members) for v in values), together))
+            outcome = distribution.summarise(
+                positions, view.variables, materialised, view.params, k=view.disclosure
+            )
+            found.append(
+                envelope(
+                    view,
+                    outcome,
+                    issuance="iss:01J0000000000000000000000A",
+                    written=dict(written),
+                    params={},
+                    engine="aibi test",
+                )
+            )
+            continue
         crossing = cross(
             [TruthValues.of(evaluate(c.resolved).values) for c in view.cohorts],
             [TruthValues.of(evaluate(p.resolved).values) for p in view.predicates],
@@ -161,6 +192,115 @@ def evaluated(
 
 
 # --- run_analysis ------------------------------------------------------------------------------
+
+COLUMNS: list[dict[str, Any]] = [
+    {"column": "trees.variety"},
+    {"column": "trees.height_m", "bins": [0, 2, 4, 6, 8]},
+    {"column": "harvests.kg", "aggregate": "mean", "bins": [0, 12, 14, 16, 20]},
+    {"column": "harvests.kg", "aggregate": "max", "empty": 0, "bins": [0, 12, 14, 16, 20]},
+    {
+        "column": "harvests.harvest_id",
+        "aggregate": "count",
+        "where": [{"kind": "value", "column": "harvests.grade", "values": ["A"]}],
+        "bins": [0, 1, 2, 3],
+    },
+    {"column": "trees.tags", "aggregate": "some", "values": ["old"]},
+]
+"""A distribution view's columns over the orchard: a category, a number with missing values,
+the mean and the greatest of a column below the unit (a tree with no harvest takes 0 as its
+greatest), a count of the rows that meet a condition, and a question about a list."""
+
+
+def distribution_document(columns: Sequence[Mapping[str, Any]] = COLUMNS) -> dict[str, Any]:
+    return document(
+        view={
+            "analysis": "summary.distribution",
+            "cohorts": ["apple", "pear"],
+            "params": {"columns": [dict(column) for column in columns]},
+        }
+    )
+
+
+@pytest.mark.parametrize("floor", [None, 2, 3, 5])
+def test_a_distribution_run_by_sql_gives_the_reference_evaluator_s_result(
+    world: World, orchard: Orchard, floor: int | None
+) -> None:
+    published = world.publish("orchard", orchard(40, harvests=60))
+    written = distribution_document()
+    [result] = run(catalog_of(world, floor=floor), written).results
+    [expected] = evaluated(world, published.manifest, written, floor=floor)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+    assert result.derivation.analysis.id == "summary.distribution"
+    assert len(result.charts) == len(COLUMNS)
+
+
+def test_a_distribution_s_issuance_records_its_materialisation_after_its_cohorts_counts(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    [result] = run(catalog, distribution_document(COLUMNS[:2])).results
+    issuance = explained(catalog, result.issuance.id).issuance
+    assert issuance is not None
+    assert isinstance(issuance.sql, dict)
+    queries = cast(list[dict[str, list[str]]], issuance.sql["queries"])
+    assert len(queries) == 3
+    assert len(queries[2]["statements"]) == 2 * 3
+
+
+def test_views_that_read_the_same_materialisation_share_its_run(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    ran: list[int] = []
+    given = analyses_module.run_views
+
+    def counted(
+        cohorts: Sequence[Any], crossings: Sequence[Any], read: Sequence[Any], *args: Any, **kw: Any
+    ) -> Any:
+        ran.append(len(read))
+        return given(cohorts, crossings, read, *args, **kw)
+
+    monkeypatch.setattr(analyses_module, "run_views", counted)
+    written = distribution_document(COLUMNS[:1])
+    written["views"] = written["views"] * 3
+    first, second, third = run(catalog_of(world), written).results
+    assert ran == [1]
+    assert first.digest == second.digest == third.digest
+
+
+def test_a_column_with_more_categories_than_a_result_lists_is_refused(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    monkeypatch.setattr(distribution, "MAX_CATEGORIES", 2)
+    written = distribution_document([COLUMNS[1], COLUMNS[0]])
+    written["cohorts"]["apple"] = {"all": []}
+    refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.LIMIT_EXCEEDED,
+        "/views/0/params/columns/1",
+    )
+    assert refusal.limit is not None
+    assert refusal.limit.name == "categories"
+
+
+def test_under_a_floor_a_number_without_bins_or_a_declared_range_is_refused(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard())
+    written = distribution_document([{"column": "trees.height_m"}])
+    refusal = refused(answer(catalog_of(world, floor=3), "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.MISSING_MEMBER,
+        "/views/0/params/columns/0/bins",
+    )
+    [result] = run(catalog_of(world), written).results
+    positions: Any = result.values.positions
+    height = positions[0]["columns"][0]
+    assert height["histogram"]["edges_from"] == "data"
 
 
 def test_run_analysis_computes_what_the_reference_evaluator_computes(
@@ -422,13 +562,13 @@ def test_a_query_two_views_ask_runs_once(
     world.publish("orchard", orchard())
     catalog = catalog_of(world)
     ran: list[tuple[int, int]] = []
-    given = analyses_module.run_crossed
+    given = analyses_module.run_views
 
     def counted(cohorts: Sequence[Any], crossings: Sequence[Any], *args: Any, **kwargs: Any) -> Any:
         ran.append((len(cohorts), len(crossings)))
         return given(cohorts, crossings, *args, **kwargs)
 
-    monkeypatch.setattr(analyses_module, "run_crossed", counted)
+    monkeypatch.setattr(analyses_module, "run_views", counted)
     [once] = run(catalog, document()).results
     written = document()
     written["views"] = written["views"] * 4 + [
@@ -480,13 +620,17 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     catalog = catalog_of(world)
     found = answer(catalog, "list_analyses", {})
     assert isinstance(found, AnalysisListing)
-    assert [entry["id"] for entry in found.analyses] == ["compare.existence"]
+    assert [entry["id"] for entry in found.analyses] == [
+        "compare.existence",
+        "summary.distribution",
+    ]
     assert found.applicable is None
     found = answer(catalog, "list_analyses", {"dataset": "orchard", "unit": "trees"})
     assert isinstance(found, AnalysisListing)
     assert found.applicable is not None
     assert [(a.analysis, a.status) for a in found.applicable] == [
-        ("compare.existence", "available")
+        ("compare.existence", "available"),
+        ("summary.distribution", "available_with_caveats"),
     ]
     assert found.release is not None
     assert found.release.label == 1
@@ -500,7 +644,10 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
     world.publish("orchard", orchard())
     found = answer(catalog_of(world), "describe_dataset", {"dataset": "orchard"})
     assert isinstance(found, DatasetDescription)
-    assert [a.analysis for a in found.applicable_analyses] == ["compare.existence"]
+    assert [a.analysis for a in found.applicable_analyses] == [
+        "compare.existence",
+        "summary.distribution",
+    ]
 
 
 def test_every_analysis_is_a_resource(world: World) -> None:
@@ -563,3 +710,93 @@ def test_an_answer_over_the_cap_names_the_widest_view(
     )
     refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
     assert (refusal.code, refusal.path) == (RefusalCode.LIMIT_EXCEEDED, "/views/1")
+
+
+@pytest.mark.parametrize(
+    ("limit", "most"), [("query_seconds", 25), ("query_memory", 2 << 30), ("query_answer_bytes", 1)]
+)
+def test_a_run_over_its_seconds_memory_or_answer_names_the_widest_materialising_view(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch, limit: str, most: int
+) -> None:
+    world.publish("orchard", orchard())
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        raise QueryRefused(
+            Refusal(
+                code=RefusalCode.LIMIT_EXCEEDED,
+                path=None,
+                message=[],
+                limit=Limit(name=limit, max=most),
+            )
+        )
+
+    monkeypatch.setattr(analyses_module, "run_views", slow)
+    written = document()
+    written["views"].append(distribution_document(COLUMNS[:2])["views"][0])
+    refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (RefusalCode.LIMIT_EXCEEDED, "/views/1")
+
+
+def test_a_variable_a_view_reads_twice_is_materialised_once(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = world.publish("orchard", orchard())
+    read: list[int] = []
+    given = analyses_module.run_views
+
+    def counted(
+        cohorts: Sequence[Any],
+        crossings: Sequence[Any],
+        asked: Sequence[Any],
+        *args: Any,
+        **kw: Any,
+    ) -> Any:
+        read.extend(len(variables) for _, variables in asked)
+        return given(cohorts, crossings, asked, *args, **kw)
+
+    monkeypatch.setattr(analyses_module, "run_views", counted)
+    written = distribution_document([COLUMNS[2], COLUMNS[2]])
+    [result] = run(catalog_of(world), written).results
+    [expected] = evaluated(world, published.manifest, written)
+    assert read == [1]
+    assert result.digest == expected.digest
+
+
+def test_the_server_reads_and_summarises_a_materialisation_by_the_call_s_deadline(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    seen: list[tuple[str, float | None]] = []
+    reading, summarising = sql_module.CompiledMaterialised.read, distribution.summarise
+
+    def read(self: Any, answers: Any, ends: float | None = None) -> Any:
+        seen.append(("read", ends))
+        return reading(self, answers, ends)
+
+    def summarise(*args: Any, **kwargs: Any) -> Any:
+        seen.append(("summarise", kwargs.get("ends")))
+        return summarising(*args, **kwargs)
+
+    monkeypatch.setattr(sql_module.CompiledMaterialised, "read", read)
+    monkeypatch.setattr(distribution, "summarise", summarise)
+    deadline = Deadline(time.monotonic() + 20, 30.0)
+    body: JsonValue = {"document": distribution_document(COLUMNS[:2])}
+    found = within(deadline, lambda: answer(catalog_of(world), "run_analysis", body))
+    assert not isinstance(found, list)
+    ends = deadline.at - RECORD_SECONDS
+    assert seen == [("read", ends), ("summarise", ends)]
+
+
+def test_a_summary_the_deadline_stops_refuses_the_call_as_late(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+
+    def late(*args: Any, **kwargs: Any) -> Any:
+        raise CallerDeadline
+
+    monkeypatch.setattr(distribution, "summarise", late)
+    deadline = Deadline(time.monotonic() + 20, 30.0)
+    body: JsonValue = {"document": distribution_document(COLUMNS[:2])}
+    refusal = refused(within(deadline, lambda: answer(catalog_of(world), "run_analysis", body)))
+    assert refusal.limit == Limit(name="tool_seconds", max=30)

@@ -1,11 +1,15 @@
-# Reference outputs for the methods of compare.existence (SPEC §9.5, §13.4; D321).
+# Reference outputs for the methods of compare.existence and summary.distribution (SPEC §9.5,
+# §13.4; D321, D328).
 #
 # Run with base R, no packages:  Rscript existence.R > existence.json
 # The checked-in existence.json was written by R 4.3.3. The Wilson interval is prop.test's
 # (correct = FALSE); Newcombe's hybrid score interval (method 10 of Newcombe 1998) and the Katz log
 # interval are written out below, as named implementations; Fisher's exact test is fisher.test's,
 # the chi-squared test chisq.test's (correct = FALSE), its tail pchisq's, and q-values
-# p.adjust's (method = "BH").
+# p.adjust's (method = "BH"). A distribution's mean is mean's, its standard deviation sd's, its
+# quartiles and median quantile's (type = 7), and its histogram's counts cut's (right = FALSE,
+# include.lowest = TRUE: bins [a, b), the last [a, b]) with the values below the first edge and
+# above the last counted apart.
 
 num <- function(x) if (is.na(x)) "null" else sprintf("%.17g", x)
 vec <- function(x) paste0("[", paste(vapply(x, num, ""), collapse = ", "), "]")
@@ -119,5 +123,31 @@ for (v in vectors) {
   entries <- c(entries, obj(p = vec(v), q = vec(p.adjust(v, method = "BH"))))
 }
 add(sprintf("\"benjamini_hochberg\": [%s]", paste(entries, collapse = ",\n  ")))
+
+samples <- list(
+  list(c(1, 2, 3, 4), c(0, 2, 4)),
+  list(c(7), c(0, 10)),
+  list(c(5, 5, 5, 5, 5), c(0, 5, 10)),
+  list(c(-3.5, 0, 0, 2.25, 10, 10, 10, 41), c(-10, 0, 10, 20, 30)),
+  list(c(20, 27, 34, 41, 48, 55, 62, 69, 26, 33, 40, 47), c(20, 30, 40, 50, 60, 70)),
+  list(c(0.1, 0.2, 0.30000000000000004, 1e-12, 123456.789), c(0, 0.25, 1, 1000)),
+  list(c(2, 9), c(1, 2, 9)),
+  list(c(1e15, 1e15 + 2, -1e15), c(-2e15, 0, 2e15)),
+  list(c(3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5), c(1, 3, 5, 7, 9))
+)
+entries <- character()
+for (s in samples) {
+  x <- s[[1]]
+  e <- s[[2]]
+  q <- unname(quantile(x, c(0.25, 0.5, 0.75), type = 7))
+  inside <- x[x >= e[1] & x <= e[length(e)]]
+  counts <- c(sum(x < e[1]), as.vector(table(cut(inside, e, right = FALSE, include.lowest = TRUE))),
+              sum(x > e[length(e)]))
+  entries <- c(entries, obj(values = vec(x), edges = vec(e), mean = num(mean(x)),
+                            sd = num(if (length(x) < 2) NA else sd(x)), q1 = num(q[1]),
+                            median = num(q[2]), q3 = num(q[3]), min = num(min(x)),
+                            max = num(max(x)), histogram = vec(counts)))
+}
+add(sprintf("\"distribution\": [%s]", paste(entries, collapse = ",\n  ")))
 
 cat(sprintf("{\"r\": \"%s\",\n%s}\n", R.version.string, paste(lines, collapse = ",\n")))
