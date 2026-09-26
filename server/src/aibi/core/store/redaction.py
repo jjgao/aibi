@@ -109,7 +109,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from enum import IntEnum
 from functools import cache
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from pydantic import JsonValue
 
@@ -1045,9 +1045,19 @@ def _params_hold(params: JsonValue, terms: Terms) -> bool:
     alone, its unit not known, so that a constant on a column that names no one is matched as
     ``Place.OTHER`` there and nowhere else; a string elsewhere holds one as a constant in
     ``Place.UNKNOWN`` does, while numbers outside clauses are an analysis's settings, never a
-    unit's key."""
+    unit's key; but the members of a variable that hold values of its column
+    (``_variable_constants``, D325) are constants on its column, as a ``value`` leaf's are."""
     if _clause_shaped(params):
         return _clause_holds(params, terms, None, True)
+    if _variable_shaped(params):
+        place = terms.place(params.get("column"))
+        held = _variable_constants(params)
+        if any(
+            terms.in_constant(constant, place)
+            for key in held
+            for constant in _constants_of(params[key])
+        ):
+            return True
     if isinstance(params, dict):
         return any(
             terms.string(key) != key or _params_hold(member, terms)
@@ -1060,6 +1070,34 @@ def _params_hold(params: JsonValue, terms: Terms) -> bool:
 
 _COMBINATORS = ("all", "any", "not", "known", "unknown")
 _TEXT = ("notes", "note", "drafted_by")
+
+
+def _variable_shaped(value: JsonValue) -> TypeGuard[dict[str, JsonValue]]:
+    """Whether a value is a view's variable (D325), as written or canonical: an object with a
+    ``column`` that is no clause."""
+    return isinstance(value, dict) and "column" in value and not _clause_shaped(value)
+
+
+def _variable_constants(variable: Mapping[str, JsonValue]) -> frozenset[str]:
+    """The members of a variable (D325), as written or canonical, that hold values of its
+    column, and so are constants on it as a ``value`` leaf's are: ``values`` (with ``some`` and
+    ``every``), ``empty`` (a unit's value with no rows; not the keyword ``"exclude"``) and the
+    edges of ``bins`` (a histogram's bounds, which are ``range`` bounds on the column: a bin
+    ``[key, key + ε)`` isolates the key), but for ``count``, whose ``bins`` bound numbers of
+    rows, never a column's values. Every other member is structure (``column``, ``via``,
+    ``lookup``, ``aggregate``, ``lift``, ``count``) or clauses (``where``, ``rows``,
+    ``question``), redacted as clauses are."""
+    found = {"values"} & variable.keys()
+    if "empty" in variable and variable["empty"] != "exclude":
+        found.add("empty")
+    if "bins" in variable and variable.get("aggregate") != "count":
+        found.add("bins")
+    return frozenset(found)
+
+
+def _constants_of(member: JsonValue) -> list[JsonValue]:
+    """The constants a member of ``_variable_constants`` holds: a list's items, or itself."""
+    return list(member) if isinstance(member, list) else [member]
 
 
 def _clause_shaped(value: JsonValue) -> bool:
@@ -1309,9 +1347,20 @@ class _Written:
             self.ours = True
 
     def settings(self, value: JsonValue) -> JsonValue:
-        """A view's parameters: clauses as clauses, anything else an analysis's settings."""
+        """A view's parameters: clauses as clauses, the members of a variable that hold values
+        of its column (``_variable_constants``) as constants on it (D325), anything else an
+        analysis's settings."""
         if _clause_shaped(value):
             return self.clause(value)
+        if _variable_shaped(value):
+            place = self.place(value.get("column"))
+            held = _variable_constants(value)
+            return self.terms.keyed(
+                value,
+                lambda key, member: (
+                    self.constants(member, place) if key in held else self.settings(member)
+                ),
+            )
         if isinstance(value, list):
             return [self.settings(item) for item in value]
         if isinstance(value, dict):

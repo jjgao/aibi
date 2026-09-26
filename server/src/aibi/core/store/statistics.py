@@ -64,14 +64,13 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
 from aibi.core.schema.jsonio import canonical, utf16_key
+from aibi.core.schema.limits import MAX_CATEGORIES
 from aibi.core.schema.semantics import ObservationState
 from aibi.core.store import derive
 
 FORMAT = "aibi.statistics/1"
 BINS = 10
 """*B*, the bins of a histogram in catalogue statistics (SPEC §8.4)."""
-MAX_CATEGORIES = 150
-"""Distinct values a column's categories may have, the cap on categorical levels (§14)."""
 STATES = (
     ObservationState.PRESENT,
     ObservationState.NOT_APPLICABLE,

@@ -20,10 +20,11 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses.charts import existence_chart
-from aibi.core.analyses.existence import Outcome
+from aibi.core.analyses import distribution, existence
+from aibi.core.analyses.charts import distribution_charts, existence_chart
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.readback import readback
+from aibi.core.schema.analyses import ExistenceValues
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.digests import RESULT_MEMBERS, output_digest
 from aibi.core.schema.numbers import NotEstimableReason
@@ -64,6 +65,17 @@ def document_of(view: CheckedView) -> dict[str, JsonValue]:
         "view": view.identity.view(),
         "cohorts": {cohort.id: cohort.identity.hashed() for cohort in view.cohorts},
     }
+
+
+Outcome = existence.Outcome | distribution.Outcome
+"""An analysis's digested parts and caveats, as the core's analyses give them."""
+
+
+def charts(outcome: Outcome, labels: list[str]) -> list[dict[str, JsonValue]]:
+    """The charts of an outcome's values (``charts``)."""
+    if isinstance(outcome.values, ExistenceValues):
+        return [existence_chart(outcome.values, labels)]
+    return distribution_charts(outcome.values, labels)
 
 
 def envelope(
@@ -145,7 +157,7 @@ def envelope(
             cohorts=[readback(cohort) for cohort in view.cohorts], view=view.readback()
         ),
         labels=[Data(data=label) for label in labels],
-        charts=[existence_chart(outcome.values, labels)],
+        charts=charts(outcome, labels),
     )
 
 
@@ -154,4 +166,4 @@ def issued_packs(view: CheckedView) -> dict[str, JsonValue]:
     return {pack: version.model_dump(mode="json") for pack, version in view.packs.items()}
 
 
-__all__ = ["document_of", "envelope", "issued_packs"]
+__all__ = ["Outcome", "charts", "document_of", "envelope", "issued_packs"]

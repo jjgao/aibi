@@ -13,11 +13,12 @@ writes a file, not even one of the files it may read.
 
 ``serve`` is the query worker's child (``worker``): it asks the kernel to kill it first when
 memory runs out, limits its CPU time and address space, writes no core file (which would hold
-the rows it read), reads one request, runs it in a session
-and answers with the rows packed as integers, column by column; its parent watches its resident
-memory. A failed query is answered with its error's class alone, never DuckDB's message, which
-can hold paths, SQL and values. This module imports nothing of aibi's, so that the child loads
-DuckDB and this alone, and the server's process never loads DuckDB.
+the rows it read), reads one request, runs it in a session and answers with the rows packed
+column by column: integers, and in the columns a query names as values (D327) doubles or text
+as well; its parent watches its resident memory. A failed query is answered with its error's
+class alone, never DuckDB's message, which can hold paths, SQL and values. This module imports
+nothing of aibi's, so that the child loads DuckDB and this alone, and the server's process never
+loads DuckDB.
 """
 
 import contextlib
@@ -39,7 +40,13 @@ import duckdb
 _PR_SET_PDEATHSIG = 1
 _KIND = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 WIDTHS = ("b", "h", "i", "q")
-"""The array type codes an answer's columns are packed in, narrowest first."""
+"""The array type codes an answer's integer columns are packed in, narrowest first."""
+DOUBLES = "d"
+"""The type code of a value column of doubles, packed as an array of them."""
+TEXTS = "s"
+"""The type code of a value column of text: its total bytes, each row's length in bytes as an
+array of ``LENGTHS``, and the rows' UTF-8 bytes one after another."""
+LENGTHS = "I"
 VALUE, MEMORY, TOO_LARGE, ERROR = b"V", b"M", b"A", b"E"
 """The first byte of an answer: rows, out of memory, an answer larger than it may be, or an
 error, followed by its class's name."""
@@ -58,10 +65,12 @@ class Session:
 
 @dataclass(frozen=True)
 class Statement:
-    """One query and its parameters, by name."""
+    """One query and its parameters, by name, and the columns whose rows may hold doubles or
+    text as well as integers (D327)."""
 
     sql: str
     parameters: Mapping[str, object]
+    values: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -82,7 +91,9 @@ class NotAQuery(Exception):  # noqa: N818 - the class's name is what a failed ru
 
 
 class NotIntegers(Exception):  # noqa: N818 - the class's name is what a failed run reports
-    """Rows holding a value that is not a 64-bit integer, which an answer cannot carry."""
+    """Rows holding a value that is not a 64-bit integer where the query names no value column,
+    or a value column holding what is neither doubles nor text alone, or a null, which an answer
+    cannot carry."""
 
 
 def connect(session: Session) -> duckdb.DuckDBPyConnection:
@@ -205,22 +216,45 @@ def _packed(column: Sequence[object]) -> array[int]:
     raise NotIntegers
 
 
-def answer(results: Sequence[Result], most: int) -> bytes:
+def _values(column: Sequence[object]) -> tuple[str, list[bytes]]:
+    """A value column (D327): integers as ``_packed`` packs them; doubles, integers among them
+    made doubles; or text alone. Its type code and its parts."""
+    if all(type(value) is int or type(value) is bool for value in column):
+        packed = _packed(column)
+        return packed.typecode, [packed.tobytes()]
+    if all(type(value) is float or type(value) is int for value in column):
+        return DOUBLES, [array(DOUBLES, cast(Sequence[float], column)).tobytes()]
+    if all(type(value) is str for value in column):
+        encoded = [cast(str, value).encode("utf-8") for value in column]
+        lengths = array(LENGTHS, [len(part) for part in encoded])
+        total = sum(len(part) for part in encoded)
+        return TEXTS, [struct.pack("!Q", total), lengths.tobytes(), *encoded]
+    raise NotIntegers
+
+
+def answer(results: Sequence[Result], most: int, values: Sequence[frozenset[int]] = ()) -> bytes:
     """The rows as an answer: ``VALUE``, the number of results, and for each its row and column
-    counts and each column's type code and values (a type code alone for no rows);
-    ``TOO_LARGE`` past ``most`` bytes."""
+    counts and each column's type code and values (a type code alone for no rows); a column
+    ``values`` names for its result as ``_values`` packs it; ``TOO_LARGE`` past ``most``
+    bytes."""
     parts = [VALUE, struct.pack("!I", len(results))]
     size = len(VALUE) + 4
-    for result in results:
+    for at, result in enumerate(results):
         rows = result.rows
+        named = values[at] if at < len(values) else frozenset[int]()
         parts.append(struct.pack("!QI", len(rows), result.columns))
         size += 12
         for index in range(result.columns):
-            packed = _packed([row[index] for row in rows])
-            size += 1 + len(packed) * packed.itemsize
+            column = [row[index] for row in rows]
+            if index in named:
+                code, packed = _values(column)
+            else:
+                ints = _packed(column)
+                code, packed = ints.typecode, [ints.tobytes()]
+            size += 1 + sum(len(part) for part in packed)
             if size > most:
                 return TOO_LARGE
-            parts += [packed.typecode.encode("ascii"), packed.tobytes()]
+            parts += [code.encode("ascii"), *packed]
     return b"".join(parts)
 
 
@@ -233,8 +267,8 @@ def _failed(error: BaseException) -> bytes:
 def serve(descriptor: int, parent: int) -> None:
     """The child, on its end of the parent's socket: its limits (``(cpu, hard cpu, address
     space)``), then one request (``Session`` fields, the largest answer, and ``(sql,
-    parameters)`` pairs), answered as ``answer`` packs rows, or with ``MEMORY``, ``TOO_LARGE``
-    or ``ERROR``."""
+    parameters, value columns)`` triples), answered as ``answer`` packs rows, or with
+    ``MEMORY``, ``TOO_LARGE`` or ``ERROR``."""
     _die_with(parent)
     _first_to_go()
     sock = socket.socket(fileno=descriptor)
@@ -251,12 +285,15 @@ def serve(descriptor: int, parent: int) -> None:
         if request is None:
             return
         paths, limit, threads, most, queries = cast(
-            tuple[tuple[str, ...], int, int, int, list[tuple[str, dict[str, object]]]],
+            tuple[
+                tuple[str, ...], int, int, int, list[tuple[str, dict[str, object], frozenset[int]]]
+            ],
             pickle.loads(request),
         )
         del request
-        statements = [Statement(sql, parameters) for sql, parameters in queries]
-        written = answer(run(Session(paths, limit, threads), statements), most)
+        statements = [Statement(sql, parameters, values) for sql, parameters, values in queries]
+        found = run(Session(paths, limit, threads), statements)
+        written = answer(found, most, [statement.values for statement in statements])
     except (MemoryError, OutOfMemory):
         written = MEMORY
     except Exception as error:
@@ -266,6 +303,10 @@ def serve(descriptor: int, parent: int) -> None:
 
 
 __all__ = [
+    "DOUBLES",
+    "LENGTHS",
+    "TEXTS",
+    "WIDTHS",
     "NotAQuery",
     "NotIntegers",
     "OutOfMemory",
