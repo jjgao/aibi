@@ -252,6 +252,10 @@ class Canonicalisation:
     """The views' predicates canonicalised, by key, each as a cohort of one clause (D317)."""
     variables: Mapping[str, CanonicalVariable] = field(default_factory=dict[str, CanonicalVariable])
     """The views' variables canonicalised, by key (D325)."""
+    published: Mapping[str, int | None] = field(default_factory=dict[str, int | None])
+    """A release's floor of its own, by manifest hash, as ``canonicalise`` was given it (a
+    draft's latest published release's ``min_cell_count``), so that a refusal names the setting
+    that binds (D332)."""
 
 
 def canonicalise(
@@ -296,7 +300,9 @@ def canonicalise(
             else:
                 found[kind][name] = made
     read = {key: _variable(key, variable, given) for key, variable in resolution.variables.items()}
-    return Canonicalisation(found["cohorts"], finish_refusals(refusals), found["predicates"], read)
+    return Canonicalisation(
+        found["cohorts"], finish_refusals(refusals), found["predicates"], read, dict(own)
+    )
 
 
 def _variable(

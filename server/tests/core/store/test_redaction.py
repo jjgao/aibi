@@ -695,3 +695,17 @@ def test_a_result_s_canonical_variable_holds_a_bin_edge_on_its_column() -> None:
     assert not redaction._params_hold(counted, terms)  # pyright: ignore[reportPrivateUsage]
     elsewhere: JsonValue = {"columns": [{**variable, "empty": "exclude", "bins": [1, 5]}]}
     assert not redaction._params_hold(elsewhere, terms)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_members_view_s_offset_and_limit_are_settings_never_a_person_s_key() -> None:
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "loans",
+        "cohorts": {"all": {"all": []}},
+        "views": [{"analysis": "summary.members", "params": {"offset": 2, "limit": 3}}],
+    }
+    found: Any = redaction._Written(terms, "loans", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"] == {"offset": 2, "limit": 3}
+    assert not redaction._params_hold({"limit": 3, "offset": 2}, terms)  # pyright: ignore[reportPrivateUsage]

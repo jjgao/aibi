@@ -66,6 +66,13 @@ whose ``max`` is 65, D328)."""
 MAX_CATEGORIES = 150
 """Distinct values a column's categories may have, in catalogue statistics and in a result: the
 cap on categorical levels (§14; D270, D328)."""
+MAX_MEMBERS = 1_000
+"""Unit keys one page of ``summary.members`` lists (D331)."""
+MEMBERS_PAGE = 100
+"""The keys a page of ``summary.members`` lists when its view gives no ``limit`` (D331)."""
+MAX_LISTED = 1_000_000
+"""Members of the cohort a ``summary.members`` view lists keys of, which the server reads and
+orders to take a page (the limit ``listed_members``, D333)."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -111,6 +118,7 @@ VARIABLES = "variables"
 BIN_EDGES = "bin_edges"
 """Edges of a histogram a view's parameters give (at most ``MAX_BINS`` + 1, D328)."""
 CATEGORIES = "categories"
+LISTED_MEMBERS = "listed_members"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
@@ -375,6 +383,7 @@ __all__ = [
     "JSON_VALUES",
     "KEY_COLUMNS",
     "LEAVES",
+    "LISTED_MEMBERS",
     "LIST_MEMBERS",
     "LOG_BYTES",
     "MAX_AGENT_PROPOSALS",
@@ -394,6 +403,8 @@ __all__ = [
     "MAX_KEEP_DAYS",
     "MAX_LEAVES",
     "MAX_LIST",
+    "MAX_LISTED",
+    "MAX_MEMBERS",
     "MAX_NAME",
     "MAX_OPEN_PROPOSALS",
     "MAX_PACKS",
@@ -413,6 +424,7 @@ __all__ = [
     "MAX_TEXT",
     "MAX_VALUES",
     "MAX_VIEWS",
+    "MEMBERS_PAGE",
     "MEMBER_BYTES",
     "MIN_LOG_BYTES",
     "MIN_QUERY_MEMORY",

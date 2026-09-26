@@ -474,7 +474,9 @@ def _bound_key(value: Constant | None) -> str | None:
 
 def constant_json(value: Constant) -> JsonValue:
     """A constant as the canonical form writes it: integers beyond ±(2^53 − 1) as decimal
-    strings, integral numbers as integers, dates as ``YYYY-MM-DD`` and datetimes in UTC."""
+    strings, integral numbers as integers, dates as ``YYYY-MM-DD`` and datetimes in UTC, the year
+    in four digits, as ``isoformat`` writes it and the platform's ``strftime`` does not always
+    before 1000 (D289, D333)."""
     if isinstance(value, bool | str):
         return value
     if isinstance(value, float):
@@ -484,11 +486,9 @@ def constant_json(value: Constant) -> JsonValue:
     if isinstance(value, int):
         return value if abs(value) <= MAX_SAFE_INTEGER else str(value)
     if isinstance(value, datetime):
-        utc = value.astimezone(UTC)
-        text = utc.strftime("%Y-%m-%dT%H:%M:%S")
-        if utc.microsecond:
-            text += f".{utc.microsecond:06d}".rstrip("0")
-        return text + "Z"
+        utc = value if value.tzinfo is UTC else value.astimezone(UTC)
+        text = utc.isoformat()[: -len("+00:00")]
+        return (text.rstrip("0") if utc.microsecond else text) + "Z"
     return value.isoformat()
 
 

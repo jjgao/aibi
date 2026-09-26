@@ -215,6 +215,7 @@ def test_m1_datasets_are_imported_curated_found_described_withdrawn_and_reimport
     assert [a["analysis"] for a in library_described["applicable_analyses"]] == [
         "compare.existence",
         "summary.distribution",
+        "summary.members",
     ]
     assert column["statistics"]["states"]["PRESENT"]["count"] > 0
     assert resource["id"] == "dataset"
