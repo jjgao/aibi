@@ -15,7 +15,8 @@ rules differ (§6.5).
   the customers' ages' range, for ``summary.distribution``.
 - ``distributed`` checks a ``summary.distribution`` view of the extended shop over cohorts of the
   pattern document, and ``summarised`` runs it over variables materialised as given, under a
-  *k*, each cohort's size given, for checks that run one view many times.
+  *k*, each cohort's size given, for checks that run one view many times; ``columned`` and
+  ``contrasted`` do the same for ``compare.columns``.
 - ``patterned`` makes cohorts and predicates whose units' truth values are given as strings, one
   character per unit (``T``, ``F``, or a reason's letter for UNKNOWN: ``I`` NO_INFORMATION, ``A``
   NOT_ASSESSED, ``C`` NOT_COVERED), each over a canonical cohort of the shop, and runs
@@ -33,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import distribution, members, views
+from aibi.core.analyses import columns, distribution, members, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome as AnyOutcome
@@ -49,7 +50,12 @@ from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import Accounting, Crossing, TruthValues, cross
 from aibi.core.engine.truth import Truth, TruthValue
 from aibi.core.engine.variables import Joint, Materialised, evaluate_variable, joint, materialise
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
+from aibi.core.schema.analyses import (
+    ColumnsParams,
+    DistributionParams,
+    ExistenceParams,
+    MembersParams,
+)
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.refusals import Refusal
@@ -229,6 +235,9 @@ def analyse_document(
             outcome = members.list_members(position, listed, view.params, k=view.disclosure)
             found.append(_result(view, outcome, written))
             continue
+        if isinstance(view.params, ColumnsParams):
+            found.append(_result(view, _compared_by_evaluator(view, positions), written))
+            continue
         crossing = cross(
             [TruthValues.of(evaluate(cohort.resolved).values) for cohort in view.cohorts],
             [TruthValues.of(evaluate(p.resolved).values) for p in view.predicates],
@@ -273,6 +282,26 @@ def materialise_by_evaluator(
         together = joint(values, members) if len(values) > 1 else None
         found.append((tuple(materialise(value, members) for value in values), together))
     return found
+
+
+def shared_by_evaluator(view: CheckedView) -> bool:
+    """Whether a view's cohorts share units, by the reference evaluator."""
+    held = [set(evaluate(cohort.resolved).members) for cohort in view.cohorts]
+    return any(held[a] & held[b] for a in range(len(held)) for b in range(a + 1, len(held)))
+
+
+def _compared_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> columns.Outcome:
+    assert isinstance(view.params, ColumnsParams)
+    return columns.compare_columns(
+        positions,
+        view.variables,
+        materialise_by_evaluator(view),
+        view.params,
+        reference=view.reference,
+        overlap=shared_by_evaluator(view) and view.overlap,
+        k=view.disclosure,
+        computation=view.identity.computation_id,
+    )
 
 
 def _summarised_by_evaluator(
@@ -492,6 +521,83 @@ def summarise_materialised(
     return distribution.summarise(
         positions, view.variables, materialised, view.params, k=k, ends=ends
     )
+
+
+def columns_view(
+    given: Sequence[Mapping[str, Any]],
+    *,
+    cohorts: int = 2,
+    k: int | None = None,
+    reference: int = 0,
+    overlap: bool = False,
+    level: float | None = None,
+    extras: Sequence[Descriptor] = (),
+) -> CheckedView:
+    """A checked ``compare.columns`` view of ``given`` over ``cohorts`` cohorts of the pattern
+    document, over the extended shop with ``extras`` among its descriptors."""
+    names = list(PATTERN_DOCUMENT["cohorts"])[:cohorts]
+    params: dict[str, Any] = {"columns": [dict(column) for column in given]}
+    if level is not None:
+        params["level"] = level
+    written = {
+        **PATTERN_DOCUMENT,
+        "views": [
+            {
+                "analysis": "compare.columns",
+                "cohorts": names,
+                "reference": names[reference],
+                "params": params,
+                **({"overlap": "allow"} if overlap else {}),
+            }
+        ],
+    }
+    release = shop_release(
+        {"customers": [{"customer_id": "c1", "age": 30}]}, extended=True, extras=extras
+    )
+    checked = check_document(written, release, floor=k)
+    assert checked.refusals == [], checked.refusals
+    [view] = checked.views
+    return view
+
+
+def compare_materialised(
+    view: CheckedView,
+    sizes: Sequence[int],
+    materialised: Sequence[tuple[Sequence[Materialised], Joint | None]],
+    *,
+    k: int | None = None,
+    overlap: bool = False,
+    ends: float | None = None,
+) -> columns.Outcome:
+    """``compare.columns`` over ``view``, its cohorts of ``sizes`` units, all members, and its
+    variables materialised over them as given, under ``k`` and by ``ends``; ``overlap`` says
+    that its cohorts share units."""
+    positions = [
+        CohortAt(cohort, _accounting(truth_values("T" * size)))
+        for cohort, size in zip(view.cohorts, sizes, strict=True)
+    ]
+    assert isinstance(view.params, ColumnsParams)
+    return columns.compare_columns(
+        positions,
+        view.variables,
+        materialised,
+        view.params,
+        reference=view.reference,
+        overlap=overlap,
+        k=k,
+        computation=view.identity.computation_id,
+        ends=ends,
+    )
+
+
+@pytest.fixture(scope="session")
+def columned() -> Callable[..., CheckedView]:
+    return columns_view
+
+
+@pytest.fixture(scope="session")
+def contrasted() -> Callable[..., columns.Outcome]:
+    return compare_materialised
 
 
 @pytest.fixture(scope="session")

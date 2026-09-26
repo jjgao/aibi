@@ -20,7 +20,8 @@ A view is checked in two steps, around phase 1:
 2. ``checked``, after phase 1: a view whose cohorts, predicates and variables all canonicalised, and
    whose variables its analysis takes (``summary.distribution``'s: categories or numbers, ``bins``
    only for numbers, under *k* a number's histogram edges from ``bins`` or a declared range, and
-   under *k* one set of edges for a column's values across the call's views, D328, D329), and, for
+   under *k* one set of edges for a column's values across the call's views, D328, D329;
+   ``compare.columns``': categories or numbers, and no ``bins``, D336), and, for
    ``summary.members``, whose dataset allows row ids and which no disclosure setting covers
    (``ROW_IDS_NOT_ALLOWED`` at ``analysis`` otherwise, D332), gets its canonical form and ids
    (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none (D284);
@@ -45,7 +46,7 @@ from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
-from aibi.core.analyses import distribution, existence, members
+from aibi.core.analyses import columns, distribution, existence, members
 from aibi.core.analyses.registry import CORE, LATER, PACK_ANALYSES, Analyses, Registered
 from aibi.core.engine.canonical import (
     CanonicalCohort,
@@ -53,8 +54,13 @@ from aibi.core.engine.canonical import (
     CanonicalVariable,
     ViewIdentity,
 )
-from aibi.core.engine.resolve import FieldRead, ViewPredicate, ViewVariable
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
+from aibi.core.engine.resolve import PER_CATEGORY, FieldRead, ViewPredicate, ViewVariable
+from aibi.core.schema.analyses import (
+    ColumnsParams,
+    DistributionParams,
+    ExistenceParams,
+    MembersParams,
+)
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.document import (
     PARSED,
@@ -222,8 +228,9 @@ def parse(
         reference = _reference_of(document, first)
         if isinstance(params, ExistenceParams):
             predicates = _predicates(params, index, reference, refusals)
-        elif isinstance(params, DistributionParams):
-            variables = _variables(params, index, reference, refusals)
+        elif isinstance(params, DistributionParams | ColumnsParams):
+            independent = bool(fields.assumes_independent_groups)
+            variables = _variables(params, index, reference, refusals, independent)
         elif isinstance(params, MembersParams):
             _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
         if len(refusals.found) > before or params is None:
@@ -303,20 +310,33 @@ def _predicates(
 
 
 def _variables(
-    params: DistributionParams, index: int, reference: str | None, refusals: _Refusals
+    params: DistributionParams | ColumnsParams,
+    index: int,
+    reference: str | None,
+    refusals: _Refusals,
+    independent: bool,
 ) -> tuple[ViewVariable, ...]:
     """A view's variables to resolve (D325): the ``where`` of each holds no ``ids`` and no
     ``cohort`` leaf, as a predicate holds none, and no pack leaf, which the slice that runs
-    packs' analyses expands (D324)."""
+    packs' analyses expands (D324); ``count: "rows"`` is a descriptive analysis's, from M3.2e,
+    and never one that assumes independent groups (``independent``), which compares units
+    (§9.2, D335)."""
     base: list[str | int] = ["views", index, "params", "columns"]
     before = len(refusals.found)
     for position, variable in enumerate(params.columns):
-        if variable.count is not None:
+        if variable.count is not None and independent:
+            refusals.add(
+                RefusalCode.INVALID_VALUE,
+                (*base, position, "count"),
+                text("This analysis compares units, one value each (§9.2), so a variable counts "),
+                text("units, not rows: leave count out"),
+            )
+        elif variable.count is not None:
             refusals.add(
                 RefusalCode.NOT_SUPPORTED,
                 (*base, position, "count"),
-                text('Counting rows (count: "rows", §9.2) comes with M3.2c; a variable counts '),
-                text("units until then"),
+                text(f'Counting rows (count: "rows", §9.2) comes with {PER_CATEGORY}; a '),
+                text("variable counts units until then"),
             )
         where: list[str | int] = [*base, position, "where"]
         for leaf, path, _ in walk(list(variable.where or []), where):
@@ -342,6 +362,7 @@ def _variables(
             reference=reference,
             at=(*base, position),
             variable=variable,
+            independent=independent,
         )
         for position, variable in enumerate(params.columns)
     )
@@ -381,6 +402,10 @@ class CheckedView:
             )
         if isinstance(self.params, MembersParams):
             return members.view_readback(self.cohorts[0], self.params)
+        if isinstance(self.params, ColumnsParams):
+            return columns.view_readback(
+                len(self.cohorts), self.reference, self.variables, self.params
+            )
         assert isinstance(self.params, DistributionParams), "the core's analyses are known"
         return distribution.view_readback(len(self.cohorts), self.variables)
 
@@ -490,6 +515,11 @@ def checked(
         disclosure = max(given) if given else None
         if isinstance(view.params, DistributionParams):
             wrong = _distributed(view.index, view.params, variables, disclosure, edges_of)
+            if wrong:
+                refusals += wrong
+                continue
+        if isinstance(view.params, ColumnsParams):
+            wrong = _compared(view.index, view.params, variables)
             if wrong:
                 refusals += wrong
                 continue
@@ -615,6 +645,45 @@ def _distributed(
     return found
 
 
+def _compared(
+    index: int, params: ColumnsParams, variables: Sequence[CanonicalVariable]
+) -> list[Refusal]:
+    """What ``compare.columns`` refuses of its resolved variables (D336): a column whose values
+    are neither categories nor numbers, and ``bins``, which divide only a histogram, which it
+    does not draw."""
+    found: list[Refusal] = []
+    for position, (variable, given) in enumerate(zip(variables, params.columns, strict=True)):
+        at: list[str | int] = ["views", index, "params", "columns", position]
+        if not distribution.summarised(variable):
+            found.append(
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=pointer([*at, "column"]),
+                    message=[
+                        text("compare.columns compares categories and numbers, and this "),
+                        text("column's values are neither: "),
+                        data(variable.resolved.column),
+                    ],
+                    alternatives=[
+                        data(name)
+                        for name in ("category", "boolean", "number", "integer", "time_offset")
+                    ],
+                )
+            )
+        elif given.bins is not None:
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=pointer([*at, "bins"]),
+                    message=[
+                        text("bins divide a histogram, which compare.columns does not draw; "),
+                        text("summary.distribution draws one"),
+                    ],
+                )
+            )
+    return found
+
+
 def _counted(form: JsonValue) -> JsonValue:
     """What a ``count`` counts: its canonical form without the column it names and the lookups
     to it, which a count does not read (D326), so that counts of one canonical set of rows are
@@ -692,6 +761,8 @@ def _canonical_params(
                 form["bins"] = None if given.bins is None else list[JsonValue](given.bins)
             columns.append(form)
         return {"columns": columns}
+    if isinstance(params, ColumnsParams):
+        return {"columns": [variable.form for variable in variables], "level": params.level}
     if isinstance(params, MembersParams):
         return {"limit": params.limit, "offset": params.offset}
     raise ValueError("the canonical parameters of an analysis the core does not run")

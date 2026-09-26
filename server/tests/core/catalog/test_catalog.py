@@ -270,6 +270,7 @@ def test_a_dataset_is_described_with_its_tables_columns_graph_and_its_analyses(
     assert found.graph.tables == ["harvests", "trees"]
     assert [(e.child, e.parent) for e in found.graph.edges] == [("harvests", "trees")]
     assert [(a.analysis, a.version, a.status, a.missing) for a in found.applicable_analyses] == [
+        ("compare.columns", "1.0.0", "available_with_caveats", []),
         ("compare.existence", "1.0.0", "available", []),
         ("summary.distribution", "1.0.0", "available_with_caveats", []),
         ("summary.members", "1.0.0", "available", []),

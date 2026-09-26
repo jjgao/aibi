@@ -12,7 +12,12 @@ from pydantic import JsonValue
 import aibi
 from aibi.core.analyses.existence import ENTRY, METHODS
 from aibi.core.analyses.registry import Analyses
-from aibi.core.schema.descriptors import AnalysisDescriptor
+from aibi.core.schema.descriptors import (
+    AnalysisDescriptor,
+    ColumnDescriptor,
+    RelationshipDescriptor,
+    TableDescriptor,
+)
 from aibi.core.schema.pack_api import AnalysisInputs, Pack, PackManifest, PackRegistry, ReleaseView
 from aibi.core.schema.refusals import RefusalCode
 
@@ -94,6 +99,7 @@ def test_the_core_s_entry_is_generated_from_its_models() -> None:
 def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     analyses = Analyses(shelves([{"role": "orders", "kind": "table"}]))
     assert analyses.ids() == [
+        "compare.columns",
         "compare.existence",
         "shelves.restock",
         "summary.distribution",
@@ -106,7 +112,8 @@ def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     assert analyses.get("compare.existence") is not None
     assert analyses.get("shelves.other") is None
     assert analyses.get("elsewhere.restock") is None
-    assert analyses.get("compare.columns") is None
+    assert analyses.get("compare.columns") is not None
+    assert analyses.get("survival.km") is None
 
 
 def test_an_entry_handed_out_cannot_change_the_registry() -> None:
@@ -265,3 +272,59 @@ def test_an_analysis_that_lists_keys_is_unavailable_under_a_disclosure_setting_n
         else:
             assert found["summary.members"] == ("unavailable", missing)
         assert found["compare.existence"] == ("available", [])
+
+
+def test_a_comparison_under_a_disclosure_setting_needs_something_it_compares_as_categories(
+    shop: Shop,
+) -> None:
+    """Under *k* ``compare.columns`` shows numbers' units only (D337), so it applies to a unit
+    whose table holds categories, a list of them included, or is in a relationship, down which
+    ``some`` and ``every`` make them, and not where every column is a number of the unit's."""
+    release = shop()
+    held = ("category", "boolean", "list<category>")
+    plain = [
+        descriptor
+        for descriptor in release.descriptors
+        if not isinstance(descriptor, RelationshipDescriptor)
+        and getattr(descriptor.fields, "datatype", None) not in held
+    ]
+    relationships = [d for d in release.descriptors if isinstance(d, RelationshipDescriptor)]
+    column = next(d for d in plain if isinstance(d, ColumnDescriptor))
+    listed = column.model_copy(
+        update={"fields": column.fields.model_copy(update={"datatype": "list<category>"})}
+    )
+
+    def status(
+        descriptors: list[Any], k: int | None, unit: str | None = None
+    ) -> tuple[str, list[str]]:
+        found = {
+            item.analysis: (item.status, item.missing)
+            for item in Analyses().applicable(
+                descriptors, dataset=release.dataset, manifest=release.manifest, unit=unit, k=k
+            )
+        }
+        return found["compare.columns"]
+
+    assert relationships
+    assert status(list(release.descriptors), 3)[0] != "unavailable"
+    assert status(plain, None)[0] != "unavailable"
+    assert status(plain, 3) == ("unavailable", ["columns", "min_cell_count"])
+    assert status([*plain, *relationships], 3)[0] != "unavailable"
+    assert status([*plain, listed], 3)[0] != "unavailable"
+    related = [*plain, *relationships]
+    assert status(related, 3, "returns")[0] != "unavailable"
+    assert status(related, 3, "checked_orders") == ("unavailable", ["columns", "min_cell_count"])
+    assert status(related, 3, "customers")[0] != "unavailable"
+    later = next(d for d in plain if d.id == "returns.return_id")
+    listed_later = later.model_copy(
+        update={"fields": later.fields.model_copy(update={"datatype": "list<category>"})}
+    )
+    assert status([*plain, listed_later], 3)[0] != "unavailable"
+    unkeyed = [d for d in plain if not isinstance(d, TableDescriptor)]
+    assert status(unkeyed, 3) == ("unavailable", ["unit"])
+    tables = [d for d in plain if not isinstance(d, ColumnDescriptor)]
+    assert status(tables, 3) == ("unavailable", ["columns", "min_cell_count"])
+    owner = listed.id.split(".", 1)[0]
+    others = {"customers", "orders", "returns"} - {owner}
+    assert status([*plain, listed], 3, owner)[0] != "unavailable"
+    assert all(status([*plain, listed], 3, other)[0] == "unavailable" for other in others)

@@ -725,7 +725,7 @@ def test_counting_rows_is_not_supported_until_its_part(check: Check, shop: Shop)
         RefusalCode.NOT_SUPPORTED,
         "/views/0/params/columns/0/count",
     )
-    assert "M3.2c" in json.dumps([s.model_dump() for s in refusal.message])
+    assert "M3.2e (#52)" in json.dumps([s.model_dump() for s in refusal.message])
 
 
 def test_under_k_whether_a_column_has_too_many_categories_depends_on_its_declaration_alone(

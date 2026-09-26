@@ -4,11 +4,15 @@ reference evaluator and materialised by the SQL compiler, which must agree."""
 import json
 import math
 import time
+from array import array
 from collections.abc import Callable
+from dataclasses import replace
 from fractions import Fraction
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from aibi.core.analyses import stats
 from aibi.core.engine import sql as sql_module
@@ -16,8 +20,15 @@ from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.resolve import Resolution
 from aibi.core.engine.sql import CompiledMaterialised, compile_materialised
-from aibi.core.engine.variables import aggregated, evaluate_variable, joint, materialise
-from aibi.core.engine.worker import CallerDeadline
+from aibi.core.engine.variables import (
+    aggregated,
+    evaluate_variable,
+    exact_mean,
+    exact_sum,
+    joint,
+    materialise,
+)
+from aibi.core.engine.worker import CallerDeadline, QueryError, Rows
 
 City = Callable[..., Release]
 Doc = Callable[..., dict[str, Any]]
@@ -319,7 +330,7 @@ def test_counts_per_category_of_a_multi_valued_column_are_not_supported_until_th
     [refusal] = resolution.refusals
     assert (refusal.code, refusal.path) == ("NOT_SUPPORTED", "/views/0/params/columns/0/column")
     said = json.dumps([part.model_dump() for part in refusal.message])
-    assert "M3.2c" in said
+    assert "M3.2e (#52)" in said
     assert "M3.2b" not in said
 
 
@@ -493,3 +504,53 @@ def test_the_mean_is_the_exact_mean_correctly_rounded(
     assert exact == expected
     assert aggregated("mean", weighted, len(values)) == expected
     assert stats.mean(sorted(weighted)) == expected
+
+
+NUMBERS = st.one_of(
+    st.floats(allow_nan=False, allow_infinity=False),
+    st.floats(min_value=-1e-300, max_value=1e-300),
+    st.integers(min_value=-(2**70), max_value=2**70),
+)
+"""Doubles of every exponent, subnormal ones included, and integers beyond 2^53."""
+
+
+@given(st.lists(st.tuples(NUMBERS, st.integers(min_value=1, max_value=10**9)), min_size=1))
+def test_the_exact_mean_is_the_rational_mean_correctly_rounded(
+    values: list[tuple[int | float, int]],
+) -> None:
+    """``exact_sum`` is the rational sum of the values, each as many times as it is counted, and
+    ``exact_mean`` that over the count, correctly rounded (D326)."""
+    total, least, count = exact_sum(values)
+    expected = sum((Fraction(value) * times for value, times in values), Fraction(0))
+    assert Fraction(total, 2**-least) == expected
+    assert count == sum(times for _, times in values)
+    try:
+        rounded = float(expected / count)
+    except OverflowError:
+        return
+    assert exact_mean(values) == rounded
+
+
+def test_a_materialisation_s_overlaps_answer_is_one_row_of_counts_none_negative() -> None:
+    """The units two cohorts share, read from the answer (D339): one row of one count a pair,
+    and anything else, a negative count included, a fault."""
+    compiled = CompiledMaterialised(
+        statements=("a", "b", "c"),
+        parameters={},
+        marks=(),
+        cohorts=2,
+        shapes=(sql_module._Shape("column", "number", None, None, None),),  # pyright: ignore[reportPrivateUsage]
+        shared=True,
+    )
+
+    def rows(*values: int) -> Rows:
+        return Rows([memoryview(array("q", [value])) for value in values], 1)
+
+    assert compiled.columns == (5, 5, 1)
+    assert compiled.read_shared([rows(0), rows(0), rows(3)]) == (3,)
+    with pytest.raises(QueryError):
+        compiled.read_shared([rows(0), rows(0), rows(-1)])
+    with pytest.raises(QueryError):
+        compiled.read_shared([rows(0), rows(0), rows(1, 2)])
+    alone = replace(compiled, cohorts=1, statements=("a",))
+    assert (alone.columns, alone.read_shared([rows(0)])) == ((5,), ())

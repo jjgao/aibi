@@ -1,5 +1,5 @@
 """The parameters and values of the core's analyses (SPEC §8.1, §8.2, §9.1, §9.2, §9.5; D319,
-D325, D328, D330).
+D325, D328, D330, D336).
 
 An analysis's parameters are a view's ``params`` after substitution (§7.4): objects with fixed
 keys, whose clauses are the document's own. Its values are the ``values`` of its result
@@ -30,6 +30,15 @@ category over those for which the value is known, categories merged under a disc
 and a category column's undeclared values one ``other_values`` row there (D329); for numbers, n,
 mean, standard deviation, median, quartiles, minimum, maximum and a histogram, and under a
 disclosure setting only the histogram's merged bins and the quartiles' bins.
+
+``compare.columns`` (D336) takes ``columns``, one to ``MAX_VARIABLES`` variables, and ``level``.
+Its values, per position and column: for categories, the cohort's units per category over those
+with a value, as ``summary.distribution`` gives them; for numbers, n, mean, standard deviation and
+median. For the view, per column: for categories, the test of the cohort-by-category table and, per
+row of it, the difference in proportions of each other position versus the reference; for
+numbers, Welch's test and a rank test, and the differences in means and in medians versus the
+reference; and the Benjamini–Hochberg family of the primary tests. Under a disclosure setting a
+number shows only its units, and categories only what their shown rows give (D337).
 
 ``summary.members`` (D331) takes ``offset`` and ``limit``, a page of the unit keys of the view's one
 cohort. Its values, at its one position: the unit table's key columns, and at most ``limit`` of
@@ -206,7 +215,7 @@ class Variable(DocModel):
     """For numbers: a histogram's edges; without them, the column's declared ``range`` in
     ``BINS`` equal bins, or, without a disclosure setting, the data's."""
     count: Literal["rows"] | None = None
-    """``"rows"`` counts rows rather than units (§9.2): refused until M3.2c (D324)."""
+    """``"rows"`` counts rows rather than units (§9.2): refused until M3.2e (D324, D335)."""
 
     @model_validator(mode="after")
     def _check_members(self) -> Self:
@@ -356,6 +365,109 @@ class DistributionValues(Output):
     view: NoViewValues
 
 
+# --- compare.columns (D336) -----------------------------------------------------------------------
+
+
+class ColumnsParams(DocModel):
+    """``compare.columns``' parameters (D336)."""
+
+    columns: Annotated[
+        list[Variable], Field(min_length=1, max_length=MAX_VARIABLES), LimitName(VARIABLES)
+    ]
+    """The variables, in the order the values give them."""
+    level: Annotated[Level, Field(le=MAX_LEVEL)] = 0.95
+    """The level of every interval, at most ``MAX_LEVEL``."""
+
+
+class NumberSummary(Estimable):
+    """A numeric variable at one position of ``compare.columns`` (D336): its units with a value,
+    their mean, standard deviation and median; under a disclosure setting ``n`` alone (D337)."""
+
+    kind: Literal["numbers"]
+    n: ComputedCount
+    mean: Number
+    sd: Number
+    median: Number
+
+
+ColumnSummary = Annotated[
+    Annotated[CategoryDistribution, Tag("categories")] | Annotated[NumberSummary, Tag("numbers")],
+    Discriminator(
+        _distribution_kind,
+        custom_error_type="wrong_type",
+        custom_error_message='A column\'s summary is of kind "categories" or "numbers"',
+    ),
+]
+
+
+class ColumnsPosition(Output):
+    columns: Annotated[list[ColumnSummary], Field(min_length=1, max_length=MAX_VARIABLES)]
+
+
+class CategoryContrast(Output):
+    """One row of a categorical variable's table across the view's cohorts (D336, D337): the
+    categories it holds, and the difference in the proportion of units in it of each other
+    position versus the reference, in view order."""
+
+    values: Annotated[list[Data], Field(max_length=MAX_CATEGORIES)]
+    """The categories of the row, in their listed order."""
+    other_values: Literal[True] | None = None
+    """Under a disclosure setting, whether the row holds a category column's undeclared
+    values (D329)."""
+    effects: Annotated[list[EffectSize], Field(max_length=MAX_COHORTS - 1)]
+
+    @model_validator(mode="after")
+    def _check_named(self) -> Self:
+        if not self.values and self.other_values is None:
+            raise PydanticCustomError("empty_row", "A row names a category or holds other values")
+        return self
+
+
+class CategoryComparison(Output):
+    """A categorical variable across the view's cohorts (D336): the test of the table of
+    cohorts by categories, absent for one cohort, and its rows, each with its effects."""
+
+    kind: Literal["categories"]
+    test: HypothesisTest | None = None
+    categories: Annotated[list[CategoryContrast], Field(max_length=MAX_CATEGORIES)]
+
+
+class NumberComparison(Output):
+    """A numeric variable across the view's cohorts (D336): the primary test (Welch's *t* or
+    Welch's one-way test) and the secondary one (Mann–Whitney or Kruskal–Wallis), both absent
+    for one cohort, and the difference in means and in medians of each other position versus
+    the reference, in view order."""
+
+    kind: Literal["numbers"]
+    test: HypothesisTest | None = None
+    secondary: HypothesisTest | None = None
+    """Reported unadjusted: it is not in the family (§9.5)."""
+    effects: Annotated[list[EffectSize], Field(max_length=2 * (MAX_COHORTS - 1))]
+
+
+ColumnComparison = Annotated[
+    Annotated[CategoryComparison, Tag("categories")] | Annotated[NumberComparison, Tag("numbers")],
+    Discriminator(
+        _distribution_kind,
+        custom_error_type="wrong_type",
+        custom_error_message='A column\'s comparison is of kind "categories" or "numbers"',
+    ),
+]
+
+
+class ColumnsView(Output):
+    columns: Annotated[list[ColumnComparison], Field(min_length=1, max_length=MAX_VARIABLES)]
+    family: Family | None = None
+    """The Benjamini–Hochberg family of the primary tests; absent for a view of one cohort."""
+
+
+class ColumnsValues(Output):
+    """``compare.columns``' ``values`` (§8.1): ``positions`` in view order, and ``view``."""
+
+    positions: Annotated[list[ColumnsPosition], Field(min_length=1, max_length=MAX_COHORTS)]
+    view: ColumnsView
+
+
 # --- summary.members (D331) --------------------------------------------------------------------
 
 
@@ -424,9 +536,17 @@ __all__ = [
     "EXISTENCE_AGGREGATES",
     "NUMERIC_AGGREGATES",
     "Aggregate",
+    "CategoryComparison",
+    "CategoryContrast",
     "CategoryDistribution",
     "CategoryShare",
+    "ColumnComparison",
     "ColumnDistribution",
+    "ColumnSummary",
+    "ColumnsParams",
+    "ColumnsPosition",
+    "ColumnsValues",
+    "ColumnsView",
     "DistributionParams",
     "DistributionPosition",
     "DistributionValues",
@@ -444,7 +564,9 @@ __all__ = [
     "MembersPosition",
     "MembersValues",
     "NoViewValues",
+    "NumberComparison",
     "NumberDistribution",
+    "NumberSummary",
     "PredicateContrast",
     "PredicateShare",
     "Variable",

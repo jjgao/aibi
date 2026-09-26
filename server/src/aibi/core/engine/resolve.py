@@ -311,6 +311,11 @@ Function = Literal["count", "max", "min", "mean"]
 VariableKind = Literal["column", "aggregate", "question"]
 
 
+PER_CATEGORY = "M3.2e (#52)"
+"""The part that gives descriptive analyses per-category counts of multi-valued columns and
+counts of rows (D335)."""
+
+
 @dataclass(frozen=True)
 class ViewVariable:
     """A column a view's parameters read, one value per unit of its cohorts (§9.2, D325):
@@ -321,6 +326,10 @@ class ViewVariable:
     reference: str
     at: Position
     variable: Variable
+    independent: bool = False
+    """Whether the view's analysis assumes independent groups, whose variables are one value per
+    unit whatever the column (§9.2), so that a multi-valued column of categories takes an
+    aggregate as one of numbers does, with no part to come (D335)."""
 
 
 @dataclass(frozen=True)
@@ -922,7 +931,7 @@ class _Resolver:
         base = ResolvedVariable(given.key, release, unit, descriptor.id, datatype, "column", path)
         if aggregate is None:
             if multi:
-                self._not_single(descriptor, datatype, at)
+                self._not_single(descriptor, datatype, at, given.independent)
                 return None
             self._read_column(context, descriptor)
             self._read_path(context, path)
@@ -948,27 +957,36 @@ class _Resolver:
             return None
         return self._aggregate(context, variable, base, descriptor, path, at)
 
-    def _not_single(self, descriptor: ColumnDescriptor, datatype: str | None, at: Position) -> None:
-        """A variable that is multi-valued for the unit, given no aggregate (§9.2)."""
-        if datatype in ("category", "boolean", "list<category>"):
+    def _not_single(
+        self, descriptor: ColumnDescriptor, datatype: str | None, at: Position, independent: bool
+    ) -> None:
+        """A variable that is multi-valued for the unit, given no aggregate (§9.2): for an
+        analysis that assumes independent groups, or of numbers, an aggregate is required; a
+        descriptive analysis's per-category counts of categories come with M3.2e (D335)."""
+        categories = datatype in ("category", "boolean", "list<category>")
+        if categories and not independent:
             self.refuse(
                 RefusalCode.NOT_SUPPORTED,
                 (*at, "column"),
                 text("Counts per category of a column with several values per unit are "),
-                text(
-                    "given from M3.2c (#46); until then, give an aggregate (some, every, or max or "
-                ),
-                text("min of an ordered category): "),
+                text(f"given from {PER_CATEGORY}; until then, give an aggregate (some, every, or "),
+                text("max or min of an ordered category): "),
                 data(descriptor.id),
             )
             return
+        names = (
+            ("some", "every", "max", "min")
+            if categories
+            else ("count", "max", "min", "mean", "some", "every")
+        )
         self.refuse(
             RefusalCode.AGGREGATE_REQUIRED,
             (*at, "column"),
             text("The column has several values per unit, below it or in a list, so the view "),
-            text("gives an aggregate, one value per unit (§9.2): "),
+            text("gives an aggregate, one value per unit (§9.2"),
+            text("; max and min of an ordered category): " if categories else "): "),
             data(descriptor.id),
-            alternatives=[text(name) for name in ("count", "max", "min", "mean", "some", "every")],
+            alternatives=[text(name) for name in names],
         )
 
     def _question(
@@ -2629,6 +2647,7 @@ def _quantifier(given: object) -> tuple[Quantifier, int | None]:
 
 
 __all__ = [
+    "PER_CATEGORY",
     "UNCONFIRMED",
     "Coverage",
     "FieldRead",

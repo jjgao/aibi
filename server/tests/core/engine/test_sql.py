@@ -22,7 +22,14 @@ from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.resolved import flipped
-from aibi.core.engine.sql import CompileError, Crossing, TruthValues, compile_cohort, cross
+from aibi.core.engine.sql import (
+    CompileError,
+    Crossing,
+    TruthValues,
+    compile_cohort,
+    cross,
+    pairs,
+)
 from aibi.core.engine.variables import evaluate_variable, joint, materialise
 from aibi.core.schema.semantics import Flag
 
@@ -660,6 +667,47 @@ def test_variables_materialised_by_the_compiler_count_what_the_evaluator_gives_e
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(compiler, "MARK_BITS", 1)
         assert materialised(cohorts, found) == tuple(expected)
+
+
+@FEWER
+@given(data=city_data(), extra=st.data())
+def test_a_materialisation_counts_the_units_its_cohorts_share_as_the_evaluator_s_members_do(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    shared_materialised: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """A materialisation that also counts the units each pair of its cohorts shares (D339), as a
+    view of ``compare.columns`` asks: the variables as the property above has them, and each
+    pair's shared units those the reference evaluator gives both cohorts as members; one cohort
+    has no pair, and its materialisation no statement more."""
+    rows, options = data
+    release = city(rows, **options)
+    scoped = options["violations"].get("parents") is GROUPED
+    written = {
+        f"c{index}": extra.draw(st.lists(clauses(scoped, 3), min_size=0, max_size=2))
+        for index in range(extra.draw(st.integers(min_value=1, max_value=4)))
+    }
+    given = extra.draw(st.lists(variables(scoped), min_size=1, max_size=2))
+    resolution = variables_of(doc(written), release, given)
+    limits = {refusal.limit.name for refusal in resolution.refusals if refusal.limit}
+    assume(not limits & {"clause_depth", "leaves_per_cohort"})
+    assert resolution.refusals == [], resolution.refusals
+    cohorts = [resolution.cohorts[name] for name in written]
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    values = [evaluate_variable(variable) for variable in found]
+    members = [set(evaluate(cohort).members) for cohort in cohorts]
+    expected = tuple(
+        (
+            tuple(materialise(value, sorted(held)) for value in values),
+            joint(values, sorted(held)) if len(found) > 1 else None,
+        )
+        for held in members
+    )
+    shared = tuple(len(members[a] & members[b]) for a, b in pairs(len(cohorts)))
+    assert shared_materialised(cohorts, found) == (expected, shared)
 
 
 @EXAMPLES

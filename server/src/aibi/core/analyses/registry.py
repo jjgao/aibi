@@ -4,8 +4,8 @@ The registry holds the core's analyses, each an entry (a descriptor of kind ``an
 parameters' model and its implementation, and the analyses of the installed packs, each an entry
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
 path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
-(D328) and ``summary.members`` (D331); the rest of §9.5 follows in the later slices of M3 (D315,
-D324).
+(D328), ``summary.members`` (D331) and ``compare.columns`` (D336); the rest of §9.5 follows in the
+later slices of M3 (D315, D324).
 
 A pack's analysis is registered, listed and matched for applicability like the core's; the core
 runs it from the slice that hands it the inputs its ``requires`` name, materialised (the columns,
@@ -27,14 +27,25 @@ but not by its ``min`` descriptors without a field whose status is ``imported_de
 once for all of them. An analysis that lists units' keys (``summary.members``) is ``unavailable``
 under any disclosure setting and where the dataset allows no row ids, ``missing`` naming the
 setting (``min_cell_count``, ``allow_row_ids``), since every view of it is refused there (D332).
+An analysis that shows nothing of numbers but their units under a disclosure setting
+(``compare.columns``) is ``unavailable`` there for a unit over which no view could compare
+categories: its table has no column of categories (``category``, ``boolean``,
+``list<category>``) and is in no relationship, through which a path reaches every other table and
+down which (directly, or with a ``via`` back down one it went up) ``some`` and ``every`` make
+categories of any column; ``missing`` names ``columns`` and ``min_cell_count`` (D337).
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aibi.core.analyses import distribution, existence, members
+from aibi.core.analyses import columns, distribution, existence, members
 from aibi.core.engine.resolve import UNCONFIRMED, DescriptorCopies, PackView, pack_failed
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
+from aibi.core.schema.analyses import (
+    ColumnsParams,
+    DistributionParams,
+    ExistenceParams,
+    MembersParams,
+)
 from aibi.core.schema.catalog import ApplicableAnalysis
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
@@ -42,6 +53,7 @@ from aibi.core.schema.descriptors import (
     DatasetDescriptor,
     Descriptor,
     EndpointDescriptor,
+    RelationshipDescriptor,
     TableDescriptor,
 )
 from aibi.core.schema.document import DocModel
@@ -61,11 +73,11 @@ CORE: Mapping[str, CoreAnalysis] = {
     existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams),
     distribution.ENTRY.id: CoreAnalysis(distribution.ENTRY, DistributionParams),
     members.ENTRY.id: CoreAnalysis(members.ENTRY, MembersParams),
+    columns.ENTRY.id: CoreAnalysis(columns.ENTRY, ColumnsParams),
 }
 """The core's analyses, by id."""
 
 LATER: Mapping[str, str] = {
-    "compare.columns": "M3.2c",
     "survival.km": "M3.3",
     "survival.cox": "M3.3",
 }
@@ -76,6 +88,10 @@ LISTS_KEYS = frozenset({members.ANALYSIS_ID})
 """The core's analyses that list units' keys, which are refused under any disclosure setting
 and where the dataset allows no row ids (D332), and so are ``unavailable`` there, naming the
 setting: ``min_cell_count``, ``allow_row_ids``."""
+CATEGORIES_UNDER_K = frozenset({columns.ANALYSIS_ID})
+"""The analyses that show only numbers' units under a disclosure setting (D337), and so compare
+something there only of a column of categories."""
+CATEGORIES = frozenset({"category", "boolean", "list<category>"})
 
 PACK_ANALYSES = "M3.2d"
 """The slice that runs packs' analyses (D316, D324)."""
@@ -141,7 +157,8 @@ class Analyses:
         """Each analysis's applicability to a release (module docstring): for ``unit``, or, with
         none, the best status over the release's keyed tables; ``k`` is the release's effective
         disclosure setting, the floor's included, under which an analysis that lists unit keys
-        is ``unavailable`` (``LISTS_KEYS``)."""
+        is ``unavailable`` (``LISTS_KEYS``), and one that shows only numbers' units for a unit
+        over which no view compares categories (``CATEGORIES_UNDER_K``)."""
         view = _view(descriptors, dataset, manifest)
         withheld = _withheld(descriptors, k)
         keyed = [
@@ -159,6 +176,13 @@ class Analyses:
             if withheld and analysis.id in LISTS_KEYS:
                 outcomes = [
                     (_UNAVAILABLE, [*missing, *withheld], list[str]()) for _, missing, _ in outcomes
+                ]
+            if k is not None and analysis.id in CATEGORIES_UNDER_K and units:
+                outcomes = [
+                    outcome
+                    if _categories(descriptors, table)
+                    else (_UNAVAILABLE, [*outcome[1], "columns", "min_cell_count"], list[str]())
+                    for table, outcome in zip(units, outcomes, strict=True)
                 ]
             found.append(_best(analysis, outcomes))
         return found
@@ -286,12 +310,33 @@ def _matches(
     return found
 
 
+def _categories(descriptors: Sequence[Descriptor], unit: str) -> bool:
+    """Whether a view of ``unit`` could compare categories (``CATEGORIES_UNDER_K``): its table
+    has a column of categories, or is in a relationship (a coverage table is in none, which the
+    release's checks refuse), since a path through it reaches every other table's columns, and a
+    step down one, directly or with a ``via`` back down the one it went up, makes categories
+    (false and true) of any column by ``some`` and ``every`` (§6.1, §9.2)."""
+    return any(
+        (
+            isinstance(descriptor, RelationshipDescriptor)
+            and unit in (descriptor.fields.child_table, descriptor.fields.parent_table)
+        )
+        or (
+            isinstance(descriptor, ColumnDescriptor)
+            and descriptor.id.split(".", 1)[0] == unit
+            and descriptor.fields.datatype in CATEGORIES
+        )
+        for descriptor in descriptors
+    )
+
+
 def _unsettled(descriptor: Descriptor) -> bool:
     """Whether a descriptor has a field whose status is not settled by an operator (§5.1)."""
     return any(entry.status in UNCONFIRMED for entry in descriptor.curation.values())
 
 
 __all__ = [
+    "CATEGORIES_UNDER_K",
     "CORE",
     "LATER",
     "LISTS_KEYS",

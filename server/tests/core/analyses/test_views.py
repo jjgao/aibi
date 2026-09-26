@@ -111,6 +111,7 @@ def test_an_unknown_analysis_is_refused_listing_the_registry(check: Check, shop:
     [refusal] = found.refusals
     assert (refusal.code, refusal.path) == (RefusalCode.UNKNOWN_ANALYSIS, "/views/0/analysis")
     assert [segment.model_dump() for segment in refusal.alternatives] == [
+        {"data": "compare.columns"},
         {"data": "compare.existence"},
         {"data": "summary.distribution"},
         {"data": "summary.members"},
@@ -122,8 +123,8 @@ def test_a_core_analysis_of_a_later_slice_is_not_supported_naming_it(
     check: Check, shop: Shop
 ) -> None:
     for analysis, slice_ in (
-        ("compare.columns", "M3.2c"),
         ("survival.km", "M3.3"),
+        ("survival.cox", "M3.3"),
     ):
         found = check(document({"analysis": analysis, "cohorts": ["gold"]}), shop())
         [refusal] = found.refusals

@@ -59,12 +59,15 @@ from typing import Literal, cast
 from aibi.core.analyses import stats
 from aibi.core.analyses.common import (
     CohortAt,
+    Shown,
+    analysed_of,
     caveat,
     cohort_caveats,
     flag_caveats,
     populations,
+    shown,
 )
-from aibi.core.analyses.disclosure import merged, small, split_hidden
+from aibi.core.analyses.disclosure import merged
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.readback import variable_readback
 from aibi.core.engine.variables import Joint, Materialised, Value
@@ -90,7 +93,7 @@ from aibi.core.schema.jsonio import utf16_key
 from aibi.core.schema.limits import MAX_CATEGORIES, MAX_COHORTS
 from aibi.core.schema.numbers import DenominatorDefinition, NotEstimableReason, Proportion
 from aibi.core.schema.output import Data, Segment, text
-from aibi.core.schema.results import Analysed, AnalysedCounts, AnalysedVariable, Population
+from aibi.core.schema.results import Analysed, Population
 from aibi.core.schema.semantics import ExclusionReason
 
 ANALYSIS_ID = "summary.distribution"
@@ -211,7 +214,7 @@ def needs_edges(variable: CanonicalVariable, bins: Sequence[float] | None) -> bo
     return not categorical(variable) and bins is None and declared_range(variable) is None
 
 
-def _categories(variable: CanonicalVariable) -> list[Value]:
+def declared_categories(variable: CanonicalVariable) -> list[Value]:
     """The categories a variable declares, in their order: a column's permissible values (an
     ordered category's, for ``max`` and ``min``), or ``false`` and ``true``."""
     resolved = variable.resolved
@@ -225,29 +228,13 @@ def _categories(variable: CanonicalVariable) -> list[Value]:
     return [] if allowed is None else [entry.value for entry in allowed.values]
 
 
-def _label(value: Value) -> str:
+def category_label(value: Value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
 
 
 # --- Values ---------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _Shown:
-    """What the pass shows of a variable at a position: its split, and its breakdown."""
-
-    split: bool
-    excluded: bool
-
-
-def _shown(found: Materialised, size_shown: bool, k: int | None) -> _Shown:
-    if k is None:
-        return _Shown(True, True)
-    split = size_shown and not split_hidden(found.n, found.excluded_units, k)
-    excluded = split and not any(small(k, count) for count in found.excluded.values())
-    return _Shown(split, excluded)
 
 
 def _proportion(count: int, n: int, position: int) -> Proportion:
@@ -270,14 +257,14 @@ def _category_distribution(
     found: Materialised,
     position: int,
     column: int,
-    shown: _Shown,
+    shown: Shown,
     k: int | None,
 ) -> CategoryDistribution:
-    declared = _categories(variable)
+    declared = declared_categories(variable)
     undeclared = [value for value in found.values if value not in declared]
-    open_list = _open(variable)
+    open_list = open_categories(variable)
     if k is None:
-        others = sorted(undeclared, key=lambda value: utf16_key(_label(value)))
+        others = sorted(undeclared, key=lambda value: utf16_key(category_label(value)))
         rows: list[tuple[list[Value], bool]] = [([value], False) for value in [*declared, *others]]
     else:
         rows = [([value], False) for value in declared] + ([([], True)] if open_list else [])
@@ -296,7 +283,9 @@ def _category_distribution(
     shares = [
         CategoryShare(
             values=[
-                Data(data=_label(value)) for listed, _ in rows[start : end + 1] for value in listed
+                Data(data=category_label(value))
+                for listed, _ in rows[start : end + 1]
+                for value in listed
             ],
             other_values=True if any(other for _, other in rows[start : end + 1]) else None,
             proportion=_proportion(sum(counts[start : end + 1]), found.n, position),
@@ -306,7 +295,7 @@ def _category_distribution(
     return CategoryDistribution(kind="categories", categories=shares)
 
 
-def _open(variable: CanonicalVariable) -> bool:
+def open_categories(variable: CanonicalVariable) -> bool:
     """Whether a variable's values may lie outside its declared categories: a category column's
     (an ordered category's ``max`` and ``min`` read none outside its list, and a boolean or a
     question has none)."""
@@ -426,7 +415,7 @@ def _number_distribution(
     found: Materialised,
     column: int,
     bins: Sequence[float] | None,
-    shown: _Shown,
+    shown: Shown,
     k: int | None,
 ) -> NumberDistribution:
     bins_of = ("q1_bin", "median_bin", "q3_bin") if k is not None else ()
@@ -533,9 +522,9 @@ def summarise(
         zip(materialised, population, strict=True)
     ):
         size_shown = counts.n_true is not None
-        shown = [_shown(one, size_shown, k) for one in found]
+        split = [shown(one, size_shown, k) for one in found]
         columns: list[ColumnDistribution] = []
-        for index, (variable, one, visible) in enumerate(zip(variables, found, shown, strict=True)):
+        for index, (variable, one, visible) in enumerate(zip(variables, found, split, strict=True)):
             if ends is not None and time.monotonic() >= ends:
                 raise CallerDeadline
             if categorical(variable):
@@ -544,54 +533,10 @@ def summarise(
                 bins = params.columns[index].bins
                 columns.append(_number_distribution(variable, one, index, bins, visible, k))
         at_positions.append(DistributionPosition(columns=columns))
-        analysed.append(_analysed(found, together, shown, k))
+        analysed.append(analysed_of(found, together, split, k))
     values = DistributionValues(positions=at_positions, view=NoViewValues())
     caveats = _caveats(positions, population, analysed, materialised, k)
     return Outcome(population, analysed, values, caveats)
-
-
-def _counts(
-    model: type[AnalysedCounts],
-    n: int,
-    excluded: Mapping[ExclusionReason, int],
-    units: int,
-    shown: _Shown,
-) -> AnalysedCounts:
-    reasons = {
-        member: _SUPPRESSED
-        for member, lost in (
-            ("/n", not shown.split),
-            ("/excluded_units", not shown.split),
-            ("/excluded", not shown.excluded),
-        )
-        if lost
-    }
-    return model(
-        n=n if shown.split else None,
-        excluded=dict(excluded) if shown.excluded else None,
-        excluded_units=units if shown.split else None,
-        not_estimable=reasons or None,
-    )
-
-
-def _analysed(
-    found: Sequence[Materialised], together: Joint | None, shown: Sequence[_Shown], k: int | None
-) -> Analysed:
-    if len(found) == 1:
-        [one], [visible] = found, shown
-        counted = _counts(AnalysedCounts, one.n, one.excluded, one.excluded_units, visible)
-        return Analysed.model_validate(counted.model_dump())
-    assert together is not None, "several variables are counted together"
-    variables = [
-        cast(
-            AnalysedVariable,
-            _counts(AnalysedVariable, one.n, one.excluded, one.excluded_units, visible),
-        )
-        for one, visible in zip(found, shown, strict=True)
-    ]
-    whole = _Shown(k is None, k is None)
-    counted = _counts(AnalysedCounts, together.known, together.none_by_reason, together.none, whole)
-    return Analysed.model_validate({**counted.model_dump(), "variables": variables})
 
 
 def _caveats(

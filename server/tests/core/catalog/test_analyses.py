@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 from pydantic import JsonValue
 
-from aibi.core.analyses import distribution, members, views
+from aibi.core.analyses import columns, distribution, members, views
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome, envelope
@@ -31,7 +31,12 @@ from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import TruthValues, cross
 from aibi.core.engine.variables import evaluate_variable, joint, materialise
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
+from aibi.core.schema.analyses import (
+    ColumnsParams,
+    DistributionParams,
+    ExistenceParams,
+    MembersParams,
+)
 from aibi.core.schema.catalog import AnalysisListing, DatasetDescription
 from aibi.core.schema.caveats import CaveatCode
 from aibi.core.schema.cohorts import (
@@ -154,20 +159,35 @@ def evaluated(
                 )
             )
             continue
-        if isinstance(view.params, DistributionParams):
+        if isinstance(view.params, DistributionParams | ColumnsParams):
             values = [evaluate_variable(variable.resolved) for variable in view.variables]
             materialised = []
+            held: list[set[int]] = []
             for cohort in view.cohorts:
                 units = [
                     row
                     for row, value in enumerate(evaluate(cohort.resolved).values)
                     if value.is_true
                 ]
+                held.append(set(units))
                 together = joint(values, units) if len(values) > 1 else None
                 materialised.append((tuple(materialise(v, units) for v in values), together))
-            outcome = distribution.summarise(
-                positions, view.variables, materialised, view.params, k=view.disclosure
-            )
+            if isinstance(view.params, ColumnsParams):
+                shared = any(a & b for i, a in enumerate(held) for b in held[i + 1 :])
+                outcome = columns.compare_columns(
+                    positions,
+                    view.variables,
+                    materialised,
+                    view.params,
+                    reference=view.reference,
+                    overlap=shared and view.overlap,
+                    k=view.disclosure,
+                    computation=view.identity.computation_id,
+                )
+            else:
+                outcome = distribution.summarise(
+                    positions, view.variables, materialised, view.params, k=view.disclosure
+                )
             found.append(
                 envelope(
                     view,
@@ -321,6 +341,191 @@ def test_under_a_floor_a_number_without_bins_or_a_declared_range_is_refused(
 
 def members_document(**view: Any) -> dict[str, Any]:
     return document(view={"analysis": "summary.members", "cohorts": ["apple"], **view})
+
+
+COMPARED: list[dict[str, Any]] = [
+    {"column": "trees.tags", "aggregate": "some", "values": ["old"]},
+    {"column": "trees.height_m"},
+    {"column": "harvests.kg", "aggregate": "mean"},
+    {"column": "harvests.kg", "aggregate": "max", "empty": 0},
+    {
+        "column": "harvests.harvest_id",
+        "aggregate": "count",
+        "where": [{"kind": "value", "column": "harvests.grade", "values": ["A"]}],
+    },
+]
+"""A comparison's columns over the orchard: a question about a list, a number with missing
+values, the mean and the greatest of a column below the unit, and a count of rows."""
+
+
+def columns_document(
+    given: Sequence[Mapping[str, Any]] = COMPARED,
+    cohorts: Mapping[str, Sequence[Any]] | None = None,
+    **view: Any,
+) -> dict[str, Any]:
+    names = list(cohorts or {"apple": [APPLE], "pear": [PEAR]})
+    return document(
+        cohorts,
+        view={
+            "analysis": "compare.columns",
+            "cohorts": names,
+            "params": {"columns": [dict(column) for column in given]},
+            **view,
+        },
+    )
+
+
+@pytest.mark.parametrize("floor", [None, 2, 3, 5])
+def test_a_comparison_run_by_sql_gives_the_reference_evaluator_s_result(
+    world: World, orchard: Orchard, floor: int | None
+) -> None:
+    world.publish("orchard", orchard(40, harvests=60))
+    coverage = {
+        "kind": "coverage",
+        "id": "cov:harvests.tree_id",
+        "label": "Every tree's harvests are recorded",
+        "fields": {"relationship": "rel:harvests.tree_id", "parents": "all"},
+    }
+    world.curate("orchard", {"op": "put", "descriptor": coverage})
+    manifest = world.store.latest("orchard").manifest
+    written = columns_document(
+        cohorts={"apple": [APPLE], "pear": [PEAR], "plum": [{**APPLE, "values": ["plum"]}]}
+    )
+    [result] = run(catalog_of(world, floor=floor), written).results
+    [expected] = evaluated(world, manifest, written, floor=floor)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+    assert result.derivation.analysis.id == "compare.columns"
+    assert len(result.charts) == len(COMPARED)
+    tests = [column["test"] for column in cast(Any, result.values.view)["columns"]]
+    if floor is None:
+        assert [test["method"] for test in tests] == [
+            "chi_squared",
+            "welch_anova",
+            "welch_anova",
+            "welch_anova",
+            "welch_anova",
+        ]
+        assert all(test["p"] is not None for test in tests)
+
+
+def test_a_comparison_s_issuance_records_its_materialisation_and_the_units_its_cohorts_share(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    [result] = run(catalog, columns_document(COMPARED[:2])).results
+    issuance = explained(catalog, result.issuance.id).issuance
+    assert issuance is not None
+    assert isinstance(issuance.sql, dict)
+    queries = cast(list[dict[str, list[str]]], issuance.sql["queries"])
+    assert len(queries) == 3
+    assert len(queries[2]["statements"]) == 2 * 3 + 1
+    assert "FILTER" in queries[2]["statements"][-1].upper()
+
+
+def test_a_comparison_of_cohorts_that_share_units_is_refused_with_their_shared_count(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    written = columns_document(COMPARED[1:2], cohorts={"apple": [APPLE], "old": [OLD]})
+    refusal = refused(answer(catalog, "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (RefusalCode.COHORTS_OVERLAP, "/views/0")
+    assert refusal.counts is not None
+    [shared] = refusal.counts
+    assert shared.population.n_true
+    allowed = columns_document(
+        COMPARED[1:2], cohorts={"apple": [APPLE], "old": [OLD]}, overlap="allow"
+    )
+    [result] = run(catalog, allowed).results
+    compared = cast(Any, result.values.view)["columns"][0]
+    assert compared["test"]["not_estimable"]["/p"] == "overlapping_cohorts"
+    assert CaveatCode.COHORTS_OVERLAP in {caveat.code for caveat in result.caveats}
+
+
+def test_a_comparison_and_a_distribution_of_one_column_share_one_materialisation(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison's count of the units its cohorts share is added to the one run, and the
+    distribution records its statements without it, as it would alone (D339)."""
+    world.publish("orchard", orchard())
+    ran: list[tuple[int, list[bool]]] = []
+    given = analyses_module.run_views
+
+    def counted(
+        cohorts: Sequence[Any], crossings: Sequence[Any], read: Sequence[Any], *args: Any, **kw: Any
+    ) -> Any:
+        ran.append((len(read), list(kw["shared"])))
+        return given(cohorts, crossings, read, *args, **kw)
+
+    monkeypatch.setattr(analyses_module, "run_views", counted)
+    catalog = catalog_of(world)
+    alone = run(catalog, distribution_document(COMPARED[1:2])).results[0]
+    written = columns_document(COMPARED[1:2])
+    written["views"].insert(
+        0,
+        {
+            "analysis": "summary.distribution",
+            "cohorts": ["apple", "pear"],
+            "params": {"columns": [dict(COMPARED[1])]},
+        },
+    )
+    described, compared = run(catalog, written).results
+    assert ran == [(1, [False]), (1, [True])]
+    assert described.digest == alone.digest
+
+    def statements(result: Any) -> list[list[str]]:
+        issuance = explained(catalog, result.issuance.id).issuance
+        assert issuance is not None
+        assert isinstance(issuance.sql, dict)
+        queries = cast(list[dict[str, list[str]]], issuance.sql["queries"])
+        return [query["statements"] for query in queries]
+
+    assert statements(described) == statements(alone)
+    assert statements(compared)[-1] == [*statements(alone)[-1], statements(compared)[-1][-1]]
+    assert "FILTER" in statements(compared)[-1][-1].upper()
+
+
+def test_under_a_floor_a_comparison_and_a_distribution_show_one_column_s_rows_alike(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard(40, harvests=60))
+    written = columns_document([{"column": "trees.variety"}, COMPARED[0]])
+    written["views"].append(
+        {
+            "analysis": "summary.distribution",
+            "cohorts": ["apple", "pear"],
+            "params": {"columns": [{"column": "trees.variety"}, COMPARED[0]]},
+        }
+    )
+    compared, described = run(catalog_of(world, floor=3), written).results
+    for position in (0, 1):
+        for column in (0, 1):
+            assert (
+                cast(Any, compared.values.positions[position])["columns"][column]
+                == cast(Any, described.values.positions[position])["columns"][column]
+            )
+
+
+def test_a_comparison_s_bootstrap_is_the_same_by_sql_and_on_every_run(
+    world: World, orchard: Orchard
+) -> None:
+    world.publish("orchard", orchard(40, harvests=60))
+    catalog = catalog_of(world)
+    written = columns_document(COMPARED[1:3])
+    first = run(catalog, written).results[0]
+    again = run(catalog, written).results[0]
+    assert first.digest == again.digest
+    assert first.issuance.id != again.issuance.id
+    medians = [
+        e
+        for e in cast(Any, first.values.view)["columns"][0]["effects"]
+        if e["measure"] == "median_difference"
+    ]
+    assert medians
+    assert all(effect["ci"]["low"] is not None for effect in medians)
 
 
 def test_members_listed_by_sql_are_the_reference_evaluator_s_page_for_page(
@@ -872,6 +1077,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     found = answer(catalog, "list_analyses", {})
     assert isinstance(found, AnalysisListing)
     assert [entry["id"] for entry in found.analyses] == [
+        "compare.columns",
         "compare.existence",
         "summary.distribution",
         "summary.members",
@@ -881,6 +1087,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     assert isinstance(found, AnalysisListing)
     assert found.applicable is not None
     assert [(a.analysis, a.status) for a in found.applicable] == [
+        ("compare.columns", "available_with_caveats"),
         ("compare.existence", "available"),
         ("summary.distribution", "available_with_caveats"),
         ("summary.members", "available"),
@@ -898,6 +1105,7 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
     found = answer(catalog_of(world), "describe_dataset", {"dataset": "orchard"})
     assert isinstance(found, DatasetDescription)
     assert [a.analysis for a in found.applicable_analyses] == [
+        "compare.columns",
         "compare.existence",
         "summary.distribution",
         "summary.members",

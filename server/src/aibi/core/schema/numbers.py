@@ -412,16 +412,24 @@ Probability = Annotated[float, AllowInfNan(False), Field(ge=0, le=1)]
 """A p-value or a q-value: from 0 to 1."""
 
 
+DegreesOfFreedom = (
+    Annotated[int, Field(ge=1, le=MAX_SAFE_INTEGER)]
+    | Annotated[Finite, Field(gt=0, le=MAX_SAFE_INTEGER)]
+)
+"""A test's degrees of freedom: an integer, or for Welch's tests a positive number (D338)."""
+
+
 class HypothesisTest(Estimable):
-    """A test between cohorts (SPEC §8.2, §9.5; D319): ``method`` as the analysis entry names
-    it, the positions whose cohorts it used, in view order, and its p-value; its statistic and
-    degrees of freedom where the method has them, and its q-value while it is in its view's
-    multiple-testing family."""
+    """A test between cohorts (SPEC §8.2, §9.5; D319, D338): ``method`` as the analysis entry
+    names it, the positions whose cohorts it used, in view order, and its p-value; its statistic
+    and degrees of freedom where the method has them (``df_denominator`` the second of an F
+    test's), and its q-value while it is in its view's multiple-testing family."""
 
     method: Identifier
     positions: Annotated[list[Position], Field(max_length=MAX_COHORTS)]
     statistic: Annotated[Finite | None, COMPUTED] = None
-    df: Annotated[int, Field(ge=1, le=MAX_SAFE_INTEGER)] | None = None
+    df: DegreesOfFreedom | None = None
+    df_denominator: Annotated[Finite, Field(gt=0, le=MAX_SAFE_INTEGER)] | None = None
     p: Annotated[Probability | None, COMPUTED]
     q: Annotated[Probability | None, COMPUTED] = None
 
@@ -442,6 +450,7 @@ __all__ = [
     "RATIO_MEASURES",
     "RELATIVE_POINTER",
     "ComputedCount",
+    "DegreesOfFreedom",
     "DenominatorDefinition",
     "EffectMeasure",
     "EffectSize",
