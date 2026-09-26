@@ -1,0 +1,189 @@
+{
+  "$defs": {
+    "Completeness": {
+      "additionalProperties": false,
+      "description": "Some column, with the concept or datatype if given, whose PRESENT cells are at least\n``min_present`` of its table's rows (D274).",
+      "properties": {
+        "concept": {
+          "maxLength": 256,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+          "title": "Concept",
+          "type": "string"
+        },
+        "datatype": {
+          "enum": [
+            "number",
+            "integer",
+            "string",
+            "boolean",
+            "category",
+            "list<category>",
+            "date",
+            "datetime",
+            "time_offset"
+          ],
+          "title": "Datatype",
+          "type": "string"
+        },
+        "min_present": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Min Present",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min_present"
+      ],
+      "title": "Completeness",
+      "type": "object"
+    },
+    "OntologyCode": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "system": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "System",
+          "type": "string"
+        }
+      },
+      "required": [
+        "system",
+        "code"
+      ],
+      "title": "OntologyCode",
+      "type": "object"
+    }
+  },
+  "$id": "tool.search-catalog.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Every filter given must hold; none given lists every dataset (D274).",
+  "properties": {
+    "completeness": {
+      "$ref": "#/$defs/Completeness"
+    },
+    "concepts": {
+      "items": {
+        "maxLength": 256,
+        "not": {
+          "anyOf": [
+            {
+              "pattern": "__"
+            },
+            {
+              "pattern": "^(?:cohort|compare|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value):"
+            }
+          ]
+        },
+        "pattern": "^[a-z][a-z0-9_]{0,63}:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Concepts",
+      "type": "array"
+    },
+    "data_use": {
+      "items": {
+        "$ref": "#/$defs/OntologyCode"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Data Use",
+      "type": "array"
+    },
+    "domain_tags": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Domain Tags",
+      "type": "array"
+    },
+    "facets": {
+      "additionalProperties": false,
+      "maxProperties": 16,
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "propertyNames": {
+        "not": {
+          "pattern": "__"
+        }
+      },
+      "title": "Facets",
+      "type": "object"
+    },
+    "limit": {
+      "default": 20,
+      "maximum": 50,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "min_rows": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Min Rows",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "roles": {
+      "items": {
+        "enum": [
+          "entity",
+          "link",
+          "measurement",
+          "event",
+          "coverage"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Roles",
+      "type": "array"
+    },
+    "text": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "title": "SearchCatalog",
+  "type": "object"
+}

@@ -1,0 +1,1118 @@
+{
+  "$defs": {
+    "Bin": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count",
+          "x-aibi-computed": true
+        },
+        "high": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Data"
+            }
+          ],
+          "title": "High"
+        },
+        "includes_high": {
+          "title": "Includes High",
+          "type": "boolean"
+        },
+        "includes_low": {
+          "title": "Includes Low",
+          "type": "boolean"
+        },
+        "low": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Data"
+            }
+          ],
+          "title": "Low"
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "count",
+        "reference",
+        "includes_low",
+        "includes_high"
+      ],
+      "title": "Bin",
+      "type": "object"
+    },
+    "CategoriesOut": {
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "items": {
+            "$ref": "#/$defs/CategoryCount"
+          },
+          "title": "Categories",
+          "type": "array"
+        },
+        "kind": {
+          "const": "categories",
+          "title": "Kind",
+          "type": "string"
+        },
+        "multi_membership": {
+          "title": "Multi Membership",
+          "type": "boolean"
+        },
+        "pooled": {
+          "$ref": "#/$defs/StatCount"
+        }
+      },
+      "required": [
+        "kind",
+        "categories",
+        "multi_membership"
+      ],
+      "title": "CategoriesOut",
+      "type": "object"
+    },
+    "CategoryCount": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "value": {
+          "$ref": "#/$defs/Data"
+        }
+      },
+      "required": [
+        "count",
+        "reference",
+        "value"
+      ],
+      "title": "CategoryCount",
+      "type": "object"
+    },
+    "Caveat": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNKNOWN_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "INVALID_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SCOPE_PARTIAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COVERAGE_PROPOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNCONFIRMED_SEMANTICS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNMAPPED_COMPARISON"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "TIME_ORIGIN_MISMATCH"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "block"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "CONFOUNDED_WITH_DATASET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COHORTS_OVERLAP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SMALL_N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "PH_VIOLATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "DRAFT_RELEASE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SUPPRESSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "NOT_ESTIMABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "LIFT_DIFFERS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "POOLED_ACROSS_DATASETS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        }
+      ],
+      "description": "``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.",
+      "properties": {
+        "affects": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$"
+            },
+            {
+              "enum": [
+                "UNKNOWN_EXCLUDED",
+                "INVALID_EXCLUDED",
+                "SCOPE_PARTIAL",
+                "COVERAGE_PROPOSED",
+                "UNCONFIRMED_SEMANTICS",
+                "UNMAPPED_COMPARISON",
+                "TIME_ORIGIN_MISMATCH",
+                "CONFOUNDED_WITH_DATASET",
+                "COHORTS_OVERLAP",
+                "SMALL_N",
+                "PH_VIOLATED",
+                "DRAFT_RELEASE",
+                "SUPPRESSED",
+                "NOT_ESTIMABLE",
+                "LIFT_DIFFERS",
+                "POOLED_ACROSS_DATASETS"
+              ]
+            }
+          ],
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "affects"
+      ],
+      "title": "Caveat",
+      "type": "object"
+    },
+    "ColumnStatistics": {
+      "additionalProperties": false,
+      "properties": {
+        "distribution": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CategoriesOut"
+            },
+            {
+              "$ref": "#/$defs/HistogramOut"
+            },
+            {
+              "$ref": "#/$defs/NoDistribution"
+            }
+          ],
+          "title": "Distribution"
+        },
+        "rows": {
+          "$ref": "#/$defs/StatCount"
+        },
+        "states": {
+          "$ref": "#/$defs/StateCounts"
+        }
+      },
+      "required": [
+        "rows",
+        "states",
+        "distribution"
+      ],
+      "title": "ColumnStatistics",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1).",
+      "properties": {
+        "data": {
+          "maxLength": 10000,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
+    "DataSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "maxLength": 200,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "truncated": {
+          "const": true,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataSegment",
+      "type": "object"
+    },
+    "DisclosureOut": {
+      "additionalProperties": false,
+      "description": "The effective disclosure setting: the largest of the floor and the dataset's (§8.4).",
+      "properties": {
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "required": [
+        "min_cell_count"
+      ],
+      "title": "DisclosureOut",
+      "type": "object"
+    },
+    "HistogramOut": {
+      "additionalProperties": false,
+      "properties": {
+        "bins": {
+          "items": {
+            "$ref": "#/$defs/Bin"
+          },
+          "title": "Bins",
+          "type": "array"
+        },
+        "edges_from": {
+          "enum": [
+            "range",
+            "data"
+          ],
+          "title": "Edges From",
+          "type": "string"
+        },
+        "kind": {
+          "const": "histogram",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max": {
+          "$ref": "#/$defs/StatValue"
+        },
+        "min": {
+          "$ref": "#/$defs/StatValue"
+        }
+      },
+      "required": [
+        "kind",
+        "edges_from",
+        "bins"
+      ],
+      "title": "HistogramOut",
+      "type": "object"
+    },
+    "NoDistribution": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "none",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "identifier",
+            "text",
+            "undeclared",
+            "categories",
+            "out_of_range",
+            "empty",
+            "no_declared_range",
+            "suppressed",
+            "unrepresentable"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "title": "NoDistribution",
+      "type": "object"
+    },
+    "NotEstimableReason": {
+      "enum": [
+        "no_units",
+        "no_events",
+        "zero_denominator",
+        "zero_variance",
+        "not_reached",
+        "beyond_follow_up",
+        "separation",
+        "not_converged",
+        "degenerate_table",
+        "overlapping_cohorts",
+        "confounded_with_dataset",
+        "suppressed"
+      ],
+      "title": "NotEstimableReason",
+      "type": "string"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "ReleaseOut": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "manifest",
+        "status"
+      ],
+      "title": "ReleaseOut",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "StatCount": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A catalogue statistic's count: ``null`` when suppressed (§8.4), with its reference.",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "count",
+        "reference"
+      ],
+      "title": "StatCount",
+      "type": "object"
+    },
+    "StatValue": {
+      "additionalProperties": false,
+      "description": "A value a statistic reports (a smallest or largest value), with its reference.",
+      "properties": {
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Data"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "reference"
+      ],
+      "title": "StatValue",
+      "type": "object"
+    },
+    "StateCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "NOT_APPLICABLE": {
+          "$ref": "#/$defs/StatCount"
+        },
+        "NOT_ASSESSED": {
+          "$ref": "#/$defs/StatCount"
+        },
+        "PRESENT": {
+          "$ref": "#/$defs/StatCount"
+        },
+        "UNKNOWN": {
+          "$ref": "#/$defs/StatCount"
+        }
+      },
+      "required": [
+        "PRESENT",
+        "NOT_APPLICABLE",
+        "NOT_ASSESSED",
+        "UNKNOWN"
+      ],
+      "title": "StateCounts",
+      "type": "object"
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    }
+  },
+  "$id": "tool.describe-column.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "caveats": {
+      "items": {
+        "$ref": "#/$defs/Caveat"
+      },
+      "title": "Caveats",
+      "type": "array"
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "descriptor": {
+      "additionalProperties": {
+        "$ref": "#/$defs/OutputJson"
+      },
+      "title": "Descriptor",
+      "type": "object",
+      "x-aibi-data": true
+    },
+    "disclosure": {
+      "$ref": "#/$defs/DisclosureOut"
+    },
+    "identifier": {
+      "title": "Identifier",
+      "type": "boolean"
+    },
+    "release": {
+      "$ref": "#/$defs/ReleaseOut"
+    },
+    "statistics": {
+      "$ref": "#/$defs/ColumnStatistics"
+    }
+  },
+  "required": [
+    "dataset",
+    "release",
+    "disclosure",
+    "descriptor",
+    "identifier",
+    "statistics",
+    "caveats"
+  ],
+  "title": "ColumnDescription",
+  "type": "object"
+}

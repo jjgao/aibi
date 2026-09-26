@@ -20,6 +20,7 @@ ROUTES = [
     ("GET", "/operator/datasets/{dataset}/queue"),
     ("POST", "/operator/datasets/{dataset}/erase"),
     ("POST", "/operator/datasets/{dataset}/import"),
+    ("POST", "/operator/datasets/{dataset}/proposals/reject"),
     ("POST", "/operator/datasets/{dataset}/proposals/{proposal}/reject"),
     ("POST", "/operator/datasets/{dataset}/proposers"),
     ("POST", "/operator/datasets/{dataset}/reimport"),

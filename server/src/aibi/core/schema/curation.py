@@ -43,8 +43,10 @@ from aibi.core.schema.ids import (
 )
 from aibi.core.schema.jsonio import JsonError, json_value
 from aibi.core.schema.limits import CHANGE_EDITS, MAX_CHANGE_EDITS, LimitName
-from aibi.core.schema.output import DATA_MARK, OUTPUT_JSON_MARK, Count, Output, Segment
+from aibi.core.schema.numbers import Estimable
+from aibi.core.schema.output import COMPUTED, DATA_MARK, OUTPUT_JSON_MARK, Count, Output, Segment
 from aibi.core.schema.pack_api import NoteKind
+from aibi.core.schema.results import StatRef
 
 _KEYED = rf"{IDENT}\.{IDENT}(?:\+{IDENT})*"
 DESCRIPTOR_ID_RE = rf"^(?:{IDENT}(?:\.{IDENT})?|(?:rel|cov):{_KEYED}|ep:{IDENT})$"
@@ -223,14 +225,31 @@ class QueueProposal(Output):
     """Accepted in the open session's draft, which still holds it and has not been published."""
 
 
-class QueueNote(Output):
-    """A note of the import report (D231): counts and row references, never cell values."""
+class QueueNote(Estimable):
+    """A note of the import report (D231): counts and row references, never cell values.
+
+    The ``curation_queue`` tool gives each count its reference, and a count the disclosure
+    settings suppress is ``null``, its reason in ``not_estimable``, and lists no rows (D277); the
+    operator's queue gives the counts as they are, without references."""
 
     kind: NoteKind
     subject: QueueText | None = None
     message: list[Segment]
-    count: Count | None = None
+    count: Annotated[Count | None, COMPUTED] = None
+    reference: StatRef | None = None
     rows: list[Count] = Field(default_factory=list[int])
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_count(cls, data: object) -> object:
+        """A note without a count may give it as ``None``; only a suppressed count, whose
+        reason ``not_estimable`` gives, is ``null``."""
+        if not isinstance(data, dict):
+            return data
+        given = cast(dict[str, object], data)
+        if given.get("count", 0) is None and "not_estimable" not in given:
+            return {key: value for key, value in given.items() if key != "count"}
+        return given
 
 
 class CurationQueue(Output):

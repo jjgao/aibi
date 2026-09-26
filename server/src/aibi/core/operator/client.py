@@ -30,6 +30,7 @@ from aibi.core.schema.operator import (
     DraftChanged,
     ErasedOut,
     ImportPublished,
+    ProposalsRejected,
     ProposersRan,
     Refusals,
     Rejected,
@@ -235,6 +236,16 @@ class OperatorClient:
     def reject(self, dataset: str, proposal: int) -> Answer[Rejected]:
         path = self._dataset(dataset, "proposals", str(proposal), "reject")
         return self._post(path, {}, Rejected)
+
+    def reject_all(
+        self, dataset: str, *, proposer: str | None = None, kind: str | None = None
+    ) -> Answer[ProposalsRejected]:
+        body: dict[str, JsonValue] = {}
+        if proposer is not None:
+            body["proposer"] = proposer
+        if kind is not None:
+            body["kind"] = kind
+        return self._post(self._dataset(dataset, "proposals", "reject"), body, ProposalsRejected)
 
     # --- Sessions ---
 
