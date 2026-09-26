@@ -6,8 +6,14 @@ add tables by adding migrations.
 The server process is its only writer (§11.2); a connection is shared behind a lock, and every
 change runs in one transaction. The database runs in WAL mode with foreign keys on, full
 synchronisation, and ``secure_delete``, so that what redaction overwrites or deletes is not left
-in free pages (§12.2, Erasure); after a redaction the WAL is checkpointed and truncated, and
-``checkpoint`` says whether that finished.
+in free pages (§12.2, Erasure); after a redaction the database is vacuumed, so that no page keeps
+in its unallocated space a copy of a row that rebalancing moved, and the WAL is checkpointed and
+truncated, and ``checkpoint`` says whether that finished. That a vacuum is due is recorded in the
+redaction's own transaction (``due_vacuum``) and cleared once a vacuum and the checkpoint after
+it finished (``vacuumed``), so one that failed is retried, even after a restart.
+
+The derivation log's tables (M2, D289) are ``derivations``'s, which says what their triggers
+hold.
 
 Rules the schema holds itself, by triggers: a label is never removed or changed; a manifest is
 never removed, and is only ever withdrawn, once; the audit trail is never removed from, and only
@@ -169,6 +175,125 @@ MIGRATIONS: tuple[str, ...] = (
     ) STRICT;
     ALTER TABLE proposals ADD COLUMN client TEXT;
     """,
+    # 4: M2 (#15), the derivation log (D289)
+    """
+    CREATE TABLE derivations (
+        id TEXT PRIMARY KEY CHECK (id GLOB 'drv:*' AND length(id) = 68),
+        kind TEXT NOT NULL CHECK (kind IN ('cohort', 'result')),
+        hashed TEXT,
+        releases TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE derivation_releases (
+        derivation TEXT NOT NULL REFERENCES derivations (id),
+        dataset TEXT NOT NULL,
+        manifest TEXT NOT NULL CHECK (manifest GLOB 'sha256:*' AND length(manifest) = 71),
+        PRIMARY KEY (derivation, dataset)
+    ) STRICT;
+    CREATE INDEX derivation_releases_by_dataset ON derivation_releases (dataset);
+    CREATE TABLE issuances (
+        id TEXT PRIMARY KEY CHECK (id GLOB 'iss:*' AND length(id) = 30),
+        derivation TEXT NOT NULL REFERENCES derivations (id),
+        tool TEXT NOT NULL CHECK (tool IN ('count_cohort', 'run_analysis')),
+        written TEXT NOT NULL,
+        params TEXT NOT NULL,
+        sql TEXT,
+        values_from TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        packs TEXT NOT NULL,
+        at TEXT NOT NULL,
+        CHECK ((sql IS NULL) = (values_from != id))
+    ) STRICT;
+    CREATE INDEX issuances_by_derivation ON issuances (derivation);
+    CREATE INDEX issuances_by_time ON issuances (tool, at);
+    CREATE INDEX issuances_by_source ON issuances (values_from);
+    CREATE TABLE vacuum_due (due INTEGER PRIMARY KEY CHECK (due = 1)) STRICT;
+    CREATE TABLE log_permits (
+        kind TEXT PRIMARY KEY CHECK (kind IN ('pruning', 'redaction')),
+        before TEXT,
+        CHECK ((kind = 'pruning') = (before IS NOT NULL))
+    ) STRICT;
+    CREATE TRIGGER log_permits_fixed BEFORE UPDATE ON log_permits
+        BEGIN SELECT RAISE(ABORT, 'a permit is written and removed, never changed'); END;
+    CREATE TRIGGER derivations_recorded_once BEFORE INSERT ON derivations
+        WHEN NEW.hashed IS NULL OR EXISTS (SELECT 1 FROM derivations WHERE id = NEW.id)
+        BEGIN SELECT RAISE(ABORT, 'a derivation is recorded once, with its object'); END;
+    CREATE TRIGGER derivations_kept BEFORE DELETE ON derivations
+        BEGIN SELECT RAISE(ABORT, 'a derivation is never removed'); END;
+    CREATE TRIGGER derivations_erased_once BEFORE UPDATE ON derivations
+        WHEN OLD.hashed IS NULL OR NEW.hashed IS NOT NULL OR NEW.id IS NOT OLD.id
+            OR NEW.kind IS NOT OLD.kind OR NEW.releases IS NOT OLD.releases
+            OR NEW.recorded_at IS NOT OLD.recorded_at
+            OR NOT EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+        BEGIN SELECT RAISE(ABORT, 'a derivation changes only when erased, once'); END;
+    CREATE TRIGGER derivation_releases_listed BEFORE INSERT ON derivation_releases
+        WHEN EXISTS (
+                SELECT 1 FROM derivation_releases
+                WHERE derivation = NEW.derivation AND dataset = NEW.dataset
+            )
+            OR NOT EXISTS (
+                SELECT 1 FROM derivations d, json_each(d.releases) r
+                WHERE d.id = NEW.derivation
+                    AND json_extract(r.value, '$.dataset') IS NEW.dataset
+                    AND json_extract(r.value, '$.manifest') IS NEW.manifest
+            )
+            OR EXISTS (
+                SELECT 1 FROM manifests WHERE hash = NEW.manifest
+                    AND (withdrawn_at IS NOT NULL OR dataset IS NOT NEW.dataset)
+            )
+        BEGIN
+            SELECT RAISE(
+                ABORT, 'a derivation''s releases are those it lists, once, live, of their dataset'
+            );
+        END;
+    CREATE TRIGGER derivation_releases_kept BEFORE DELETE ON derivation_releases
+        BEGIN SELECT RAISE(ABORT, 'the releases of a derivation are never removed'); END;
+    CREATE TRIGGER derivation_releases_fixed BEFORE UPDATE ON derivation_releases
+        BEGIN SELECT RAISE(ABORT, 'the releases of a derivation never change'); END;
+    CREATE TRIGGER issuances_recorded_once BEFORE INSERT ON issuances
+        WHEN EXISTS (SELECT 1 FROM issuances WHERE id = NEW.id)
+            OR (SELECT hashed FROM derivations WHERE id = NEW.derivation) IS NULL
+            OR EXISTS (
+                SELECT 1 FROM derivation_releases r JOIN manifests m ON m.hash = r.manifest
+                WHERE r.derivation = NEW.derivation AND m.withdrawn_at IS NOT NULL
+            )
+            OR (NEW.values_from IS NOT NEW.id AND NOT EXISTS (
+                SELECT 1 FROM issuances
+                WHERE id = NEW.values_from AND values_from = id AND derivation = NEW.derivation
+            ))
+        BEGIN
+            SELECT RAISE(ABORT, 'an issuance is recorded once, of a live derivation it names');
+        END;
+    CREATE TRIGGER issuances_redacted_only BEFORE UPDATE ON issuances
+        WHEN NEW.id IS NOT OLD.id OR NEW.derivation IS NOT OLD.derivation
+            OR NEW.tool IS NOT OLD.tool OR NEW.values_from IS NOT OLD.values_from
+            OR NEW.engine IS NOT OLD.engine OR NEW.packs IS NOT OLD.packs OR NEW.at IS NOT OLD.at
+            OR (NEW.written IS NOT OLD.written
+                AND NOT (json_valid(NEW.written) AND instr(NEW.written, '[erased]') > 0))
+            OR (NEW.params IS NOT OLD.params
+                AND NOT (json_valid(NEW.params) AND instr(NEW.params, '[erased]') > 0))
+            OR (NEW.sql IS NOT OLD.sql
+                AND NOT (json_valid(NEW.sql) AND instr(NEW.sql, '[erased]') > 0))
+            OR NOT EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+        BEGIN SELECT RAISE(ABORT, 'only redaction changes an issuance'); END;
+    CREATE TRIGGER issuances_removed_by_erasure_or_pruning BEFORE DELETE ON issuances
+        WHEN NOT (
+            (
+                (SELECT hashed FROM derivations WHERE id = OLD.derivation) IS NULL
+                AND EXISTS (SELECT 1 FROM log_permits WHERE kind = 'redaction')
+            )
+            OR EXISTS (
+                SELECT 1 FROM log_permits p
+                WHERE p.kind = 'pruning' AND OLD.tool = 'count_cohort' AND OLD.at < p.before
+                    AND NOT EXISTS (
+                        SELECT 1 FROM issuances k
+                        WHERE k.values_from = OLD.id AND k.id IS NOT OLD.id
+                            AND NOT (k.tool = 'count_cohort' AND k.at < p.before)
+                    )
+            )
+        )
+        BEGIN SELECT RAISE(ABORT, 'an issuance is removed only by erasure or pruning'); END;
+    """,
 )
 
 
@@ -254,6 +379,29 @@ class AppDB:
                 self.connection.execute("ROLLBACK")
                 raise
             self.connection.execute("COMMIT")
+
+    def due_vacuum(self, db: sqlite3.Connection) -> None:
+        """Record, in a redaction's transaction ``db``, that the database is to be vacuumed
+        (D223)."""
+        db.execute("INSERT OR IGNORE INTO vacuum_due (due) VALUES (1)")
+
+    def vacuum_is_due(self) -> bool:
+        """Whether a redaction ran since a vacuum and the checkpoint after it last finished."""
+        with self.lock:
+            return self.connection.execute("SELECT 1 FROM vacuum_due").fetchone() is not None
+
+    def vacuumed(self) -> None:
+        """Clear the record of a vacuum due, once a vacuum and the checkpoint after it
+        finished."""
+        with self.transaction() as db:
+            db.execute("DELETE FROM vacuum_due")
+
+    def vacuum(self) -> None:
+        """Rebuild the database after a redaction: ``secure_delete`` zeroes what is deleted, but
+        a page that rebalancing rebuilt keeps, in its unallocated space, the bytes of the rows
+        it moved, which may be a row as it was before redaction changed it (§12.2, Erasure)."""
+        with self.lock:
+            self.connection.execute("VACUUM")
 
     def checkpoint(self, wait: float = CHECKPOINT_WAIT) -> bool:
         """Write the WAL into the database and empty it, so no old page stays in the WAL.

@@ -6,24 +6,33 @@ predicates normalised (§6.4, §7.6 step 4), existence questions are split into 
 with trailing lookups moved into the last ``where`` (step 5), ``cohort`` leaves are inlined, and
 combinators are flattened (step 6). Each rule is applied as the tree is built, bottom up, so the
 result is already the fixpoint that repeating steps 4 to 6 would reach. Sorting and hashing are
-M2.2's (steps 8 and later).
+``canonical``'s (step 8 and the ids, D281).
+
+Packs (steps 1 and 2, D285, D286): the document's ``packs`` are resolved to the installed
+versions, and so are those a cohort's dataset lists; a pack leaf is checked against its kind's
+schema, compiled by its pack, and its expansion resolved where the leaf is, as one leaf as
+written: every node of the expansion has the pack leaf as its origin, and every refusal inside it
+is placed at the pack leaf.
 
 Everything §6.5 refuses is refused here too: a scope or filtered column mentioned other than in
 a top-level ``values`` conjunct without ``negate`` (and, for a filtered column, with allowed
 values only), scope columns under ``every``, ``exclude_self`` that does not return to its row's
 table, and unknown scope columns in ``covered``. Refusals point into the document as written.
 
-Refused until later milestones: pack leaves (M2.2), concept references and cross-dataset
-cohorts (M6), and a coverage's ``parent_scope`` holding more than value predicates and
-combinators.
+Refused until later milestones: concept references and cross-dataset cohorts (M6), and a
+coverage's ``parent_scope`` holding more than value predicates and combinators.
 """
 
+import logging
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Literal, cast
+
+from packaging.specifiers import SpecifierSet
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from aibi.core.engine.data import Release
 from aibi.core.engine.graph import PATH_SEARCH_STEPS, Graph, Path, Step, down_steps, render
@@ -41,6 +50,7 @@ from aibi.core.engine.resolved import (
     RExists,
     RIds,
     RKnown,
+    RNot,
     RUnknown,
     RValue,
     Values,
@@ -65,6 +75,7 @@ from aibi.core.schema.descriptors import (
 from aibi.core.schema.document import (
     AllClause,
     AnyClause,
+    Clause,
     ClauseModel,
     CohortLeaf,
     CoveredLeaf,
@@ -78,21 +89,41 @@ from aibi.core.schema.document import (
     UnitKey,
     UnknownClause,
     ValueLeaf,
+    walk,
 )
 from aibi.core.schema.document import Step as DocStep
 from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER
-from aibi.core.schema.jsonio import pointer
+from aibi.core.schema.jsonio import JsonError, canonical, pointer
+from aibi.core.schema.jsonschemas import (
+    OUT_OF_STEPS,
+    STEPS_BASE,
+    STEPS_PER_VALUE,
+    UNEVALUABLE,
+    WRITE_STEPS_MAX,
+    StepBudget,
+)
 from aibi.core.schema.limits import (
     CLAUSE_DEPTH,
+    EXPANSION_VALUES,
     LEAVES,
     MAX_CLAUSE_DEPTH,
     MAX_LEAVES,
     MAX_PATH_STEPS,
+    MAX_SUMMARY_SEGMENTS,
+    MAX_VALUES,
+    PACK_LEAF_STEPS,
     PATH_SEARCH,
     PATH_STEPS,
 )
 from aibi.core.schema.loading import as_written
-from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.output import DataSegment, Segment, TextSegment, data, text
+from aibi.core.schema.pack_api import (
+    LeafKind,
+    Pack,
+    PackRegistry,
+    Refused,
+    UnknownPack,
+)
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 
@@ -103,6 +134,84 @@ _NUMERIC = ("number", "integer", "time_offset")
 _ORDERED = ("number", "integer", "date", "datetime", "time_offset")
 _LISTED = 64
 """Alternatives listed in a refusal before the rest are counted."""
+_EXPANSION = "~expansion"
+"""The token under a pack leaf's position at which its expansion is resolved; no position of
+the document as written has it, and every refusal inside an expansion is placed at the leaf."""
+_CLAUSES: TypeAdapter[list[Clause]] = TypeAdapter(list[Clause])
+
+Label = int | Literal["draft"]
+_logger = logging.getLogger(__name__)
+
+
+class LabelNotShownError(AttributeError):
+    """A pack's compiler or caveat rule read a release's label (D285, D287)."""
+
+
+class DescriptorCopies(Mapping[str, Descriptor]):
+    """A release's descriptors as a pack reads them: each a deep copy, made the first time it is
+    read and kept for the view's later reads, in a mapping that cannot be changed. What a pack
+    does to one reaches neither the release nor another view, and a view costs only the
+    descriptors it reads. The release's own descriptors are held only in closures, so that no
+    attribute of the view reaches them; it is no sandbox, since a pack's code runs in this
+    process (D285, D287)."""
+
+    __slots__ = ("_has", "_keys", "_read", "_size")
+
+    def __init__(self, source: Mapping[str, Descriptor]) -> None:
+        copies: dict[str, Descriptor] = {}
+
+        def read(key: str) -> Descriptor:
+            found = copies.get(key)
+            if found is None:
+                found = copies[key] = source[key].model_copy(deep=True)
+            return found
+
+        self._read: Callable[[str], Descriptor] = read
+        self._has: Callable[[object], bool] = lambda key: key in source
+        self._keys: Callable[[], Iterator[str]] = lambda: iter(source)
+        self._size = len(source)
+
+    def __getitem__(self, key: str) -> Descriptor:
+        return self._read(key)
+
+    def __contains__(self, key: object) -> bool:
+        return self._has(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return self._keys()
+
+    def __len__(self) -> int:
+        return self._size
+
+
+@dataclass(frozen=True)
+class PackView:
+    """A ``ReleaseView``: what a pack's leaf compiler and caveat rule read of a release, its
+    descriptors and never its data (§10.1). Its label is not shown: an id hashes the manifest,
+    not the label, so what a pack makes of a release is the same drafted or published, and one
+    id has one digest (D285, D287). A pack that reads it fails (``PACK_FAILED``)."""
+
+    dataset: str
+    manifest: str
+    packs: Sequence[str]
+    descriptors: Mapping[str, Descriptor]
+    """Copies of the release's descriptors (``DescriptorCopies``)."""
+
+    @property
+    def label(self) -> Label:
+        raise LabelNotShownError("a pack's compiler and caveat rule read no release label")
+
+    @classmethod
+    def of(cls, release: Release) -> "PackView":
+        dataset = release.dataset_descriptor
+        packs = () if dataset is None else tuple(dataset.fields.packs or ())
+        return cls(release.dataset, release.manifest, packs, DescriptorCopies(release.by_id))
+
+
+def pack_failed(pack: str, stage: str, error: Exception) -> None:
+    """Log that a pack's code raised: the pack and the exception's type only, since its message
+    may quote the leaf or the release (D285)."""
+    _logger.warning("pack %s: its %s raised %s", pack, stage, type(error).__name__)
 
 
 @dataclass(frozen=True, order=True)
@@ -147,6 +256,12 @@ class ResolvedCohort:
     fields: tuple[FieldRead, ...]
     coverage: Mapping[str, Coverage]
     """Each relationship a question asks about, by id."""
+    packs: frozenset[str] = frozenset()
+    """The packs whose leaves the cohort's expansion holds, a referenced cohort's included."""
+    summaries: Mapping[Position, tuple[Segment, ...]] = field(
+        default_factory=dict[Position, tuple[Segment, ...]]
+    )
+    """Each pack leaf of the cohort as written, and its pack's summary of it (§7.3)."""
 
     @property
     def tree(self) -> RClause:
@@ -175,11 +290,13 @@ def resolve(
     document: Document,
     releases: Mapping[str, Release],
     positions: Mapping[Position, str] | None = None,
+    *,
+    registry: PackRegistry | None = None,
 ) -> Resolution:
     """Resolve a loaded document. ``releases`` maps each dataset reference as written (``d``,
     ``d@3``) to its release; ``positions`` are the loader's, so that refusals point into the
-    document as written."""
-    return _Resolver(document, releases, positions or {}).run()
+    document as written. ``registry`` holds the packs whose leaves may be expanded."""
+    return _Resolver(document, releases, positions or {}, registry).run()
 
 
 def check_parent_scopes(release: Release) -> list[Refusal]:
@@ -364,6 +481,10 @@ class _Cohort:
     """The positions of the cohort's leaves as written, cohort leaves included."""
     deduplicated: Deduplicated = field(default_factory=Deduplicated)
     """The cohort's nodes as step 8 leaves them, for mentions and the caps."""
+    packs: set[str] = field(default_factory=set[str])
+    summaries: dict[Position, tuple[Segment, ...]] = field(
+        default_factory=dict[Position, tuple[Segment, ...]]
+    )
 
 
 class _Resolver:
@@ -372,14 +493,35 @@ class _Resolver:
         document: Document | None,
         releases: Mapping[str, Release],
         positions: Mapping[Position, str],
+        registry: PackRegistry | None = None,
     ) -> None:
         self._given = document
         """The document resolved; a release's parent scopes are resolved without one."""
         self.releases = releases
         self.positions = positions
+        self.registry = registry
         self.refusals: list[Refusal] = []
         self.resolved: dict[str, ResolvedCohort | None] = {}
         self.graphs: dict[int, Graph] = {}
+        self.unavailable: set[str] = set()
+        """Packs the document names that are refused at its ``packs``."""
+        self.expanding: tuple[Position, str] | None = None
+        """The pack leaf whose expansion is being resolved, and its kind."""
+        self.leaf_steps: int | None = None
+        """The steps the document's pack leaves may take together, once counted."""
+        self.leaf_budget: StepBudget | None = None
+        self.expansion_values = MAX_VALUES
+        """JSON values the document's expansions may still hold (D285)."""
+        self.checked: dict[bytes, list[tuple[Position, str]]] = {}
+        """The schema failures of each distinct pack leaf, by its RFC 8785 text."""
+        self.compiled: dict[tuple[bytes, str], tuple[list[ClauseModel], JsonValue] | None] = {}
+        """Each distinct pack leaf's checked expansion in a release, and its JSON; ``None`` for
+        one its compiler refused or gave what the core refuses."""
+        self.refused_by_pack: dict[tuple[bytes, str], list[Refusal]] = {}
+        """The refusals of each compile that failed: empty for an expansion the core refused."""
+        self.raised: set[tuple[bytes, str]] = set()
+        """The compiles whose compiler raised what is no refusal."""
+        self.summarised: dict[bytes, tuple[Segment, ...] | None] = {}
 
     @property
     def document(self) -> Document:
@@ -390,14 +532,22 @@ class _Resolver:
 
     def refuse(
         self,
-        code: RefusalCode,
+        code: RefusalCode | str,
         at: Position,
         *message: Segment,
         alternatives: Iterable[Segment] = (),
         limit: Limit | None = None,
     ) -> None:
-        written, parameter = as_written(at, self.positions) if self.positions else (at, None)
         segments = list(message)
+        if self.expanding is not None:
+            at, kind = self.expanding
+            segments = [
+                text("In the expansion of the pack leaf "),
+                data(kind),
+                text(": "),
+                *segments,
+            ]
+        written, parameter = as_written(at, self.positions) if self.positions else (at, None)
         if parameter is not None:
             segments += [text(" (in the value of parameter "), data(parameter), text(")")]
         self.refusals.append(
@@ -420,6 +570,7 @@ class _Resolver:
     # --- Documents and cohorts -------------------------------------------------------------
 
     def run(self) -> Resolution:
+        self._document_packs()
         self._mixed_releases()
         for name in self._order():
             self.resolved[name] = self._cohort(name)
@@ -470,6 +621,64 @@ class _Resolver:
             return cohort.dataset, ("cohorts", name, "dataset")
         return self.document.dataset or "", ("dataset",)
 
+    def _document_packs(self) -> None:
+        """Every pack the document names is installed at a version its specifier admits, a
+        pre-release included (§7.6, step 1; D286)."""
+        registry = self.registry
+        registered = () if registry is None else registry.ids
+        for pack_id, specifier in (self.document.packs or {}).items():
+            at: Position = ("packs", pack_id)
+            if registry is None or pack_id not in registered:
+                self.unavailable.add(pack_id)
+                self.refuse(
+                    RefusalCode.PACK_UNAVAILABLE,
+                    at,
+                    text("No pack with this id is installed: "),
+                    data(pack_id),
+                    alternatives=self._installed(),
+                )
+                continue
+            version = registry.pack(pack_id).manifest.version
+            if not SpecifierSet(specifier).contains(version, prereleases=True):
+                self.unavailable.add(pack_id)
+                self.refuse(
+                    RefusalCode.PACK_UNAVAILABLE,
+                    at,
+                    text("The installed version of pack "),
+                    data(pack_id),
+                    text(", "),
+                    data(version),
+                    text(", is not one the document's specifier admits: "),
+                    data(specifier),
+                )
+
+    def _installed(self) -> list[Segment]:
+        registry = self.registry
+        if registry is None:
+            return []
+        return self.listed(
+            [f"{pack_id} {registry.pack(pack_id).manifest.version}" for pack_id in registry.ids]
+        )
+
+    def _dataset_packs(self, release: Release, at: Position) -> bool:
+        """Whether every pack the dataset lists is installed: their results versions are part
+        of every cohort id over it (§7.6, D286)."""
+        dataset = release.dataset_descriptor
+        listed = () if dataset is None else dataset.fields.packs or ()
+        registered = () if self.registry is None else self.registry.ids
+        missing = sorted(pack for pack in listed if pack not in registered)
+        if missing:
+            self.refuse(
+                RefusalCode.PACK_UNAVAILABLE,
+                at,
+                text("Dataset "),
+                data(release.dataset),
+                text(" was built with packs that are not installed: "),
+                *[data(pack) for pack in missing],
+                alternatives=self._installed(),
+            )
+        return not missing
+
     def _mixed_releases(self) -> None:
         """A document resolves each dataset to exactly one release (§7.1)."""
         seen: dict[str, str] = {}
@@ -511,7 +720,7 @@ class _Resolver:
             )
             return None
         unit = self._unit(release)
-        if unit is None:
+        if unit is None or not self._dataset_packs(release, at):
             return None
         graph = self.graphs.get(id(release))
         if graph is None:
@@ -543,6 +752,8 @@ class _Resolver:
             _interned(leaves),
             tuple(sorted(context.fields)),
             dict(sorted(context.coverage.items())),
+            frozenset(context.packs),
+            dict(context.summaries),
         )
 
     def _within_caps(
@@ -687,7 +898,7 @@ class _Resolver:
         elif isinstance(clause, CohortLeaf):
             resolved = self._inlined(context, clause, at)
         else:
-            resolved = self._pack(clause, at)
+            resolved = self._pack(context, clause, at, table, in_where)
         if resolved is None:
             context.failed = True
         return resolved
@@ -722,13 +933,252 @@ class _Resolver:
                 members.append(resolved)
         return members, failed
 
-    def _pack(self, clause: PackLeaf, at: Position) -> None:
-        self.refuse(
-            RefusalCode.NOT_SUPPORTED,
-            (*at, "kind"),
-            text("Pack leaves are expanded by their pack's compiler from M2.2: "),
-            data(clause.kind),
-        )
+    # --- Pack leaves (§7.3, D285) --------------------------------------------------------
+
+    def _pack(
+        self, context: _Cohort, clause: PackLeaf, at: Position, table: str, in_where: bool
+    ) -> RClause | None:
+        """A pack leaf, expanded by its pack's compiler and resolved where it is written."""
+        kind = clause.kind
+        pack_id = kind.partition(".")[0]
+        if pack_id in self.unavailable:
+            return None  # refused at the document's packs
+        registry = self.registry
+        leaf_kind = None
+        if registry is not None:
+            try:
+                leaf_kind = registry.leaf_kind(kind)
+            except UnknownPack:
+                leaf_kind = None
+        if registry is None or leaf_kind is None:
+            self.refuse(
+                RefusalCode.UNKNOWN_KIND,
+                (*at, "kind"),
+                text("No installed pack has the leaf kind "),
+                data(kind),
+                alternatives=self.listed([] if registry is None else registry.leaf_kinds()),
+            )
+            return None
+        leaf = cast(JsonValue, clause.model_dump(mode="json"))
+        key = canonical(leaf)
+        if not self._schema_holds(registry, kind, leaf, key, at):
+            return None
+        pack = registry.pack(pack_id)
+        compiled = self._expansion(key, context.release, pack, leaf_kind, at)
+        summary = self._summary(key, pack_id, leaf_kind, at)
+        if compiled is None or summary is None:
+            return None
+        expansion, written = compiled
+        values = _count_values(written)
+        if values > self.expansion_values:
+            self.refuse(
+                RefusalCode.LIMIT_EXCEEDED,
+                at,
+                text("The expansions of the document's pack leaves hold more than "),
+                text(f"{MAX_VALUES} JSON values together, the most a document may"),
+                limit=Limit(name=EXPANSION_VALUES, max=MAX_VALUES),
+            )
+            return None
+        self.expansion_values -= values
+        written_before = set(context.written)
+        outer, self.expanding = self.expanding, (at, kind)
+        try:
+            members, failed = self._resolved(context, expansion, (*at, _EXPANSION), table, in_where)
+        finally:
+            self.expanding = outer
+            context.written = written_before
+        if failed:
+            return None
+        context.packs.add(pack_id)
+        context.summaries[at] = summary
+        origin = frozenset({at})
+        marked = [_remarked(member, origin) for member in members]
+        if not marked:
+            return RAll((), origin)
+        return all_of(marked) if len(marked) > 1 else marked[0]
+
+    def _schema_holds(
+        self, registry: PackRegistry, kind: str, leaf: JsonValue, key: bytes, at: Position
+    ) -> bool:
+        """Whether the leaf, ``kind`` included, satisfies its kind's schema as registered. The
+        document's pack leaves share one budget of steps; a leaf is checked once however often
+        it is written."""
+        failures = self.checked.get(key)
+        if failures is None:
+            if self.leaf_budget is None:
+                self.leaf_budget = StepBudget(self._leaf_steps())
+            found = registry.leaf_checker(kind).failures(leaf, budget=self.leaf_budget)
+            failures = [(failure.path, failure.keyword) for failure in found]
+            self.checked[key] = failures
+        for path, keyword in failures:
+            if keyword == OUT_OF_STEPS:
+                self.refuse(
+                    RefusalCode.LIMIT_EXCEEDED,
+                    at,
+                    text("Checking the document's pack leaves against their kinds' schemas "),
+                    text("takes more steps than it may; write fewer or smaller pack leaves"),
+                    limit=Limit(name=PACK_LEAF_STEPS, max=self._leaf_steps()),
+                )
+            elif keyword == UNEVALUABLE:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    at,
+                    text("The schema of leaf kind "),
+                    data(kind),
+                    text(" cannot evaluate this leaf"),
+                )
+            else:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    (*at, *path),
+                    text("The leaf does not satisfy the schema of its kind, "),
+                    data(kind),
+                    text(": its keyword "),
+                    data(keyword),
+                    text(" fails here"),
+                )
+        return not failures
+
+    def _leaf_steps(self) -> int:
+        """The steps the document's pack leaves may take together: ``STEPS_BASE`` and
+        ``STEPS_PER_VALUE`` per JSON value of every pack leaf, at most ``WRITE_STEPS_MAX``."""
+        if self.leaf_steps is None:
+            values = 0
+            for cohort in self.document.cohorts.values():
+                for clause, _, _ in walk(list(cohort.all), []):
+                    if isinstance(clause, PackLeaf):
+                        values += _count_values(cast(JsonValue, clause.model_dump(mode="json")))
+            self.leaf_steps = min(WRITE_STEPS_MAX, STEPS_BASE + STEPS_PER_VALUE * values)
+        return self.leaf_steps
+
+    def _expansion(
+        self,
+        key: bytes,
+        release: Release,
+        pack: Pack,
+        leaf_kind: LeafKind,
+        at: Position,
+    ) -> tuple[list[ClauseModel], JsonValue] | None:
+        """The leaf's expansion in a release, checked: core clauses with no pack, ``ids`` or
+        ``cohort`` leaf at any depth, as a document holds them. The compiler runs once per
+        distinct leaf and release, on a leaf of its own built from the leaf's JSON and a view
+        of its own (``PackView``), so that what it does to either reaches no other reader, and
+        no leaf's expansion depends on what another's compiler did; its refusals are placed at
+        the leaf, their paths below it, and anything else it raises but a ``MemoryError`` (a
+        ``RecursionError`` included) is ``PACK_FAILED`` (D285)."""
+        cache = (key, release.manifest)
+        if cache in self.compiled:
+            found = self.compiled[cache]
+            if found is None:
+                self._refuse_again(cache, at)
+            return found
+        try:
+            given = leaf_kind.compile(
+                PackLeaf.model_validate_json(key), PackView.of(release), pack.manifest.version
+            )
+            checked = self._checked_expansion(cast(object, given))
+        except Refused as refused:
+            self.compiled[cache] = None
+            self.refused_by_pack[cache] = list(refused.refusals)
+            self._refuse_again(cache, at)
+            return None
+        except MemoryError:
+            raise
+        except Exception as error:
+            pack_failed(pack.id, "leaf compiler", error)
+            self.compiled[cache] = None
+            self.raised.add(cache)
+            self._refuse_again(cache, at)
+            return None
+        if checked is None:
+            self.compiled[cache] = None
+            self.refused_by_pack[cache] = []
+            self._refuse_again(cache, at)
+            return None
+        self.compiled[cache] = checked
+        return checked
+
+    def _refuse_again(self, cache: tuple[bytes, str], at: Position) -> None:
+        """Place a failed compile's refusals at a leaf: the compiler's, below the leaf, or one
+        saying the pack gave what is no expansion."""
+        if cache in self.raised:
+            self.refuse(
+                RefusalCode.PACK_FAILED, at, text("The pack's compiler of this leaf failed")
+            )
+            return
+        refusals = self.refused_by_pack.get(cache, [])
+        if not refusals:
+            self.refuse(
+                RefusalCode.PACK_FAILED,
+                at,
+                text("The pack's compiler of this leaf gave what is no expansion: core clauses, "),
+                text("valid as a document's, with no pack, ids or cohort leaf"),
+            )
+            return
+        for refusal in refusals:
+            below = _tokens(refusal.path or "")
+            self.refuse(
+                refusal.code,
+                (*at, *below),
+                *refusal.message,
+                alternatives=refusal.alternatives,
+                limit=refusal.limit,
+            )
+
+    @staticmethod
+    def _checked_expansion(given: object) -> tuple[list[ClauseModel], JsonValue] | None:
+        """The expansion a compiler gave, checked; ``None`` for what is no expansion. Dumping
+        the models it gave runs its code, whose exceptions the caller catches."""
+        if not isinstance(given, list | tuple):
+            return None
+        items = cast(Sequence[object], given)
+        if not all(isinstance(item, BaseModel) for item in items):
+            return None
+        try:
+            written = [
+                cast(JsonValue, cast(BaseModel, item).model_dump(mode="json", by_alias=True))
+                for item in items
+            ]
+            canonical(written)
+            checked = _CLAUSES.validate_python(written)
+        except (JsonError, ValidationError, ValueError, TypeError):
+            return None
+        for member, _, _ in walk(list(checked), []):
+            if isinstance(member, PackLeaf | IdsLeaf | CohortLeaf):
+                return None
+        return list(checked), cast(JsonValue, written)
+
+    def _summary(
+        self, key: bytes, pack: str, leaf_kind: LeafKind, at: Position
+    ) -> tuple[Segment, ...] | None:
+        """The pack's summary of the leaf as written, from a leaf of its own: at most
+        ``MAX_SUMMARY_SEGMENTS`` segments, kept outside every hash (§7.3); anything else, or an
+        exception, is ``PACK_FAILED`` (D285)."""
+        if key not in self.summarised:
+            found: tuple[Segment, ...] | None = None
+            try:
+                given = cast(object, leaf_kind.summary(PackLeaf.model_validate_json(key)))
+                if isinstance(given, list | tuple):
+                    items = tuple(cast(Sequence[object], given))
+                    if len(items) <= MAX_SUMMARY_SEGMENTS and all(
+                        type(item) in (TextSegment, DataSegment) for item in items
+                    ):
+                        found = _segments(cast(tuple[Segment, ...], items))
+            except MemoryError:
+                raise
+            except Exception as error:
+                pack_failed(pack, "summary", error)
+                found = None
+            self.summarised[key] = found
+        summary = self.summarised[key]
+        if summary is None:
+            self.refuse(
+                RefusalCode.PACK_FAILED,
+                at,
+                text("The pack's summary of this leaf is not a list of at most "),
+                text(f"{MAX_SUMMARY_SEGMENTS} segments"),
+            )
+        return summary
 
     def _inlined(self, context: _Cohort, clause: CohortLeaf, at: Position) -> RClause | None:
         """The referenced cohort's canonical form, inlined (§7.6, step 3): each of its top-level
@@ -738,6 +1188,7 @@ class _Resolver:
             return None  # its own refusals, or the document checks', say why
         context.fields.update(other.fields)
         context.coverage.update(other.coverage)
+        context.packs.update(other.packs)
         # The cohort leaf is a leaf as written: it maps to every clause its expansion joins, and
         # an empty cohort, an empty all (TRUE), maps to where it is inlined.
         origin = frozenset({at})
@@ -1652,6 +2103,54 @@ class _Resolver:
         return ok
 
 
+def _remarked(node: RClause, origin: frozenset[Position]) -> RClause:
+    """The node, and every node below it, with ``origin`` as its origin: an expansion's nodes
+    all come from its pack leaf, which is one leaf as written (§6.6, D285)."""
+    if isinstance(node, RExists):
+        where = tuple(_remarked(clause, origin) for clause in node.where)
+        return replace(node, where=where, origin=origin)
+    if isinstance(node, RAll | RAny):
+        members = tuple(_remarked(member, origin) for member in node.members)
+        return replace(node, members=members, origin=origin)
+    if isinstance(node, RNot | RKnown | RUnknown):
+        return replace(node, member=_remarked(node.member, origin), origin=origin)
+    return replace(node, origin=origin)
+
+
+def _segments(given: tuple[Segment, ...]) -> tuple[Segment, ...] | None:
+    """Segments validated again, since ``model_construct`` builds them unchecked."""
+    try:
+        return tuple(type(segment).model_validate(segment.model_dump()) for segment in given)
+    except ValidationError:
+        return None
+
+
+def _count_values(value: JsonValue) -> int:
+    """The JSON values in a value, itself included."""
+    count = 0
+    pending: list[JsonValue] = [value]
+    while pending:
+        current = pending.pop()
+        count += 1
+        if isinstance(current, dict):
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return count
+
+
+def _tokens(path: str) -> tuple[str | int, ...]:
+    """The tokens of a JSON Pointer, list indexes as numbers."""
+    if not path:
+        return ()
+    tokens: list[str | int] = []
+    for raw in path[1:].split("/"):
+        token = raw.replace("~1", "/").replace("~0", "~")
+        is_index = token.isascii() and token.isdigit() and (token == "0" or token[0] != "0")
+        tokens.append(int(token) if is_index else token)
+    return tuple(tokens)
+
+
 def _in_document_order(position: Position) -> tuple[tuple[int, int, str], ...]:
     """A sort key that puts positions in the order of the document as written: list indexes
     as numbers, so that ``10`` comes after ``9``."""
@@ -1685,9 +2184,13 @@ __all__ = [
     "UNCONFIRMED",
     "Coverage",
     "FieldRead",
+    "Label",
+    "LabelNotShownError",
+    "PackView",
     "Resolution",
     "ResolvedCohort",
     "check_parent_scopes",
+    "pack_failed",
     "resolve",
     "typed_constant",
 ]

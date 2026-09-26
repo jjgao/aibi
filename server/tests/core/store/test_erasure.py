@@ -19,7 +19,7 @@ from aibi.core.engine import build
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.store import parquet
 from aibi.core.store.build import BuildRefused, Layout
-from aibi.core.store.erasure import Erased, erase
+from aibi.core.store.erasure import Erased, _Person, erase  # pyright: ignore[reportPrivateUsage]
 from aibi.core.store.manifest import hex_of
 from aibi.core.store.redaction import MARK, Terms
 from aibi.core.store.sources import TypedSource
@@ -386,7 +386,7 @@ def test_a_release_withdrawn_before_is_passed_over(
 def test_the_person_s_numeric_key_is_erased_from_free_text_too(
     store: Store, library: Library
 ) -> None:
-    """A patient number is the person's; a surrogate key below them stays in prose."""
+    """A member's number is the person's; a surrogate key below them stays in prose."""
     number = "104233"
     members = library.members.replace(KEY.encode(), number.encode())
     loans = tuple(tuple(number if v == KEY else v for v in loan) for loan in library.loans)
@@ -1180,9 +1180,16 @@ def test_the_longest_term_is_erased_first() -> None:
 
 
 def test_numbers_below_the_person_are_erased_only_as_whole_values() -> None:
-    terms = Terms(["104233"], ["2"])
+    terms = Terms(["104233"], ["2"], numbers=["2"])
     assert terms.text("page 2 of 104233") == f"page 2 of {MARK}"
     assert terms.json({"n": 2, "m": "2", "k": 104233}) == {"k": MARK, "m": MARK, "n": MARK}
+
+
+def test_text_below_the_person_that_reads_as_a_number_is_erased_as_a_token() -> None:
+    terms = Terms(["m-1"], ["2", "3"], numbers=["3"])
+    assert terms.text("page 2 of 3") == f"page {MARK} of 3"
+    assert terms.numbers == frozenset({"3"})
+    assert Terms.loads(terms.dumps()).numbers == frozenset({"3"})
 
 
 def test_object_keys_that_are_terms_are_erased_and_kept_apart(
@@ -1311,3 +1318,97 @@ def test_a_checkpoint_left_unfinished_is_retried_when_the_store_opens(
 def _wal_holds(root: Path, text: str) -> bool:
     wal = root / "app.db-wal"
     return wal.exists() and text.encode() in wal.read_bytes()
+
+
+def _plant(store: Store, text: str) -> None:
+    """Write ``text`` into the unallocated space of the page of the app DB's labels, which no
+    erasure writes, as a page that rebalancing rebuilt keeps the bytes of a row it moved; the WAL
+    is checkpointed first, so that the file holds the page's latest version."""
+    assert store.db.checkpoint()
+    connection = store.db.connection
+    size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+    root = int(
+        connection.execute("SELECT rootpage FROM sqlite_schema WHERE name = 'labels'").fetchone()[0]
+    )
+    planted = f" {text} ".encode()
+    with Path(store.db.path).open("r+b") as file:
+        file.seek((root - 1) * size)
+        page = file.read(size)
+        assert page[0] == 13  # a table's leaf page
+        used = 8 + 2 * int.from_bytes(page[3:5], "big")
+        content = int.from_bytes(page[5:7], "big") or 65_536
+        assert content - used > len(planted)
+        file.seek((root - 1) * size + (used + content - len(planted)) // 2)
+        file.write(planted)
+
+
+@pytest.mark.parametrize("vacuumed", [True, False])
+def test_erasure_leaves_no_copy_of_a_term_in_the_unallocated_space_of_a_page(
+    store: Store, library: Library, imported: str, monkeypatch: pytest.MonkeyPatch, vacuumed: bool
+) -> None:
+    _mention(store, imported)
+    _without_the_member(store, library)
+    _plant(store, KEY)
+    if not vacuumed:
+        monkeypatch.setattr(store.db, "vacuum", lambda: None)
+    assert erase(store, "lib", "members", [KEY], "operator:ada").redacted
+    assert _holds(store, KEY) == ([] if vacuumed else ["app.db"])
+
+
+def _full() -> None:
+    raise sqlite3.OperationalError("database or disk is full")
+
+
+def test_a_vacuum_that_fails_leaves_the_redaction_pending_until_one_finishes(
+    store: Store, library: Library, imported: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mention(store, imported)
+    _without_the_member(store, library)
+    _plant(store, KEY)
+    vacuum = store.db.vacuum
+    monkeypatch.setattr(store.db, "vacuum", _full)
+    assert not erase(store, "lib", "members", [KEY], "operator:ada").redacted
+    assert store.pending_redactions("lib") == {}
+    assert store.db.vacuum_is_due()
+    assert not store.redacted([1])
+    assert "app.db" in _holds(store, KEY)
+    monkeypatch.setattr(store.db, "vacuum", vacuum)
+    later = monotonic() + CHECKPOINT_RETRY
+    monkeypatch.setattr("aibi.core.store.store.monotonic", lambda: later)
+    with store.pin():
+        pass
+    assert store.redacted([1])
+    assert not store.db.vacuum_is_due()
+    assert _holds(store, KEY) == []
+
+
+def test_a_vacuum_that_failed_is_retried_when_the_store_opens(
+    tmp_path: Path, library: Library, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data"
+    store = Store(root)
+    with store.pin() as pin:
+        built = store.import_release(
+            pin, "lib", library.descriptors(), library.sources(), library.layouts
+        )
+        store.publish("lib", built.manifest.hash, "operator:ada")
+    _mention(store, built.manifest.hash)
+    _without_the_member(store, library)
+    _plant(store, KEY)
+    monkeypatch.setattr(store.db, "vacuum", _full)
+    assert not erase(store, "lib", "members", [KEY], "operator:ada").redacted
+    store.close()
+    again = Store(root)
+    try:
+        assert again.redacted([1])
+        assert not again.db.vacuum_is_due()
+        assert _holds(again, KEY) == []
+    finally:
+        again.close()
+
+
+def test_the_person_s_repr_names_their_table_and_releases_and_never_their_key(
+    store: Store, imported: str
+) -> None:
+    shown = repr(_Person("members", {imported: store.load(imported)}, [KEY]))
+    assert shown == f"_Person(table='members', releases={[imported]!r})"

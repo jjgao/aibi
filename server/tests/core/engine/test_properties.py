@@ -9,13 +9,17 @@ from typing import Any
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
+from aibi.core.engine.canonical import as_document
+from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
+from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.resolved import RAll, document
 from aibi.core.engine.truth import TruthValue, all_of, not_
 
 City = Callable[..., Release]
 Doc = Callable[..., dict[str, Any]]
 Runner = Callable[..., Any]
+Canon = Callable[..., Any]
 
 OWNER = "rel:establishments.owner"
 INSPECTED = "rel:inspections.establishment"
@@ -182,7 +186,7 @@ def leaves(draw: st.DrawFn) -> dict[str, Any]:
     pick = lambda options: draw(st.sampled_from(options))  # noqa: E731
     lift = pick([None, "strict", "assessed"])
     lifted = {} if lift is None else {"lift": lift}
-    choice = draw(st.integers(0, 16))
+    choice = draw(st.integers(0, 17))
     if choice == 0:
         return _value(
             "establishments.grade",
@@ -295,6 +299,9 @@ def leaves(draw: st.DrawFn) -> dict[str, Any]:
             "via": [{"rel": LICENCES, "dir": "down"}, {"rel": LICENCE_TYPE, "dir": "up"}],
             "where": [_value("licence_types.tier", values=[pick([1, 3])])],
         }
+    if choice == 16:
+        # Literal strings that start with $, written "$$…" (§7.1).
+        return _value("establishments.name", values=_subset(draw, ["$$", "$$name", "$$$x", "e"]))
     scope = pick([{}, {"scope": {"code": _subset(draw, ["temp", "pest"])}}])
     return {"kind": "covered", "table": "violations", **scope, **lifted}
 
@@ -420,21 +427,10 @@ def test_resolving_the_resolved_form_again_changes_nothing(
     assert first.refusals == []
     tree = first.resolution.cohorts["c"].tree
     members = tree.members if isinstance(tree, RAll) else (tree,)
-    written = [_with_dataset(document(member), release.manifest) for member in members]
+    written = [as_document(document(member), {release.manifest: "d"}) for member in members]
     again = run(doc(written), release)
     assert again.refusals == []
     assert again.resolution.cohorts["c"].tree == tree
-
-
-def _with_dataset(value: Any, manifest: str) -> Any:
-    """The form as a document writes it: unit keys name the dataset, not its manifest hash."""
-    if isinstance(value, dict):
-        if value.get("dataset") == manifest and "key" in value:
-            return {**value, "dataset": "d"}
-        return {key: _with_dataset(member, manifest) for key, member in value.items()}
-    if isinstance(value, list):
-        return [_with_dataset(item, manifest) for item in value]
-    return value
 
 
 @EXAMPLES
@@ -488,3 +484,64 @@ def test_the_direct_multi_step_and_nested_forms_resolve_to_one_tree(
         assert result.refusals == []
         trees.append(result.resolution.cohorts["c"].tree)
     assert all(tree == trees[0] for tree in trees)
+
+
+# --- Canonical forms (§7.6, §13.4) ------------------------------------------------------------
+
+
+def _canonical_cohort(canon: Canon, doc: Doc, release: Release, written: list[Any]) -> Any:
+    result = canon(doc(written), release)
+    limits = {refusal.limit.name for refusal in result.refusals if refusal.limit}
+    assume(not limits & {"clause_depth", "leaves_per_cohort"})
+    assert result.refusals == [], result.refusals
+    return result.cohorts["c"]
+
+
+def _shuffled(value: Any, order: random.Random, sets: bool = False) -> Any:
+    """The value with every object's keys in another order, and the order-insensitive lists (the
+    members of all, any and where, values, ids and scope value lists) shuffled; paths and
+    quantifier lists keep their order."""
+    if isinstance(value, dict):
+        keys = list(value)
+        order.shuffle(keys)
+        return {
+            key: _shuffled(value[key], order, key in ("all", "any", "where", "values", "ids"))
+            if key != "scope"
+            else {column: _shuffled(values, order, True) for column, values in value[key].items()}
+            for key in keys
+        }
+    if isinstance(value, list):
+        items = [_shuffled(item, order) for item in value]
+        if sets:
+            order.shuffle(items)
+        return items
+    return value
+
+
+@EXAMPLES
+@given(clause=clauses())
+def test_canonicalising_the_canonical_form_again_changes_nothing(
+    canon: Canon, city: City, doc: Doc, clause: Any
+) -> None:
+    release = city()
+    first = _canonical_cohort(canon, doc, release, [clause])
+    written = [as_document(member, {release.manifest: "d"}) for member in first.clauses]
+    again = _canonical_cohort(canon, doc, release, written)
+    assert again.form == first.form
+    assert again.id == first.id
+
+
+@EXAMPLES
+@given(data=city_data(), a=clauses(2), b=clauses(2), seed=st.integers(0, 2**32 - 1))
+def test_reordered_members_and_keys_give_identical_ids_and_digests(
+    canon: Canon, city: City, doc: Doc, data: Any, a: Any, b: Any, seed: int
+) -> None:
+    rows, options = data
+    release = city(rows, **options)
+    written = [_fit(a, options), _fit(b, options), _fit(a, options)]
+    first = _canonical_cohort(canon, doc, release, written)
+    other = _canonical_cohort(canon, doc, release, _shuffled(written, random.Random(seed), True))
+    assert other.form == first.form
+    assert other.id == first.id
+    digests = [count_parts(c, evaluate(c.resolved)).digest for c in (first, other)]
+    assert digests[0] == digests[1]

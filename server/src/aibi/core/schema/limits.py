@@ -43,6 +43,11 @@ MAX_LEAVES = 64
 MAX_COHORT_REFERENCES = 256
 """``cohort`` leaves in one cohort as written (SPEC §7.1): each inlines the cohort it names, so
 they bound the work of resolving a cohort before its canonical form is measured."""
+MAX_PACK_LEAVES = 256
+"""Pack leaves in one cohort as written: each is compiled by its pack and its expansion
+resolved, so they bound that work as ``MAX_COHORT_REFERENCES`` bounds inlining (D285)."""
+MAX_SUMMARY_SEGMENTS = 64
+"""Segments of a pack leaf's summary (D285)."""
 MAX_COHORTS = 6
 MAX_DATASETS = 64
 """Datasets in one cross-dataset cohort, and entries in a ``via`` map by dataset."""
@@ -136,6 +141,12 @@ QUEUE_BYTES = "queue_bytes"
 """Bytes of the items of one curation queue, in JSON (D250)."""
 EXTENSION_STEPS = "extension_steps"
 """Steps of evaluating one extension object against its pack's schema (D247)."""
+PACK_LEAVES = "pack_leaves"
+"""Pack leaves in one cohort as written (D285)."""
+PACK_LEAF_STEPS = "pack_leaf_steps"
+"""Steps of evaluating a document's pack leaves against their kinds' schemas, together (D285)."""
+EXPANSION_VALUES = "expansion_values"
+"""JSON values of the expansions of a document's pack leaves, together (D285)."""
 MAX_OPEN_PROPOSALS = 10_000
 MAX_AGENT_PROPOSALS = MAX_OPEN_PROPOSALS // 2
 """Agents' share of ``MAX_OPEN_PROPOSALS``: the rest stays for the importers' and the models'
@@ -267,6 +278,7 @@ __all__ = [
     "DESCRIPTOR_BYTES",
     "DOCUMENT_BYTES",
     "ENTRIES",
+    "EXPANSION_VALUES",
     "EXTENSION_STEPS",
     "IDENTIFIER_CHARACTERS",
     "IMPORT_BYTES",
@@ -295,6 +307,7 @@ __all__ = [
     "MAX_NAME",
     "MAX_OPEN_PROPOSALS",
     "MAX_PACKS",
+    "MAX_PACK_LEAVES",
     "MAX_PARAMS",
     "MAX_PATH_STEPS",
     "MAX_POINTER",
@@ -304,6 +317,7 @@ __all__ = [
     "MAX_QUEUE_ITEMS",
     "MAX_REFUSALS",
     "MAX_STRING",
+    "MAX_SUMMARY_SEGMENTS",
     "MAX_TEXT",
     "MAX_VALUES",
     "MAX_VIEWS",
@@ -314,6 +328,8 @@ __all__ = [
     "OPEN_PROPOSALS",
     "OPERATOR_REQUESTS",
     "PACKS",
+    "PACK_LEAF_STEPS",
+    "PACK_LEAVES",
     "PARAMETERS",
     "PATH_SEARCH",
     "PATH_STEPS",
