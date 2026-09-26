@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from aibi.core.api.errors import status_of
+from aibi.core.catalog.service import DEADLINE, Deadline
 from aibi.core.catalog.tools import RULES, TOOLS
 from aibi.core.mcp import server as transport_module
 from aibi.core.mcp.calls import Calls, _Place  # pyright: ignore[reportPrivateUsage]
@@ -37,7 +38,7 @@ def _structured(result: dict[str, Any]) -> dict[str, Any]:
     return found
 
 
-def test_the_server_lists_exactly_the_five_catalogue_tools(served: Served) -> None:
+def test_the_server_lists_exactly_the_catalogue_and_query_tools(served: Served) -> None:
     answered = served.rpc("tools/list")
     assert answered.status_code == 200
     tools = answered.json()["result"]["tools"]
@@ -47,13 +48,17 @@ def test_the_server_lists_exactly_the_five_catalogue_tools(served: Served) -> No
         "describe_column",
         "curation_queue",
         "propose_descriptor",
+        "validate_document",
+        "count_cohort",
+        "explain",
     ]
     assert list(TOOL_MODELS) == [tool.name for tool in TOOLS]
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"
         assert tool["outputSchema"]["type"] == "object"
         assert RULES in tool["description"]
-        assert tool["annotations"]["readOnlyHint"] is (tool["name"] != "propose_descriptor")
+        writes = tool["name"] in ("propose_descriptor", "count_cohort")
+        assert tool["annotations"]["readOnlyHint"] is not writes
         assert tool["annotations"]["idempotentHint"] is tool["annotations"]["readOnlyHint"]
 
 
@@ -940,3 +945,23 @@ def test_a_real_server_s_log_and_answers_hold_no_secret_a_message_carried(
     for secret in (token, token[5:]):
         assert secret not in written
         assert not [answer for answer in answers if secret in answer]
+
+
+def test_a_call_s_thread_knows_its_deadline_on_its_own_clock() -> None:
+    """What the thread starts can end by the call's deadline, and what it records be recorded
+    only while the call can still be answered (D300, D301)."""
+    calls = Calls(None, seconds=20)  # type: ignore[arg-type]
+
+    def work() -> Deadline | None:
+        return DEADLINE.get()
+
+    async def main() -> tuple[float, object, float]:
+        before = time.monotonic()
+        found = await calls.run(work)
+        return before, found, time.monotonic()
+
+    before, found, after = anyio.run(main)
+    assert isinstance(found, Deadline)
+    assert found.seconds == 20
+    assert before + 19 <= found.at <= after + 20
+    assert DEADLINE.get() is None

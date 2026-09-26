@@ -157,9 +157,9 @@ class World:
 @pytest.fixture
 def world(tmp_path: Path) -> Iterator[World]:
     (tmp_path / "imports").mkdir()
-    store = Store(tmp_path / "data", clock=_clock())
-    yield World(tmp_path, store)
-    store.close()
+    found = World(tmp_path, Store(tmp_path / "data", clock=_clock()))
+    yield found
+    found.store.close()
 
 
 @pytest.fixture

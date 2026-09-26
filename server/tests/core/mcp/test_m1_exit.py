@@ -134,7 +134,7 @@ async def _agent(url: str, *calls: tuple[str, dict[str, Any]]) -> list[dict[str,
         initialized = await session.initialize()
         assert initialized.instructions is not None
         listed = await session.list_tools()
-        assert {tool.name for tool in listed.tools} == {
+        assert {tool.name for tool in listed.tools} >= {
             "search_catalog",
             "describe_dataset",
             "describe_column",

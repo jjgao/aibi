@@ -30,6 +30,14 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from aibi.core.schema.caveats import Caveat
+from aibi.core.schema.cohorts import (
+    CohortCounts,
+    CountCohort,
+    DocumentValidation,
+    Explain,
+    Explanation,
+    ValidateDocument,
+)
 from aibi.core.schema.curation import CurationQueue, ProposalInput
 from aibi.core.schema.descriptors import By, Datatype, PositiveInt
 from aibi.core.schema.ids import (
@@ -484,6 +492,9 @@ TOOL_MODELS: dict[str, tuple[type[BaseModel], type[Output]]] = {
     "describe_column": (DescribeColumn, ColumnDescription),
     "curation_queue": (QueueRequest, QueueOut),
     "propose_descriptor": (ProposeDescriptor, Proposed),
+    "validate_document": (ValidateDocument, DocumentValidation),
+    "count_cohort": (CountCohort, CohortCounts),
+    "explain": (Explain, Explanation),
 }
 """Each tool's request and output models, from which every schema of the tool is generated."""
 

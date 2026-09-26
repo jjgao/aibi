@@ -117,7 +117,10 @@ def erase(
     """Erase the person whose row in ``table`` has ``key`` (its primary key's values, in the
     key's order, typed by its columns' datatypes). With ``redact_only``, a key that no live
     release holds is redacted from the app DB alone, rather than refused, if the dataset has a
-    withdrawn release. Raises ``StoreRefused``."""
+    withdrawn release. Raises ``StoreRefused``. It first waits for the store's housekeeping
+    thread (``Store.housekept``), so that the pins tool calls released before it began count as
+    released, as their releases would otherwise count them (D300)."""
+    store.housekept()
     with store.exclusive(dataset, "erase"):
         return _erase(store, dataset, table, key, by, uploads=uploads, redact_only=redact_only)
 

@@ -3,9 +3,13 @@
 
 - ``serve`` reads the configuration (``--config`` or ``AIBI_CONFIG``), sets the umask to 077 (the
   data files hold datasets, and only the server's user needs them), opens the store, which refuses
-  while another process has it open (D221), and runs uvicorn until it is stopped.
+  while another process has it open (D221) or its app DB has pages of another size than the
+  derivation log charges (D300), exiting with 1 and a message, and prunes the derivation log's
+  expired ``count_cohort`` issuances (``[log]``, D300), and runs uvicorn until it is stopped.
 - ``check`` reads the configuration and prints what it resolves to: the bind, the hosts and
-  origins allowed, the directories and the limits; never the token's hash.
+  origins allowed, the directories and the limits, and that ``count_cohort`` is disabled on a
+  system without the query workers' ``/proc`` (which ``serve`` writes to standard error too);
+  never the token's hash.
 - ``new-token`` makes a curator token and prints it, once, with the hash the configuration holds.
 - ``hash-token`` reads a token from standard input, or a prompt that does not echo on a terminal,
   and prints its hash; a token is never an argument.
@@ -44,11 +48,13 @@ from aibi.core.api.logs import WithoutSecrets
 from aibi.core.api.protection import Policy
 from aibi.core.api.rates import Buckets, Rate, client_key
 from aibi.core.catalog.service import Catalog
+from aibi.core.engine.worker import Workers
 from aibi.core.importers.uploads import UploadArea
 from aibi.core.mcp.calls import Calls
 from aibi.core.operator.auth import hash_token, new_token, token_digest
 from aibi.core.operator.router import Services
 from aibi.core.schema.pack_api import PackRegistry
+from aibi.core.store.appdb import PageSizeError
 from aibi.core.store.store import Store, StoreLockedError
 
 GRACEFUL_SHUTDOWN = 30
@@ -86,17 +92,35 @@ class Proposals:
         return self.buckets.take(client_key(client))
 
 
+NO_WORKERS = (
+    "count_cohort is disabled: this system has no /proc, so no query worker's memory can be watched"
+)
+"""What ``check`` prints, and ``serve`` writes to standard error, without query workers."""
+
+
+def workers_of(config: ServerConfig) -> Workers | None:
+    """The query workers of ``[queries]`` (D293); ``None`` on a system without ``/proc``, where
+    no worker's memory can be watched, so that the server still serves the catalogue and
+    ``count_cohort`` refuses as ``NOT_SUPPORTED`` (D300)."""
+    try:
+        return Workers(config.queries.limits())
+    except RuntimeError:
+        return None
+
+
 def tools_of(config: ServerConfig, store: Store, registry: PackRegistry | None) -> Calls:
     """The server's tool calls (D277, D278): its catalogue, with the floor and the model cards of
-    the configuration; its bodies' deadlines, ``tool_body_idle_seconds`` and an upload's rate
-    (D266); the rate of proposals per client; and clients keyed as the rates key them (D259), for
-    their share of the places and of agents' proposals."""
+    the configuration and the query workers of ``[queries]`` (``workers_of``; D293, D300); its
+    bodies' deadlines, ``tool_body_idle_seconds`` and an upload's rate (D266); the rate of
+    proposals per client; and clients keyed as the rates key them (D259), for their share of the
+    places and of agents' proposals."""
     catalog = Catalog(
         store,
         registry=registry,
         floor=config.disclosure.min_cell_count_floor,
         models=tuple(config.models),
         token_digest=token_digest(config.curator.token_hash),
+        workers=workers_of(config),
     )
     proposals = config.server.rates.proposals
     return Calls(
@@ -139,16 +163,23 @@ def uvicorn_config(
 
 
 def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
-    """Serve until stopped; 1 if another process has the store open."""
+    """Serve until stopped; 1 if another process has the store open, or its app DB has pages
+    of another size than the derivation log's accounting charges (``PageSizeError``, D300),
+    whose message is written to standard error."""
     err = sys.stderr if stderr is None else stderr
     previous = os.umask(0o077)
     try:
         try:
-            store = Store(config.storage.data)
+            store = Store(config.storage.data, log=config.log.limits())
         except StoreLockedError:
             err.write("aibi-server: another server has the store open\n")
             return 1
+        except PageSizeError as error:
+            err.write(f"aibi-server: {error}\n")
+            return 1
         try:
+            if workers_of(config) is None:
+                err.write(f"aibi-server: {NO_WORKERS}\n")
             registry = PackRegistry((), core_version=aibi.__version__)
             app = create_app(
                 Policy.of(config),
@@ -191,6 +222,17 @@ def check(config: ServerConfig) -> list[str]:
         ("proposals", server.rates.proposals),
     ):
         lines.append(f"rate, {name}: {rate.per_minute} a minute, bursts of {rate.burst}")
+    log = config.log.limits()
+    days = log.keep_count_issuances_days
+    kept = "until pruned" if days is None else f"{days} days"
+    lines.append(f"count issuances kept: {kept}; log bytes: {log.log_bytes}")
+    queries = config.queries.limits()
+    lines.append(
+        f"query workers: {queries.query_workers}; query seconds: {queries.query_seconds}; "
+        f"query memory: {queries.query_memory}; query threads: {queries.query_threads}"
+        if workers_of(config) is not None
+        else f"query workers: none; {NO_WORKERS}"
+    )
     floor = config.disclosure.min_cell_count_floor
     lines.append(f"disclosure floor: {'none' if floor is None else floor}")
     lines += [f"database {name}: {found.kind}" for name, found in config.databases.items()]
@@ -263,6 +305,7 @@ def main(
 
 __all__ = [
     "GRACEFUL_SHUTDOWN",
+    "NO_WORKERS",
     "Proposals",
     "WithoutSecrets",
     "check",
