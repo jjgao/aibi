@@ -632,7 +632,7 @@ def test_under_a_floor_no_tool_lists_or_names_a_member_s_key(
             else found.model_dump(mode="json")
         )
         assert [key for key in listed if f'"{key}"' in dumped] == []
-        assert "ROW_IDS_NOT_ALLOWED" in dumped
+        assert "WITHHELD_UNDER_K" in dumped
         assert '"/views/0/analysis"' in dumped
     bodies: list[JsonValue] = [{"dataset": "orchard", "unit": "trees"}, {"dataset": "orchard"}]
     for body in bodies:
@@ -675,7 +675,7 @@ def test_a_draft_under_its_published_release_s_setting_is_refused_naming_that_se
     written = members_document()
     written["dataset"] = "orchard@draft"
     refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
-    assert (refusal.code, refusal.path) == (RefusalCode.ROW_IDS_NOT_ALLOWED, "/views/0/analysis")
+    assert (refusal.code, refusal.path) == (RefusalCode.WITHHELD_UNDER_K, "/views/0/analysis")
     said = "".join(segment.model_dump().get("text", "") for segment in refusal.message)
     assert "the latest published release's min_cell_count, 5" in said
     assert "floor" not in said

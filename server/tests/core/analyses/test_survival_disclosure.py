@@ -61,10 +61,12 @@ def test_a_view_of_it_is_refused_under_any_disclosure_setting(
     found = check(document(**params), release, floor=floor)
     assert found.views == []
     [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
+    assert (refusal.code, refusal.path) == (RefusalCode.WITHHELD_UNDER_K, "/views/0/analysis")
     said = "".join(part.model_dump().get("text", "") for part in refusal.message)
     assert f"({source})" in said
-    assert all("data" not in part.model_dump() for part in refusal.message)
+    assert [
+        part.model_dump()["data"] for part in refusal.message if "data" in part.model_dump()
+    ] == ["survival.km"]
     assert [part.model_dump()["data"] for part in refusal.alternatives] == [
         "count_cohort",
         "compare.columns",

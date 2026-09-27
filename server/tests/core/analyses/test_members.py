@@ -266,10 +266,10 @@ def test_a_view_is_refused_under_any_disclosure_setting_whatever_its_cohort_s_si
     release = things(["yes"] * 40, **dataset)
     found = check(things_document({"yes": [YES]}), release, floor=floor, published=published)
     [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (
-        RefusalCode.ROW_IDS_NOT_ALLOWED,
-        "/views/0/analysis",
+    code = (
+        RefusalCode.ROW_IDS_NOT_ALLOWED if said == "allow row ids" else RefusalCode.WITHHELD_UNDER_K
     )
+    assert (refusal.code, refusal.path) == (code, "/views/0/analysis")
     assert found.views == []
     assert "key-" not in refusal.model_dump_json()
     assert said in "".join(segment.model_dump().get("text", "") for segment in refusal.message)
@@ -312,7 +312,7 @@ def test_lists_of_cohorts_whose_sizes_are_shown_would_name_the_units_a_count_s_p
     }
     named = listed_by["every"] - listed_by["not_x"] - listed_by["x_and_known_x"]
     assert sorted(named) == ["key-021", "key-022", "key-023"]
-    assert [refusal.code for refusal in checked.refusals] == [RefusalCode.ROW_IDS_NOT_ALLOWED]
+    assert [refusal.code for refusal in checked.refusals] == [RefusalCode.WITHHELD_UNDER_K]
 
 
 def test_a_members_key_is_written_as_an_ids_leaf_s_member_is(check: Check) -> None:

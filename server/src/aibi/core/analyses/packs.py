@@ -58,10 +58,11 @@ tells every pack whether they do, so that it computes no between-cohort value th
 view's static caveats; ``NOT_ESTIMABLE`` is the envelope's. A pack's analysis has no chart: a visual
 output is a render specification among its values (§10.1).
 
-**Disclosure** (§8.4, D344). A pack's values are an arbitrary function of every member's values,
-so no rule over counts can protect them: a view of a pack's analysis is refused under any
-disclosure setting, a deployment's floor included (``views.checked``), and applicability calls it
-``unavailable`` there (``registry``). It is refused and unavailable where the dataset allows no
+**Disclosure** (§8.4, D344, D353). A pack's values are an arbitrary function of every member's
+values, so no rule over counts can protect them: every pack's analysis is a refused one, so a view
+of it is refused under any disclosure setting, a deployment's floor included
+(``WITHHELD_UNDER_K``, ``views.checked``), and applicability calls it ``unavailable`` there
+(``registry``). It is refused (``ROW_IDS_NOT_ALLOWED``) and unavailable where the dataset allows no
 row ids too, as ``summary.members`` is (D332): it is handed each member's values in the keys'
 order, which it can give back as a table of units. Without either, every count is shown and so is
 what the pack gives.

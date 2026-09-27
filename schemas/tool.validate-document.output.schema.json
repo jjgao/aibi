@@ -2154,6 +2154,7 @@
         "FILTER_COLUMN_MENTION",
         "UNKNOWN_SCOPE_COLUMN",
         "ROW_IDS_NOT_ALLOWED",
+        "WITHHELD_UNDER_K",
         "INVALID_KEY",
         "MIXED_RELEASES",
         "NOT_SUPPORTED",

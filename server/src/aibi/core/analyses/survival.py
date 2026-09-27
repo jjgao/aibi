@@ -45,11 +45,11 @@ them, and a difference of medians is a difference of two. Every other number is 
 arithmetic (``ieee``), and one that is not finite or lies beyond that range is no value, with a
 reason: a test ``zero_variance``, a pointwise bound ``zero_denominator``.
 
-**Disclosure** (§8.4, D351). Under any disclosure setting a view of a survival analysis is refused
-(``views.checked``), and applicability calls it ``unavailable`` there (``registry``): a curve's
-values can give the censorings between its event times, counts §8.4's grid rule showed while it
-protected every count it listed, and a rule that protects them is later work. Without one, every
-count is shown.
+**Disclosure** (§8.4, D351, D353). Survival is a refused analysis: under any disclosure setting a
+view of it is refused (``WITHHELD_UNDER_K``, ``views.checked``), and applicability calls it
+``unavailable`` there (``registry``): a curve's values can give the censorings between its event
+times, counts §8.4's grid rule showed while it protected every count it listed, and a rule that
+protects them is later work. Without one, every count is shown.
 """
 
 import hashlib

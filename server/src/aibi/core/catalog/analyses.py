@@ -46,6 +46,7 @@ from pydantic import JsonValue
 
 from aibi.core.analyses import columns, distribution, members, packs, survival
 from aibi.core.analyses.existence import CohortAt, compare
+from aibi.core.analyses.registry import withheld
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
 from aibi.core.analyses.views import CheckedView
 from aibi.core.catalog.cohorts import (
@@ -356,6 +357,9 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                 ]
             )
         views = found.views
+        for view in views:
+            if withheld(view.analysis, view.disclosure):
+                raise ValueError("a view refused for disclosure is never run (§8.4, D353)")
         cohorts: dict[str, CanonicalCohort] = {}
         for view in views:
             for cohort in view.cohorts:

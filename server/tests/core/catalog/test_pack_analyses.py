@@ -353,7 +353,7 @@ def test_under_a_floor_no_tool_runs_a_pack_s_analysis_or_names_a_value(
             if isinstance(found, list)
             else found.model_dump(mode="json")
         )
-        assert "NOT_SUPPORTED" in dumped
+        assert "WITHHELD_UNDER_K" in dumped
         assert '"/views/0/analysis"' in dumped
         assert '"tree1"' not in dumped
     assert echo.handed == []

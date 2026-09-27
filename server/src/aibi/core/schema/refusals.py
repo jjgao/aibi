@@ -79,6 +79,10 @@ class RefusalCode(StrEnum):
     FILTER_COLUMN_MENTION = "FILTER_COLUMN_MENTION"
     UNKNOWN_SCOPE_COLUMN = "UNKNOWN_SCOPE_COLUMN"
     ROW_IDS_NOT_ALLOWED = "ROW_IDS_NOT_ALLOWED"
+    WITHHELD_UNDER_K = "WITHHELD_UNDER_K"
+    """An analysis refused under any disclosure setting, since its output is nothing the pass
+    can protect (§8.4, D353), whatever the setting's value: only a release with no disclosure
+    setting, or an analysis the message offers, answers."""
     INVALID_KEY = "INVALID_KEY"
     MIXED_RELEASES = "MIXED_RELEASES"
     NOT_SUPPORTED = "NOT_SUPPORTED"

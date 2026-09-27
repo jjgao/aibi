@@ -101,10 +101,9 @@ def test_under_any_disclosure_setting_no_view_lists_a_key_and_nothing_checked_na
     for pattern in ["", *("T" * size for size in (1, 4, 8)), "TTTTFFUU", "TFUTFUTF"]:
         found = check(document(), things(pattern, **dataset), floor=floor)
         [refusal] = found.refusals
-        assert (refusal.code, refusal.path) == (
-            RefusalCode.ROW_IDS_NOT_ALLOWED,
-            "/views/0/analysis",
-        )
+        rowless = dataset.get("disclosure", {}).get("allow_row_ids") is False
+        code = RefusalCode.ROW_IDS_NOT_ALLOWED if rowless else RefusalCode.WITHHELD_UNDER_K
+        assert (refusal.code, refusal.path) == (code, "/views/0/analysis")
         assert found.views == []
         assert named(refusal.model_dump(mode="json")) == set()
         for cohort in found.canonical.cohorts.values():
