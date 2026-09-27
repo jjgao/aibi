@@ -1257,19 +1257,25 @@ def bootstrap_medians(
     return found
 
 
-def percentile_interval(replicates: Sequence[float], level: float) -> tuple[float, float]:
-    """The bootstrap interval at ``level`` of replicates (§9.5): their ⌈B·alpha/2⌉-th and
-    ⌈B·(1 − alpha/2)⌉-th order statistics, alpha = 1 − ``level`` read as the decimal JSON writes
-    it, so that 0.95 gives the 50th and the 1950th of 2000, where the double's own alpha, a
-    little above 0.05, would give the 51st."""
-    count = len(replicates)
+def percentile_ranks(count: int, level: float) -> tuple[int, int]:
+    """The ranks, from 1, of a bootstrap interval's bounds at ``level`` over ``count``
+    replicates (§9.5, D338): ⌈B·alpha/2⌉ and ⌈B·(1 − alpha/2)⌉ within 1 to B, alpha = 1 −
+    ``level`` read as the decimal JSON writes it, so that 0.95 gives the 50th and the 1950th of
+    2000, where the double's own alpha, a little above 0.05, would give the 51st."""
     if not count or not 0 < level < 1:
         raise ValueError("an interval of at least one replicate, at a level between 0 and 1")
     alpha = 1 - Fraction(repr(level))
     low = math.ceil(count * alpha / 2)
     high = math.ceil(count * (1 - alpha / 2))
+    return max(low, 1), min(high, count)
+
+
+def percentile_interval(replicates: Sequence[float], level: float) -> tuple[float, float]:
+    """The bootstrap interval at ``level`` of replicates (§9.5): their order statistics at
+    ``percentile_ranks``."""
+    low, high = percentile_ranks(len(replicates), level)
     ordered = sorted(replicates)
-    return ordered[max(low, 1) - 1], ordered[min(high, count) - 1]
+    return ordered[low - 1], ordered[high - 1]
 
 
 __all__ = [
@@ -1293,6 +1299,7 @@ __all__ = [
     "newcombe",
     "order_statistic",
     "percentile_interval",
+    "percentile_ranks",
     "quantile",
     "sd",
     "t_quantile",

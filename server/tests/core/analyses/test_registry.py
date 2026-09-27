@@ -102,6 +102,7 @@ def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
         "shelves.restock",
         "summary.distribution",
         "summary.members",
+        "survival.km",
     ]
     found = analyses.get("shelves.restock")
     assert found is not None
@@ -111,7 +112,8 @@ def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     assert analyses.get("shelves.other") is None
     assert analyses.get("elsewhere.restock") is None
     assert analyses.get("compare.columns") is not None
-    assert analyses.get("survival.km") is None
+    assert analyses.get("survival.km") is not None
+    assert analyses.get("survival.cox") is None
 
 
 def test_an_entry_handed_out_cannot_change_the_registry() -> None:

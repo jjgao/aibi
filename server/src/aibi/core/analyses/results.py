@@ -20,11 +20,21 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, existence, members, packs
-from aibi.core.analyses.charts import columns_charts, distribution_charts, existence_chart
+from aibi.core.analyses import columns, distribution, existence, members, packs, survival
+from aibi.core.analyses.charts import (
+    columns_charts,
+    distribution_charts,
+    existence_chart,
+    survival_chart,
+)
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.readback import readback
-from aibi.core.schema.analyses import ColumnsValues, DistributionValues, ExistenceValues
+from aibi.core.schema.analyses import (
+    ColumnsValues,
+    DistributionValues,
+    ExistenceValues,
+    SurvivalValues,
+)
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.digests import RESULT_MEMBERS, output_digest
 from aibi.core.schema.numbers import NotEstimableReason
@@ -68,7 +78,12 @@ def document_of(view: CheckedView) -> dict[str, JsonValue]:
 
 
 Outcome = (
-    existence.Outcome | distribution.Outcome | members.Outcome | columns.Outcome | packs.Outcome
+    existence.Outcome
+    | distribution.Outcome
+    | members.Outcome
+    | columns.Outcome
+    | survival.Outcome
+    | packs.Outcome
 )
 """An analysis's digested parts and caveats, as the core's analyses and packs' give them."""
 
@@ -85,6 +100,8 @@ def charts(outcome: Outcome, labels: list[str]) -> list[dict[str, JsonValue]]:
         return distribution_charts(outcome.values, labels)
     if isinstance(outcome.values, ColumnsValues):
         return columns_charts(outcome.values, labels)
+    if isinstance(outcome.values, SurvivalValues):
+        return [survival_chart(outcome.values, labels)]
     return []
 
 

@@ -282,12 +282,12 @@ def test_validate_document_reads_back_and_marks_ids_not_yet_issued(
     written = document(
         {"tall": [{"kind": "value", "column": "trees.height_m", "range": {"gte": "$h"}}]},
         params={"h": 5, "unused": 1},
-        views=[{"analysis": "survival.km", "cohorts": ["tall"]}],
+        views=[{"analysis": "survival.cox", "cohorts": ["tall"]}],
     )
     found = validated(catalog, {"document": written})
     [deferred] = found.refusals
     assert (deferred.code, deferred.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
-    assert "M3.3" in json.dumps(deferred.model_dump(mode="json")["message"])
+    assert "M3.3b" in json.dumps(deferred.model_dump(mode="json")["message"])
     assert not found.valid
     [check] = found.cohorts
     assert check.status == "not_issued"

@@ -66,7 +66,12 @@ counts the units its cohorts share (`sql.compile_materialised(…, shared=True)`
 `core/engine/inputs.py` lists a cohort's members with each variable's value by the reference
 evaluator and orders them by key, `sql.compile_inputs` lists them by SQL, and
 `core/analyses/packs.py` runs a pack's analysis on them (refused under any disclosure setting and
-where row ids are not allowed); pack leaves in a variable's `where` are expanded.
+where row ids are not allowed); pack leaves in a variable's `where` are expanded. From M3.3a, a
+view's endpoint is resolved with its cohorts (`resolve.ViewEndpoint`) and its rows listed as a
+pack's inputs are; `core/analyses/survival.py` is `survival.km` (refused under any disclosure
+setting), its methods in `core/analyses/timetoevent.py` held to R (`reference/survival.R`) and
+doing their arithmetic as C does (`core/analyses/ieee.py`), and a pack's analysis is handed the
+rows of the endpoints it requires.
 
 ## Non-negotiables
 

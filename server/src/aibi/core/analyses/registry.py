@@ -4,27 +4,29 @@ The registry holds the core's analyses, each an entry (a descriptor of kind ``an
 parameters' model and its implementation, and the analyses of the installed packs, each an entry
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
 path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
-(D328), ``summary.members`` (D331) and ``compare.columns`` (D336); the rest of §9.5 follows in the
-later slices of M3 (D315, D324).
+(D328), ``summary.members`` (D331), ``compare.columns`` (D336) and ``survival.km`` (D348);
+``survival.cox`` follows in M3.3b (D346).
 
 A pack's analysis is registered, listed and matched for applicability like the core's, and run
 from M3.2d on the inputs its ``requires`` name, materialised (``analyses.packs``, D341–D343): its
-columns and aggregates; endpoint rows come with survival, M3.3 (``ENDPOINTS``), and until then a
-view of one that requires an endpoint is ``NOT_SUPPORTED``. A pack's values are no counts the
-disclosure pass can protect, so under any disclosure setting a view of one is refused and it is
-``unavailable``, ``missing`` naming ``min_cell_count`` (D344).
+columns and aggregates, and from M3.3 its endpoints' rows (D352). A pack's values are no counts
+the disclosure pass can protect, so under any disclosure setting a view of one is refused and it
+is ``unavailable``, ``missing`` naming ``min_cell_count`` (D344); so is a survival analysis
+(``WITHHELD``, D351).
 
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
-kept: a requirement is met by the descriptors of its ``kind`` (endpoints, columns of its
-``datatype``, tables other than the unit), on the unit table when it says ``"on": "unit"``, at
+kept: a requirement is met by the descriptors of its ``kind`` (endpoints an analysis can use,
+whose table, time, status and event coding are declared, D347; columns of its ``datatype``;
+tables other than the unit), on the unit table when it says ``"on": "unit"``, at
 least ``min`` of them (1 by default; 0 is always met); a requirement with a ``predicate`` also
 needs the predicate of its pack to hold of the release, and a pack that is not installed, a
 predicate it does not register or one that raises meets nothing. Requirements without a
 ``kind`` (the view's ``cohorts``) are the view's to meet. An analysis is ``unavailable`` when a
 requirement is not met, naming its roles; ``available_with_caveats`` when a requirement is met,
 but not by its ``min`` descriptors without a field whose status is ``imported_default``,
-``proposed`` or ``undeclared`` (an endpoint whose event coding was imported by default); and
+``proposed`` or ``undeclared`` (an endpoint whose event coding was imported by default, or whose
+entry is not declared, which its views read as undeclared, D347); and
 ``available`` otherwise. A requirement predicate reads the release, not the unit table, so it runs
 once for all of them. An analysis that lists units' keys (``summary.members``) is ``unavailable``
 under any disclosure setting and where the dataset allows no row ids, ``missing`` naming the
@@ -44,13 +46,20 @@ refused (D341).
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aibi.core.analyses import columns, distribution, existence, members
-from aibi.core.engine.resolve import UNCONFIRMED, DescriptorCopies, PackView, pack_failed
+from aibi.core.analyses import columns, distribution, existence, members, survival
+from aibi.core.engine.resolve import (
+    UNCONFIRMED,
+    DescriptorCopies,
+    PackView,
+    pack_failed,
+    usable_endpoint,
+)
 from aibi.core.schema.analyses import (
     ColumnsParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
+    SurvivalParams,
 )
 from aibi.core.schema.catalog import ApplicableAnalysis
 from aibi.core.schema.descriptors import (
@@ -82,15 +91,15 @@ CORE: Mapping[str, CoreAnalysis] = {
     distribution.ENTRY.id: CoreAnalysis(distribution.ENTRY, DistributionParams),
     members.ENTRY.id: CoreAnalysis(members.ENTRY, MembersParams),
     columns.ENTRY.id: CoreAnalysis(columns.ENTRY, ColumnsParams),
+    survival.ENTRY.id: CoreAnalysis(survival.ENTRY, SurvivalParams),
 }
 """The core's analyses, by id."""
 
 LATER: Mapping[str, str] = {
-    "survival.km": "M3.3",
-    "survival.cox": "M3.3",
+    "survival.cox": "M3.3b",
 }
 """The core's analyses of §9.5 that a later slice of M3 implements, and the slice (D315, D317,
-D324): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
+D324, D346): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
 
 LISTS_KEYS = frozenset({members.ANALYSIS_ID})
 """The core's analyses that list units' keys, which are refused under any disclosure setting
@@ -101,9 +110,10 @@ CATEGORIES_UNDER_K = frozenset({columns.ANALYSIS_ID})
 something there only of a column of categories."""
 CATEGORIES = frozenset({"category", "boolean", "list<category>"})
 
-ENDPOINTS = "M3.3"
-"""The slice that materialises endpoint rows, which a pack's analysis that requires an endpoint
-needs (D341)."""
+WITHHELD = frozenset({survival.ANALYSIS_ID})
+"""The core's analyses refused under any disclosure setting, since what they report can give
+counts below *k* that §8.4's rules do not yet protect (D351), and so ``unavailable`` there, naming
+``min_cell_count``; a pack's analysis is too (D344)."""
 
 
 @dataclass(frozen=True)
@@ -225,6 +235,11 @@ class Analyses:
                 outcomes = [
                     (_UNAVAILABLE, [*missing, *withheld], list[str]()) for _, missing, _ in outcomes
                 ]
+            elif k is not None and analysis.id in WITHHELD:
+                outcomes = [
+                    (_UNAVAILABLE, [*missing, "min_cell_count"], list[str]())
+                    for _, missing, _ in outcomes
+                ]
             if k is not None and analysis.id in CATEGORIES_UNDER_K and units:
                 outcomes = [
                     outcome
@@ -322,19 +337,17 @@ UNHANDED = ("date", "datetime")
 
 def _unrun(analysis: Registered) -> list[str]:
     """The roles of a pack analysis's requirements that no view of it can meet, so that it is
-    ``unavailable`` wherever its views are refused (D341): an endpoint, whose rows come with
-    M3.3, and a column of a datatype no input column is handed, each required at least once
-    (``min`` 1 by default)."""
+    ``unavailable`` wherever its views are refused (D341): a column of a datatype no input
+    column is handed, required at least once (``min`` 1 by default). An endpoint's rows are
+    handed from M3.3a (D352)."""
     if analysis.pack is None:
         return []
     return [
         requirement.role
         for requirement in analysis.entry.fields.requires
         if (requirement.min is None or requirement.min > 0)
-        and (
-            requirement.kind == "endpoint"
-            or (requirement.kind == "column" and requirement.datatype in UNHANDED)
-        )
+        and requirement.kind == "column"
+        and requirement.datatype in UNHANDED
     ]
 
 
@@ -367,7 +380,7 @@ def _matches(
     found: list[Descriptor] = []
     for descriptor in descriptors:
         if kind == "endpoint" and isinstance(descriptor, EndpointDescriptor):
-            if on != "unit" or descriptor.fields.table == unit:
+            if usable_endpoint(descriptor) and (on != "unit" or descriptor.fields.table == unit):
                 found.append(descriptor)
         elif kind == "column" and isinstance(descriptor, ColumnDescriptor):
             table = descriptor.id.split(".", 1)[0]
@@ -406,16 +419,20 @@ def _categories(descriptors: Sequence[Descriptor], unit: str) -> bool:
 
 
 def _unsettled(descriptor: Descriptor) -> bool:
-    """Whether a descriptor has a field whose status is not settled by an operator (§5.1)."""
+    """Whether a descriptor has a field whose status is not settled by an operator (§5.1): one
+    curated as unconfirmed, or an endpoint's ``entry`` not declared at all, which every view of
+    it reads as ``undeclared`` (§5.8, D347)."""
+    if isinstance(descriptor, EndpointDescriptor) and descriptor.fields.entry is None:
+        return True
     return any(entry.status in UNCONFIRMED for entry in descriptor.curation.values())
 
 
 __all__ = [
     "CATEGORIES_UNDER_K",
     "CORE",
-    "ENDPOINTS",
     "LATER",
     "LISTS_KEYS",
+    "WITHHELD",
     "Analyses",
     "CoreAnalysis",
     "Registered",

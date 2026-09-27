@@ -115,6 +115,7 @@ def test_an_unknown_analysis_is_refused_listing_the_registry(check: Check, shop:
         {"data": "compare.existence"},
         {"data": "summary.distribution"},
         {"data": "summary.members"},
+        {"data": "survival.km"},
     ]
     assert found.views == []
 
@@ -122,10 +123,7 @@ def test_an_unknown_analysis_is_refused_listing_the_registry(check: Check, shop:
 def test_a_core_analysis_of_a_later_slice_is_not_supported_naming_it(
     check: Check, shop: Shop
 ) -> None:
-    for analysis, slice_ in (
-        ("survival.km", "M3.3"),
-        ("survival.cox", "M3.3"),
-    ):
+    for analysis, slice_ in (("survival.cox", "M3.3b"),):
         found = check(document({"analysis": analysis, "cohorts": ["gold"]}), shop())
         [refusal] = found.refusals
         assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")

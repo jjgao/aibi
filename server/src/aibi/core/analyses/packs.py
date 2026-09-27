@@ -1,4 +1,5 @@
-"""A pack's analysis run on the inputs its ``requires`` name (SPEC §8, §9.1, §10.1; D341–D344).
+"""A pack's analysis run on the inputs its ``requires`` name (SPEC §8, §9.1, §10.1; D341–D344,
+D352).
 
 A pack registers an analysis as an entry and a ``run`` (§10.1); the registry lists it and matches
 it for applicability (D316), and this module runs it (M3.2d, D324).
@@ -9,17 +10,22 @@ schema checks as they are written; phase 2 binds them (``views``). An input colu
 categories, booleans, numbers or text (``taken``): a date or datetime column is ``NOT_SUPPORTED``,
 and an identifier column's values (§5.4, ``resolve.identifying``), which name units, rows or
 people, are never handed, nor a value whose ``where`` tests one (``ROW_IDS_NOT_ALLOWED``; its
-rows may be counted).
+rows may be counted). Its ``endpoints`` bind an endpoint (§5.8) to each of its ``endpoint``
+requirements, by role; a role given none reads the one usable endpoint that meets it, and one whose
+``min`` is 0 none (D352).
 
 **Inputs** (D342). Per position, the cohort's members with each input column's value or the reasons
 it is excluded, in the order of §9.3 (``engine.inputs``: listed by SQL, ``sql.compile_inputs``, or
 by the reference evaluator), handed to ``run`` column by column (``AnalysisInputs``), their keys
-never: an analysis reads values, not identities. The inputs hold at most ``MAX_INPUT_CELLS`` cells
-over the view's positions, one cell per member and column (one per member without columns), or the
-call is refused (``TooManyCells``); the SQL listing takes no more members than that, and knows a
-cohort over it from its first rows. The seed is the SHA-256 of the RFC 8785 text of
-``{"computation"}``, the view's computation id, so that resampling in a pack is as reproducible as
-the core's (§9.3, D338).
+never: an analysis reads values, not identities; and then each bound endpoint's rows
+(``InputPosition.endpoints``: entry, time and whether it ended in an event, as ``survival.km`` reads
+them, D347), a member with a missing cell excluded with its reasons and one with an invalid row
+(§5.8) ``INVALID_VALUE``. The inputs hold at most ``MAX_INPUT_CELLS`` cells over the view's
+positions, one cell per member and column listed, an endpoint's two or three columns included (one
+per member without columns), or the call is refused (``TooManyCells``); the SQL listing takes no
+more members than that, and knows a cohort over it from its first rows. The seed is the SHA-256 of
+the RFC 8785 text of ``{"computation"}``, the view's computation id, so that resampling in a pack is
+as reproducible as the core's (§9.3, D338).
 
 **Running** (D343). ``run`` gets inputs of its own, ``options`` a copy, and runs once, in the
 server's process, as a pack's code runs everywhere: packs are installed through code review
@@ -41,15 +47,16 @@ its deadline by what ``run`` takes past it, and after it by the copy, which the 
 one stretch of the core's own work between two looks.
 
 **The result** (§8.1). The population is each position's cohort count; ``analysed`` counts, per
-position, each input column's units with a value and those excluded by reason, and with two columns
-or more the units some column has a value for, as ``summary.distribution``'s does (D328); without
-columns, the members, none excluded. The caveats are the cohorts' (§8.3), ``UNKNOWN_EXCLUDED``
-naming the values where a member is excluded for a reason other than ``NOT_APPLICABLE``, the flags
-of the values read, ``COHORTS_OVERLAP`` where an analysis that assumes independent groups is
-allowed cohorts that share units and they do (``AnalysisInputs.overlapping`` tells every pack
-whether they do, so that it computes no between-cohort value then, §7.4), and the view's static
-caveats; ``NOT_ESTIMABLE`` is the envelope's. A pack's analysis has no chart: a visual output is a
-render specification among its values (§10.1).
+position, each input column's units with a value (an endpoint's, with a valid row) and those
+excluded by reason, and with two inputs or more the units some input has a value for, as
+``summary.distribution``'s does (D328); without columns, the members, none excluded. The caveats are
+the cohorts' (§8.3), ``UNKNOWN_EXCLUDED`` naming the values where a member is excluded for a reason
+other than ``NOT_APPLICABLE`` or ``INVALID_VALUE``, ``INVALID_EXCLUDED`` where an endpoint's row is
+invalid, the flags of the values read, ``COHORTS_OVERLAP`` where an analysis that assumes
+independent groups is allowed cohorts that share units and they do (``AnalysisInputs.overlapping``
+tells every pack whether they do, so that it computes no between-cohort value then, §7.4), and the
+view's static caveats; ``NOT_ESTIMABLE`` is the envelope's. A pack's analysis has no chart: a visual
+output is a render specification among its values (§10.1).
 
 **Disclosure** (§8.4, D344). A pack's values are an arbitrary function of every member's values,
 so no rule over counts can protect them: a view of a pack's analysis is refused under any
@@ -62,6 +69,7 @@ what the pack gives.
 
 import hashlib
 import json
+import math
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -80,10 +88,11 @@ from aibi.core.analyses.common import (
     flag_caveats,
     populations,
 )
+from aibi.core.analyses.survival import endpoint_cells
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.inputs import Listed, TooManyCells, cells
 from aibi.core.engine.readback import variable_readback
-from aibi.core.engine.resolve import ResolvedVariable, pack_failed
+from aibi.core.engine.resolve import ResolvedEndpoint, ResolvedVariable, pack_failed
 from aibi.core.engine.variables import Joint, Materialised, Value
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.analyses import PackParams
@@ -108,7 +117,9 @@ from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import (
     Analysis,
     AnalysisInputs,
+    EndpointRow,
     InputColumn,
+    InputEndpoint,
     InputPosition,
     JsonTooLarge,
     plain_json,
@@ -190,9 +201,13 @@ def inputs(
     reference: int,
     overlapping: bool,
     computation: str,
+    endpoints: Sequence[tuple[str, ResolvedEndpoint]] = (),
+    ends: float | None = None,
 ) -> AnalysisInputs:
     """What ``run`` is handed (module docstring): ``variables`` each input column with its role,
-    in the order ``listed`` gives their values, each listing in the order of §9.3."""
+    in the order ``listed`` gives their values, each listing in the order of §9.3, and after them
+    the columns of ``endpoints``, each endpoint with its role (D352); the call's deadline
+    ``ends`` looked at within each endpoint's rows."""
     columns = tuple(
         InputColumn(
             role=role,
@@ -204,27 +219,56 @@ def inputs(
         )
         for role, variable in variables
     )
-    positions = tuple(
-        InputPosition(
-            units=one.members,
-            values=tuple(one.values),
-            excluded=tuple(
-                tuple(_names(reasons) for reasons in excluded) for excluded in one.excluded
-            ),
+    width = len(columns)
+    positions: list[InputPosition] = []
+    for one in listed:
+        rows: list[tuple[EndpointRow | None, ...]] = []
+        reasons: list[tuple[tuple[str, ...], ...]] = []
+        offset = width
+        for _, endpoint in endpoints:
+            found = endpoint_cells(endpoint, one, offset, ends)
+            offset += len(endpoint.variables)
+            rows.append(tuple(_row(subject) for subject in found.subjects))
+            reasons.append(tuple(_names(given) for given in found.reasons))
+        positions.append(
+            InputPosition(
+                units=one.members,
+                values=tuple(one.values[:width]),
+                excluded=tuple(
+                    tuple(_names(given) for given in excluded) for excluded in one.excluded[:width]
+                ),
+                endpoints=tuple(rows),
+                endpoint_excluded=tuple(reasons),
+            )
         )
-        for one in listed
-    )
     options = cast(dict[str, JsonValue], json.loads(canonical(dict(params.options or {}))))
     return AnalysisInputs(
         analysis=entry_id,
         version=version,
         columns=columns,
-        positions=positions,
+        positions=tuple(positions),
         reference=reference,
         overlapping=overlapping,
         options=options,
         seed=seed(computation),
+        endpoints=tuple(
+            InputEndpoint(
+                role=role,
+                endpoint=endpoint.endpoint,
+                units=endpoint.units,
+                entry=endpoint.entry is not None,
+            )
+            for role, endpoint in endpoints
+        ),
     )
+
+
+def _row(subject: tuple[float, float, bool] | None) -> EndpointRow | None:
+    """A subject as a pack is handed it: its entry ``None`` at the origin."""
+    if subject is None:
+        return None
+    entry, when, event = subject
+    return (None if math.isinf(entry) else entry, when, event)
 
 
 def run_pack(
@@ -239,10 +283,11 @@ def run_pack(
     overlapping: bool,
     computation: str,
     ends: float | None = None,
+    endpoints: Sequence[tuple[str, ResolvedEndpoint]] = (),
 ) -> Outcome:
     """A view of a pack's analysis run (module docstring): ``listed`` each position's members
-    with its input columns' values in the order of §9.3. Raises ``TooManyCells``, ``PackFailed``
-    and ``CallerDeadline``."""
+    with its input columns' values in the order of §9.3, and then its endpoints' (D352). Raises
+    ``TooManyCells``, ``PackFailed`` and ``CallerDeadline``."""
     if len(listed) != len(positions):
         raise ValueError("a listing per position")
     found = cells(listed)
@@ -258,6 +303,8 @@ def run_pack(
         reference=reference,
         overlapping=overlapping,
         computation=computation,
+        endpoints=endpoints,
+        ends=ends,
     )
     _look(ends)
     given = _guarded(entry.id, "analysis", lambda: cast(object, analysis.run(handed)))
@@ -265,16 +312,44 @@ def run_pack(
     values = _checked(entry.id, given, returns, len(positions), ends)
     _look(ends)
     population = populations(positions, None)
-    analysed = [_analysed(one, ends) for one in listed]
+    inputs_of = [_inputs_of(one, len(variables), endpoints, ends) for one in listed]
+    analysed = [
+        _analysed(one.members, found, ends) for one, found in zip(listed, inputs_of, strict=True)
+    ]
     _look(ends)
     independent = entry.fields.assumes_independent_groups
-    caveats = _caveats(positions, population, listed, overlapping and independent)
+    caveats = _caveats(positions, population, listed, inputs_of, overlapping and independent)
     return Outcome(population, analysed, values, caveats)
 
 
 def _look(ends: float | None) -> None:
     if ends is not None and time.monotonic() >= ends:
         raise CallerDeadline
+
+
+_Input = tuple[Sequence[object | None], Sequence[frozenset[ExclusionReason]]]
+"""One input of a position: each member's value (an endpoint's row), ``None`` where it is
+excluded, and its reasons."""
+
+
+def _inputs_of(
+    one: Listed,
+    width: int,
+    endpoints: Sequence[tuple[str, ResolvedEndpoint]],
+    ends: float | None = None,
+) -> list[_Input]:
+    """A position's inputs in order: its columns, then each endpoint's rows (D352), the call's
+    deadline ``ends`` looked at within each."""
+    found: list[_Input] = [
+        (values, excluded)
+        for values, excluded in zip(one.values[:width], one.excluded[:width], strict=True)
+    ]
+    offset = width
+    for _, endpoint in endpoints:
+        rows = endpoint_cells(endpoint, one, offset, ends)
+        offset += len(endpoint.variables)
+        found.append((rows.subjects, rows.reasons))
+    return found
 
 
 _PASSED = (MemoryError, KeyboardInterrupt, SystemExit)
@@ -365,39 +440,41 @@ def _checked(
         raise failed(text("values whose not_estimable maps name no null member")) from None
 
 
-def _analysed(one: Listed, ends: float | None = None) -> Analysed:
-    """A position's ``analysed`` (module docstring), the call's deadline looked at before each
-    column is counted and every ``DEADLINE_UNITS`` members of the joint count."""
-    if not one.values:
-        return Analysed(n=one.members, excluded=dict.fromkeys(ExclusionReason, 0), excluded_units=0)
+def _analysed(members: int, inputs: Sequence[_Input], ends: float | None = None) -> Analysed:
+    """A position's ``analysed`` (module docstring): each input's units with a value (an
+    endpoint's with a valid row) and excluded by reason, and with two or more the units some
+    input has a value for, the call's deadline looked at before each input is counted and every
+    ``DEADLINE_UNITS`` members of the joint count."""
+    if not inputs:
+        return Analysed(n=members, excluded=dict.fromkeys(ExclusionReason, 0), excluded_units=0)
     found: list[Materialised] = []
-    for values, excluded, marks in zip(one.values, one.excluded, one.marks, strict=True):
+    for values, excluded in inputs:
         _look(ends)
-        found.append(_materialised(values, excluded, marks))
+        found.append(_materialised(values, excluded))
     together: Joint | None = None
     if len(found) > 1:
         known = sum(
-            any(reasons[member] == frozenset() for reasons in one.excluded)
-            for member in range(one.members)
+            any(excluded[member] == frozenset() for _, excluded in inputs)
+            for member in range(members)
         )
         by_reason = dict.fromkeys(ExclusionReason, 0)
-        for member in range(one.members):
+        for member in range(members):
             if not member % DEADLINE_UNITS:
                 _look(ends)
-            if any(not reasons[member] for reasons in one.excluded):
+            if any(not excluded[member] for _, excluded in inputs):
                 continue
-            for reason in {r for reasons in one.excluded for r in reasons[member]}:
+            for reason in {r for _, excluded in inputs for r in excluded[member]}:
                 by_reason[reason] += 1
-        together = Joint(known, one.members - known, MappingProxyType(by_reason))
+        together = Joint(known, members - known, MappingProxyType(by_reason))
     return analysed_of(found, together, [Shown(True, True)] * len(found), None)
 
 
 def _materialised(
-    values: Sequence[Value | None],
-    excluded: Sequence[frozenset[ExclusionReason]],
-    marks: frozenset[object],
+    values: Sequence[object | None], excluded: Sequence[frozenset[ExclusionReason]]
 ) -> Materialised:
-    counted: Counter[Value] = Counter(value for value in values if value is not None)
+    """An input's split of a position's members into those with a value, counted as one value
+    (``analysed`` reads only how many), and those excluded by reason."""
+    counted: Counter[Value] = Counter(True for value in values if value is not None)
     reasons = dict.fromkeys(ExclusionReason, 0)
     units = 0
     for given in excluded:
@@ -414,20 +491,38 @@ def _caveats(
     positions: Sequence[CohortAt],
     population: Sequence[Population],
     listed: Sequence[Listed],
+    inputs: Sequence[Sequence[_Input]],
     overlapping: bool,
 ) -> list[Caveat]:
-    """The caveats the view's data raise (module docstring)."""
-    unknown = any(
-        reason is not ExclusionReason.NOT_APPLICABLE
-        for one in listed
-        for excluded in one.excluded
+    """The caveats the view's data raise (module docstring): ``INVALID_EXCLUDED`` where an
+    endpoint's row is invalid (§5.8, D352)."""
+    given = [
+        reason
+        for one in inputs
+        for _, excluded in one
         for reasons in excluded
         for reason in reasons
+    ]
+    unknown = any(
+        reason not in (ExclusionReason.NOT_APPLICABLE, ExclusionReason.INVALID_VALUE)
+        for reason in given
     )
     found = cohort_caveats(positions, population, None, values_unknown=unknown)
     found += flag_caveats(
         (mark for one in listed for marks in one.marks for mark in marks), "/values"
     )
+    if ExclusionReason.INVALID_VALUE in given:
+        found.append(
+            caveat(
+                CaveatCode.INVALID_EXCLUDED,
+                ["/analysed"],
+                text(
+                    "Units whose endpoint status is not in its event coding, whose time is "
+                    "negative, or whose entry is at or after their time are left out of that "
+                    "endpoint's rows as INVALID_VALUE (§5.8)"
+                ),
+            )
+        )
     if overlapping:
         found.append(
             caveat(
@@ -450,10 +545,11 @@ def view_readback(
     reference: int | None,
     variables: Sequence[tuple[str, CanonicalVariable]],
     options: Mapping[str, JsonValue],
+    endpoints: Sequence[tuple[str, ResolvedEndpoint]] = (),
 ) -> list[Segment]:
     """The view's readback (§7.7): the analysis's label and id as data, its cohorts counted and
-    its reference by position, each input column by role, from the release's descriptors, and
-    its options as data."""
+    its reference by position, each input column and endpoint by role, from the release's
+    descriptors, and its options as data."""
     found: list[Segment] = [
         text("The pack's analysis "),
         data(label),
@@ -472,12 +568,30 @@ def view_readback(
             *variable_readback(variable),
             text("."),
         ]
+    for role, endpoint in endpoints:
+        found += [
+            text(" Endpoint for "),
+            data(role),
+            text(": "),
+            data(endpoint.endpoint),
+            text(", its time "),
+            data(endpoint.time.column),
+            text(" and status "),
+            data(endpoint.status.column),
+            *(
+                []
+                if endpoint.entry is None
+                else [text(", its entry "), data(endpoint.entry.column)]
+            ),
+            text("."),
+        ]
     if options:
         found += [text(" Options: "), data(canonical(dict(options)).decode()), text(".")]
     found.append(
         text(
-            " A member whose value of a column cannot be decided, or that has none, is handed "
-            "to the analysis with its reasons and counted by reason."
+            " A member whose value of a column cannot be decided, or that has none, or whose "
+            "endpoint row is missing or invalid, is handed to the analysis with its reasons and "
+            "counted by reason."
         )
     )
     return found

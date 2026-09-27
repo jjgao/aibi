@@ -232,7 +232,9 @@ class _Release:
 
 def _field_reads(descriptors: Sequence[Descriptor]) -> list[tuple[str, str, str]]:
     """The fields queries read (§5.1) whose status raises ``UNCONFIRMED_SEMANTICS``, as
-    (descriptor id, pointer, status); a proposed ``parents`` is ``COVERAGE_PROPOSED``'s."""
+    (descriptor id, pointer, status), an endpoint's included, whose ``entry`` not declared is
+    ``undeclared`` as its views read it (§5.8, D347); a proposed ``parents`` is
+    ``COVERAGE_PROPOSED``'s."""
     found: list[tuple[str, str, str]] = []
 
     def read(descriptor: Descriptor, pointer: str, *, absent_counts: bool = False) -> None:
@@ -267,6 +269,10 @@ def _field_reads(descriptors: Sequence[Descriptor]) -> list[tuple[str, str, str]
                 found.append((descriptor.id, "/fields/parents", parents.status))
             for name in ("record_filter", "parent_scope"):
                 read(descriptor, f"/fields/{name}")
+        elif isinstance(descriptor, EndpointDescriptor):
+            for name in ("table", "time_column", "status_column", "event_coding"):
+                read(descriptor, f"/fields/{name}")
+            read(descriptor, "/fields/entry", absent_counts=descriptor.fields.entry is None)
     return found
 
 
