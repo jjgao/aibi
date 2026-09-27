@@ -7,12 +7,15 @@ orders (a parent scope), so that a question about returns through orders is one 
 rules differ (§6.5).
 
 - ``shop`` builds the release from rows (``rows`` the default rows, ``customers`` of them).
-- ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates and
-  variables, runs each by the reference evaluator (``evaluate``, ``evaluate_variable``,
-  ``members.keys``, ``inputs.listed`` for a pack's analysis, whose registry it is given) and
-  makes its result envelope as ``run_analysis`` does, returning each view's ``Analysed``.
-  ``shop(extended=True)`` adds an order's amount, a number with a declared range, and declares
-  the customers' ages' range, for ``summary.distribution``.
+- ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates,
+  variables and endpoints, runs each by the reference evaluator (``evaluate``,
+  ``evaluate_variable``, ``members.keys``, ``inputs.listed`` for a pack's or a survival analysis,
+  a pack's registry given) and makes its result envelope as ``run_analysis`` does, returning each
+  view's ``Analysed``. ``shop(extended=True)`` adds an order's amount, a number with a declared
+  range, and declares the customers' ages' range, for ``summary.distribution``;
+  ``shop(survived=...)`` adds each customer's months until they left (``tenure``, ``left``,
+  ``joined``) and the endpoint ``ep:retention`` over them, its customers entering at ``joined``
+  (``"delayed"``), at the origin (``"origin"``) or as it leaves undeclared (``"undeclared"``).
 - ``distributed`` checks a ``summary.distribution`` view of the extended shop over cohorts of the
   pattern document, and ``summarised`` runs it over variables materialised as given, under a
   *k*, each cohort's size given, for checks that run one view many times; ``columned`` and
@@ -34,7 +37,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import columns, distribution, members, packs, views
+from aibi.core.analyses import columns, distribution, members, packs, survival, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome as AnyOutcome
@@ -58,6 +61,7 @@ from aibi.core.schema.analyses import (
     ExistenceParams,
     MembersParams,
     PackParams,
+    SurvivalParams,
 )
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
@@ -70,15 +74,54 @@ RETURNS = "rel:returns.order"
 ENGINE = "aibi test"
 
 
+ENTRIES: Mapping[str, Any] = {
+    "delayed": {"column": "joined"},
+    "origin": "at_origin",
+    "undeclared": None,
+}
+"""How the shop's retention endpoint says its customers enter: at their ``joined`` month, at the
+origin, or undeclared."""
+
+
+def retention(entry: str = "delayed", **fields: Any) -> Descriptor:
+    """The shop's endpoint: months until a customer leaves (``customers.tenure``, its status
+    ``customers.left``), entering as ``entry`` says; ``fields`` replace its fields."""
+    given: dict[str, Any] = {
+        "table": "customers",
+        "time_column": "tenure",
+        "status_column": "left",
+        "event_coding": {"event": ["yes"], "censored": ["no"]},
+    }
+    if ENTRIES[entry] is not None:
+        given["entry"] = ENTRIES[entry]
+    given.update(fields)
+    return build.descriptor(
+        "endpoint", "ep:retention", {k: v for k, v in given.items() if v is not None}
+    )
+
+
 def shop_descriptors(
     *,
     disclosure: Mapping[str, Any] | None = None,
     extended: bool = False,
     extras: Sequence[Descriptor] = (),
+    survived: str | None = None,
 ) -> list[Descriptor]:
     column, table, relationship = build.column, build.table, build.relationship
     ages: dict[str, Any] = {"range": {"min": 18, "max": 98}} if extended else {}
     amounts = [column("orders.amount", "number", range={"min": 0, "max": 200})] if extended else []
+    if survived is not None:
+        amounts += [
+            column("customers.tenure", "time_offset", units="mo"),
+            column(
+                "customers.left",
+                "category",
+                permissible_values={"values": [{"value": v} for v in ("yes", "no")]},
+                missing_codes={"?": "NOT_ASSESSED"},
+            ),
+            column("customers.joined", "time_offset", units="mo"),
+            retention(survived),
+        ]
     amounts += extras
     return [
         build.dataset(**({} if disclosure is None else {"disclosure": dict(disclosure)})),
@@ -121,11 +164,15 @@ def shop_descriptors(
     ]
 
 
-def shop_rows(customers: int = 24, *, extended: bool = False) -> dict[str, list[dict[str, object]]]:
+def shop_rows(
+    customers: int = 24, *, extended: bool = False, survived: bool = False
+) -> dict[str, list[dict[str, object]]]:
     """Customers of three tiers, every fifth tier not assessed, of ages 20 to 69; each places
     an order or two, one in four through the phone; every other order is checked for returns,
     and one in three of the checked ones has one. ``extended``: every order has an amount but
-    every seventh, whose amount is empty."""
+    every seventh, whose amount is empty. ``survived``: each customer has a tenure of 1 to 37
+    months and joined in month 0 to 4 of it (0 for every third), and two in three left (every
+    eleventh's leaving not assessed)."""
     rows: dict[str, list[dict[str, object]]] = {
         "customers": [],
         "orders": [],
@@ -136,7 +183,17 @@ def shop_rows(customers: int = 24, *, extended: bool = False) -> dict[str, list[
     order = 0
     for n in range(1, customers + 1):
         tier = "?" if n % 5 == 0 else tiers[n % 3]
-        rows["customers"].append({"customer_id": f"c{n}", "tier": tier, "age": 20 + (n * 7) % 50})
+        customer: dict[str, object] = {
+            "customer_id": f"c{n}",
+            "tier": tier,
+            "age": 20 + (n * 7) % 50,
+        }
+        if survived:
+            tenure = float((n * 11) % 37 + 1)
+            customer["tenure"] = tenure
+            customer["left"] = "?" if n % 11 == 0 else "yes" if n % 3 else "no"
+            customer["joined"] = 0.0 if n % 3 == 0 else min(float(n % 5), tenure - 0.5)
+        rows["customers"].append(customer)
         for _ in range(1 + n % 2):
             order += 1
             channel = "phone" if order % 4 == 0 else ("shop", "web")[order % 2]
@@ -161,7 +218,8 @@ def shop_release(
     rows: Mapping[str, Sequence[Mapping[str, object]]] | None = None, **options: Any
 ) -> Release:
     extended = bool(options.get("extended"))
-    given = rows if rows is not None else shop_rows(extended=extended)
+    survived = options.get("survived") is not None
+    given = rows if rows is not None else shop_rows(extended=extended, survived=survived)
     return build.release(shop_descriptors(**options), given)
 
 
@@ -206,6 +264,7 @@ def check_document(
         positions=loaded.positions,
         predicates=[p for view in parsed for p in view.predicates],
         variables=[v for view in parsed for v in view.variables],
+        endpoints=[e for view in parsed for e in view.endpoints],
     )
     checked, mixed = views.checked(loaded.document, parsed, canonical, registry)
     deferred = views.deferred(loaded.document, loaded.positions)
@@ -236,6 +295,9 @@ def analyse_document(
         if isinstance(view.params, PackParams):
             assert analyses is not None, "a pack's analysis is of an installed pack"
             found.append(_result(view, _packed_by_evaluator(view, positions, analyses), written))
+            continue
+        if isinstance(view.params, SurvivalParams):
+            found.append(_result(view, _survived_by_evaluator(view, positions), written))
             continue
         if isinstance(view.params, DistributionParams):
             found.append(_result(view, _summarised_by_evaluator(view, positions), written))
@@ -268,13 +330,30 @@ def analyse_document(
     return found
 
 
+def _survived_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> survival.Outcome:
+    assert isinstance(view.params, SurvivalParams)
+    [endpoint] = view.endpoints
+    found = [ordered_inputs(listed(c.resolved, endpoint.variables)) for c in view.cohorts]
+    together = shared(found)
+    assert not together or view.overlap, "cohorts that share units are refused"
+    return survival.survive(
+        positions,
+        [survival.endpoint_rows(endpoint, one) for one in found],
+        view.params,
+        reference=view.reference,
+        overlap=bool(together),
+        computation=view.identity.computation_id,
+    )
+
+
 def _packed_by_evaluator(
     view: CheckedView, positions: Sequence[CohortAt], analyses: Analyses
 ) -> packs.Outcome:
     """A view of a pack's analysis run on its inputs listed by the reference evaluator, as
-    ``run_analysis`` lists them by SQL (D342)."""
+    ``run_analysis`` lists them by SQL (D342, D352)."""
     assert isinstance(view.params, PackParams)
     variables = [variable.resolved for variable in view.variables]
+    variables += [variable for endpoint in view.endpoints for variable in endpoint.variables]
     found = [ordered_inputs(listed(cohort.resolved, variables)) for cohort in view.cohorts]
     together = shared(found)
     independent = view.analysis.entry.fields.assumes_independent_groups
@@ -290,6 +369,7 @@ def _packed_by_evaluator(
         reference=view.reference,
         overlapping=bool(together),
         computation=view.identity.computation_id,
+        endpoints=list(zip(view.endpoint_roles, view.endpoints, strict=True)),
     )
 
 

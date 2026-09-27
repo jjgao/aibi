@@ -48,11 +48,12 @@ def _refusal(function: Any, *args: Any, limits: ImportLimits = SMALL) -> tuple[s
 
 
 def _alive(pid: int) -> bool:
-    """Whether ``pid`` is a process that has not ended (a zombie has)."""
+    """Whether ``pid`` is a process that has not ended (a zombie has); one reaped between
+    opening its ``stat`` and reading it has too (``ProcessLookupError``)."""
     try:
         with open(f"/proc/{pid}/stat") as stat:
             return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 

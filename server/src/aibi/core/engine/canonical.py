@@ -44,7 +44,9 @@ from aibi.core.engine.resolve import (
     Label,
     PackView,
     ResolvedCohort,
+    ResolvedEndpoint,
     ResolvedVariable,
+    ViewEndpoint,
     ViewPredicate,
     ViewVariable,
     pack_failed,
@@ -263,6 +265,8 @@ class Canonicalisation:
     """A release's floor of its own, by manifest hash, as ``canonicalise`` was given it (a
     draft's latest published release's ``min_cell_count``), so that a refusal names the setting
     that binds (D332)."""
+    endpoints: Mapping[str, ResolvedEndpoint] = field(default_factory=dict[str, ResolvedEndpoint])
+    """The views' endpoints resolved, by key; each is canonical as its ``form`` (D347)."""
 
 
 def canonicalise(
@@ -276,9 +280,10 @@ def canonicalise(
     positions: Mapping[Position, str] | None = None,
     predicates: Sequence[ViewPredicate] = (),
     variables: Sequence[ViewVariable] = (),
+    endpoints: Sequence[ViewEndpoint] = (),
 ) -> Canonicalisation:
     """Canonicalise a loaded document's cohorts (phase 1) against its releases, and the views'
-    ``predicates`` and ``variables`` with them (D317, D325).
+    ``predicates``, ``variables`` and ``endpoints`` with them (D317, D325, D347).
 
     ``releases`` maps each dataset reference as written to its release, ``labels`` each release's
     manifest hash to its label (``"draft"`` for a session's draft), ``registry`` holds the
@@ -288,7 +293,13 @@ def canonicalise(
     loader's, so that pointers lead into the document as written."""
     given = positions or {}
     resolution = resolve(
-        written, releases, given, registry=registry, predicates=predicates, variables=variables
+        written,
+        releases,
+        given,
+        registry=registry,
+        predicates=predicates,
+        variables=variables,
+        endpoints=endpoints,
     )
     refusals = list(resolution.refusals)
     own = floors or {}
@@ -311,7 +322,12 @@ def canonicalise(
         for key, variable in resolution.variables.items()
     }
     return Canonicalisation(
-        found["cohorts"], finish_refusals(refusals), found["predicates"], read, dict(own)
+        found["cohorts"],
+        finish_refusals(refusals),
+        found["predicates"],
+        read,
+        dict(own),
+        dict(resolution.endpoints),
     )
 
 

@@ -73,6 +73,8 @@ from aibi.core.schema.descriptors import (
     CoverageDescriptor,
     Descriptor,
     DirectCoverage,
+    EndpointDescriptor,
+    EntryColumn,
     GroupedCoverage,
 )
 from aibi.core.schema.document import (
@@ -325,6 +327,10 @@ class Resolution:
         default_factory=dict[str, "ResolvedVariable"]
     )
     """The views' variables resolved, by key; one with a refusal is left out (D325)."""
+    endpoints: Mapping[str, "ResolvedEndpoint"] = field(
+        default_factory=dict[str, "ResolvedEndpoint"]
+    )
+    """The views' endpoints resolved, by key; one with a refusal is left out (D347)."""
 
 
 @dataclass(frozen=True)
@@ -421,6 +427,67 @@ class ResolvedVariable:
         )
 
 
+@dataclass(frozen=True)
+class ViewEndpoint:
+    """An endpoint a view reads (§5.8, §7.4, D347): the one ``endpoint`` names, or with none the
+    one usable endpoint that meets the view's requirement, resolved on the document's unit table
+    in the release of ``reference`` and refused at ``at``, where it is or would be written; with
+    ``on_unit`` it must be on the unit table itself (§9.1), else it is read through the one path
+    of lookups that reaches its table."""
+
+    key: str
+    reference: str
+    at: Position
+    endpoint: str | None
+    on_unit: bool = True
+
+
+@dataclass(frozen=True)
+class ResolvedEndpoint:
+    """An endpoint resolved (§5.8, D347): its descriptor's id, its time, status and entry
+    columns as columns of the unit (``ResolvedVariable``, read through ``via`` when it is on
+    another table), its event coding, the units of its time, and the fields its reading read."""
+
+    key: str
+    release: Release
+    unit: str
+    endpoint: str
+    time: ResolvedVariable
+    status: ResolvedVariable
+    entry: ResolvedVariable | None
+    """The entry column; ``None`` for an entry at the origin, declared or not (§5.8)."""
+    event: tuple[str | bool | int | float, ...]
+    censored: tuple[str | bool | int | float, ...]
+    units: str | None
+    fields: tuple[FieldRead, ...] = ()
+
+    @property
+    def variables(self) -> tuple[ResolvedVariable, ...]:
+        """Its columns, as a listing reads them: time, status, then entry if it has one."""
+        if self.entry is None:
+            return (self.time, self.status)
+        return (self.time, self.status, self.entry)
+
+    @property
+    def unconfirmed(self) -> tuple[FieldRead, ...]:
+        """The fields that raise ``UNCONFIRMED_SEMANTICS``, an undeclared ``entry`` among them
+        (§5.8)."""
+        return tuple(read for read in self.fields if read.status in UNCONFIRMED)
+
+    @property
+    def form(self) -> JsonValue:
+        """Its canonical form: its id and its time column, on which the view's times are
+        constants (D348)."""
+        return {"id": self.endpoint, "time": self.time.column}
+
+
+def usable_endpoint(descriptor: EndpointDescriptor) -> bool:
+    """Whether an analysis can use an endpoint: its table, time, status and event coding are
+    declared (§5.8, D347)."""
+    fields = descriptor.fields
+    return None not in (fields.table, fields.time_column, fields.status_column, fields.event_coding)
+
+
 def resolve(
     document: Document,
     releases: Mapping[str, Release],
@@ -429,13 +496,16 @@ def resolve(
     registry: PackRegistry | None = None,
     predicates: Sequence[ViewPredicate] = (),
     variables: Sequence[ViewVariable] = (),
+    endpoints: Sequence[ViewEndpoint] = (),
 ) -> Resolution:
     """Resolve a loaded document. ``releases`` maps each dataset reference as written (``d``,
     ``d@3``) to its release; ``positions`` are the loader's, so that refusals point into the
     document as written. ``registry`` holds the packs whose leaves may be expanded.
-    ``predicates`` and ``variables`` are resolved after the cohorts, in the same resolution, so
-    that their pack leaves share the document's budget of steps (D285, D317, D325)."""
-    return _Resolver(document, releases, positions or {}, registry).run(predicates, variables)
+    ``predicates``, ``variables`` and ``endpoints`` are resolved after the cohorts, in the same
+    resolution, so that their pack leaves share the document's budget of steps (D285, D317,
+    D325, D347)."""
+    resolver = _Resolver(document, releases, positions or {}, registry)
+    return resolver.run(predicates, variables, endpoints)
 
 
 def check_parent_scopes(release: Release) -> list[Refusal]:
@@ -712,7 +782,10 @@ class _Resolver:
     # --- Documents and cohorts -------------------------------------------------------------
 
     def run(
-        self, predicates: Sequence[ViewPredicate] = (), variables: Sequence[ViewVariable] = ()
+        self,
+        predicates: Sequence[ViewPredicate] = (),
+        variables: Sequence[ViewVariable] = (),
+        endpoints: Sequence[ViewEndpoint] = (),
     ) -> Resolution:
         self.view_clauses = [predicate.clause for predicate in predicates] + [
             clause for variable in variables for clause in variable.variable.where or []
@@ -732,7 +805,12 @@ class _Resolver:
             made = self._view_variable(variable)
             if made is not None:
                 read[variable.key] = made
-        return Resolution(cohorts, finish_refusals(self.refusals), found, read)
+        ends: dict[str, ResolvedEndpoint] = {}
+        for endpoint in endpoints:
+            resolved = self._view_endpoint(endpoint)
+            if resolved is not None:
+                ends[endpoint.key] = resolved
+        return Resolution(cohorts, finish_refusals(self.refusals), found, read, ends)
 
     def _order(self) -> list[str]:
         """Cohorts after those they reference, in document order otherwise."""
@@ -923,6 +1001,214 @@ class _Resolver:
             leaves=frozenset(context.written),
             packs=frozenset(context.packs),
             summaries=dict(context.summaries),
+        )
+
+    def _view_endpoint(self, given: ViewEndpoint) -> ResolvedEndpoint | None:
+        """A view's endpoint (§5.8, D347): the one it names, or the one usable endpoint that
+        meets it, whose table, time, status and event coding are declared and, ``on_unit``, is on
+        the unit table itself; its columns read one value per unit, on the unit table or through
+        the one path of lookups to its table, their datatypes declared (its time and entry
+        columns time offsets in one unit, its status any single value); its fields, and its
+        entry's absence, recorded as read. The refusals of its release and unit are its
+        cohorts'."""
+        release = self.releases.get(given.reference)
+        unit = self.document.unit
+        if release is None or ":" in unit or release.table(unit) is None:
+            return None
+        graph = self.graphs.get(id(release))
+        if graph is None:
+            graph = self.graphs[id(release)] = Graph.of(release)
+        context = _Cohort(given.key, given.reference, release, graph, unit)
+        self._read(context, release.table(unit), unit, "/fields/primary_key")
+        at = given.at
+        endpoints = [d for d in release.descriptors if isinstance(d, EndpointDescriptor)]
+        if given.endpoint is None:
+            fit = [
+                d
+                for d in endpoints
+                if usable_endpoint(d) and (not given.on_unit or d.fields.table == unit)
+            ]
+            if len(fit) != 1:
+                self.refuse(
+                    RefusalCode.MISSING_MEMBER,
+                    at,
+                    text(f"The view names no endpoint, and {len(fit)} usable endpoints are "),
+                    text("on the unit table" if given.on_unit else "in the release"),
+                    text(": name one"),
+                    alternatives=self.listed([d.id for d in fit]),
+                )
+                return None
+            descriptor = fit[0]
+        else:
+            named = release.by_id.get(given.endpoint)
+            if not isinstance(named, EndpointDescriptor):
+                self.refuse(
+                    RefusalCode.UNKNOWN_DESCRIPTOR,
+                    at,
+                    text("The release has no endpoint "),
+                    data(given.endpoint),
+                    alternatives=self.listed([d.id for d in endpoints]),
+                )
+                return None
+            descriptor = named
+        fields = descriptor.fields
+        missing = [
+            name
+            for name, value in (
+                ("table", fields.table),
+                ("time_column", fields.time_column),
+                ("status_column", fields.status_column),
+                ("event_coding", fields.event_coding),
+            )
+            if value is None
+        ]
+        if missing:
+            self.refuse(
+                RefusalCode.NOT_SUPPORTED,
+                at,
+                text("An endpoint whose table, time, status or event coding is undeclared "),
+                text("cannot be used by an analysis (§5.8); undeclared here: "),
+                *self.listed(missing),
+            )
+            return None
+        table = fields.table
+        assert table is not None
+        if given.on_unit and table != unit:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                at,
+                text("The analysis reads an endpoint on the unit table itself (§9.1), and this "),
+                text("one is on table "),
+                data(table),
+            )
+            return None
+        for member in ("table", "time_column", "status_column", "event_coding"):
+            self._read(context, descriptor, descriptor.id, f"/fields/{member}")
+        if fields.entry is None:
+            context.fields.add(FieldRead(descriptor.id, "/fields/entry", "undeclared"))
+        else:
+            self._read(context, descriptor, descriptor.id, "/fields/entry")
+        path: Path = ()
+        if table != unit:
+            found = self._path(context, None, at[:-1], unit, table, str(at[-1]))
+            if found is None:
+                return None
+            if down_steps(found):
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    at,
+                    text("An endpoint is read one row per unit, and the path to its table "),
+                    data(table),
+                    text(" goes below the unit"),
+                )
+                return None
+            path = found
+            self._read_path(context, path)
+        assert fields.time_column is not None
+        assert fields.status_column is not None
+        assert fields.event_coding is not None
+        time = self._endpoint_column(context, given, table, fields.time_column, path, "time")
+        status = self._endpoint_column(context, given, table, fields.status_column, path, "status")
+        entry: ResolvedVariable | None = None
+        if isinstance(fields.entry, EntryColumn):
+            entry = self._endpoint_column(context, given, table, fields.entry.column, path, "entry")
+            if entry is None:
+                return None
+        if time is None or status is None:
+            return None
+        units = release.by_id.get(time.column)
+        time_units = units.fields.units if isinstance(units, ColumnDescriptor) else None
+        if entry is not None:
+            other = release.by_id.get(entry.column)
+            entry_units = other.fields.units if isinstance(other, ColumnDescriptor) else None
+            if time_units is not None and entry_units is not None and time_units != entry_units:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    at,
+                    text("The endpoint's entry is in "),
+                    data(entry_units),
+                    text(" and its time in "),
+                    data(time_units),
+                    text(": an entry is on the time's clock (§5.8)"),
+                )
+                return None
+        coding = fields.event_coding
+        return ResolvedEndpoint(
+            given.key,
+            release,
+            unit,
+            descriptor.id,
+            time,
+            status,
+            entry,
+            tuple(coding.event),
+            tuple(coding.censored),
+            time_units,
+            tuple(sorted(context.fields)),
+        )
+
+    def _endpoint_column(
+        self,
+        context: _Cohort,
+        given: ViewEndpoint,
+        table: str,
+        name: str,
+        path: Path,
+        role: Literal["time", "status", "entry"],
+    ) -> ResolvedVariable | None:
+        """One of an endpoint's columns, read as a column of the unit (D347): declared, its
+        datatype declared, a time offset for its time and entry and any single value for its
+        status, not an identifier column where row ids are not allowed."""
+        release = context.release
+        at = given.at
+        descriptor = release.column(table, name)
+        if descriptor is None:
+            self.refuse(
+                RefusalCode.UNKNOWN_COLUMN,
+                at,
+                text("Table "),
+                data(table),
+                text(" has no column "),
+                data(name),
+                text(f", the endpoint's {role} column"),
+            )
+            return None
+        datatype = descriptor.fields.datatype
+        if datatype is None:
+            self.refuse(
+                RefusalCode.UNDECLARED_DATATYPE,
+                at,
+                text(f"The datatype of the endpoint's {role} column is undeclared, so its values "),
+                text("cannot be read: "),
+                data(descriptor.id),
+            )
+            return None
+        wrong = datatype != "time_offset" if role != "status" else datatype == "list<category>"
+        if wrong:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                at,
+                text(
+                    f"The endpoint's {role} column is a time offset (§5.8), and this one is not: "
+                    if role != "status"
+                    else "The endpoint's status column holds one value per row, and this one "
+                    "is a list: "
+                ),
+                data(descriptor.id),
+            )
+            return None
+        if self._identifier(context, descriptor) and not self._row_ids(context):
+            self.refuse(
+                RefusalCode.ROW_IDS_NOT_ALLOWED,
+                at,
+                text("The dataset does not allow row ids, so identifier columns are not read "),
+                text("(§8.4): "),
+                data(descriptor.id),
+            )
+            return None
+        self._read_column(context, descriptor)
+        return ResolvedVariable(
+            f"{given.key}/{role}", release, context.unit, descriptor.id, datatype, "column", path
         )
 
     def _variable(self, context: _Cohort, given: ViewVariable) -> ResolvedVariable | None:
@@ -2695,8 +2981,10 @@ __all__ = [
     "PackView",
     "Resolution",
     "ResolvedCohort",
+    "ResolvedEndpoint",
     "ResolvedVariable",
     "VariableKind",
+    "ViewEndpoint",
     "ViewPredicate",
     "ViewVariable",
     "check_parent_scopes",
@@ -2705,4 +2993,5 @@ __all__ = [
     "pack_failed",
     "resolve",
     "typed_constant",
+    "usable_endpoint",
 ]

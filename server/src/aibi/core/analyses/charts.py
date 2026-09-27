@@ -26,6 +26,11 @@ bars of each cohort's categories as ``summary.distribution`` draws them; for num
 difference versus the reference, in means and in medians, a point with its interval as a rule,
 one row of the facet per measure, one line per other cohort in view order. A difference not shown
 has no row, so under a disclosure setting a number's chart has none.
+
+``survival.km`` has one chart (D348): each cohort's curve as a line stepping after each of its
+steps from 1 at time 0, its pointwise interval as a band where the curve's steps have both
+bounds, one line per cohort in view order; a step whose value is not estimable has no row, and a
+cohort with no units none.
 """
 
 import json
@@ -42,6 +47,7 @@ from aibi.core.schema.analyses import (
     HistogramBin,
     NumberComparison,
     NumberDistribution,
+    SurvivalValues,
 )
 
 
@@ -286,6 +292,74 @@ def _effects_chart(
     }
 
 
+def survival_chart(values: SurvivalValues, labels: Sequence[str]) -> dict[str, JsonValue]:
+    """The chart of ``survival.km``'s values, its cohorts labelled in view order (module
+    docstring): each cohort with units from 1 at time 0, where every curve starts."""
+    curve: list[JsonValue] = []
+    band: list[JsonValue] = []
+    for position, at in enumerate(values.positions):
+        if at.last_follow_up is not None:
+            start: dict[str, JsonValue] = {
+                "position": position,
+                "cohort": labels[position],
+                "time": 0,
+                "survival": 1,
+            }
+            curve.append(start)
+            band.append({**start, "low": 1, "high": 1})
+        for step in at.curve.steps:
+            if step.survival is None:
+                continue
+            row: dict[str, JsonValue] = {
+                "position": position,
+                "cohort": labels[position],
+                "time": step.time,
+                "survival": step.survival,
+            }
+            curve.append(row)
+            if step.ci.low is not None and step.ci.high is not None:
+                band.append({**row, "low": step.ci.low, "high": step.ci.high})
+    cohort: dict[str, JsonValue] = {
+        "field": "cohort",
+        "type": "nominal",
+        "sort": None,
+        "title": "Cohort",
+    }
+    time: dict[str, JsonValue] = {"field": "time", "type": "quantitative", "title": "Time"}
+    return {
+        "description": (
+            "Each cohort's Kaplan-Meier curve, with its pointwise interval where both bounds "
+            "are shown"
+        ),
+        "layer": [
+            {
+                "data": {"values": band},
+                "mark": {"type": "area", "interpolate": "step-after", "opacity": 0.2},
+                "encoding": {
+                    "x": time,
+                    "y": {"field": "low", "type": "quantitative"},
+                    "y2": {"field": "high"},
+                    "color": cohort,
+                },
+            },
+            {
+                "data": {"values": curve},
+                "mark": {"type": "line", "interpolate": "step-after"},
+                "encoding": {
+                    "x": time,
+                    "y": {
+                        "field": "survival",
+                        "type": "quantitative",
+                        "title": "Survival",
+                        "scale": {"domain": [0, 1]},
+                    },
+                    "color": cohort,
+                },
+            },
+        ],
+    }
+
+
 def _interval(one: HistogramBin) -> str:
     """A bin's interval as text: ``[`` or ``(`` by whether it holds its low edge, ``-∞`` for none,
     and ``]`` or ``)`` likewise at its high edge, ``∞`` for none."""
@@ -301,4 +375,4 @@ def _edge(value: float) -> str:
     return json.dumps(value)
 
 
-__all__ = ["columns_charts", "distribution_charts", "existence_chart"]
+__all__ = ["columns_charts", "distribution_charts", "existence_chart", "survival_chart"]

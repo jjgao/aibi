@@ -78,13 +78,18 @@ from aibi.core.schema.document import (
     ValueList,
     Via,
 )
-from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER, Identifier
+from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER, EndpointId, Identifier
 from aibi.core.schema.limits import (
     BIN_EDGES,
+    GRID_TIMES,
+    LANDMARKS,
     MAX_BINS,
     MAX_CATEGORIES,
     MAX_COHORTS,
     MAX_COLUMNS,
+    MAX_CURVE_STEPS,
+    MAX_GRID,
+    MAX_LANDMARKS,
     MAX_MEMBERS,
     MAX_PREDICATES,
     MAX_VARIABLES,
@@ -99,6 +104,7 @@ from aibi.core.schema.numbers import (
     EffectSize,
     Estimable,
     HypothesisTest,
+    Interval,
     Level,
     Number,
     Proportion,
@@ -538,6 +544,101 @@ class MembersValues(Output):
     view: NoViewValues
 
 
+# --- survival.km (D348) --------------------------------------------------------------------------
+
+
+def _times(value: list[float]) -> list[float]:
+    if any(later <= earlier for earlier, later in pairwise(value)):
+        raise PydanticCustomError("times_order", "Times are strictly increasing")
+    return value
+
+
+Time = Annotated[Finite, Field(ge=0)]
+"""A time since the origin, in the units of the endpoint's time (§5.8)."""
+Times = Annotated[list[Time], AfterValidator(_times)]
+
+
+class SurvivalParams(DocModel):
+    """``survival.km``'s parameters (D348)."""
+
+    endpoint: EndpointId | None = None
+    """The endpoint (§5.8); without one, the one usable endpoint on the unit table."""
+    landmarks: Annotated[Times, Field(max_length=MAX_LANDMARKS), LimitName(LANDMARKS)] | None = None
+    """Times at which each curve's value is given with its interval; none by default."""
+    grid: (
+        Annotated[Times, Field(min_length=1, max_length=MAX_GRID), LimitName(GRID_TIMES)] | None
+    ) = None
+    """Times at which the curves are reported, with the units at risk and the follow-ups that
+    ended since the time before; without them, every time at which a follow-up ends."""
+    level: Annotated[Level, Field(le=MAX_LEVEL)] = 0.95
+    """The level of every interval, at most ``MAX_LEVEL``."""
+
+
+class CurveStep(Estimable):
+    """A curve at one time (D348): the units at risk there, the follow-ups that ended there (or,
+    at a grid time, since the grid time before) in an event or censored, and the curve's value
+    with its pointwise log-log interval; after the cohort's last follow-up its value is
+    ``beyond_follow_up``."""
+
+    time: Time
+    at_risk: Count
+    events: Count
+    censored: Count
+    survival: Number
+    ci: Interval
+
+
+class Curve(Output):
+    times_from: Literal["data", "grid"]
+    """Whether the steps are at each time a follow-up ends, or at the view's ``grid``."""
+    steps: Annotated[list[CurveStep], Field(max_length=MAX_CURVE_STEPS)]
+
+
+class SurvivalMedian(Estimable):
+    """A curve's median and its Brookmeyer–Crowley interval (§9.5); ``not_reached`` where the
+    curve, or a bound's curve, does not reach ½."""
+
+    estimate: Number
+    ci: Interval
+
+
+class Landmark(Estimable):
+    """A curve's value at a landmark time, with its pointwise log-log interval."""
+
+    time: Time
+    estimate: Number
+    ci: Interval
+
+
+class SurvivalPosition(Estimable):
+    """``survival.km`` at one position (D348): the events among the units analysed, the last
+    time at which a follow-up ended, the curve, its median and its landmarks."""
+
+    events: Count
+    last_follow_up: Number
+    curve: Curve
+    median: SurvivalMedian
+    landmarks: Annotated[list[Landmark], Field(max_length=MAX_LANDMARKS)]
+
+
+class SurvivalView(Output):
+    """``survival.km`` across the view's cohorts (D348): the log-rank test, the difference in
+    medians and the hazard ratio of each other position versus the reference, in view order,
+    and the test of proportional hazards of the Cox fit that gives the hazard ratios; the tests
+    absent for a view of one cohort."""
+
+    test: HypothesisTest | None = None
+    effects: Annotated[list[EffectSize], Field(max_length=2 * (MAX_COHORTS - 1))]
+    proportional_hazards: HypothesisTest | None = None
+
+
+class SurvivalValues(Output):
+    """``survival.km``'s ``values`` (§8.1): ``positions`` in view order, and ``view``."""
+
+    positions: Annotated[list[SurvivalPosition], Field(min_length=1, max_length=MAX_COHORTS)]
+    view: SurvivalView
+
+
 # --- A pack's analysis (D341) -------------------------------------------------------------------
 
 
@@ -563,6 +664,17 @@ class PackParams(DocModel):
         | None
     ) = None
     """The variables of each ``column`` requirement, in the order its inputs give them."""
+    endpoints: (
+        Annotated[
+            dict[Identifier, EndpointId],
+            Field(max_length=MAX_VARIABLES),
+            LimitName(VARIABLES),
+            map_cap(MAX_VARIABLES),
+        ]
+        | None
+    ) = None
+    """The endpoint each of its ``endpoint`` requirements reads, by role; a role not given reads
+    the one usable endpoint that meets it (D352)."""
     options: dict[ParamKey, DocumentJson] | None = None
     """What else the analysis takes, as its entry's ``params`` schema has it."""
 
@@ -584,6 +696,8 @@ __all__ = [
     "ColumnsPosition",
     "ColumnsValues",
     "ColumnsView",
+    "Curve",
+    "CurveStep",
     "DistributionParams",
     "DistributionPosition",
     "DistributionValues",
@@ -596,6 +710,7 @@ __all__ = [
     "Histogram",
     "HistogramBin",
     "KeyPart",
+    "Landmark",
     "LargeInteger",
     "MembersParams",
     "MembersPosition",
@@ -607,5 +722,11 @@ __all__ = [
     "PackParams",
     "PredicateContrast",
     "PredicateShare",
+    "SurvivalMedian",
+    "SurvivalParams",
+    "SurvivalPosition",
+    "SurvivalValues",
+    "SurvivalView",
+    "Time",
     "Variable",
 ]

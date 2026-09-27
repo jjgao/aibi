@@ -274,6 +274,7 @@ def test_a_dataset_is_described_with_its_tables_columns_graph_and_its_analyses(
         ("compare.existence", "1.0.0", "available", []),
         ("summary.distribution", "1.0.0", "available_with_caveats", []),
         ("summary.members", "1.0.0", "available", []),
+        ("survival.km", "1.0.0", "unavailable", ["endpoint"]),
     ]
     assert found.columns_total == 9
     assert found.columns_next is None

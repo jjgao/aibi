@@ -84,6 +84,14 @@ MAX_RESULT_VALUES = MAX_VALUES
 MAX_RESULT_CHARACTERS = 8 * 2**20
 """Characters of the text of the values a pack's analysis gives, keys included, together (the
 limit ``result_characters``, D343); each string holds at most ``MAX_TEXT``."""
+MAX_LANDMARKS = 16
+"""Landmark times of a survival view, each a curve's value with its interval (D348)."""
+MAX_GRID = 100
+"""Grid times of a survival view, at which its curves are reported (the limit ``grid_times``,
+D348)."""
+MAX_CURVE_STEPS = 2_000
+"""Steps of one cohort's curve that a survival view reports without a grid (the limit
+``curve_steps``, D348): a curve has a step wherever a unit's follow-up ends."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -133,6 +141,9 @@ LISTED_MEMBERS = "listed_members"
 INPUT_CELLS = "input_cells"
 RESULT_VALUES = "result_values"
 RESULT_CHARACTERS = "result_characters"
+LANDMARKS = "landmarks"
+GRID_TIMES = "grid_times"
+CURVE_STEPS = "curve_steps"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
@@ -386,6 +397,7 @@ __all__ = [
     "COHORT_REFERENCES",
     "CONCURRENT_IMPORTS",
     "CONSTANT_CHARACTERS",
+    "CURVE_STEPS",
     "DATASETS",
     "DECODED_BYTES",
     "DESCRIPTOR_BYTES",
@@ -393,6 +405,7 @@ __all__ = [
     "ENTRIES",
     "EXPANSION_VALUES",
     "EXTENSION_STEPS",
+    "GRID_TIMES",
     "IDENTIFIER_CHARACTERS",
     "IMPORT_BYTES",
     "IMPORT_CELLS",
@@ -400,6 +413,7 @@ __all__ = [
     "INPUT_CELLS",
     "JSON_VALUES",
     "KEY_COLUMNS",
+    "LANDMARKS",
     "LEAVES",
     "LISTED_MEMBERS",
     "LIST_MEMBERS",
@@ -413,13 +427,16 @@ __all__ = [
     "MAX_COHORTS",
     "MAX_COHORT_REFERENCES",
     "MAX_COLUMNS",
+    "MAX_CURVE_STEPS",
     "MAX_DATASETS",
     "MAX_DEPTH",
     "MAX_DOCUMENT_BYTES",
     "MAX_ENTRIES",
+    "MAX_GRID",
     "MAX_IDENTIFIER",
     "MAX_INPUT_CELLS",
     "MAX_KEEP_DAYS",
+    "MAX_LANDMARKS",
     "MAX_LEAVES",
     "MAX_LIST",
     "MAX_LISTED",

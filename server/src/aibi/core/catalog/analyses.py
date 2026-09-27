@@ -44,7 +44,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, members, packs
+from aibi.core.analyses import columns, distribution, members, packs, survival
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
 from aibi.core.analyses.views import CheckedView
@@ -76,14 +76,17 @@ from aibi.core.schema.analyses import (
     ExistenceParams,
     MembersParams,
     PackParams,
+    SurvivalParams,
 )
 from aibi.core.schema.cohorts import AnalysisResults, RunAnalysis
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import (
     CATEGORIES,
+    CURVE_STEPS,
     INPUT_CELLS,
     LISTED_MEMBERS,
     MAX_CATEGORIES,
+    MAX_CURVE_STEPS,
     QUERY_ANSWER_BYTES,
     QUERY_MEMORY,
     QUERY_SECONDS,
@@ -150,9 +153,9 @@ def _run(
 ) -> ViewsRun:
     """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed,
     ``shared`` the materialisations that count the units their cohorts share and ``inputs`` the
-    listings of packs' analyses' inputs; an answer over the cap names the view to narrow
-    (``widest``, module docstring), and a listing of inputs over its caps the first view that
-    reads it (``packed``, a view per listing)."""
+    listings of packs' and survival analyses' inputs; an answer over the cap names the view to
+    narrow (``widest``, module docstring), and a listing of inputs over its caps the first view
+    that reads it (``packed``, a view per listing)."""
     try:
         return _guarded(
             lambda ends: run_views(
@@ -178,7 +181,8 @@ def _run(
                     path=pointer(["views", view.index]),
                     message=[
                         text(f"A cohort has more than {many.most} members, more than the inputs "),
-                        text("of a pack's analysis list (§14, D342): narrow the cohort"),
+                        text("of a pack's or a survival analysis list (§14, D342, D347): narrow "),
+                        text("the cohort"),
                     ],
                     limit=Limit(name=LISTED_MEMBERS, max=many.most),
                 )
@@ -230,10 +234,14 @@ def _too_large(view: CheckedView, column: int) -> ToolRefused:
 
 def _widest(views: Sequence[CheckedView]) -> CheckedView:
     """The view an answer over the cap, or a run over its seconds or memory, names: the first that
-    lists keys or a pack's analysis's inputs, a row per member, else the one whose materialisation
-    is widest, whose answer grows with the units, else the one whose crossing is (module
-    docstring)."""
-    listing = [view for view in views if isinstance(view.params, MembersParams | PackParams)]
+    lists keys or a pack's or survival analysis's inputs, a row per member, else the one whose
+    materialisation is widest, whose answer grows with the units, else the one whose crossing is
+    (module docstring)."""
+    listing = [
+        view
+        for view in views
+        if isinstance(view.params, MembersParams | PackParams | SurvivalParams)
+    ]
     if listing:
         return listing[0]
     materialising = [view for view in views if view.variables]
@@ -362,15 +370,12 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
         handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
         inputs: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
         for view in views:
-            if isinstance(view.params, PackParams):
+            if isinstance(view.params, PackParams | SurvivalParams):
                 key = _inputs_key(view)
                 if key not in handed:
                     handed[key] = len(inputs)
                     inputs.append(
-                        (
-                            [cohort.resolved for cohort in view.cohorts],
-                            [variable.resolved for variable in view.variables],
-                        )
+                        ([cohort.resolved for cohort in view.cohorts], _listed_variables(view))
                     )
                 continue
             if isinstance(view.params, MembersParams):
@@ -427,6 +432,27 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                 outcomes.append(_listed(view, position, run_listed.keys, deadline))
                 queries.append(
                     {"statements": list(run_listed.sql), "parameters": dict(run_listed.parameters)}
+                )
+                issues.append(_result_issue(view, {"queries": queries}, written, params))
+                continue
+            if isinstance(view.params, SurvivalParams):
+                given = ran_views.inputs[handed[_inputs_key(view)]]
+                outcomes.append(
+                    _survived(
+                        catalog,
+                        view,
+                        positions,
+                        given.listed,
+                        sources,
+                        workers,
+                        deadline,
+                        erasures,
+                        written,
+                        params,
+                    )
+                )
+                queries.append(
+                    {"statements": list(given.sql), "parameters": dict(given.parameters)}
                 )
                 issues.append(_result_issue(view, {"queries": queries}, written, params))
                 continue
@@ -571,6 +597,77 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
     return AnalysisResults(results=results, params=parameters(found.loaded))
 
 
+def _survived(
+    catalog: Catalog,
+    view: CheckedView,
+    positions: Sequence[CohortAt],
+    listed: Sequence[Listed],
+    sources: Mapping[str, Mapping[str, TableSource]],
+    workers: Workers,
+    deadline: Deadline | None,
+    erasures: int,
+    written: dict[str, JsonValue],
+    params: dict[str, JsonValue],
+) -> survival.Outcome:
+    """A survival view run on its endpoint rows (D347, D348): each position's listing put in the
+    order of §9.3; cohorts that share units refuse the view without ``overlap: "allow"``, as a
+    pack analysis's do (§7.4, D339); a curve of more steps than a result reports without a grid
+    refuses the call (``LIMIT_EXCEEDED`` at the view's ``grid``), and a unit's time or entry
+    beyond ±(2^53 − 1) ``NOT_SUPPORTED`` at the view."""
+    assert isinstance(view.params, SurvivalParams), "a survival view"
+    survival_params = view.params
+    ends = None if deadline is None else deadline.at - RECORD_SECONDS
+    try:
+        found = [ordered(one, ends) for one in listed]
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+    together = shared(found)
+    if together and not view.overlap:
+        _overlap(catalog, view, together, sources, workers, deadline, erasures, written, params)
+    [endpoint] = view.endpoints
+    try:
+        rows = [survival.endpoint_rows(endpoint, one, ends=ends) for one in found]
+        return survival.survive(
+            positions,
+            rows,
+            survival_params,
+            reference=view.reference,
+            overlap=bool(together),
+            computation=view.identity.computation_id,
+            ends=ends,
+        )
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+    except survival.TooManySteps as many:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer(["views", view.index, "params", "grid"]),
+                    message=[
+                        text(f"A cohort's curve has {many.steps} steps, one wherever a unit's "),
+                        text(f"follow-up ends, and a result reports at most {MAX_CURVE_STEPS} "),
+                        text("without a grid (D348): give grid times"),
+                    ],
+                    limit=Limit(name=CURVE_STEPS, max=MAX_CURVE_STEPS),
+                )
+            ]
+        ) from None
+    except survival.TooLarge:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=pointer(["views", view.index]),
+                    message=[
+                        text("A unit's time or entry in this view's endpoint rows lies beyond "),
+                        text("±(2^53 − 1), which an output does not hold (§8.2, D348)"),
+                    ],
+                )
+            ]
+        ) from None
+
+
 def _packed(
     catalog: Catalog,
     view: CheckedView,
@@ -610,6 +707,7 @@ def _packed(
             overlapping=bool(together),
             computation=view.identity.computation_id,
             ends=ends,
+            endpoints=list(zip(view.endpoint_roles, view.endpoints, strict=True)),
         )
     except CallerDeadline:
         raise late(cast(Deadline, deadline)) from None
@@ -644,15 +742,28 @@ def _first_readers(
     """The first view that reads each listing of inputs, by the listing's index."""
     firsts: dict[int, CheckedView] = {}
     for view in views:
-        if isinstance(view.params, PackParams):
+        if isinstance(view.params, PackParams | SurvivalParams):
             firsts.setdefault(handed[_inputs_key(view)], view)
     return [firsts[index] for index in range(len(firsts))]
 
 
 def _inputs_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """A pack view's inputs, by its cohorts' computation ids and its variables' canonical
-    forms in order: views that list the same inputs share their run."""
-    return (tuple(cohort.computation_id for cohort in view.cohorts), tuple(_forms(view)))
+    """A pack or survival view's inputs, by its cohorts' computation ids and its variables' and
+    endpoints' canonical forms in order: views that list the same inputs share their run."""
+    endpoints = [canonical(endpoint.form).decode() for endpoint in view.endpoints]
+    return (
+        tuple(cohort.computation_id for cohort in view.cohorts),
+        (*_forms(view), *endpoints),
+    )
+
+
+def _listed_variables(view: CheckedView) -> list[ResolvedVariable]:
+    """What a pack or survival view's inputs list of each member: its variables, then each of its
+    endpoints' columns (D347, D352)."""
+    found = [variable.resolved for variable in view.variables]
+    for endpoint in view.endpoints:
+        found += endpoint.variables
+    return found
 
 
 def _crossing_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:
