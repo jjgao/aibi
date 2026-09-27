@@ -62,7 +62,11 @@ unit keys by the reference evaluator and orders them as the canonical form does,
 `sql.compile_members` lists them by SQL, and `core/analyses/members.py` is `summary.members`,
 refused under any disclosure setting. From M3.2c, `core/analyses/columns.py` is `compare.columns`,
 its tests held to R (`reference/columns.R`) and its bootstrap in `stats.py`, and a materialisation
-counts the units its cohorts share (`sql.compile_materialised(…, shared=True)`).
+counts the units its cohorts share (`sql.compile_materialised(…, shared=True)`). From M3.2d,
+`core/engine/inputs.py` lists a cohort's members with each variable's value by the reference
+evaluator and orders them by key, `sql.compile_inputs` lists them by SQL, and
+`core/analyses/packs.py` runs a pack's analysis on them (refused under any disclosure setting and
+where row ids are not allowed); pack leaves in a variable's `where` are expanded.
 
 ## Non-negotiables
 

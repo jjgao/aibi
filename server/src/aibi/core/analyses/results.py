@@ -20,7 +20,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, existence, members
+from aibi.core.analyses import columns, distribution, existence, members, packs
 from aibi.core.analyses.charts import columns_charts, distribution_charts, existence_chart
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.readback import readback
@@ -67,13 +67,18 @@ def document_of(view: CheckedView) -> dict[str, JsonValue]:
     }
 
 
-Outcome = existence.Outcome | distribution.Outcome | members.Outcome | columns.Outcome
-"""An analysis's digested parts and caveats, as the core's analyses give them."""
+Outcome = (
+    existence.Outcome | distribution.Outcome | members.Outcome | columns.Outcome | packs.Outcome
+)
+"""An analysis's digested parts and caveats, as the core's analyses and packs' give them."""
 
 
 def charts(outcome: Outcome, labels: list[str]) -> list[dict[str, JsonValue]]:
     """The charts of an outcome's values (``charts``); ``summary.members`` has none, since a
-    list of keys holds no number to draw (D331)."""
+    list of keys holds no number to draw (D331), nor a pack's analysis, whose visual output is
+    a render specification among its values (§10.1, D343)."""
+    if isinstance(outcome, packs.Outcome):
+        return []
     if isinstance(outcome.values, ExistenceValues):
         return [existence_chart(outcome.values, labels)]
     if isinstance(outcome.values, DistributionValues):
@@ -102,12 +107,16 @@ def envelope(
         )
         for position, cohort in enumerate(view.cohorts)
     ]
-    values = Values(
-        positions=[
-            cast(dict[str, JsonValue], position.model_dump(mode="json"))
-            for position in outcome.values.positions
-        ],
-        view=cast(dict[str, JsonValue], outcome.values.view.model_dump(mode="json")),
+    values = (
+        outcome.values
+        if isinstance(outcome, packs.Outcome)
+        else Values(
+            positions=[
+                cast(dict[str, JsonValue], position.model_dump(mode="json"))
+                for position in outcome.values.positions
+            ],
+            view=cast(dict[str, JsonValue], outcome.values.view.model_dump(mode="json")),
+        )
     )
     dumped_values = cast(JsonValue, values.model_dump(mode="json"))
     caveats = [*outcome.caveats, *view.static_caveats()]

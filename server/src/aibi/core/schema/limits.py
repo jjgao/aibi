@@ -73,6 +73,17 @@ MEMBERS_PAGE = 100
 MAX_LISTED = 1_000_000
 """Members of the cohort a ``summary.members`` view lists keys of, which the server reads and
 orders to take a page (the limit ``listed_members``, D333)."""
+MAX_INPUT_CELLS = 1_000_000
+"""Cells of the inputs the core hands a pack's analysis, over its positions together: each
+position's units times its variables, one at least (the limit ``input_cells``, D342); as many as
+a listing reads members. A listing's time grows with the unit table's size times its cohorts
+times its columns, not with its cells, so a view within the cap may still reach
+``query_seconds`` (on 1,000,000 units, 6 cohorts of 2,500 with 8 columns took 130 s; #56)."""
+MAX_RESULT_VALUES = MAX_VALUES
+"""JSON values of the values a pack's analysis gives (the limit ``result_values``, D343)."""
+MAX_RESULT_CHARACTERS = 8 * 2**20
+"""Characters of the text of the values a pack's analysis gives, keys included, together (the
+limit ``result_characters``, D343); each string holds at most ``MAX_TEXT``."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -119,6 +130,9 @@ BIN_EDGES = "bin_edges"
 """Edges of a histogram a view's parameters give (at most ``MAX_BINS`` + 1, D328)."""
 CATEGORIES = "categories"
 LISTED_MEMBERS = "listed_members"
+INPUT_CELLS = "input_cells"
+RESULT_VALUES = "result_values"
+RESULT_CHARACTERS = "result_characters"
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
@@ -172,6 +186,9 @@ PACK_LEAF_STEPS = "pack_leaf_steps"
 """Steps of evaluating a document's pack leaves against their kinds' schemas, together (D285)."""
 EXPANSION_VALUES = "expansion_values"
 """JSON values of the expansions of a document's pack leaves, together (D285)."""
+PACK_OPTION_STEPS = "pack_option_steps"
+"""Steps of evaluating a view's ``options`` against its pack analysis's ``params`` schema
+(D341)."""
 MAX_OPEN_PROPOSALS = 10_000
 MAX_AGENT_PROPOSALS = MAX_OPEN_PROPOSALS // 2
 """Agents' share of ``MAX_OPEN_PROPOSALS``: the rest stays for the importers' and the models'
@@ -380,6 +397,7 @@ __all__ = [
     "IMPORT_BYTES",
     "IMPORT_CELLS",
     "IMPORT_TABLES",
+    "INPUT_CELLS",
     "JSON_VALUES",
     "KEY_COLUMNS",
     "LEAVES",
@@ -400,6 +418,7 @@ __all__ = [
     "MAX_DOCUMENT_BYTES",
     "MAX_ENTRIES",
     "MAX_IDENTIFIER",
+    "MAX_INPUT_CELLS",
     "MAX_KEEP_DAYS",
     "MAX_LEAVES",
     "MAX_LIST",
@@ -419,6 +438,8 @@ __all__ = [
     "MAX_QUEUE_BYTES",
     "MAX_QUEUE_ITEMS",
     "MAX_REFUSALS",
+    "MAX_RESULT_CHARACTERS",
+    "MAX_RESULT_VALUES",
     "MAX_STRING",
     "MAX_SUMMARY_SEGMENTS",
     "MAX_TEXT",
@@ -436,6 +457,7 @@ __all__ = [
     "PACKS",
     "PACK_LEAF_STEPS",
     "PACK_LEAVES",
+    "PACK_OPTION_STEPS",
     "PAGE_REQUESTS",
     "PARAMETERS",
     "PATH_SEARCH",
@@ -457,6 +479,8 @@ __all__ = [
     "REFERENCE_CHARACTERS",
     "REFUSALS",
     "REQUEST_BYTES",
+    "RESULT_CHARACTERS",
+    "RESULT_VALUES",
     "SCOPE_COLUMNS",
     "STRING_CHARACTERS",
     "SUBSTITUTED_BYTES",

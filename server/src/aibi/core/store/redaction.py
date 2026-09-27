@@ -115,7 +115,7 @@ from pydantic import JsonValue
 
 from aibi.core.engine.resolve import typed_constant
 from aibi.core.engine.units import scale
-from aibi.core.schema.ids import CONCEPT_ID_RE
+from aibi.core.schema.ids import CONCEPT_ID_RE, CORE_ANALYSIS_FAMILIES
 from aibi.core.schema.jsonio import canonical, number_text
 from aibi.core.store.appdb import loads
 from aibi.core.store.cells import typed
@@ -954,8 +954,29 @@ def _object_holds(hashed: JsonValue, manifest: str, terms: Terms) -> bool:
             for at, tree in cohort.items()
         )
     if isinstance(view, dict):
-        return _params_hold(view.get("params"), terms)
+        params = view.get("params")
+        if _of_pack(view) and isinstance(params, dict):
+            return any(
+                terms.string(key) != key
+                or (
+                    _naming_holds(member, terms)
+                    if key == "options"
+                    else _params_hold(member, terms)
+                )
+                for key, member in params.items()
+            )
+        return _params_hold(params, terms)
     return _naming_holds(hashed, terms)
+
+
+def _of_pack(view: Mapping[str, JsonValue]) -> bool:
+    """Whether a view, as written or canonical, is of a pack's analysis, whose ``options`` the core
+    cannot read (D341): its ``analysis`` (as written, its id; canonical, ``{"id", "version"}``) is
+    of no core family."""
+    analysis = view.get("analysis")
+    if isinstance(analysis, dict):
+        analysis = analysis.get("id")
+    return isinstance(analysis, str) and analysis.partition(".")[0] not in CORE_ANALYSIS_FAMILIES
 
 
 def _naming_holds(value: JsonValue, terms: Terms) -> bool:
@@ -1332,7 +1353,14 @@ class _Written:
         try:
             found: dict[str, JsonValue] = {}
             for key, member in view.items():
-                if key == "params":
+                if key == "params" and _of_pack(view) and isinstance(member, dict):
+                    found[key] = self.terms.keyed(
+                        member,
+                        lambda name, given: (
+                            self.pack(given) if name == "options" else self.settings(given)
+                        ),
+                    )
+                elif key == "params":
                     found[key] = self.settings(member)
                 elif key in _TEXT:
                     found[key] = self.text(member)

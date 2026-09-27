@@ -6,9 +6,9 @@ objects, which consults only the packs a dataset or document lists. The core nev
 pack; the server hands the registry the packs it loads.
 
 The extension points are typed here. The core calls each from the milestone that delivers its
-feature (M1–M3), so the types some of them exchange (analysis inputs) are placeholders until
-then. Raw snapshots and typed tables are the store's
-(``aibi.core.store.sources``) and the evaluator's (``aibi.core.engine.data``).
+feature (M1–M3); an analysis's inputs (``AnalysisInputs``) are what M3.2d materialises (D342).
+Raw snapshots and typed tables are the store's (``aibi.core.store.sources``) and the evaluator's
+(``aibi.core.engine.data``).
 """
 
 import math
@@ -41,7 +41,13 @@ from aibi.core.schema.ids import (
 from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.jsonschemas import problems as schema_problems
-from aibi.core.schema.limits import MAX_DEPTH, ImportLimits
+from aibi.core.schema.limits import (
+    MAX_DEPTH,
+    RESULT_CHARACTERS,
+    RESULT_VALUES,
+    TEXT_CHARACTERS,
+    ImportLimits,
+)
 from aibi.core.schema.output import Output, Segment
 from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.results import Pep440
@@ -256,9 +262,61 @@ class Proposal:
     evidence: str | None = None
 
 
-class AnalysisInputs(Protocol):
-    """Per cohort position, the units with the columns, aggregates and endpoint rows an entry
-    requests, materialised by the core (SPEC §10.1). Defined with the registry (M3)."""
+Cell = bool | int | float | str | None
+"""A unit's value of one input column: a boolean, an integer, a double or text (a category's
+value, an ordered category's under ``max`` and ``min``), or ``None`` where it is excluded."""
+
+
+@dataclass(frozen=True)
+class InputColumn:
+    """One variable of a pack analysis's inputs, a column its view bound to a role (D341, D342)."""
+
+    role: str
+    """The ``column`` requirement of the entry it meets."""
+    column: str
+    """Its column's descriptor id."""
+    kind: Literal["column", "aggregate", "question"]
+    """A column of the unit or of a row it looks up, an aggregate of rows below the unit, or
+    ``some`` or ``every`` of them (§9.2)."""
+    function: Literal["count", "max", "min", "mean", "some", "every"] | None
+    datatype: str | None
+    """What its values are: its column's datatype, ``integer`` for ``count``, ``number`` for
+    ``mean`` and ``boolean`` for ``some`` and ``every``."""
+    form: JsonValue
+    """Its canonical form (§7.6, D325), a copy of its own."""
+
+
+@dataclass(frozen=True)
+class InputPosition:
+    """The units of one cohort position (D342): its members, in the order of SPEC §9.3 (their
+    unit keys' RFC 8785 serialisation compared as UTF-16 code units), their keys not given."""
+
+    units: int
+    values: tuple[tuple[Cell, ...], ...]
+    """Per input column, each unit's value, ``None`` where it is excluded."""
+    excluded: tuple[tuple[tuple[str, ...], ...], ...]
+    """Per input column, each unit's reasons for being excluded (``ExclusionReason`` names,
+    sorted), ``()`` where it has a value."""
+
+
+@dataclass(frozen=True)
+class AnalysisInputs:
+    """What the core hands a pack analysis's ``run`` (SPEC §10.1; D342): per cohort position in
+    view order, its units with the columns its view bound to the entry's ``column``
+    requirements, materialised by the core; the reference position (0 unless the entry
+    ``uses_reference``); whether the view's cohorts share units, in which case no between-cohort
+    value may be computed (§7.4; an analysis that assumes independent groups gets them only under
+    ``overlap: "allow"``); the view's ``options``, a copy of
+    its own; and a seed, which resampling uses and nothing else (§9.3)."""
+
+    analysis: str
+    version: str
+    columns: tuple[InputColumn, ...]
+    positions: tuple[InputPosition, ...]
+    reference: int
+    overlapping: bool
+    options: Mapping[str, JsonValue]
+    seed: int
 
 
 class Refused(Exception):  # noqa: N818 - "refused" is the spec's word for a hook's refusal
@@ -333,7 +391,11 @@ class Translator(Protocol):
 
 
 class Analysis(Protocol):
-    """A registry entry and its implementation, deterministic as SPEC §9.3 requires."""
+    """A registry entry and its implementation, deterministic as SPEC §9.3 requires. ``run``
+    gives the result's ``values``, ``{"positions": [one object per position], "view": {…}}``,
+    which the entry's ``returns`` schema checks (D343); the entry's ``params`` schema checks a
+    view's ``options`` (D341). Both are checked as extension schemas are when the pack is
+    registered."""
 
     @property
     def entry(self) -> AnalysisDescriptor: ...
@@ -474,12 +536,67 @@ class _NotJsonError(ValueError):
     """A schema that is not a JSON value."""
 
 
-def _plain(value: object, depth: int = 0, inside: frozenset[int] = frozenset()) -> JsonValue:
+class JsonTooLarge(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """What a pack gave that holds more than ``plain_json`` allows: ``name`` the limit, ``most``
+    its value (D343)."""
+
+    def __init__(self, name: str, most: int) -> None:
+        super().__init__(f"more than {most} ({name})")
+        self.name = name
+        self.most = most
+
+
+class _RaisedLimitError(RuntimeError):
+    """A ``JsonTooLarge`` that the code being copied raised, which is its failure, not a limit
+    the copy passed (D343)."""
+
+
+@dataclass
+class _Allowance:
+    """What a copy may still hold: JSON values, and characters of text (keys included), each
+    string at most ``text`` of them; counted before each is copied."""
+
+    most_values: int
+    most_characters: int
+    text: int
+    names: tuple[str, str, str]
+    values: int = 0
+    characters: int = 0
+    tripped: "JsonTooLarge | None" = None
+    """The limit this copy passed, raised as it is: a ``JsonTooLarge`` that is not it was
+    raised by the code being copied."""
+
+    def value(self) -> None:
+        self.values += 1
+        if self.values > self.most_values:
+            self.trip(self.names[0], self.most_values)
+
+    def string(self, length: int) -> None:
+        if length > self.text:
+            self.trip(self.names[2], self.text)
+        self.characters += length
+        if self.characters > self.most_characters:
+            self.trip(self.names[1], self.most_characters)
+
+    def trip(self, name: str, most: int) -> None:
+        self.tripped = JsonTooLarge(name, most)
+        raise self.tripped
+
+
+def _plain(
+    value: object,
+    depth: int = 0,
+    inside: frozenset[int] = frozenset(),
+    allowance: _Allowance | None = None,
+) -> JsonValue:
     """A copy of a JSON value given as mappings and sequences, read-only ones included, made of
     plain dicts and lists. Anything JSON text cannot carry unchanged raises ``_NotJsonError``: a
     key that is not Unicode text, two keys written as the same text, a set, a non-finite number,
     a number beyond ±(2^53 − 1), a value that holds itself, or nesting deeper than JSON text may
-    have."""
+    have; with an ``allowance``, more than it allows raises ``JsonTooLarge`` before the value
+    that passes it is copied."""
+    if allowance is not None:
+        allowance.value()
     if isinstance(value, Mapping | list | tuple):
         identity = id(cast(object, value))
         if identity in inside:
@@ -491,15 +608,19 @@ def _plain(value: object, depth: int = 0, inside: frozenset[int] = frozenset()) 
             members = cast(Mapping[object, object], value)
             copied: dict[str, JsonValue] = {}
             for key, member in members.items():
-                text = str.__str__(key) if isinstance(key, str) else None
-                if text is None or not is_text(text):
+                if not isinstance(key, str):
+                    raise _NotJsonError("a key that is not Unicode text")
+                if allowance is not None:
+                    allowance.string(str.__len__(key))
+                text = str.__str__(key)
+                if not is_text(text):
                     raise _NotJsonError("a key that is not Unicode text")
                 if text in copied:
                     raise _NotJsonError(f"two keys written as {text!r}")
-                copied[text] = _plain(member, depth + 1, within)
+                copied[text] = _plain(member, depth + 1, within, allowance)
             return copied
         items = cast(Sequence[object], value)
-        return [_plain(item, depth + 1, within) for item in items]
+        return [_plain(item, depth + 1, within, allowance) for item in items]
     # Scalars are read, checked and kept as Python's own types, so that a subclass cannot pass
     # the checks as one value and be written as another.
     if value is None:
@@ -507,12 +628,16 @@ def _plain(value: object, depth: int = 0, inside: frozenset[int] = frozenset()) 
     if isinstance(value, bool):
         return value is True
     if isinstance(value, str):
+        if allowance is not None:
+            allowance.string(str.__len__(value))
         text = str.__str__(value)
         if not is_text(text):
             raise _NotJsonError("text that is not Unicode")
         return text
     number: int | float
     if isinstance(value, int):
+        if int.bit_length(value) > MAX_SAFE_INTEGER.bit_length():
+            raise _NotJsonError("a number beyond ±(2^53 - 1)")
         number = int.__index__(value)
     elif isinstance(value, float):
         number = float.__float__(value)
@@ -523,6 +648,23 @@ def _plain(value: object, depth: int = 0, inside: frozenset[int] = frozenset()) 
     if abs(number) > MAX_SAFE_INTEGER:
         raise _NotJsonError("a number beyond ±(2^53 - 1)")
     return number
+
+
+def plain_json(value: object, *, values: int, characters: int, text: int) -> JsonValue:
+    """A copy of what a pack's code gave, made of plain dicts and lists, as ``_plain`` makes it,
+    at most ``values`` JSON values and ``characters`` characters of text, keys included, each
+    string at most ``text``: raises ``JsonTooLarge`` before it copies what passes them, and
+    ``ValueError`` for anything JSON text cannot carry unchanged (D343). Reading what the pack
+    gave runs the pack's code (a mapping's ``items``, a sequence's ``__iter__``), which the
+    caller guards."""
+    names = (RESULT_VALUES, RESULT_CHARACTERS, TEXT_CHARACTERS)
+    allowance = _Allowance(values, characters, text, names)
+    try:
+        return _plain(value, allowance=allowance)
+    except JsonTooLarge as large:
+        if large is allowance.tripped:
+            raise
+        raise _RaisedLimitError("what a pack gave raised a limit of its own") from None
 
 
 def _copied(value: JsonValue) -> JsonValue:
@@ -594,6 +736,21 @@ def _snapshot(pack: Pack) -> tuple[Pack, list[str]]:
             problems.append(f"{name}: the wording for {code} is not Unicode text")
             continue
         wording[code] = given
+    for analysis in pack.analyses:
+        fields = analysis.entry.fields
+        for member, schema in (("params", fields.params), ("returns", fields.returns)):
+            try:
+                found = cast(dict[str, JsonValue], _plain(cast(object, schema)))
+            except _NotJsonError as error:
+                problems.append(
+                    f"{name}: the {member} schema of analysis {analysis.entry.id} is not a JSON "
+                    f"value: it holds {error}"
+                )
+                continue
+            problems.extend(
+                f"{name}: the {member} schema of analysis {analysis.entry.id} is refused: {found}"
+                for found in schema_problems(found)
+            )
     snapshot = replace(
         pack,
         concepts=tuple(concept.model_copy(deep=True) for concept in pack.concepts),
@@ -702,6 +859,15 @@ class PackRegistry:
         }
         self._leaf_checkers = {kind: Checker(schema) for kind, schema in leaf_schemas.items()}
         """The checker of each leaf kind's schema as registered."""
+        self._analysis_checkers = {
+            analysis.entry.id: (
+                Checker(analysis.entry.fields.params),
+                Checker(analysis.entry.fields.returns),
+            )
+            for pack in packs
+            for analysis in pack.analyses
+        }
+        """The checkers of each analysis's ``params`` and ``returns`` schemas as registered."""
 
     # --- Packs ---
 
@@ -811,6 +977,11 @@ class PackRegistry:
     def analyses(self) -> list[Analysis]:
         return [self._analyses[analysis_id] for analysis_id in sorted(self._analyses)]
 
+    def analysis_checkers(self, analysis_id: str) -> tuple[Checker, Checker]:
+        """The checkers of a registered pack analysis's ``params`` and ``returns`` schemas, as
+        its entry had them when its pack was registered (D341, D343)."""
+        return self._analysis_checkers[analysis_id]
+
     def requirement_predicate(self, reference: str) -> RequirementPredicate | None:
         """A predicate cited as ``<pack id>.<name>``; as ``leaf_kind`` for an unknown pack."""
         pack_id, _, name = reference.partition(".")
@@ -830,6 +1001,7 @@ __all__ = [
     "Analysis",
     "AnalysisInputs",
     "CaveatRule",
+    "Cell",
     "ConfinedPath",
     "DatabaseSource",
     "DirectoryEntry",
@@ -840,7 +1012,10 @@ __all__ = [
     "ImportResult",
     "ImportSource",
     "Importer",
+    "InputColumn",
+    "InputPosition",
     "JsonSchema",
+    "JsonTooLarge",
     "LeafKind",
     "NoteKind",
     "OntologyValidator",
@@ -862,4 +1037,5 @@ __all__ = [
     "Translator",
     "UnknownPack",
     "Validator",
+    "plain_json",
 ]

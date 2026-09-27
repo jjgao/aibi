@@ -444,7 +444,7 @@ def _refusals(found: Any) -> list[tuple[str, str | None]]:
                 "where": [{"kind": "shelves.stocked", "size": 2}],
             },
             None,
-            ("NOT_SUPPORTED", "/where/0"),
+            ("UNKNOWN_KIND", "/where/0/kind"),
         ),
     ],
 )
@@ -472,18 +472,6 @@ def test_a_declared_range_too_narrow_for_ten_bins_has_its_repeated_edges_collaps
     edges = [one["low"] for one in found["histogram"]["bins"][1:]]
     assert edges == sorted(set(edges))
     assert edges[0] == low
-
-
-def test_a_pack_leaf_in_a_column_s_where_names_the_part_that_brings_it(
-    check: Check, shop: Shop
-) -> None:
-    stocked = {
-        "column": "orders.order_id",
-        "aggregate": "count",
-        "where": [{"kind": "shelves.stocked", "size": 2}],
-    }
-    [refusal] = check(shop_document(stocked), shop(extended=True)).refusals
-    assert "M3.2d" in json.dumps([part.model_dump() for part in refusal.message])
 
 
 def test_more_columns_than_a_view_may_have_are_refused(check: Check, shop: Shop) -> None:

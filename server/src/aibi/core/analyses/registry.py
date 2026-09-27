@@ -7,10 +7,12 @@ path computes a result. The core's are ``compare.existence`` (D319), ``summary.d
 (D328), ``summary.members`` (D331) and ``compare.columns`` (D336); the rest of §9.5 follows in the
 later slices of M3 (D315, D324).
 
-A pack's analysis is registered, listed and matched for applicability like the core's; the core
-runs it from the slice that hands it the inputs its ``requires`` name, materialised (the columns,
-aggregates and endpoint rows of §10.1), and discloses its values, M3.2d (``PACK_ANALYSES``). Until
-then a view that names one is refused, ``NOT_SUPPORTED`` (D316, D324).
+A pack's analysis is registered, listed and matched for applicability like the core's, and run
+from M3.2d on the inputs its ``requires`` name, materialised (``analyses.packs``, D341–D343): its
+columns and aggregates; endpoint rows come with survival, M3.3 (``ENDPOINTS``), and until then a
+view of one that requires an endpoint is ``NOT_SUPPORTED``. A pack's values are no counts the
+disclosure pass can protect, so under any disclosure setting a view of one is refused and it is
+``unavailable``, ``missing`` naming ``min_cell_count`` (D344).
 
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
@@ -32,7 +34,11 @@ An analysis that shows nothing of numbers but their units under a disclosure set
 categories: its table has no column of categories (``category``, ``boolean``,
 ``list<category>``) and is in no relationship, through which a path reaches every other table and
 down which (directly, or with a ``via`` back down one it went up) ``some`` and ``every`` make
-categories of any column; ``missing`` names ``columns`` and ``min_cell_count`` (D337).
+categories of any column; ``missing`` names ``columns`` and ``min_cell_count`` (D337). A pack's
+analysis is ``unavailable`` under any disclosure setting and where the dataset allows no row ids,
+as ``summary.members`` is (D344), and wherever it requires an endpoint, or a column of a datatype
+no input column is handed (dates and datetimes), naming those roles, since every view of it is
+refused (D341).
 """
 
 from collections.abc import Mapping, Sequence
@@ -58,7 +64,9 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.document import DocModel
 from aibi.core.schema.ids import CORE_ANALYSIS_FAMILIES
-from aibi.core.schema.pack_api import PackRegistry, UnknownPack
+from aibi.core.schema.jsonschemas import Checker
+from aibi.core.schema.pack_api import Analysis, PackRegistry, UnknownPack
+from aibi.core.schema.results import PackVersion
 
 
 @dataclass(frozen=True)
@@ -93,8 +101,9 @@ CATEGORIES_UNDER_K = frozenset({columns.ANALYSIS_ID})
 something there only of a column of categories."""
 CATEGORIES = frozenset({"category", "boolean", "list<category>"})
 
-PACK_ANALYSES = "M3.2d"
-"""The slice that runs packs' analyses (D316, D324)."""
+ENDPOINTS = "M3.3"
+"""The slice that materialises endpoint rows, which a pack's analysis that requires an endpoint
+needs (D341)."""
 
 
 @dataclass(frozen=True)
@@ -105,6 +114,8 @@ class Registered:
     entry: AnalysisDescriptor
     pack: str | None
     params: type[DocModel] | None
+    version: PackVersion | None = None
+    """For a pack's, the pack's version and results version, which its views' ids hash."""
 
     @property
     def id(self) -> str:
@@ -130,16 +141,52 @@ class Analyses:
             return None
         if found is None:
             return None
-        return Registered(found.entry, analysis_id.partition(".")[0], None)
+        return self._pack_analysis(found)
+
+    def _pack_analysis(self, found: Analysis) -> Registered:
+        assert self.packs is not None, "a pack's analysis is of an installed pack"
+        entry = found.entry
+        manifest = self.packs.pack(entry.id.partition(".")[0]).manifest
+        version = PackVersion(version=manifest.version, results_version=manifest.results_version)
+        return Registered(entry, manifest.id, None, version)
+
+    def implementation(self, analysis_id: str) -> tuple[Analysis, Checker, Checker]:
+        """A registered pack analysis's implementation and the checkers of its entry's
+        ``params`` and ``returns`` schemas, as registered (D341, D343)."""
+        assert self.packs is not None, "a pack's analysis is of an installed pack"
+        found = self.packs.analysis(analysis_id)
+        assert found is not None, "the analysis is registered"
+        params, returns = self.packs.analysis_checkers(analysis_id)
+        return found, params, returns
+
+    def unmet(
+        self,
+        analysis: Registered,
+        descriptors: Sequence[Descriptor],
+        *,
+        dataset: str,
+        manifest: str,
+    ) -> list[str]:
+        """The roles of a pack analysis's ``predicate`` requirements that do not hold of a
+        release, each run as applicability runs it (D341)."""
+        view = _view(descriptors, dataset, manifest)
+        held: dict[str, bool] = {}
+        missing: list[str] = []
+        for requirement in analysis.entry.fields.requires:
+            reference = requirement.predicate
+            if reference is None:
+                continue
+            if reference not in held:
+                held[reference] = self._holds(reference, view)
+            if not held[reference]:
+                missing.append(requirement.role)
+        return missing
 
     def all(self) -> list[Registered]:
         """Every analysis, by id."""
         found = [Registered(a.entry.model_copy(deep=True), None, a.params) for a in CORE.values()]
         if self.packs is not None:
-            found += [
-                Registered(a.entry, a.entry.id.partition(".")[0], None)
-                for a in self.packs.analyses()
-            ]
+            found += [self._pack_analysis(analysis) for analysis in self.packs.analyses()]
         return sorted(found, key=lambda analysis: analysis.id)
 
     def ids(self) -> list[str]:
@@ -158,7 +205,8 @@ class Analyses:
         none, the best status over the release's keyed tables; ``k`` is the release's effective
         disclosure setting, the floor's included, under which an analysis that lists unit keys
         is ``unavailable`` (``LISTS_KEYS``), and one that shows only numbers' units for a unit
-        over which no view compares categories (``CATEGORIES_UNDER_K``)."""
+        over which no view compares categories (``CATEGORIES_UNDER_K``), and a pack's analysis
+        (D344)."""
         view = _view(descriptors, dataset, manifest)
         withheld = _withheld(descriptors, k)
         keyed = [
@@ -173,7 +221,7 @@ class Analyses:
             outcomes = [self._matched(analysis, descriptors, view, table, held) for table in units]
             if not outcomes:
                 outcomes = [(_UNAVAILABLE, ["unit"], list[str]())]
-            if withheld and analysis.id in LISTS_KEYS:
+            if withheld and (analysis.id in LISTS_KEYS or analysis.pack is not None):
                 outcomes = [
                     (_UNAVAILABLE, [*missing, *withheld], list[str]()) for _, missing, _ in outcomes
                 ]
@@ -183,6 +231,11 @@ class Analyses:
                     if _categories(descriptors, table)
                     else (_UNAVAILABLE, [*outcome[1], "columns", "min_cell_count"], list[str]())
                     for table, outcome in zip(units, outcomes, strict=True)
+                ]
+            unrun = _unrun(analysis)
+            if unrun:
+                outcomes = [
+                    (_UNAVAILABLE, [*missing, *unrun], list[str]()) for _, missing, _ in outcomes
                 ]
             found.append(_best(analysis, outcomes))
         return found
@@ -263,6 +316,28 @@ def _best(
     )
 
 
+UNHANDED = ("date", "datetime")
+"""The datatypes of the columns a pack's analysis is not handed (D341)."""
+
+
+def _unrun(analysis: Registered) -> list[str]:
+    """The roles of a pack analysis's requirements that no view of it can meet, so that it is
+    ``unavailable`` wherever its views are refused (D341): an endpoint, whose rows come with
+    M3.3, and a column of a datatype no input column is handed, each required at least once
+    (``min`` 1 by default)."""
+    if analysis.pack is None:
+        return []
+    return [
+        requirement.role
+        for requirement in analysis.entry.fields.requires
+        if (requirement.min is None or requirement.min > 0)
+        and (
+            requirement.kind == "endpoint"
+            or (requirement.kind == "column" and requirement.datatype in UNHANDED)
+        )
+    ]
+
+
 def _withheld(descriptors: Sequence[Descriptor], k: int | None) -> list[str]:
     """The disclosure settings under which no unit's key is listed (D332): a ``min_cell_count``
     (the effective *k*, the floor's included) and ``allow_row_ids: false``."""
@@ -338,9 +413,9 @@ def _unsettled(descriptor: Descriptor) -> bool:
 __all__ = [
     "CATEGORIES_UNDER_K",
     "CORE",
+    "ENDPOINTS",
     "LATER",
     "LISTS_KEYS",
-    "PACK_ANALYSES",
     "Analyses",
     "CoreAnalysis",
     "Registered",

@@ -2,7 +2,6 @@
 D316), with a test-only pack, ``shelves``, that registers an analysis and a requirement
 predicate."""
 
-import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -19,7 +18,6 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.pack_api import AnalysisInputs, Pack, PackManifest, PackRegistry, ReleaseView
-from aibi.core.schema.refusals import RefusalCode
 
 Check = Callable[..., Any]
 Shop = Callable[..., Any]
@@ -56,7 +54,7 @@ class Restock:
         return self._entry
 
     def run(self, inputs: AnalysisInputs) -> Mapping[str, JsonValue]:
-        raise AssertionError("the core runs no pack's analysis until M3.2d")
+        raise AssertionError("applicability runs no analysis")
 
 
 def stocked(release: ReleaseView) -> bool:
@@ -227,20 +225,6 @@ def test_without_a_unit_each_keyed_table_is_tried_and_the_best_kept(shop: Shop) 
         ["own"],
         [],
     )
-
-
-def test_a_view_of_a_pack_s_analysis_is_listed_but_not_run(check: Check, shop: Shop) -> None:
-    written = {
-        "aibi": "1",
-        "dataset": "d",
-        "unit": "customers",
-        "cohorts": {"all": {"all": []}},
-        "views": [{"analysis": "shelves.restock"}],
-    }
-    found = check(written, shop(), analyses=Analyses(shelves([])))
-    [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
-    assert "M3.2d" in json.dumps([part.model_dump() for part in refusal.message])
 
 
 @pytest.mark.parametrize(

@@ -5,15 +5,17 @@ every query of the document in one worker (``worker``), and reads their rows: ea
 accounting, which ``count_parts`` takes as it takes the reference evaluator's, and, when asked,
 each unit's truth value, made as it is read from the answer (``TruthValues``, D293).
 ``run_crossed`` counts cohorts and, in the same run, crosses cohorts with predicates
-(``sql.compile_crossing``), whose answers are integer counts whose size never depends on the
-number of units, and ``run_views`` materialises variables over cohorts in that run too
+(``sql.compile_crossing``), whose answers are integer counts whose size never depends on the number
+of units, and ``run_views`` materialises variables over cohorts in that run too
 (``sql.compile_materialised``), whose answers grow with the distinct values and, for ``max``,
 ``min`` and ``mean``, with the units, which the answer cap bounds: what ``run_analysis`` runs
-(D318, D327); and it lists cohorts' members' unit keys in that run too (``sql.compile_members``),
-a row per member, which the caller pages in the canonical form's order (D333). Rows the
-queries do not give are a fault, ``QueryError``. It returns the SQL as run and its parameters
-beside them, which the derivation log records for an issuance (§12.2): blob paths are recorded
-as their digests, so the log names what was read and not where the server keeps it.
+(D318, D327); and it lists cohorts' members' unit keys in that run too (``sql.compile_members``), a
+row per member, which the caller pages in the canonical form's order (D333); and it lists the
+members of a pack analysis's cohorts with each variable's value in that run too
+(``sql.compile_inputs``), a row per member and variable, which the caller orders by key (D342).
+Rows the queries do not give are a fault, ``QueryError``. It returns the SQL as run and its
+parameters beside them, which the derivation log records for an issuance (§12.2): blob paths are
+recorded as their digests, so the log names what was read and not where the server keeps it.
 
 The queries may read the table blobs they name, and no other file (D293). A caller pins the
 releases (``Store.pin``) before it takes their sources (``Store.sources``, which verifies each
@@ -27,14 +29,17 @@ from types import MappingProxyType
 
 from pydantic import JsonValue
 
+from aibi.core.engine.inputs import Listed, TooManyCells
 from aibi.core.engine.members import Key
 from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
 from aibi.core.engine.sql import (
     Accounting,
     Crossing,
+    TooManyListed,
     TruthValues,
     compile_cohort,
     compile_crossing,
+    compile_inputs,
     compile_materialised,
     compile_members,
 )
@@ -142,11 +147,23 @@ class MembersRun:
 
 
 @dataclass(frozen=True)
+class InputsRun:
+    """Cohorts' members with each variable's value by SQL (``sql.compile_inputs``), per cohort in
+    ``rid`` order, for the caller to order by key (``inputs.ordered``), with the statements as
+    run and their parameters, as ``Counted`` has them (D342)."""
+
+    listed: tuple[Listed, ...]
+    sql: tuple[str, ...]
+    parameters: Mapping[str, JsonValue]
+
+
+@dataclass(frozen=True)
 class ViewsRun:
     counted: list[Counted]
     crossed: list[CrossingRun]
     materialised: list[MaterialisedRun]
     listed: list[MembersRun] = field(default_factory=list[MembersRun])
+    inputs: list[InputsRun] = field(default_factory=list[InputsRun])
 
 
 def run_views(
@@ -158,13 +175,16 @@ def run_views(
     *,
     members: Sequence[ResolvedCohort] = (),
     shared: Sequence[bool] = (),
+    inputs: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedVariable]]] = (),
     ends: float | None = None,
 ) -> ViewsRun:
     """Each cohort counted, each crossing counted, each materialisation (its cohorts and
     variables) read, with the units each pair of its cohorts shares where ``shared`` says so (by
-    materialisation, none by default, D339), and each of ``members``' members' keys listed, in one
-    worker run (D318, D327, D333), the server's reading of a materialisation's rows held to
-    ``ends`` as the worker is. Raises as ``run_cohorts`` does."""
+    materialisation, none by default, D339), each of ``members``' members' keys listed, and each
+    of ``inputs``' cohorts' members listed with its variables' values, in one worker run (D318,
+    D327, D333, D342), the server's reading of a materialisation's and a listing's rows held to
+    ``ends`` as the worker is. Raises as ``run_cohorts`` does, and ``sql.TooManyListed`` or
+    ``inputs.TooManyCells`` for a listing of inputs over its caps, naming it (``listing``)."""
     compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
     crossed = [
         compile_crossing(members, asked, sources[members[0].release.manifest])
@@ -178,6 +198,10 @@ def run_views(
         for (members, variables), counted in zip(materialisations, overlaps, strict=True)
     ]
     listing = [compile_members(cohort, sources[cohort.release.manifest]) for cohort in members]
+    handed = [
+        compile_inputs(cohorts_of, variables, sources[cohorts_of[0].release.manifest])
+        for cohorts_of, variables in inputs
+    ]
     queries = [Query(c.counts_sql, c.parameters, c.counts_columns) for c in compiled]
     for crossing in crossed:
         queries += [
@@ -195,11 +219,19 @@ def run_views(
             )
         ]
     queries += [Query(m.statement, m.parameters, m.columns, m.values) for m in listing]
+    for given in handed:
+        queries += [
+            Query(statement, given.parameters, columns, values)
+            for statement, columns, values in zip(
+                given.statements, given.columns, given.values, strict=True
+            )
+        ]
     paths = sorted(
         {path for c in compiled for path in c.paths}
         | {p for x in crossed for p in x.paths}
         | {p for m in made for p in m.paths}
         | {p for m in listing for p in m.paths}
+        | {p for i in handed for p in i.paths}
     )
     rows = workers.run(paths, queries, ends=ends)
     counted: list[Counted] = []
@@ -246,12 +278,30 @@ def run_views(
         )
         for index, compiled_members in enumerate(listing)
     ]
-    return ViewsRun(counted, found, materialised, listed)
+    at += len(listing)
+    read: list[InputsRun] = []
+    for index, given in enumerate(handed):
+        answers = rows[at : at + len(given.statements)]
+        at += len(given.statements)
+        try:
+            listed_inputs = given.read(answers, ends)
+        except (TooManyListed, TooManyCells) as many:
+            many.listing = index
+            raise
+        read.append(
+            InputsRun(
+                listed_inputs,
+                given.statements,
+                MappingProxyType(given.parameters_json()),
+            )
+        )
+    return ViewsRun(counted, found, materialised, listed, read)
 
 
 __all__ = [
     "Counted",
     "CrossingRun",
+    "InputsRun",
     "MaterialisedRun",
     "MembersRun",
     "ViewsRun",

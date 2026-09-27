@@ -21,6 +21,7 @@ from aibi.core.engine import sql as compiler
 from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
+from aibi.core.engine.inputs import listed, ordered
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import (
     CompileError,
@@ -708,6 +709,75 @@ def test_a_materialisation_counts_the_units_its_cohorts_share_as_the_evaluator_s
     )
     shared = tuple(len(members[a] & members[b]) for a, b in pairs(len(cohorts)))
     assert shared_materialised(cohorts, found) == (expected, shared)
+
+
+def _inputs(found: Any) -> Any:
+    """A listing of inputs as data: each member's key, row, values and reasons, and the flags."""
+    return (
+        [tuple(key) for key in found.keys],
+        list(found.rows),
+        found.values,
+        found.excluded,
+        found.marks,
+    )
+
+
+@FEWER
+@given(data=city_data(), extra=st.data())
+def test_inputs_listed_by_the_compiler_give_each_member_what_the_evaluator_gives(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    inputs_listed: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """A pack analysis's inputs (D342): each cohort's members with each variable's value or
+    reasons, and the flags, listed in SQL as the reference evaluator gives them, in the keys'
+    order of §9.3 once ordered; with one flag to a word."""
+    rows, options = data
+    release = city(rows, **options)
+    scoped = options["violations"].get("parents") is GROUPED
+    written = {
+        f"c{index}": extra.draw(st.lists(clauses(scoped, 3), min_size=0, max_size=2))
+        for index in range(extra.draw(st.integers(min_value=1, max_value=2)))
+    }
+    given = extra.draw(st.lists(variables(scoped), min_size=0, max_size=3))
+    resolution = variables_of(doc(written), release, given)
+    limits = {refusal.limit.name for refusal in resolution.refusals if refusal.limit}
+    assume(not limits & {"clause_depth", "leaves_per_cohort"})
+    assert resolution.refusals == [], resolution.refusals
+    cohorts = [resolution.cohorts[name] for name in written]
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    expected = [_inputs(ordered(listed(cohort, found))) for cohort in cohorts]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(compiler, "MARK_BITS", 1)
+        read = inputs_listed(cohorts, found)
+    assert [_inputs(ordered(one)) for one in read] == expected
+
+
+@FEWER
+@given(data=city_data(), extra=st.data())
+def test_category_inputs_listed_by_the_compiler_give_what_the_evaluator_gives(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    inputs_listed: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """The property above over multi-valued categories alone (``category_variables``), ordered
+    ones under ``max`` and ``min`` meeting rows NOT_APPLICABLE, NOT_ASSESSED and outside the
+    list."""
+    rows, options = data
+    release = city(rows, **{**options, "inspections": {"parents": "all"}})
+    given = extra.draw(st.lists(category_variables(), min_size=1, max_size=3))
+    resolution = variables_of(doc({"every": []}), release, given)
+    assert resolution.refusals == [], resolution.refusals
+    [cohort] = resolution.cohorts.values()
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    [read] = inputs_listed([cohort], found)
+    assert _inputs(ordered(read)) == _inputs(ordered(listed(cohort, found)))
 
 
 @EXAMPLES

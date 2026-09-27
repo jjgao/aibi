@@ -58,6 +58,7 @@ from sqlglot.expressions.core import Expression
 from aibi.core.engine.canonical import canonical_clause, variable_form
 from aibi.core.engine.data import KeyPart, Release, key_part
 from aibi.core.engine.graph import Path, Step
+from aibi.core.engine.inputs import Listed, TooManyCells
 from aibi.core.engine.resolve import (
     Coverage,
     Function,
@@ -87,7 +88,7 @@ from aibi.core.engine.variables import Joint, Materialised, Value, aggregated, n
 from aibi.core.engine.worker import CallerDeadline, QueryError, Rows
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.jsonio import canonical
-from aibi.core.schema.limits import MAX_LISTED
+from aibi.core.schema.limits import MAX_INPUT_CELLS, MAX_LISTED
 from aibi.core.schema.semantics import ExclusionReason, Flag, ObservationState, Reason
 from aibi.core.store.parquet import PhysicalType
 from aibi.core.store.tables import ITEM_STATE, STATE, TableSource, physical
@@ -614,6 +615,18 @@ class _Shape:
     empty: Value | None
 
 
+def _shape(variable: ResolvedVariable) -> _Shape:
+    return _Shape(
+        variable.kind,
+        variable.datatype,
+        variable.function,
+        variable.order,
+        None
+        if variable.empty is None
+        else normalised(cast(Value, variable.empty), variable.datatype, variable.function),
+    )
+
+
 @dataclass(frozen=True)
 class CompiledMaterialised:
     """The queries that materialise variables over cohorts of one release's unit table
@@ -757,13 +770,13 @@ class CompiledMaterialised:
                     if bit & flag:
                         excluded[reason] += count
             elif tag == _UNIT_ROWS and not bit:
-                values[self._value(raw[index], shape)] += count
+                values[_read_value(raw[index], shape)] += count
             elif tag == _EMPTY_ROWS and not bit and shape.empty is not None:
                 values[shape.empty] += count
             elif tag == _EXTREME_ROWS and not bit and shape.function in ("max", "min"):
-                values[self._extreme(raw[index], shape)] += count
+                values[_read_extreme(raw[index], shape)] += count
             elif tag == _VALUE_ROWS and not bit and shape.function == "mean":
-                by_unit.setdefault(rids[index], []).append((self._value(raw[index], shape), count))
+                by_unit.setdefault(rids[index], []).append((_read_value(raw[index], shape), count))
             else:
                 raise QueryError("a materialisation's query gave a row it cannot give")
         if not _words_fit(flags, self.marks):
@@ -771,57 +784,13 @@ class CompiledMaterialised:
         for unit, groups in enumerate(by_unit.values()):
             if ends is not None and not unit % _DEADLINE_ROWS and time.monotonic() >= ends:
                 raise CallerDeadline
-            values[self._aggregate(groups, shape)] += 1
+            values[_read_aggregate(groups, shape)] += 1
         return Materialised(
             MappingProxyType(dict(values)),
             excluded_units,
             MappingProxyType(excluded),
             _marks(self.marks, flags) if flags else frozenset(),
         )
-
-    @staticmethod
-    def _value(raw: object, shape: _Shape) -> Value:
-        """A value as its query's rows hold it, in its stored type (``variables.normalised``)."""
-        if shape.kind == "question" or (shape.datatype == "boolean" and shape.function is None):
-            if raw not in (0, 1) or isinstance(raw, float):
-                raise QueryError("a materialisation's query gave a value it cannot give")
-            return bool(raw)
-        if shape.function == "count":
-            if not isinstance(raw, int) or raw < 0:
-                raise QueryError("a materialisation's query gave a value it cannot give")
-            return raw
-        if shape.order is not None:
-            if not isinstance(raw, int) or not 0 <= raw < len(shape.order):
-                raise QueryError("a materialisation's query gave a value it cannot give")
-            return raw
-        if shape.datatype in ("category", "string"):
-            if not isinstance(raw, str):
-                raise QueryError("a materialisation's query gave a value it cannot give")
-            return raw
-        if isinstance(raw, str) or (shape.datatype == "integer" and isinstance(raw, float)):
-            raise QueryError("a materialisation's query gave a value it cannot give")
-        if isinstance(raw, float) and not math.isfinite(raw):
-            raise QueryError("a materialisation's query gave a value it cannot give")
-        return normalised(cast(Value, raw), shape.datatype)
-
-    @classmethod
-    def _extreme(cls, raw: object, shape: _Shape) -> Value:
-        """A unit's ``max`` or ``min`` as SQL picked it: an ordered category's value at its
-        listed position, else the value normalised as ``aggregated``'s is."""
-        found = cls._value(raw, shape)
-        if shape.order is not None:
-            return shape.order[int(found)]
-        return normalised(found, shape.datatype, cast(Function, shape.function))
-
-    @staticmethod
-    def _aggregate(groups: Sequence[tuple[Value, int]], shape: _Shape) -> Value:
-        found = aggregated(
-            cast(Function, shape.function), groups, sum(times for _, times in groups)
-        )
-        assert found is not None, "a unit's value rows hold values"
-        if shape.order is not None:
-            return shape.order[int(found)]
-        return normalised(found, shape.datatype, cast(Function, shape.function))
 
     @staticmethod
     def _joint(rows: Rows) -> Joint:
@@ -838,6 +807,48 @@ class CompiledMaterialised:
                 if b & flag:
                     by_reason[reason] += n
         return Joint(known, none, MappingProxyType(by_reason))
+
+
+def _read_value(raw: object, shape: _Shape) -> Value:
+    """A value as its query's rows hold it, in its stored type (``variables.normalised``)."""
+    if shape.kind == "question" or (shape.datatype == "boolean" and shape.function is None):
+        if raw not in (0, 1) or isinstance(raw, float):
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        return bool(raw)
+    if shape.function == "count":
+        if not isinstance(raw, int) or raw < 0:
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        return raw
+    if shape.order is not None:
+        if not isinstance(raw, int) or not 0 <= raw < len(shape.order):
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        return raw
+    if shape.datatype in ("category", "string"):
+        if not isinstance(raw, str):
+            raise QueryError("a materialisation's query gave a value it cannot give")
+        return raw
+    if isinstance(raw, str) or (shape.datatype == "integer" and isinstance(raw, float)):
+        raise QueryError("a materialisation's query gave a value it cannot give")
+    if isinstance(raw, float) and not math.isfinite(raw):
+        raise QueryError("a materialisation's query gave a value it cannot give")
+    return normalised(cast(Value, raw), shape.datatype)
+
+
+def _read_extreme(raw: object, shape: _Shape) -> Value:
+    """A unit's ``max`` or ``min`` as SQL picked it: an ordered category's value at its
+    listed position, else the value normalised as ``aggregated``'s is."""
+    found = _read_value(raw, shape)
+    if shape.order is not None:
+        return shape.order[int(found)]
+    return normalised(found, shape.datatype, cast(Function, shape.function))
+
+
+def _read_aggregate(groups: Sequence[tuple[Value, int]], shape: _Shape) -> Value:
+    found = aggregated(cast(Function, shape.function), groups, sum(times for _, times in groups))
+    assert found is not None, "a unit's value rows hold values"
+    if shape.order is not None:
+        return shape.order[int(found)]
+    return normalised(found, shape.datatype, cast(Function, shape.function))
 
 
 def compile_materialised(
@@ -990,6 +1001,209 @@ def compile_members(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) 
     """The query that lists a cohort's members' keys over its release's table blobs (D333).
     Raises ``CompileError``."""
     return _Compiler(cohort, sources).members()
+
+
+@dataclass(frozen=True)
+class CompiledInputs:
+    """The queries that list cohorts' members with each variable's value, a pack analysis's
+    inputs (``compile_inputs``, D342): for each cohort, one that lists its members by ``rid``
+    with their keys (``CompiledMembers``' columns after ``rid``, at most ``MAX_LISTED`` + 1 rows,
+    so that a listing over the cap is known without reading more), then one per variable, a
+    materialisation's rows (``CompiledMaterialised``) but a row per member rather than per value,
+    ``r`` its ``rid``: its value, the bits of its reasons, ``empty``, its greatest or least value
+    (which DuckDB picks), or for ``mean`` its pooled rows by value, which the server averages
+    (§9.3). The server orders the members by their keys (``inputs.ordered``), never DuckDB."""
+
+    statements: tuple[str, ...]
+    parameters: Mapping[str, Parameter]
+    marks: tuple[Mark, ...]
+    cohorts: int
+    shapes: tuple[_Shape, ...]
+    kinds: tuple[PhysicalType, ...]
+    """Each key column's stored type, in key order."""
+    most: int = MAX_LISTED
+    """The most members the cohorts' listings take together: ``MAX_INPUT_CELLS`` cells over the
+    view's positions, one per member and variable (one per member without variables); the
+    statements read one more, so that inputs over it are known without shipping more (D342)."""
+    blobs: frozenset[str] = frozenset()
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        """The blobs the queries read, the only files they may open (D293)."""
+        return tuple(sorted(str(self.parameters[name]) for name in self.blobs))
+
+    @property
+    def columns(self) -> tuple[int, ...]:
+        """Each statement's columns: a listing's ``rid`` and key columns, and a variable's
+        ``t``, ``r``, ``v``, ``x``, ``n`` and the flag words."""
+        words = _words(len(self.marks))
+        return (1 + len(self.kinds), *[5 + words] * len(self.shapes)) * self.cohorts
+
+    @property
+    def values(self) -> tuple[frozenset[int], ...]:
+        """Each statement's value columns: a listing's doubles and text, a variable's ``v``."""
+        keys = frozenset(1 + at for at, kind in enumerate(self.kinds) if kind in _KEY_VALUES)
+        return (keys, *[frozenset({_MATERIALISED_VALUE})] * len(self.shapes)) * self.cohorts
+
+    def parameters_json(self) -> dict[str, JsonValue]:
+        """The parameters as the derivation log records them (``CompiledCohort``'s)."""
+        return {
+            name: PurePath(str(value)).name if name in self.blobs else _json(value)
+            for name, value in self.parameters.items()
+        }
+
+    def read(self, answers: Sequence[Rows], ends: float | None = None) -> tuple[Listed, ...]:
+        """For each cohort, its members with each variable's value, in ``rid`` order, their keys
+        made as they are read (``ListedKeys``). Raises ``QueryError`` for rows the queries do not
+        give, ``TooManyListed`` for a cohort of more than ``MAX_LISTED`` members,
+        ``TooManyCells`` for one whose cells pass ``MAX_INPUT_CELLS``, and
+        ``CallerDeadline`` once ``time.monotonic()`` passes ``ends``, looked at every
+        ``_DEADLINE_ROWS`` rows and units."""
+        if len(answers) != len(self.columns):
+            raise QueryError("a listing of inputs gave another number of answers")
+        for rows, width in zip(answers, self.columns, strict=True):
+            if rows.width != width:
+                raise QueryError("a listing of inputs gave rows of another width")
+        found: list[Listed] = []
+        step = 1 + len(self.shapes)
+        members = [len(answers[cohort * step]) for cohort in range(self.cohorts)]
+        if any(count > MAX_LISTED for count in members):
+            raise TooManyListed(MAX_LISTED)
+        if sum(members) > self.most:
+            raise TooManyCells(sum(members) * max(1, len(self.shapes)), MAX_INPUT_CELLS)
+        for cohort in range(self.cohorts):
+            listing = answers[cohort * step]
+            rids = listing.integer_column(0)
+            at = {rid: index for index, rid in enumerate(rids)}
+            if len(at) != len(listing):
+                raise QueryError("a listing of inputs gave a member twice")
+            keys = ListedKeys(
+                tuple(
+                    listing.value_column(1 + index)
+                    if kind in _KEY_VALUES
+                    else listing.integer_column(1 + index)
+                    for index, kind in enumerate(self.kinds)
+                ),
+                self.kinds,
+                len(listing),
+            )
+            read = [
+                self._variable(answers[cohort * step + 1 + index], shape, at, ends)
+                for index, shape in enumerate(self.shapes)
+            ]
+            found.append(
+                Listed(
+                    keys,
+                    rids,
+                    tuple(values for values, _, _ in read),
+                    tuple(excluded for _, excluded, _ in read),
+                    tuple(marks for _, _, marks in read),
+                )
+            )
+        return tuple(found)
+
+    def _variable(
+        self, rows: Rows, shape: _Shape, at: Mapping[int, int], ends: float | None
+    ) -> tuple[tuple[Value | None, ...], tuple[frozenset[ExclusionReason], ...], frozenset[Mark]]:
+        """One variable's rows: each member's value or reasons, and their flags together."""
+        tags, rids = rows.integer_column(0), rows.integer_column(1)
+        bits, counts = rows.integer_column(3), rows.integer_column(4)
+        words = [rows.integer_column(5 + index) for index in range(_words(len(self.marks)))]
+        raw = rows.value_column(_MATERIALISED_VALUE)
+        values: list[Value | None] = [None] * len(at)
+        excluded: list[frozenset[ExclusionReason] | None] = [None] * len(at)
+        by_unit: dict[int, list[tuple[Value, int]]] = {}
+        flags = [0] * len(words)
+        for index in range(len(rows)):
+            if ends is not None and not index % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            tag, bit, count = tags[index], bits[index], counts[index]
+            member = at.get(rids[index])
+            if member is None or count <= 0 or not 0 <= bit <= _ALL_EXCLUSIONS:
+                raise QueryError("a listing of inputs gave a row it cannot give")
+            for word_at, word in enumerate(words):
+                if word[index] < 0:
+                    raise QueryError("a listing of inputs gave a flag it cannot give")
+                flags[word_at] |= word[index]
+            if tag == _VALUE_ROWS and not bit and shape.function == "mean":
+                by_unit.setdefault(member, []).append((_read_value(raw[index], shape), count))
+                continue
+            if count != 1 or excluded[member] is not None or member in by_unit:
+                raise QueryError("a listing of inputs gave a member two rows")
+            if tag == _EXCLUDED_ROWS and bit:
+                excluded[member] = _reasons_of(bit)
+            elif tag == _UNIT_ROWS and not bit:
+                values[member] = _read_value(raw[index], shape)
+                excluded[member] = frozenset()
+            elif tag == _EMPTY_ROWS and not bit and shape.empty is not None:
+                values[member] = shape.empty
+                excluded[member] = frozenset()
+            elif tag == _EXTREME_ROWS and not bit and shape.function in ("max", "min"):
+                values[member] = _read_extreme(raw[index], shape)
+                excluded[member] = frozenset()
+            else:
+                raise QueryError("a listing of inputs gave a row it cannot give")
+        if not _words_fit(flags, self.marks):
+            raise QueryError("a listing of inputs gave a flag it cannot give")
+        for unit, (member, groups) in enumerate(by_unit.items()):
+            if ends is not None and not unit % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            if excluded[member] is not None:
+                raise QueryError("a listing of inputs gave a member two rows")
+            values[member] = _read_aggregate(groups, shape)
+            excluded[member] = frozenset()
+        if any(reasons is None for reasons in excluded):
+            raise QueryError("a listing of inputs gave a member no row")
+        return (
+            tuple(values),
+            tuple(cast(list[frozenset[ExclusionReason]], excluded)),
+            _marks(self.marks, flags) if flags else frozenset(),
+        )
+
+
+class TooManyListed(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A cohort with more members than a listing reads (``MAX_LISTED``, D333, D342)."""
+
+    def __init__(self, most: int) -> None:
+        super().__init__(f"more than {most} members")
+        self.most = most
+        self.listing: int | None = None
+        """Which of a run's listings of inputs passed it (``queries.run_views``)."""
+
+
+_REASONS_OF: dict[int, frozenset[ExclusionReason]] = {}
+
+
+def _reasons_of(bits: int) -> frozenset[ExclusionReason]:
+    """The exclusion reasons of a set of bits, one frozenset per set, shared."""
+    found = _REASONS_OF.get(bits)
+    if found is None:
+        found = frozenset(reason for reason, flag in EXCLUSION_BIT.items() if bits & flag)
+        _REASONS_OF[bits] = found
+    return found
+
+
+def compile_inputs(
+    cohorts: Sequence[ResolvedCohort],
+    variables: Sequence[ResolvedVariable],
+    sources: Mapping[str, TableSource],
+) -> CompiledInputs:
+    """The queries that list cohorts of one release's unit table with each variable's value of
+    each member (``CompiledInputs``, D342), their parts compiled once each over one compiler.
+    Raises ``CompileError``."""
+    if not cohorts:
+        raise CompileError("a listing of inputs has cohorts")
+    first = cohorts[0]
+    if any(
+        part.release is not first.release or part.unit != first.unit
+        for part in (*cohorts, *variables)
+    ):
+        raise CompileError("a listing of inputs' parts share one release and one unit table")
+    coverage: dict[str, Coverage] = {}
+    for part in (*cohorts, *variables):
+        coverage.update(part.coverage)
+    merged = replace(first, coverage=dict(sorted(coverage.items())))
+    return _Compiler(merged, sources).inputs(cohorts, variables)
 
 
 def compile_cohort(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> CompiledCohort:
@@ -1503,18 +1717,7 @@ class _Compiler:
         ctes += [
             exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
         ]
-        shapes = tuple(
-            _Shape(
-                variable.kind,
-                variable.datatype,
-                variable.function,
-                variable.order,
-                None
-                if variable.empty is None
-                else normalised(cast(Value, variable.empty), variable.datatype, variable.function),
-            )
-            for variable in variables
-        )
+        shapes = tuple(_shape(variable) for variable in variables)
         return CompiledMaterialised(
             statements=tuple(
                 self.with_ctes(select, ctes).sql(dialect="duckdb") for select in selects
@@ -1529,15 +1732,104 @@ class _Compiler:
 
     def members(self) -> CompiledMembers:
         """A cohort's members' keys (``CompiledMembers``)."""
-        cohort = self.cohort
+        select, kinds = self.keyed_members(self.cohort)
+        ctes = [self.base_cte(one) for one in self.bases.values()]
+        ctes += [
+            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
+        ]
+        return CompiledMembers(
+            statement=self.with_ctes(select, ctes).sql(dialect="duckdb"),
+            parameters=MappingProxyType(dict(self.parameters)),
+            kinds=kinds,
+            blobs=frozenset(self.blobs),
+        )
+
+    def inputs(
+        self, cohorts: Sequence[ResolvedCohort], variables: Sequence[ResolvedVariable]
+    ) -> "CompiledInputs":
+        """Cohorts' members with each variable's value (``CompiledInputs``): the members of all
+        the cohorts taken once, each cohort's first ``MAX_LISTED`` + 1 by ``rid`` and of them the
+        first ``most`` + 1 by position and ``rid``, so that no statement ships more members' rows
+        than the caps admit over the view's positions, and every relation materialised once (``AS
+        MATERIALIZED``), a variable's rows read from one join of the members to their units
+        (``materialised_rows``): DuckDB inlined relations into the branches of the ``UNION ALL``
+        of a row per member and chose plans that did not end over 512,000 units (D342)."""
+        units = [self.variable(variable) for variable in variables]
+        most = MAX_INPUT_CELLS // max(1, len(variables))
+        each = min(MAX_LISTED, most)
+        stacked: exp.Query | None = None
+        for position, cohort in enumerate(cohorts):
+            part = cast(str, self.part(cohort))
+            first = (
+                _select(_as(_num(position), "p"), _col("c", "rid"))
+                .from_(_table(part, "c"), copy=False)
+                .where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+                .order_by(exp.Ordered(this=_col("c", "rid")), copy=False)
+                .limit(_num(each + 1), copy=False)
+            )
+            one = _select(exp.Star()).from_(
+                exp.Subquery(this=first, alias=exp.TableAlias(this=_id(f"f{position}"))),
+                copy=False,
+            )
+            stacked = (
+                one if stacked is None else exp.Union(this=stacked, expression=one, distinct=False)
+            )
+        assert stacked is not None, "a listing of inputs has cohorts"
+        taken_all = self.cte(
+            _select(_col("a", "p"), _col("a", "rid"))
+            .from_(exp.Subquery(this=stacked, alias=exp.TableAlias(this=_id("a"))), copy=False)
+            .order_by(
+                exp.Ordered(this=_col("a", "p")), exp.Ordered(this=_col("a", "rid")), copy=False
+            )
+            .limit(_num(most + 1), copy=False)
+        )
+        selects: list[exp.Query] = []
+        kinds: tuple[PhysicalType, ...] = ()
+        for position, cohort in enumerate(cohorts):
+            member = self.cte(
+                _select(_col("t", "rid"), _as(_num(TRUE_CODE), "v"))
+                .from_(_table(taken_all, "t"), copy=False)
+                .where(_eq(_col("t", "p"), _num(position)), copy=False)
+            )
+            listing, kinds = self.keyed_members(cohort, rid=True, member=member)
+            selects.append(listing)
+            selects += [
+                self.materialised_rows(member, variable, found, per_unit=True)
+                for variable, found in zip(variables, units, strict=True)
+            ]
+        ctes = [self.base_cte(base) for base in self.bases.values()]
+        ctes += [
+            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
+        ]
+        for cte in ctes:
+            cte.set("materialized", True)
+        return CompiledInputs(
+            statements=tuple(
+                self.with_ctes(select, ctes).sql(dialect="duckdb") for select in selects
+            ),
+            parameters=MappingProxyType(dict(self.parameters)),
+            marks=self.marks,
+            cohorts=len(cohorts),
+            shapes=tuple(_shape(variable) for variable in variables),
+            kinds=kinds,
+            most=most,
+            blobs=frozenset(self.blobs),
+        )
+
+    def keyed_members(
+        self, cohort: ResolvedCohort, *, rid: bool = False, member: str | None = None
+    ) -> tuple[exp.Select, tuple[PhysicalType, ...]]:
+        """The select of a cohort's members' keys, with each one's ``rid`` first when ``rid``
+        (``CompiledMembers``, ``CompiledInputs``), and the key columns' stored types; ``member``
+        the relation of its members, the cohort's own by default."""
         unit = cohort.unit
         columns = self.release.primary_key(unit)
         if not columns:
             raise CompileError(f"table {unit} has no declared key")
-        member = cast(str, self.part(cohort))
+        member = member or cast(str, self.part(cohort))
         base = self.base(unit).name
         kinds: list[PhysicalType] = []
-        read: list[Expression] = []
+        read: list[Expression] = [_as(_col("c", "rid"), "rid")] if rid else []
         for at, column in enumerate(columns):
             kind = self.physical(unit, column)
             if kind == "strings":
@@ -1557,17 +1849,7 @@ class _Compiler:
         )
         select = select.where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
         select = select.order_by(exp.Ordered(this=_col("c", "rid")), copy=False)
-        select = select.limit(_num(MAX_LISTED + 1), copy=False)
-        ctes = [self.base_cte(one) for one in self.bases.values()]
-        ctes += [
-            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
-        ]
-        return CompiledMembers(
-            statement=self.with_ctes(select, ctes).sql(dialect="duckdb"),
-            parameters=MappingProxyType(dict(self.parameters)),
-            kinds=tuple(kinds),
-            blobs=frozenset(self.blobs),
-        )
+        return select.limit(_num(MAX_LISTED + 1), copy=False), tuple(kinds)
 
     def variable(self, variable: ResolvedVariable) -> tuple[str, str | None]:
         """A variable's relation over the unit table, one row per unit: ``rid``, ``x`` the bits of
@@ -1921,65 +2203,96 @@ class _Compiler:
         return status, pooled_rows
 
     def materialised_rows(
-        self, member: str, variable: ResolvedVariable, found: tuple[str, str | None]
+        self,
+        member: str,
+        variable: ResolvedVariable,
+        found: tuple[str, str | None],
+        *,
+        per_unit: bool = False,
     ) -> exp.Query:
-        """One cohort's rows of one variable (``CompiledMaterialised``)."""
+        """One cohort's rows of one variable (``CompiledMaterialised``); ``per_unit``, a row per
+        member and not per value, ``r`` its ``rid``, ``n`` 1 and the flag words its own, but for
+        ``mean``'s pooled rows, which are per member already (``CompiledInputs``, D342). Per unit,
+        the members' units are one relation that every branch reads, and no branch joins the
+        members to their units again: DuckDB planned the join inside the branches of the union
+        of a row per member so that it did not end over 1,000,000 units two to-many steps down,
+        materialised or not (D342)."""
         units, groups = found
         words = self.words_of("u")
-        count = exp.Count(this=exp.Star())
+        count: Expression = _num(1) if per_unit else exp.Count(this=exp.Star())
+        unit: Expression = _col("u", "rid") if per_unit else _num(0)
+        member_of = _eq(_col("c", "v"), _num(TRUE_CODE))
+        taken: str | None = None
+        if per_unit:
+            joined = (
+                _select(exp.Column(this=exp.Star(), table=_id("u")))
+                .from_(_table(member, "c"), copy=False)
+                .join(_table(units, "u"), on=_eq(_col("u", "rid"), _col("c", "rid")), copy=False)
+                .where(member_of.copy(), copy=False)
+            )
+            taken = self.cte(joined)
 
         def of(*columns: Expression) -> exp.Select:
+            if taken is not None:
+                return _select(*columns).from_(_table(taken, "u"), copy=False)
             select = _select(*columns).from_(_table(member, "c"), copy=False)
             select = select.join(
                 _table(units, "u"), on=_eq(_col("u", "rid"), _col("c", "rid")), copy=False
             )
             return select
 
+        def among(condition: Expression) -> Expression:
+            return condition if taken is not None else _and(member_of.copy(), condition)
+
         def ored() -> list[Expression]:
+            if per_unit:
+                return [_as(word.copy(), f"m{at}") for at, word in enumerate(words)]
             return [
                 _as(_zero(_fn("bit_or", word.copy())), f"m{at}") for at, word in enumerate(words)
             ]
 
-        member_of = _eq(_col("c", "v"), _num(TRUE_CODE))
-        analysed = _and(member_of, _eq(_col("u", "x"), _num(0)))
+        def grouped(select: exp.Select, *by: Expression) -> exp.Select:
+            return select if per_unit else select.group_by(*by, copy=False)
+
+        analysed = among(_eq(_col("u", "x"), _num(0)))
         default = self.default_of(variable)
         excluded = of(
             _as(_num(_EXCLUDED_ROWS), "t"),
-            _as(_num(0), "r"),
+            _as(unit.copy(), "r"),
             _as(default, "v"),
             _as(_col("u", "x"), "x"),
             _as(count.copy(), "n"),
             *ored(),
         )
-        excluded = excluded.where(
-            _and(member_of.copy(), exp.NEQ(this=_col("u", "x"), expression=_num(0))), copy=False
-        ).group_by(_col("u", "x"), copy=False)
+        excluded = grouped(
+            excluded.where(among(exp.NEQ(this=_col("u", "x"), expression=_num(0))), copy=False),
+            _col("u", "x"),
+        )
         parts: list[exp.Select] = [excluded]
         if groups is None:
             by_value = of(
                 _as(_num(_UNIT_ROWS), "t"),
-                _as(_num(0), "r"),
+                _as(unit.copy(), "r"),
                 _as(_col("u", "val"), "v"),
                 _as(_num(0), "x"),
                 _as(count.copy(), "n"),
                 *ored(),
             )
-            parts.append(
-                by_value.where(analysed.copy(), copy=False).group_by(_col("u", "val"), copy=False)
-            )
+            parts.append(grouped(by_value.where(analysed.copy(), copy=False), _col("u", "val")))
         else:
             empty = of(
                 _as(_num(_EMPTY_ROWS), "t"),
-                _as(_num(0), "r"),
+                _as(unit.copy(), "r"),
                 _as(default.copy(), "v"),
                 _as(_num(0), "x"),
                 _as(count.copy(), "n"),
                 *ored(),
             )
             parts.append(
-                empty.where(
-                    _and(analysed.copy(), _eq(_col("u", "e"), _num(1))), copy=False
-                ).group_by(_col("u", "e"), copy=False)
+                grouped(
+                    empty.where(_and(analysed.copy(), _eq(_col("u", "e"), _num(1))), copy=False),
+                    _col("u", "e"),
+                )
             )
             pooled = _and(analysed.copy(), _eq(_col("u", "e"), _num(0)))
             if variable.function in ("max", "min"):
@@ -1991,7 +2304,7 @@ class _Compiler:
                 )
                 extremes = of(
                     _as(_num(_EXTREME_ROWS), "t"),
-                    _as(_num(0), "r"),
+                    _as(unit.copy(), "r"),
                     _as(_col("p", "val"), "v"),
                     _as(_num(0), "x"),
                     _as(count.copy(), "n"),
@@ -2002,9 +2315,7 @@ class _Compiler:
                     on=_eq(_col("p", "rid"), _col("u", "rid")),
                     copy=False,
                 )
-                parts.append(
-                    extremes.where(pooled, copy=False).group_by(_col("p", "val"), copy=False)
-                )
+                parts.append(grouped(extremes.where(pooled, copy=False), _col("p", "val")))
             else:
                 values = of(
                     _as(_num(_VALUE_ROWS), "t"),
@@ -3290,6 +3601,7 @@ __all__ = [
     "CompileError",
     "CompiledCohort",
     "CompiledCrossing",
+    "CompiledInputs",
     "CompiledMaterialised",
     "CompiledMembers",
     "Crossed",
@@ -3297,9 +3609,11 @@ __all__ = [
     "Crossing",
     "ListedKeys",
     "Parameter",
+    "TooManyListed",
     "TruthValues",
     "compile_cohort",
     "compile_crossing",
+    "compile_inputs",
     "compile_materialised",
     "compile_members",
     "cross",

@@ -23,12 +23,14 @@ Refused until later milestones: concept references and cross-dataset cohorts (M6
 coverage's ``parent_scope`` holding more than value predicates and combinators.
 """
 
+import builtins
 import logging
 import math
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Literal, cast
 
 from packaging.specifiers import SpecifierSet
@@ -209,10 +211,42 @@ class PackView:
         return cls(release.dataset, release.manifest, packs, DescriptorCopies(release.by_id))
 
 
-def pack_failed(pack: str, stage: str, error: Exception) -> None:
+_BUILT_IN: Mapping[type, str] = MappingProxyType(
+    {
+        found: name
+        for name, found in vars(builtins).items()
+        if isinstance(found, type) and issubclass(found, BaseException)
+    }
+)
+"""Each built-in exception type by its name in ``builtins``: the one name a log may give a
+pack's exception, since a pack names its own types, and sets ``__module__``, as it likes."""
+
+
+def pack_failed(pack: str, stage: str, error: BaseException) -> None:
     """Log that a pack's code raised: the pack and the exception's type only, since its message
-    may quote the leaf or the release (D285)."""
-    _logger.warning("pack %s: its %s raised %s", pack, stage, type(error).__name__)
+    may quote the leaf or the release (D285), and the type's name only for a built-in exception,
+    since a pack names its own types as it likes (D343)."""
+    _logger.warning(
+        "pack %s: its %s raised %s",
+        pack,
+        stage,
+        _BUILT_IN.get(type(error), "an exception of its own"),
+    )
+
+
+def identifying(release: Release, descriptor: ColumnDescriptor) -> bool:
+    """Whether a column identifies rows or people: declared so (``identifier``), or a key or a
+    foreign key, a relationship's column on either side (§5.4)."""
+    if descriptor.fields.identifier:
+        return True
+    table, column = descriptor.id.split(".", 1)
+    if column in (release.primary_key(table) or ()):
+        return True
+    return any(
+        (r.fields.child_table == table and column in r.fields.child_columns)
+        or (r.fields.parent_table == table and column in r.fields.parent_columns)
+        for r in release.relationships
+    )
 
 
 @dataclass(frozen=True, order=True)
@@ -368,6 +402,12 @@ class ResolvedVariable:
     coverage: Mapping[str, Coverage] = field(default_factory=dict[str, Coverage])
     leaves: frozenset[Position] = frozenset()
     """The positions of the leaves of its ``where`` as written."""
+    packs: frozenset[str] = frozenset()
+    """The packs whose leaves its ``where`` expanded (D345)."""
+    summaries: Mapping[Position, tuple[Segment, ...]] = field(
+        default_factory=dict[Position, tuple[Segment, ...]]
+    )
+    """Each pack leaf of its ``where`` as written, by position, and its pack's summary (§7.3)."""
 
     @property
     def unconfirmed(self) -> tuple[FieldRead, ...]:
@@ -621,6 +661,9 @@ class _Resolver:
         self.raised: set[tuple[bytes, str]] = set()
         """The compiles whose compiler raised what is no refusal."""
         self.summarised: dict[bytes, tuple[Segment, ...] | None] = {}
+        self.view_clauses: list[ClauseModel] = []
+        """The clauses of the views' predicates and of their variables' ``where``, whose pack
+        leaves share the document's budget of steps (D345)."""
 
     @property
     def document(self) -> Document:
@@ -671,6 +714,9 @@ class _Resolver:
     def run(
         self, predicates: Sequence[ViewPredicate] = (), variables: Sequence[ViewVariable] = ()
     ) -> Resolution:
+        self.view_clauses = [predicate.clause for predicate in predicates] + [
+            clause for variable in variables for clause in variable.variable.where or []
+        ]
         self._document_packs()
         self._mixed_releases()
         for name in self._order():
@@ -875,6 +921,8 @@ class _Resolver:
             fields=tuple(sorted(context.fields)),
             coverage=dict(sorted(context.coverage.items())),
             leaves=frozenset(context.written),
+            packs=frozenset(context.packs),
+            summaries=dict(context.summaries),
         )
 
     def _variable(self, context: _Cohort, given: ViewVariable) -> ResolvedVariable | None:
@@ -1474,13 +1522,14 @@ class _Resolver:
 
     def _leaf_steps(self) -> int:
         """The steps the document's pack leaves may take together: ``STEPS_BASE`` and
-        ``STEPS_PER_VALUE`` per JSON value of every pack leaf, at most ``WRITE_STEPS_MAX``."""
+        ``STEPS_PER_VALUE`` per JSON value of every pack leaf, its cohorts', its views'
+        predicates' and its variables' ``where`` alike, at most ``WRITE_STEPS_MAX``."""
         if self.leaf_steps is None:
             values = 0
-            for cohort in self.document.cohorts.values():
-                for clause, _, _ in walk(list(cohort.all), []):
-                    if isinstance(clause, PackLeaf):
-                        values += _count_values(cast(JsonValue, clause.model_dump(mode="json")))
+            written = [clause for cohort in self.document.cohorts.values() for clause in cohort.all]
+            for clause, _, _ in walk([*written, *self.view_clauses], []):
+                if isinstance(clause, PackLeaf):
+                    values += _count_values(cast(JsonValue, clause.model_dump(mode="json")))
             self.leaf_steps = min(WRITE_STEPS_MAX, STEPS_BASE + STEPS_PER_VALUE * values)
         return self.leaf_steps
 
@@ -1900,18 +1949,7 @@ class _Resolver:
         )
 
     def _identifier(self, context: _Cohort, descriptor: ColumnDescriptor) -> bool:
-        """Whether a column identifies rows: declared so, or a key or foreign key (§5.4)."""
-        if descriptor.fields.identifier:
-            return True
-        table, column = descriptor.id.split(".", 1)
-        release = context.release
-        if column in (release.primary_key(table) or ()):
-            return True
-        return any(
-            (r.fields.child_table == table and column in r.fields.child_columns)
-            or (r.fields.parent_table == table and column in r.fields.parent_columns)
-            for r in release.relationships
-        )
+        return identifying(context.release, descriptor)
 
     def _row_ids(self, context: _Cohort) -> bool:
         dataset = context.release.dataset_descriptor
@@ -2662,6 +2700,7 @@ __all__ = [
     "ViewPredicate",
     "ViewVariable",
     "check_parent_scopes",
+    "identifying",
     "levels",
     "pack_failed",
     "resolve",
