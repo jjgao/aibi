@@ -73,7 +73,9 @@ setting), its methods in `core/analyses/timetoevent.py` held to R (`reference/su
 doing their arithmetic as C does (`core/analyses/ieee.py`), and a pack's analysis is handed the
 rows of the endpoints it requires. From M3.3b, `core/analyses/coxfit.py` is the unadjusted Cox
 fit of cohorts, its separation decided on the risk sets' graph and its fit and `cox.zph`'s test
-held to R (`reference/cox.R`), which `survival.km` 1.1.0 shows as hazard ratios.
+held to R (`reference/cox.R`), which `survival.km` 1.1.0 shows as hazard ratios. From M3.3c,
+`core/analyses/coxph.py` is the Cox model of a design (covariates per unit, strata, delayed entry),
+held to R (`reference/coxph.R`).
 
 ## Non-negotiables
 

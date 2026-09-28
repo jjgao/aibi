@@ -430,7 +430,7 @@ class Scripted:
     def __call__(self, beta: Sequence[float]) -> Any:
         self.seen.append(list(beta))
         loglik, score, information = self.points.pop(0)
-        return coxfit._Evaluated(loglik, score, information)  # pyright: ignore[reportPrivateUsage]
+        return coxfit.Evaluated(loglik, score, information)
 
 
 ONE = [[1.0]]
@@ -529,7 +529,7 @@ def test_agfit4_s_iteration_of_one_iteration_never_returns_to_the_last_good_poin
 def test_a_point_is_the_maximum_where_a_newton_step_would_gain_at_most_eps_of_the_loglik_or_of_1(
     loglik: float, decrement: float, reached: bool
 ) -> None:
-    evaluated = coxfit._Evaluated(loglik, [math.sqrt(decrement)], [[1.0]])  # pyright: ignore[reportPrivateUsage]
+    evaluated = coxfit.Evaluated(loglik, [math.sqrt(decrement)], [[1.0]])
     factored = [[1.0]]
     assert coxfit._at_maximum(evaluated, factored, 1) is reached  # pyright: ignore[reportPrivateUsage]
     assert coxfit._at_maximum(evaluated, factored, 0) is False  # pyright: ignore[reportPrivateUsage]

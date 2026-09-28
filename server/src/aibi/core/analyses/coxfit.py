@@ -50,7 +50,7 @@ Every floating operation is C's (``ieee``), and every loop spends its work throu
 
 import dataclasses
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -133,10 +133,16 @@ class CoxFit:
 
 
 @dataclass(frozen=True)
-class _Evaluated:
+class Evaluated:
+    """A partial log-likelihood at a point, its score and its information."""
+
     loglik: float
     score: list[float]
     information: list[list[float]]
+
+
+Model = Callable[[Sequence[float]], Evaluated]
+"""A Cox model: its ``Evaluated`` at a point of its coefficients, spending its work."""
 
 
 def _evaluate(
@@ -146,7 +152,7 @@ def _evaluate(
     eta: Sequence[float],
     watch: Watch,
     weights: Sequence[float] | None = None,
-) -> _Evaluated:
+) -> Evaluated:
     """The Efron partial log-likelihood, its score and its information (module docstring) of the
     groups ``fitted``, each with its covariates and linear predictor, ``covariates[f]`` and
     ``eta[f]``; with ``weights`` (a time weight per event time, in the table's order), the score
@@ -219,10 +225,10 @@ def _evaluate(
         for i in range(m):
             for j in range(m):
                 information[i + m][j] = information[j][i + m]
-    return _Evaluated(loglik, score, information)
+    return Evaluated(loglik, score, information)
 
 
-def _finite(evaluated: _Evaluated) -> bool:
+def _finite(evaluated: Evaluated) -> bool:
     """Whether a log-likelihood, its score and its information are all finite."""
     return (
         math.isfinite(evaluated.loglik)
@@ -231,7 +237,7 @@ def _finite(evaluated: _Evaluated) -> bool:
     )
 
 
-def _factored(evaluated: _Evaluated) -> tuple[list[list[float]], int]:
+def factored_of(evaluated: Evaluated) -> tuple[list[list[float]], int]:
     """A copy of the information, factored by ``cholesky``, and its rank."""
     matrix = [list(row) for row in evaluated.information]
     return matrix, cholesky(matrix)
@@ -281,19 +287,19 @@ class _Model:
         terms = [group for group in fitted if group != reference]
         self.covariates = [[1.0 if group == term else 0.0 for term in terms] for group in fitted]
 
-    def __call__(self, beta: Sequence[float]) -> _Evaluated:
+    def __call__(self, beta: Sequence[float]) -> Evaluated:
         self.watch.look()
         eta = [ieee.fsum(b * x for b, x in zip(beta, row, strict=True)) for row in self.covariates]
         return _evaluate(self.table, self.fitted, self.covariates, eta, self.watch)
 
 
-def _decrement(evaluated: _Evaluated, factored: Sequence[Sequence[float]]) -> float:
+def _decrement(evaluated: Evaluated, factored: Sequence[Sequence[float]]) -> float:
     """uᵀI⁻¹u, twice the gain a Newton step predicts, from the information's ``cholesky``."""
     step = solve(factored, evaluated.score)
     return ieee.fsum(u * s for u, s in zip(evaluated.score, step, strict=True))
 
 
-def _at_maximum(evaluated: _Evaluated, factored: Sequence[Sequence[float]], rank: int) -> bool:
+def _at_maximum(evaluated: Evaluated, factored: Sequence[Sequence[float]], rank: int) -> bool:
     """Whether a point is the fit's maximum to R's tolerance: its information of full rank and
     the gain a Newton step predicts at most ``EPS`` of max(1, |log-likelihood|) (``fit``)."""
     if rank != len(evaluated.score) or not _finite(evaluated):
@@ -303,13 +309,13 @@ def _at_maximum(evaluated: _Evaluated, factored: Sequence[Sequence[float]], rank
 
 def _result(
     beta: Sequence[float],
-    evaluated: _Evaluated,
+    evaluated: Evaluated,
     converged: bool,
     start: float,
     iterations: int,
 ) -> CoxFit:
     """A fit ended at ``beta``, which converged only where it is also ``_at_maximum``."""
-    factored, rank = _factored(evaluated)
+    factored, rank = factored_of(evaluated)
     reached = converged and _at_maximum(evaluated, factored, rank)
     return CoxFit(
         tuple(beta),
@@ -333,15 +339,33 @@ def fit(
     that ends at it, else ``newton`` from the point ``_ascent`` climbs to (``ascended``); where
     the ascent finds none, ``newton``'s fit from 0, and where ``newton`` from its point ends
     short of the maximum, that fit, neither converged."""
-    first = newton(table, fitted, reference, watch, counting=counting)
+    if reference not in fitted or len(fitted) < 2:
+        raise ValueError("a fit needs the reference and another group")
+    model = _Model(table, fitted, reference, watch)
+    return maximise(model, len(fitted) - 1, counting=counting)
+
+
+def maximise(model: Model, terms: int, *, counting: bool) -> CoxFit:
+    """``fit``'s search of any ``model`` of ``terms`` coefficients (module docstring):
+    ``iterate`` from 0 where that ends at the maximum, else ``iterate`` from the point
+    ``_ascent`` climbs to (``ascended``); where the ascent finds none, the iteration's fit from
+    0, and where the iteration from its point ends short of the maximum, that fit, neither
+    converged."""
+    zero = [0.0] * terms
+    first = iterate(model, zero, counting=counting)
     if first.converged:
         return first
-    model = _Model(table, fitted, reference, watch)
-    found = _ascent(model, [0.0] * (len(fitted) - 1))
+    found = _ascent(model, zero)
     if found is None:
         return first
-    again = newton(table, fitted, reference, watch, counting=counting, start=found)
-    return dataclasses.replace(again, ascended=True)
+    return dataclasses.replace(iterate(model, found, counting=counting), ascended=True)
+
+
+def iterate(model: Model, start: Sequence[float], *, counting: bool) -> CoxFit:
+    """R's iteration of any ``model`` from ``start``: ``agfit4``'s where the endpoint has an
+    entry column (``counting``), ``coxfit6``'s where it has none; converged only where it ends
+    at the maximum (``_at_maximum``)."""
+    return _counting(model, start) if counting else _right(model, start)
 
 
 def newton(
@@ -360,10 +384,10 @@ def newton(
         raise ValueError("a fit needs the reference and another group")
     model = _Model(table, fitted, reference, watch)
     first = [0.0] * (len(fitted) - 1) if start is None else list(start)
-    return _counting(model, first) if counting else _right(model, first)
+    return iterate(model, first, counting=counting)
 
 
-def _ascent(model: _Model, start: Sequence[float]) -> list[float] | None:
+def _ascent(model: Model, start: Sequence[float]) -> list[float] | None:
     """The maximum (``fit``), or none: from ``start``, each step Newton's where the information
     has full rank (its factors then positive, so the log-likelihood rises along it) and the
     score's where it has not, at most ``STEP`` in any coefficient, halved until the
@@ -375,7 +399,7 @@ def _ascent(model: _Model, start: Sequence[float]) -> list[float] | None:
     for _ in range(ASCENT):
         if not _finite(evaluated):
             return None
-        factored, rank = _factored(evaluated)
+        factored, rank = factored_of(evaluated)
         if _at_maximum(evaluated, factored, rank):
             return beta
         newton = rank == len(beta)
@@ -400,7 +424,7 @@ def _ascent(model: _Model, start: Sequence[float]) -> list[float] | None:
     return None
 
 
-def _right(model: _Model, start: Sequence[float]) -> CoxFit:
+def _right(model: Model, start: Sequence[float]) -> CoxFit:
     """``coxfit6``'s iteration: a Newton step from 0, then at most ``ITERATIONS`` more, a step
     that does not improve the log-likelihood halved back towards the last good β; run out, the
     last good β recomputed (which gives the values ``coxfit6`` gives without recomputing when
@@ -408,13 +432,13 @@ def _right(model: _Model, start: Sequence[float]) -> CoxFit:
     beta = list(start)
     evaluated = model(beta)
     first = best = evaluated.loglik
-    factored, _ = _factored(evaluated)
+    factored, _ = factored_of(evaluated)
     step = solve(factored, evaluated.score)
     newbeta = [b + s for b, s in zip(beta, step, strict=True)]
     halving = 0
     for iteration in range(1, ITERATIONS + 1):
         evaluated = model(newbeta)
-        factored, _ = _factored(evaluated)
+        factored, _ = factored_of(evaluated)
         finite = _finite(evaluated)
         if finite and _changed(best, evaluated.loglik) <= EPS:
             return _result(newbeta, evaluated, True, first, iteration)
@@ -434,7 +458,7 @@ def _right(model: _Model, start: Sequence[float]) -> CoxFit:
     return _result(beta, evaluated, False, first, ITERATIONS + 1)
 
 
-def _counting(model: _Model, start: Sequence[float]) -> CoxFit:
+def _counting(model: Model, start: Sequence[float]) -> CoxFit:
     """``agfit4``'s iteration: iteration 0 a Newton step from 0; each later one fails on a
     non-finite diagonal or log-likelihood or a change of the information's rank, converges only
     when not halving, and halves back towards the last good β on a failure or a fall; run out
@@ -443,7 +467,7 @@ def _counting(model: _Model, start: Sequence[float]) -> CoxFit:
     beta = list(start)
     evaluated = model(beta)
     first = best = evaluated.loglik
-    factored, rank = _factored(evaluated)
+    factored, rank = factored_of(evaluated)
     step = solve(factored, evaluated.score)
     oldbeta = beta
     beta = [b + s for b, s in zip(beta, step, strict=True)]
@@ -451,7 +475,7 @@ def _counting(model: _Model, start: Sequence[float]) -> CoxFit:
     for iteration in range(1, ITERATIONS + 1):
         evaluated = model(beta)
         fail = sum(1 for i in range(m) if not math.isfinite(evaluated.information[i][i]))
-        factored, again = _factored(evaluated)
+        factored, again = factored_of(evaluated)
         fail += (not math.isfinite(evaluated.loglik)) + abs(rank - again)
         if fail == 0 and halving == 0 and _changed(best, evaluated.loglik) <= EPS:
             return _result(beta, evaluated, True, first, iteration)
@@ -527,11 +551,11 @@ def proportional_hazards(
     if cholesky(matrix) < 2 * m:
         return None
     score = [0.0] * m + evaluated.score[m:]
-    statistic = _solved_quadratic(evaluated.information, score)
+    statistic = solved_quadratic(evaluated.information, score)
     return Test(statistic, m, chi_squared_p(statistic, m))
 
 
-def _solved_quadratic(matrix: Sequence[Sequence[float]], u: Sequence[float]) -> float:
+def solved_quadratic(matrix: Sequence[Sequence[float]], u: Sequence[float]) -> float:
     """uᵀA⁻¹u by Gaussian elimination with partial pivoting, as R's ``solve`` (LAPACK's
     ``dgesv``) finds A⁻¹u."""
     n = len(u)

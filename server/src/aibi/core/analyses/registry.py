@@ -5,7 +5,7 @@ parameters' model and its implementation, and the analyses of the installed pack
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
 path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
 (D328), ``summary.members`` (D331), ``compare.columns`` (D336) and ``survival.km`` (D348);
-``survival.cox`` follows in M3.3c (D346, D354).
+``survival.cox`` follows in M3.3e (D346, D354, D358).
 
 A pack's analysis is registered, listed and matched for applicability like the core's, and run
 from M3.2d on the inputs its ``requires`` name, materialised (``analyses.packs``, D341–D343): its
@@ -147,7 +147,7 @@ PACK_BECAUSE = (
 """Why a pack's analysis is refused under a disclosure setting."""
 
 LATER: Mapping[str, str] = {
-    "survival.cox": "M3.3c",
+    "survival.cox": "M3.3e",
 }
 """The core's analyses of §9.5 that a later slice of M3 implements, and the slice (D315, D317,
 D324, D346): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
