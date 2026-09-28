@@ -703,5 +703,128 @@
     "id": "drv:0a6f5116b8b9e736d7ac8115295fa48ed1242e7c42c334bbe027941a71288ca7",
     "computation_id": "drv:5cf293e097b4407e46d9ac835ee0d1748397e1dcc9955e70ca69a9d821b3fb53",
     "digest": "sha256:7b76208445f143a602c7d68dcc710f79f8a82a12a2a74aa448ee5606c30378d1"
+  },
+  "cox_tiers_and_ages": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 50
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 50
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "survival.cox",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "params": {
+            "covariates": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "customers.age"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "survived": "delayed"
+    },
+    "id": "drv:ef2b4b86ee87466729c92c8c6605d291f26334cedcd34590d44660e95b35e3ba",
+    "computation_id": "drv:4612b670420dc4f2da0e6071d4e677f94b8ae64f2a64890c2a938311ccad3dea",
+    "digest": "sha256:bc2c69e0a9649b1a8fac1afb423315961f589b54ab70a30baa12d1dbe2ba434e"
+  },
+  "cox_stratified_at_the_origin": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 50
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 50
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "survival.cox",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "reference": "old",
+          "params": {
+            "covariates": [
+              {
+                "column": "orders.channel",
+                "aggregate": "some",
+                "values": [
+                  "web"
+                ]
+              },
+              {
+                "column": "orders.amount",
+                "aggregate": "mean"
+              }
+            ],
+            "stratum": {
+              "column": "customers.tier"
+            },
+            "level": 0.9
+          }
+        }
+      ]
+    },
+    "shop": {
+      "survived": "origin",
+      "extended": true
+    },
+    "id": "drv:6bf0a431dd067282f08bd01510b468f2fbf3adb796f8ff0ac37aa0299c505a38",
+    "computation_id": "drv:3f8244b6992157552c7ac6025573c71c52f59a8bd5f50c630f07037f808bed8d",
+    "digest": "sha256:ddbc2e527407983cc6e2d4f7aeff0635bc5db0a1c88c6a2305817bafeb78d70c"
   }
 }

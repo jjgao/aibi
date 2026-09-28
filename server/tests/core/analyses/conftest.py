@@ -37,7 +37,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import columns, distribution, members, packs, survival, views
+from aibi.core.analyses import columns, cox, distribution, members, packs, survival, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome as AnyOutcome
@@ -57,6 +57,7 @@ from aibi.core.engine.truth import Truth, TruthValue
 from aibi.core.engine.variables import Joint, Materialised, evaluate_variable, joint, materialise
 from aibi.core.schema.analyses import (
     ColumnsParams,
+    CoxParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
@@ -266,7 +267,7 @@ def check_document(
         variables=[v for view in parsed for v in view.variables],
         endpoints=[e for view in parsed for e in view.endpoints],
     )
-    checked, mixed = views.checked(loaded.document, parsed, canonical, registry)
+    checked, mixed = views.checked(loaded.document, parsed, canonical, registry, loaded.positions)
     deferred = views.deferred(loaded.document, loaded.positions)
     return Checked(canonical, checked, [*refused, *deferred, *canonical.refusals, *mixed])
 
@@ -298,6 +299,9 @@ def analyse_document(
             continue
         if isinstance(view.params, SurvivalParams):
             found.append(_result(view, _survived_by_evaluator(view, positions), written))
+            continue
+        if isinstance(view.params, CoxParams):
+            found.append(_result(view, _coxed_by_evaluator(view, positions), written))
             continue
         if isinstance(view.params, DistributionParams):
             found.append(_result(view, _summarised_by_evaluator(view, positions), written))
@@ -343,6 +347,29 @@ def _survived_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> 
         reference=view.reference,
         overlap=bool(together),
         computation=view.identity.computation_id,
+    )
+
+
+def _coxed_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> cox.Outcome:
+    assert isinstance(view.params, CoxParams)
+    [endpoint] = view.endpoints
+    read = [*(variable.resolved for variable in view.variables), *endpoint.variables]
+    found = [ordered_inputs(listed(c.resolved, read)) for c in view.cohorts]
+    together = shared(found)
+    assert not together or view.overlap, "cohorts that share units are refused"
+    covariates: list[cox.Covariate] = []
+    for variable in view.variables[: len(view.params.covariates)]:
+        coded = cox.covariate_of(variable.resolved)
+        assert coded is not None, "phase 2 refuses a covariate of no coding"
+        covariates.append(coded)
+    return cox.analyse(
+        positions,
+        found,
+        endpoint,
+        covariates,
+        view.params,
+        reference=view.reference,
+        overlap=bool(together),
     )
 
 

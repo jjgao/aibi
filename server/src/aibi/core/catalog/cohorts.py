@@ -313,7 +313,7 @@ def canonical_document(catalog: Catalog, pin: Pin, written: Mapping[str, JsonVal
         for refusal in canonical.refusals
         if not (refusal.code == RefusalCode.UNKNOWN_DATASET and refusal.path in releases.refused)
     ]
-    checked, mixed = views.checked(document, parsed, canonical, catalog.analyses)
+    checked, mixed = views.checked(document, parsed, canonical, catalog.analyses, loaded.positions)
     return Canonical(
         loaded,
         canonical,

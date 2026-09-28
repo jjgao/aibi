@@ -14,9 +14,12 @@ A view is checked in two steps, around phase 1:
    ``where`` of each variable of its parameters holds no ``ids`` or ``cohort`` leaf either
    (``LEAF_NOT_ALLOWED``) and at most as many pack leaves as a cohort (D345); and a view of
    ``summary.members`` names exactly one cohort, listed in its ``cohorts`` (else ``INVALID_VALUE``
-   there) or the document's only one (else ``MISSING_MEMBER`` at ``cohorts``) (D331). Its
-   predicates, variables and endpoints (a survival analysis's one, ``params.endpoint`` or the one
-   usable endpoint on the unit table, D347; a pack's by role, D352) are then handed to
+   there) or the document's only one (else ``MISSING_MEMBER`` at ``cohorts``) (D331); and a view of
+   ``survival.cox`` that lists one cohort gives a covariate (else ``MISSING_MEMBER`` at
+   ``params/covariates``, D367). Its
+   predicates, variables (``survival.cox``'s covariates, then its stratum, D366) and endpoints (a
+   survival analysis's one, ``params.endpoint`` or the one usable endpoint on the unit table,
+   D347; a pack's by role, D352) are then handed to
    ``canonicalise`` (``ViewPredicate``, ``ViewVariable``, ``ViewEndpoint``), resolved with the
    cohorts in the release of the view's cohorts, on the unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates, variables and endpoints all
@@ -24,7 +27,9 @@ A view is checked in two steps, around phase 1:
    numbers, ``bins`` only for numbers, under *k* a number's histogram edges from ``bins`` or a
    declared range, and under *k* one set of edges for a column's values across the call's views,
    D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a pack's: no
-   dates or datetimes, and each of its role's ``datatype`` and ``on``, D341), whose disclosure
+   dates or datetimes, and each of its role's ``datatype`` and ``on``, D341; ``survival.cox``'s: a
+   coding for each covariate and the stratum, no identifier column's values, not the endpoint's
+   own time or status, and no ``bins``, D367), whose disclosure
    allows it (``_disclosure``, D353: no view of a ``refused`` analysis under any disclosure
    setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands each
    member's values in the keys' order where the dataset allows no row ids,
@@ -53,7 +58,7 @@ from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
-from aibi.core.analyses import columns, distribution, existence, members, packs, survival
+from aibi.core.analyses import columns, cox, distribution, existence, members, packs, survival
 from aibi.core.analyses.registry import (
     CORE,
     DISCLOSED,
@@ -93,6 +98,7 @@ from aibi.core.engine.resolved import (
 )
 from aibi.core.schema.analyses import (
     ColumnsParams,
+    CoxParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
@@ -120,7 +126,7 @@ from aibi.core.schema.limits import (
     PACK_OPTION_STEPS,
     VARIABLES,
 )
-from aibi.core.schema.loading import as_written, refusal_from_error
+from aibi.core.schema.loading import refusal_as_written, refusal_from_error
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
@@ -166,36 +172,23 @@ class _Refusals:
         alternatives: Sequence[Segment] = (),
         limit: Limit | None = None,
     ) -> None:
-        written, parameter = as_written(at, self.positions)
-        segments = list(message)
-        if parameter is not None:
-            segments += [text(" (in the value of parameter "), data(parameter), text(")")]
-        self.found.append(
-            Refusal(
-                code=code,
-                path=pointer(list(written)),
-                message=segments,
-                alternatives=list(alternatives),
-                limit=limit,
-            )
+        refusal = Refusal(
+            code=code,
+            path=pointer(list(at)),
+            message=list(message),
+            alternatives=list(alternatives),
+            limit=limit,
         )
+        self.found.append(refusal_as_written(refusal, self.positions))
 
     def of_error(self, error: ValidationError, model: type[DocModel], at: Position) -> None:
         """A parameter model's errors, pointed into the document as written."""
         for details in error.errors(include_url=False, include_input=False):
             refusal = refusal_from_error(details, model)
-            tokens = () if refusal.path is None else _tokens(refusal.path)
-            written, parameter = as_written((*at, *tokens), self.positions)
-            message = list(refusal.message)
-            if parameter is not None:
-                message += [text(" (in the value of parameter "), data(parameter), text(")")]
+            path = pointer(list(at)) + (refusal.path or "")
             self.found.append(
-                refusal.model_copy(update={"path": pointer(list(written)), "message": message})
+                refusal_as_written(refusal.model_copy(update={"path": path}), self.positions)
             )
-
-
-def _tokens(path: str) -> Position:
-    return tuple(token.replace("~1", "/").replace("~0", "~") for token in path.split("/")[1:])
 
 
 def _listed(names: Sequence[str]) -> list[Segment]:
@@ -284,7 +277,7 @@ def parse(
             variables = _variables(written, index, reference, refusals, independent)
         elif isinstance(params, MembersParams):
             _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
-        elif isinstance(params, SurvivalParams) and reference is not None:
+        elif isinstance(params, SurvivalParams | CoxParams) and reference is not None:
             endpoints = (
                 ViewEndpoint(
                     f"{index}/endpoint",
@@ -293,6 +286,14 @@ def parse(
                     params.endpoint,
                 ),
             )
+        if isinstance(params, CoxParams):
+            _modelled(view.cohorts, params, index, refusals)
+            modelled: list[tuple[tuple[str | int, ...], Variable]] = [
+                (("covariates", j), v) for j, v in enumerate(params.covariates)
+            ]
+            if params.stratum is not None:
+                modelled.append((("stratum",), params.stratum))
+            variables = _variables(modelled, index, reference, refusals, True)
         elif isinstance(params, PackParams):
             cohorts = len(view.cohorts) if view.cohorts is not None else len(document.cohorts)
             written = _pack_params(found, params, cohorts, index, analyses, refusals)
@@ -503,6 +504,20 @@ def _one_cohort(
         )
 
 
+def _modelled(
+    listed: Sequence[str] | None, params: CoxParams, index: int, refusals: _Refusals
+) -> None:
+    """A ``survival.cox`` view has a term (D367): a second cohort or a covariate, since a model
+    of one cohort without covariates, stratified or not, has none."""
+    if listed is not None and len(listed) == 1 and not params.covariates:
+        refusals.add(
+            RefusalCode.MISSING_MEMBER,
+            ("views", index, "params", "covariates"),
+            text("A Cox model of one cohort compares its units by their covariates, and the "),
+            text("view gives none: give covariates, or list a second cohort to compare with"),
+        )
+
+
 def _predicates(
     params: ExistenceParams, index: int, reference: str | None, refusals: _Refusals
 ) -> tuple[ViewPredicate, ...]:
@@ -650,6 +665,11 @@ class CheckedView:
         if isinstance(self.params, SurvivalParams):
             [endpoint] = self.endpoints
             return survival.view_readback(len(self.cohorts), self.reference, endpoint, self.params)
+        if isinstance(self.params, CoxParams):
+            [endpoint] = self.endpoints
+            return cox.view_readback(
+                len(self.cohorts), self.reference, endpoint, self.variables, self.params
+            )
         if isinstance(self.params, PackParams):
             fields = self.analysis.entry.fields
             return packs.view_readback(
@@ -732,11 +752,13 @@ def checked(
     parsed: Sequence[ParsedView],
     canonical: Canonicalisation,
     analyses: Analyses | None = None,
+    positions: Mapping[Position, str] | None = None,
 ) -> tuple[list[CheckedView], list[Refusal]]:
     """The second step (module docstring): the views whose cohorts and predicates all
     canonicalised, in canonical form; and a refusal for a view whose cohorts are of more than
     one release (``MIXED_RELEASES``), which resolution refuses first (§7.4). ``analyses`` runs
-    a pack analysis's requirement predicates; without it, none holds."""
+    a pack analysis's requirement predicates; without it, none holds. Each refusal is pointed
+    into the document as written by ``positions``, the substituted positions (D368)."""
     found: list[CheckedView] = []
     refusals: list[Refusal] = []
     edges_of: dict[tuple[str, ...], JsonValue] = {}
@@ -798,6 +820,11 @@ def checked(
             if wrong:
                 refusals += wrong
                 continue
+        if isinstance(view.params, CoxParams):
+            wrong = _coxed(view, cohorts[0], variables, endpoints)
+            if wrong:
+                refusals += wrong
+                continue
         identity = ViewIdentity(
             analysis=view.analysis.id,
             version=view.analysis.entry.version,
@@ -827,7 +854,7 @@ def checked(
                 endpoint_roles=view.endpoint_roles,
             )
         )
-    return found, refusals
+    return found, [refusal_as_written(refusal, positions or {}) for refusal in refusals]
 
 
 def _alternatives() -> list[Segment]:
@@ -1014,6 +1041,82 @@ def _packed(
                 alternatives=[text("list_analyses gives each analysis's applicability")],
             )
         )
+    return found
+
+
+def _coxed(
+    view: ParsedView,
+    cohort: CanonicalCohort,
+    variables: Sequence[CanonicalVariable],
+    endpoints: Sequence[ResolvedEndpoint],
+) -> list[Refusal]:
+    """What phase 2 refuses of a ``survival.cox`` view's resolved covariates and stratum once its
+    disclosure is checked (``_disclosure``; D367): a column whose values have no coding
+    (``cox.covariate_of``: dates and datetimes, which resolution leaves only as columns), an
+    identifier column's values (§5.4; ``count`` reads none), which name units, rows or people and
+    as numbers mean nothing, the endpoint's own time or status column, which would model the
+    outcome by itself (an endpoint is on the unit table, so its columns are read as they are,
+    and a covariate or stratum that names one reads it so too: resolution takes no question or
+    aggregate of a unit's own column), and ``bins``, which divide only a histogram."""
+    release = cohort.resolved.release
+    [endpoint] = endpoints
+    outcome = {endpoint.time.column, endpoint.status.column}
+    found: list[Refusal] = []
+    for given, variable in zip(view.variables, variables, strict=True):
+        resolved = variable.resolved
+        column = pointer([*given.at, "column"])
+        if cox.covariate_of(resolved) is None:
+            found.append(
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=column,
+                    message=[
+                        text("survival.cox models categories, booleans, strings and numbers, "),
+                        text("and this column's datatype is none of them: "),
+                        data(resolved.column),
+                        text(" ("),
+                        data(resolved.datatype or "undeclared"),
+                        text(")"),
+                    ],
+                    alternatives=[data(name) for name in cox.TAKEN],
+                )
+            )
+        elif _identifies(release, resolved.column) and resolved.function != "count":
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=column,
+                    message=[
+                        text("An identifier column's values name units, rows or people (§5.4), "),
+                        text("and are no covariate or stratum; count its rows instead: "),
+                        data(resolved.column),
+                    ],
+                    alternatives=[data("count")],
+                )
+            )
+        elif resolved.column in outcome:
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=column,
+                    message=[
+                        text("The endpoint's time or status is the outcome the model explains, "),
+                        text("and no covariate or stratum: "),
+                        data(resolved.column),
+                    ],
+                )
+            )
+        elif given.variable.bins is not None:
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=pointer([*given.at, "bins"]),
+                    message=[
+                        text("bins divide a histogram, which survival.cox does not draw; "),
+                        text("summary.distribution draws one"),
+                    ],
+                )
+            )
     return found
 
 
@@ -1210,7 +1313,8 @@ def _canonical_params(
     for none) (§7.6, D325); a pack analysis's, each role's variables' forms, each bound
     endpoint's form by role where it binds any, and its options as written (D341, D352); a
     survival analysis's, its endpoint's form, its grid (``null`` for none), landmarks and level
-    (D348)."""
+    (D348); ``survival.cox``'s, its covariates' forms in order, its endpoint's form, its level
+    and its stratum's form (``null`` for none) (D366)."""
     if isinstance(params, SurvivalParams):
         [endpoint] = endpoints
         return {
@@ -1218,6 +1322,16 @@ def _canonical_params(
             "grid": None if params.grid is None else list[JsonValue](params.grid),
             "landmarks": list[JsonValue](params.landmarks or []),
             "level": params.level,
+        }
+    if isinstance(params, CoxParams):
+        [endpoint] = endpoints
+        stratified = params.stratum is not None
+        forms = [variable.form for variable in variables]
+        return {
+            "covariates": forms[: len(forms) - stratified],
+            "endpoint": endpoint.form,
+            "level": params.level,
+            "stratum": forms[-1] if stratified else None,
         }
     if isinstance(params, PackParams):
         by_role: dict[str, list[JsonValue]] = {}

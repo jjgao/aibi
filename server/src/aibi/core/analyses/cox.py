@@ -1,9 +1,29 @@
-"""``survival.cox``'s model of cohorts and covariates, as a function of each member's cells
-(SPEC §9.5; D362–D365).
+"""``survival.cox``: one Cox model of cohorts and covariates (SPEC §8.4, §9.1, §9.5; D362–D369).
 
-A view's positions each hand every member's cells (``Member``): its endpoint row or the reasons
-it has none (``survival.endpoint_cells``), and per covariate, then the stratum, its value or the
-reasons it has none (``engine.inputs``). ``model`` gives the analysis's values from them:
+A view names cohorts (the reference one of them), an endpoint (``params.endpoint`` or the one
+usable endpoint on the unit table, D347), covariates (``params.covariates``, variables of §9.2,
+one value per unit) and optionally a stratum (``params.stratum``), and gets one model: each other
+cohort's membership versus the reference and each covariate's columns, over left-truncated risk
+sets, stratified by the stratum's levels (D366).
+
+**Covariates** (D367). A covariate's coding is its variable's (``covariate_of``): a question
+(``some``, ``every``) or a boolean column is a boolean; a number, integer or time offset column, a
+``count`` or a ``mean``, and ``max`` or ``min`` of numbers, a number; a category column a category,
+in its permissible values' order where it is ordered and in canonical order otherwise, a string
+column a category in canonical order, and ``max`` or ``min`` of an ordered category a category in
+its order. Anything else is refused in phase 2 (``views``), and so is the stratum's.
+
+**The rows** (D368). Each member's cells are listed as a pack analysis's inputs are
+(``engine.inputs``, by SQL or the reference evaluator, in the order of §9.3): each covariate's
+value, the stratum's, then its endpoint row (``survival.endpoint_cells``). A unit's time or entry
+beyond ±(2^53 − 1) refuses the view, as ``survival.km``'s (``survival.TooLarge``), and so does a
+number covariate's value there among the complete cases (``TooLarge``), a category's level longer
+than ``MAX_TEXT`` (``LongLevel``) and a number covariate whose column the design's fit cannot scale
+(``Unscalable``).
+
+**The model** (D362–D365). A view's positions each hand every member's cells (``Member``): its
+endpoint row or the reasons it has none, and per covariate, then the stratum, its value or the
+reasons it has none. ``model`` gives the analysis's values from them:
 
 - **Complete cases** (D363): a member is analysed where it has an endpoint row and a value of
   every covariate and of the stratum; an excluded member counts under the union of its reasons.
@@ -26,22 +46,41 @@ reasons it has none (``engine.inputs``). ``model`` gives the analysis's values f
   ``not_converged``; a variance that is not positive; a value beyond 2^53 − 1 or that rounds to
   0 (``separation``, without a direction).
 
+**Caveats** (D369): the cohorts' (§8.3); ``UNKNOWN_EXCLUDED`` where a member is left out for a
+reason other than ``NOT_APPLICABLE`` or ``INVALID_VALUE``; ``INVALID_EXCLUDED`` where an endpoint
+row is invalid; the flags of the values read; ``COHORTS_OVERLAP``; ``SMALL_N`` where a cohort with
+complete cases has fewer than ``MIN_GROUP_N`` or fewer than ``MIN_EVENTS`` events among them, and
+where the complete cases' events are fewer than ``EVENTS_PER_TERM`` per term the fit estimated;
+``PH_VIOLATED`` where the test of proportional hazards gives p < ``PH_LEVEL``; and the view's static
+caveats.
+
+**Disclosure** (§8.4, D351, D353). ``survival.cox`` is a refused analysis: under any disclosure
+setting a view of it is refused (``WITHHELD_UNDER_K``, ``views.checked``), and applicability calls
+it ``unavailable`` there (``registry``). Without one, every count is shown.
+
 Every loop spends its work through ``timetoevent.Watch`` (D350).
 """
 
 import math
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from aibi.core.analyses import coxfit, coxph, ieee, survival, timetoevent
+from aibi.core.analyses.common import CohortAt, caveat, cohort_caveats, flag_caveats, populations
 from aibi.core.analyses.coxph import Unit
 from aibi.core.analyses.distribution import category_label
 from aibi.core.analyses.stats import z
+from aibi.core.engine.canonical import CanonicalVariable
+from aibi.core.engine.inputs import Listed
+from aibi.core.engine.readback import variable_readback
+from aibi.core.engine.resolve import ResolvedEndpoint, ResolvedVariable
+from aibi.core.engine.truth import Mark
 from aibi.core.engine.variables import Value
 from aibi.core.schema.analyses import (
     CovariateTest,
+    CoxParams,
     CoxPosition,
     CoxTerm,
     CoxValues,
@@ -49,19 +88,20 @@ from aibi.core.schema.analyses import (
     Direction,
     ModelTest,
 )
+from aibi.core.schema.caveats import Caveat, CaveatCode
+from aibi.core.schema.descriptors import AnalysisDescriptor
 from aibi.core.schema.digests import order_key
+from aibi.core.schema.export import params_schema, values_schema
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
-from aibi.core.schema.limits import MAX_VARIABLES
+from aibi.core.schema.jsonio import number_text
+from aibi.core.schema.limits import MAX_COHORTS, MAX_STRATA, MAX_TEXT, MAX_VARIABLES
 from aibi.core.schema.numbers import Interval, NotEstimableReason
-from aibi.core.schema.output import Data
-from aibi.core.schema.results import Analysed, AnalysedCounts
+from aibi.core.schema.output import Data, Segment, data, text
+from aibi.core.schema.results import Analysed, AnalysedCounts, Population
 from aibi.core.schema.semantics import ExclusionReason
 
 MAX_PARAMETERS = MAX_VARIABLES
 """The covariates' columns a model has at most, after coding (§9.5)."""
-
-MAX_STRATA = 100
-"""The stratum's levels a model has at most among its complete cases (D363)."""
 
 TEST = "grambsch_therneau"
 """The method of the test of proportional hazards, as the entry names it."""
@@ -95,6 +135,35 @@ class TooManyStrata(ValueError):  # noqa: N818 - raised like a limit's refusal
         self.count = count
 
 
+class TooLarge(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A number covariate, ``covariate`` its index, with a complete case's value beyond
+    ±(2^53 − 1) (D368): an integer beyond it has no exact double, and rounding would merge
+    values that coding and the columns tell apart."""
+
+    def __init__(self, covariate: int) -> None:
+        super().__init__(covariate)
+        self.covariate = covariate
+
+
+class LongLevel(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A category covariate, ``covariate`` its index, a level or baseline of which, shown as
+    data, is longer than ``MAX_TEXT`` characters (D368)."""
+
+    def __init__(self, covariate: int) -> None:
+        super().__init__(covariate)
+        self.covariate = covariate
+
+
+class Unscalable(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A number covariate, ``covariate`` its index, whose column the design's fit cannot scale:
+    its spread's scale, or that scale's square, is no double (``coxph.Separated.unscalable``,
+    D368). It is not constant, so no label would say what it is."""
+
+    def __init__(self, covariate: int) -> None:
+        super().__init__(covariate)
+        self.covariate = covariate
+
+
 @dataclass(frozen=True)
 class Covariate:
     """How a covariate codes (D363): a number, a boolean, or a category, whose ``order`` is its
@@ -119,7 +188,7 @@ class Member:
 
 
 @dataclass(frozen=True)
-class Outcome:
+class Model:
     """The model's ``analysed`` per position (complete cases) and its values."""
 
     analysed: list[Analysed]
@@ -193,6 +262,23 @@ def _analysed(
 
 def _known(values: Sequence[Value | None]) -> list[Value]:
     return [value for value in values if value is not None]
+
+
+def _in_range(
+    covariates: Sequence[Covariate], complete: Sequence[Member], watch: timetoevent.Watch
+) -> None:
+    """Raise ``TooLarge`` for a number covariate with a complete case's value beyond
+    ±(2^53 − 1) (D368), each covariate's pass spending a unit a complete case."""
+    for j, covariate in enumerate(covariates):
+        if covariate.kind != "number":
+            continue
+        watch.spend(len(complete))
+        if any(
+            abs(value) > MAX_SAFE_INTEGER
+            for member in complete
+            if (value := member.values[j]) is not None and not isinstance(value, bool | str)
+        ):
+            raise TooLarge(j)
 
 
 def _coded(
@@ -352,7 +438,7 @@ def model(
     overlap: bool,
     level: float,
     ends: float | None = None,
-) -> Outcome:
+) -> Model:
     """``survival.cox``'s values over the positions' members (module docstring): ``overlap``
     where cohorts share units a view allows, the positions' complete cases pooled for the
     coding, the reference ``reference``, intervals at ``level``, the call's deadline ``ends``
@@ -382,7 +468,14 @@ def model(
         sum(1 for member in complete if member.endpoint and member.endpoint[2])
         for complete in cases
     ]
+    _in_range(covariates, pooled, watch)
     coding = [_coded(covariate, j, pooled, watch) for j, covariate in enumerate(covariates)]
+    for j, coded in enumerate(coding):
+        shown = () if coded.constant or coded.baseline is None else (*coded.levels, coded.baseline)
+        if covariates[j].kind == "category" and any(
+            len(category_label(value)) > MAX_TEXT for value in shown
+        ):
+            raise LongLevel(j)
     parameters = sum(coded.width for coded in coding)
     if parameters > MAX_PARAMETERS:
         raise TooManyParameters(parameters)
@@ -443,7 +536,7 @@ def model(
         view = CoxView(
             terms=terms, covariate_tests=tests, proportional_hazards=_not_computed(whole_reason)
         )
-        return Outcome(analysed, CoxValues(positions=positions_values, view=view))
+        return Model(analysed, CoxValues(positions=positions_values, view=view))
     covariate_columns = sum(
         1 for plan in plans if plan.kind == "covariate" and plan.column is not None
     )
@@ -451,7 +544,7 @@ def model(
         view = _cohorts(cases, plans, reference, level, ends)
     else:
         view = _design(cases, plans, covariates, coding, strata, reference, level, watch)
-    return Outcome(analysed, CoxValues(positions=positions_values, view=view))
+    return Model(analysed, CoxValues(positions=positions_values, view=view))
 
 
 def _rows(complete: Sequence[Member]) -> survival.Rows:
@@ -558,6 +651,11 @@ def _design(
             stratum = strata[last] if strata and last is not None else 0
             units.append(Unit(stratum, entry, time, event, tuple(columns)))
     found = coxph.separated(units, watch, counting=counting)
+    for plan in plans:
+        if plan.column is not None and plan.column in found.unscalable:
+            assert plan.kind == "covariate", "a cohort's indicator is 0 or 1"
+            assert covariates[plan.index].kind == "number", "a coded column is 0 or 1"
+            raise Unscalable(plan.index)
     terms: list[CoxTerm] = []
     for plan in plans:
         if plan.reason is not None or plan.column is None:
@@ -587,7 +685,7 @@ def _design(
                 )
             )
             continue
-        if j in found.unidentified or j in found.unscalable or j not in found.estimated:
+        if j in found.unidentified or j not in found.estimated:
             terms.append(
                 _term(plan.kind, plan.index, plan.level, plan.baseline, level, _ZERO_VARIANCE)
             )
@@ -668,13 +766,381 @@ def _model_test(
     )
 
 
+# --- The analysis (D366–D369) -------------------------------------------------------------------
+
+ANALYSIS_ID = "survival.cox"
+VERSION = "1.0.0"
+"""Bumped whenever its outputs for the same inputs change (§7.6)."""
+MIN_GROUP_N = survival.MIN_GROUP_N
+MIN_EVENTS = survival.MIN_EVENTS
+EVENTS_PER_TERM = survival.EVENTS_PER_TERM
+"""Below this many events per term the fit estimated, the terms carry ``SMALL_N`` (§8.3)."""
+PH_LEVEL = survival.PH_LEVEL
+"""Below this p-value of the test of proportional hazards, the result carries ``PH_VIOLATED``."""
+CONE = "recession_cone"
+"""The method that decides separation and identification (D360)."""
+METHODS: Mapping[str, str] = {
+    WALD: 'The Cox model, coxph(ties = "efron"), of each other cohort\'s membership versus the '
+    "reference and the covariates' columns over left-truncated risk sets, stratified by the "
+    "stratum's levels, fitted as R fits it; each term's hazard ratio with its Wald interval and "
+    "Wald p-value as summary.coxph gives them, and the joint Wald test of each covariate of two "
+    "or more columns, implemented directly",
+    CONE: "Separation and identification decided exactly from the risk sets, by the "
+    "likelihood's recession cone in integers, not by R's flags after fitting; the finite part "
+    "fitted with the separated columns fixed at 0",
+    TEST: "The global test of proportional hazards of the terms the fit estimated, as R's "
+    'cox.zph(transform = "km"), implemented directly',
+}
+CAVEATS = survival.CAVEATS
+ENTRY = AnalysisDescriptor.model_validate(
+    {
+        "kind": "analysis",
+        "id": ANALYSIS_ID,
+        "version": VERSION,
+        "label": "Cox proportional hazards model",
+        "definition": (
+            "One Cox model over left-truncated risk sets, Efron ties: each other cohort's "
+            "membership versus the reference and each covariate (numbers as they are, booleans "
+            "1 against 0, categories one term per level against the most common one among those "
+            "with an event), optionally stratified; complete cases only; hazard ratios with "
+            "Wald intervals and p-values, each covariate's joint Wald test, and the test of "
+            "proportional hazards."
+        ),
+        "fields": {
+            "requires": [
+                {"role": "endpoint", "kind": "endpoint", "on": "unit"},
+                {"role": "cohorts", "min": 1, "max": MAX_COHORTS},
+            ],
+            "params": params_schema(CoxParams),
+            "returns": values_schema(CoxValues),
+            "methods": dict(METHODS),
+            "assumptions": [
+                "proportional hazards",
+                "log-linear effects of numbers",
+                "independent censoring",
+                "independent groups",
+            ],
+            "uses_reference": True,
+            "assumes_independent_groups": True,
+            "cross_dataset": None,
+            "caveats": [code.value for code in CAVEATS],
+            "min_group_n": MIN_GROUP_N,
+            "min_events": MIN_EVENTS,
+        },
+    }
+)
+"""The registry entry (§9.1): implemented directly, with no library."""
+
+_NUMBERS = frozenset({"number", "integer", "time_offset"})
+TAKEN = ("category", "boolean", "string", "number", "integer", "time_offset")
+"""The datatypes of the columns a covariate or the stratum reads as it is (D367)."""
+
+
+def covariate_of(variable: ResolvedVariable) -> Covariate | None:
+    """A covariate's coding by its variable (D367, module docstring); ``None`` for one that is
+    none of them, which phase 2 refuses."""
+    if variable.kind == "question":
+        return Covariate("boolean")
+    if variable.kind == "aggregate":
+        if variable.function != "count" and variable.order is not None:
+            return Covariate("category", tuple(variable.order))
+        assert variable.function == "count" or variable.datatype in _NUMBERS, (
+            "resolution takes a mean, max or min of numbers or of an ordered category alone"
+        )
+        return Covariate("number")
+    if variable.datatype == "boolean":
+        return Covariate("boolean")
+    if variable.datatype in _NUMBERS:
+        return Covariate("number")
+    if variable.datatype == "string":
+        return Covariate("category")
+    if variable.datatype != "category":
+        return None
+    table, _, name = variable.column.partition(".")
+    descriptor = variable.release.column(table, name)
+    allowed = None if descriptor is None else descriptor.fields.permissible_values
+    if allowed is None or not allowed.ordered:
+        return Covariate("category")
+    return Covariate("category", tuple(entry.value for entry in allowed.values))
+
+
+def members_of(
+    endpoint: ResolvedEndpoint, listed: Listed, width: int, ends: float | None = None
+) -> list[Member]:
+    """A position's members' cells from a listing of its ``width`` variables (the covariates,
+    then the stratum) and then its endpoint's columns (D368); the call's deadline ``ends``
+    watched, each member spending a unit a cell."""
+    cells = survival.endpoint_cells(endpoint, listed, width, ends)
+    watch = timetoevent.Watch(ends)
+    found: list[Member] = []
+    for member in range(listed.members):
+        watch.spend(1 + width)
+        found.append(
+            Member(
+                cells.subjects[member],
+                cells.reasons[member],
+                tuple(listed.values[j][member] for j in range(width)),
+                tuple(listed.excluded[j][member] for j in range(width)),
+            )
+        )
+    return found
+
+
+def _within(positions: Sequence[Sequence[Member]], watch: timetoevent.Watch) -> None:
+    """Raise ``survival.TooLarge`` for a unit's time or entry beyond ±(2^53 − 1), as
+    ``survival.km`` does (D348, D368); an entry at the origin is none."""
+    for members in positions:
+        for member in members:
+            watch.spend()
+            if member.endpoint is None:
+                continue
+            entry, when, _ = member.endpoint
+            if abs(when) > MAX_SAFE_INTEGER or (
+                entry != timetoevent.ORIGIN and abs(entry) > MAX_SAFE_INTEGER
+            ):
+                raise survival.TooLarge
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """A view's digested parts, before its digest is taken, and its caveats."""
+
+    population: list[Population]
+    analysed: list[Analysed]
+    values: CoxValues
+    caveats: list[Caveat]
+
+
+def analyse(
+    positions: Sequence[CohortAt],
+    listed: Sequence[Listed],
+    endpoint: ResolvedEndpoint,
+    covariates: Sequence[Covariate],
+    params: CoxParams,
+    *,
+    reference: int,
+    overlap: bool,
+    ends: float | None = None,
+) -> Outcome:
+    """``survival.cox`` over a view's cohorts (module docstring), from each position's listing
+    in the order of §9.3 (``members_of``); ``overlap`` says that the view allows overlap and its
+    cohorts share units. Raises ``survival.TooLarge``, ``TooLarge``, ``LongLevel``,
+    ``Unscalable``, ``TooManyParameters``, ``TooManyStrata``, and ``CallerDeadline`` once
+    ``time.monotonic()`` has passed ``ends`` (``timetoevent.Watch``, D350)."""
+    if len(listed) != len(positions):
+        raise ValueError("a listing per position")
+    width = len(covariates) + (params.stratum is not None)
+    watch = timetoevent.Watch(ends)
+    members = [members_of(endpoint, one, width, ends) for one in listed]
+    _within(members, watch)
+    watch.look()
+    found = model(
+        members,
+        covariates,
+        stratified=params.stratum is not None,
+        reference=reference,
+        overlap=overlap,
+        level=params.level,
+        ends=ends,
+    )
+    population = populations(positions, None)
+    marks = [mark for one in listed for flags in one.marks for mark in flags]
+    caveats = _caveats(positions, population, found, marks, overlap)
+    return Outcome(population, found.analysed, found.values, caveats)
+
+
+def _estimated(term: CoxTerm) -> bool:
+    """Whether the fit estimated a term: its ratio is shown, or lies beyond range (D364)."""
+    reason = term.reasons().get("/estimate")
+    return term.estimate is not None or (reason is _SEPARATION and term.direction is None)
+
+
+def _caveats(
+    positions: Sequence[CohortAt],
+    population: Sequence[Population],
+    found: Model,
+    marks: Sequence[Mark],
+    overlap: bool,
+) -> list[Caveat]:
+    """The caveats that the view's data raise (module docstring); the static ones are the
+    view's."""
+    unknown = any(
+        count
+        for one in found.analysed
+        for reason, count in (one.excluded or {}).items()
+        if reason not in (ExclusionReason.NOT_APPLICABLE, ExclusionReason.INVALID_VALUE)
+    )
+    caveats = cohort_caveats(positions, population, None, values_unknown=unknown)
+    caveats += flag_caveats(marks, "/values")
+    if any(
+        (position.variables[-1].excluded or {}).get(ExclusionReason.INVALID_VALUE)
+        for position in found.values.positions
+    ):
+        caveats.append(
+            caveat(
+                CaveatCode.INVALID_EXCLUDED,
+                ["/analysed"],
+                text(
+                    "Units whose status is not in the endpoint's event coding, whose time is "
+                    "negative, or whose entry is at or after their time are left out as "
+                    "INVALID_VALUE (§5.8)"
+                ),
+            )
+        )
+    if overlap:
+        caveats.append(
+            caveat(
+                CaveatCode.COHORTS_OVERLAP,
+                ["/values"],
+                text(
+                    "Cohorts of the view share units, so no value of the model was computed; "
+                    "compare a subset with the rest of its base instead (§7.4)"
+                ),
+            )
+        )
+    small = [
+        f"/values/positions/{position}"
+        for position, (one, at) in enumerate(
+            zip(found.analysed, found.values.positions, strict=True)
+        )
+        if one.n and (one.n < MIN_GROUP_N or at.events < MIN_EVENTS)
+    ]
+    if small:
+        caveats.append(
+            caveat(
+                CaveatCode.SMALL_N,
+                small,
+                text(
+                    f"A cohort has fewer than {MIN_GROUP_N} complete cases or fewer than "
+                    f"{MIN_EVENTS} events among them"
+                ),
+            )
+        )
+    view = found.values.view
+    estimated = sum(_estimated(term) for term in view.terms)
+    events = sum(position.events for position in found.values.positions)
+    if estimated and events < EVENTS_PER_TERM * estimated:
+        caveats.append(
+            caveat(
+                CaveatCode.SMALL_N,
+                ["/values/view/terms"],
+                text(f"The model has fewer than {EVENTS_PER_TERM} events per term it estimated"),
+            )
+        )
+    tested = view.proportional_hazards
+    if tested.p is not None and tested.p < PH_LEVEL:
+        caveats.append(
+            caveat(
+                CaveatCode.PH_VIOLATED,
+                ["/values/view/terms", "/values/view/proportional_hazards"],
+                text(
+                    f"The test of proportional hazards gives p < {number_text(PH_LEVEL)}: each "
+                    "hazard ratio is an average over time"
+                ),
+            )
+        )
+    return caveats
+
+
+# --- Readback ---------------------------------------------------------------------------------
+
+
+def _coding_readback(variable: CanonicalVariable, covariate: Covariate) -> list[Segment]:
+    """How a covariate enters the model (D367), as its readback says it."""
+    if covariate.kind == "boolean":
+        return [text("1 for true against 0 for false")]
+    if covariate.kind == "category":
+        found: list[Segment] = [
+            text("one term per level against the most common level among those with an "),
+            text("event"),
+        ]
+        if covariate.order is not None:
+            found.append(text(", its levels in their declared order"))
+        return found
+    resolved = variable.resolved
+    if resolved.function == "count":
+        return [text("a number, its hazard ratio per row more")]
+    table, _, name = resolved.column.partition(".")
+    descriptor = resolved.release.column(table, name)
+    units = None if descriptor is None else descriptor.fields.units
+    if units is None:
+        return [text("a number, its hazard ratio per 1 more")]
+    return [text("a number, its hazard ratio per 1 more, in "), data(units)]
+
+
+def view_readback(
+    cohorts: int,
+    reference: int,
+    endpoint: ResolvedEndpoint,
+    variables: Sequence[CanonicalVariable],
+    params: CoxParams,
+) -> list[Segment]:
+    """The view's readback (§7.7): a function of its canonical form and the release's
+    descriptors, cohorts named by position; ``variables`` are the covariates, then the stratum
+    where the view has one."""
+    stratified = params.stratum is not None
+    covariates = variables[: len(params.covariates)]
+    found: list[Segment] = [
+        text("A Cox proportional hazards model, Efron ties, of the endpoint "),
+        *survival.endpoint_readback(endpoint),
+    ]
+    if cohorts > 1:
+        found.append(
+            text(
+                f"; its terms: each other cohort's membership, of the {cohorts} in view order, "
+                f"versus the reference, the cohort at position {reference}"
+            )
+        )
+    for index, variable in enumerate(covariates):
+        coded = covariate_of(variable.resolved)
+        assert coded is not None, "phase 2 refuses a covariate of no coding"
+        found += [text(f"; covariate {index} ("), *_coding_readback(variable, coded)]
+        found += [text("): "), *variable_readback(variable)]
+    if stratified:
+        found += [text("; stratified by the levels of "), *variable_readback(variables[-1])]
+    found += [
+        text("; Wald intervals at "),
+        data(number_text(params.level)),
+        text(", each term's Wald p-value, the joint Wald test of each covariate of two or more "),
+        text("columns, and the Grambsch–Therneau test of proportional hazards of the terms the "),
+        text("fit estimated."),
+        text(
+            " Complete cases only: a unit without a valid endpoint row or without a value of "
+            "every covariate and of the stratum is left out and counted by reason; one whose "
+            "status is not coded, whose time is negative or whose entry is at or after its time "
+            "is left out as INVALID_VALUE."
+        ),
+    ]
+    return found
+
+
 __all__ = [
+    "ANALYSIS_ID",
+    "CAVEATS",
+    "CONE",
+    "ENTRY",
+    "EVENTS_PER_TERM",
     "MAX_PARAMETERS",
-    "MAX_STRATA",
+    "METHODS",
+    "MIN_EVENTS",
+    "MIN_GROUP_N",
+    "PH_LEVEL",
+    "TAKEN",
+    "TEST",
+    "VERSION",
+    "WALD",
     "Covariate",
+    "LongLevel",
     "Member",
+    "Model",
     "Outcome",
+    "TooLarge",
     "TooManyParameters",
     "TooManyStrata",
+    "Unscalable",
+    "analyse",
+    "covariate_of",
+    "members_of",
     "model",
+    "view_readback",
 ]

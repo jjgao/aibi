@@ -859,3 +859,64 @@ def test_a_survival_view_s_times_are_erased_as_constants_on_its_endpoint_s_time(
     assert holds(hashed("loans.days", [], [1, 3.0]), "sha256:x", terms)
     assert not holds(hashed("loans.days", [2, 5], [72]), "sha256:x", terms)
     assert not holds(hashed("visits.seq", [3], [2]), "sha256:x", terms)
+
+
+def test_a_cox_view_s_covariates_and_stratum_are_erased_as_a_view_s_variables_are() -> None:
+    """``survival.cox``'s covariates and stratum are variables (D366): as written and canonical,
+    their ``values`` and ``empty`` are constants on their columns and their ``where`` a clause;
+    its endpoint and level stay."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    where: JsonValue = [{"kind": "value", "column": "loans.loan_id", "values": [2]}]
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "cohorts": {"a": {"all": []}, "b": {"all": []}},
+        "views": [
+            {
+                "analysis": "survival.cox",
+                "cohorts": ["a", "b"],
+                "params": {
+                    "endpoint": "ep:returned",
+                    "covariates": [
+                        {"column": "loans.loan_id", "aggregate": "some", "values": [2, 17]},
+                        {"column": "loans.days", "aggregate": "max", "empty": 3},
+                        {"column": "loans.days", "aggregate": "count", "where": where},
+                    ],
+                    "stratum": {"column": "loans.loan_id", "aggregate": "every", "values": [2]},
+                    "level": 0.9,
+                },
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    params = found["views"][0]["params"]
+    some, most, counted = params["covariates"]
+    assert some["values"] == [MARK, 17]
+    assert most["empty"] == MARK
+    assert counted["where"][0]["values"] == [MARK]
+    assert params["stratum"]["values"] == [MARK]
+    assert (params["endpoint"], params["level"]) == ("ep:returned", 0.9)
+
+    def hashed(covariates: list[JsonValue], stratum: JsonValue) -> JsonValue:
+        return {
+            "view": {
+                "analysis": {"id": "survival.cox", "version": "1.0.0"},
+                "params": {
+                    "covariates": covariates,
+                    "endpoint": {"id": "ep:returned", "time": "loans.days"},
+                    "level": 0.9,
+                    "stratum": stratum,
+                },
+            }
+        }
+
+    rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}
+    named: JsonValue = {"aggregate": "max", "column": "loans.days", "rows": rows, "empty": 3}
+    other: JsonValue = {"aggregate": "max", "column": "loans.days", "rows": rows, "empty": 5}
+    holds = redaction._object_holds  # pyright: ignore[reportPrivateUsage]
+    assert holds(hashed([named], None), "sha256:x", terms)
+    assert holds(hashed([], named), "sha256:x", terms)
+    assert holds(hashed([other, named], other), "sha256:x", terms)
+    assert not holds(hashed([other], other), "sha256:x", terms)
+    assert not holds(hashed([{"column": "loans.days"}], None), "sha256:x", terms)

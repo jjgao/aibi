@@ -985,10 +985,15 @@ SURVIVAL_TIMES = ("grid", "landmarks")
 (D348)."""
 
 
+SURVIVAL_VARIABLES = ("covariates", "stratum")
+"""The members of a survival view's parameters that hold variables (``survival.cox``'s, D366)."""
+
+
 def _survival_holds(params: Mapping[str, JsonValue], terms: Terms) -> bool:
     """Whether a survival view's canonical parameters hold a term: its times as constants on its
     endpoint's time column, which its canonical ``endpoint`` names (``{"id", "time"}``), as a
-    variable's ``bins`` are on its column (D325, D348). The rest, its endpoint's id and time
+    variable's ``bins`` are on its column (D325, D348), and its covariates and stratum as a
+    view's variables hold them (``_params_hold``, D366). The rest, its endpoint's id and time
     column and its level, are the derivation's structure and settings, never a person's data."""
     endpoint = params.get("endpoint")
     column = endpoint.get("time") if isinstance(endpoint, dict) else None
@@ -996,6 +1001,9 @@ def _survival_holds(params: Mapping[str, JsonValue], terms: Terms) -> bool:
     return any(
         isinstance(given, list) and any(terms.in_constant(time, place) for time in given)
         for given in (params.get(key) for key in SURVIVAL_TIMES)
+    ) or any(
+        given is not None and _params_hold(given, terms)
+        for given in (params.get(key) for key in SURVIVAL_VARIABLES)
     )
 
 

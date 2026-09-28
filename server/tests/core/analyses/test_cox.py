@@ -361,7 +361,7 @@ def test_the_model_stops_at_the_call_s_deadline() -> None:
         )
 
 
-def run(positions: list[list[Member]], covariates: list[Covariate], **given: Any) -> cox.Outcome:
+def run(positions: list[list[Member]], covariates: list[Covariate], **given: Any) -> cox.Model:
     options: dict[str, Any] = {"stratified": False, "reference": 0, "overlap": False, "level": 0.95}
     options.update(given)
     return cox.model(positions, covariates, **options)

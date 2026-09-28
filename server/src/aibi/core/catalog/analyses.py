@@ -44,7 +44,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, members, packs, survival
+from aibi.core.analyses import columns, cox, distribution, members, packs, survival
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.registry import withheld
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
@@ -73,6 +73,7 @@ from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
 from aibi.core.schema.analyses import (
     ColumnsParams,
+    CoxParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
@@ -83,16 +84,21 @@ from aibi.core.schema.cohorts import AnalysisResults, RunAnalysis
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import (
     CATEGORIES,
+    COX_PARAMETERS,
     CURVE_STEPS,
     INPUT_CELLS,
     LISTED_MEMBERS,
     MAX_CATEGORIES,
     MAX_CURVE_STEPS,
+    MAX_STRATA,
+    MAX_TEXT,
     QUERY_ANSWER_BYTES,
     QUERY_MEMORY,
     QUERY_SECONDS,
+    STRATA,
     TEXT_CHARACTERS,
 )
+from aibi.core.schema.loading import refusal_as_written
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 from aibi.core.schema.results import CohortCount
@@ -241,7 +247,7 @@ def _widest(views: Sequence[CheckedView]) -> CheckedView:
     listing = [
         view
         for view in views
-        if isinstance(view.params, MembersParams | PackParams | SurvivalParams)
+        if isinstance(view.params, MembersParams | PackParams | SurvivalParams | CoxParams)
     ]
     if listing:
         return listing[0]
@@ -344,249 +350,282 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             raise ToolRefused(refusals[:1])
         document = found.loaded.document
         if not document.views:
-            raise ToolRefused(
-                [
-                    Refusal(
-                        code=RefusalCode.MISSING_MEMBER,
-                        path="/views",
-                        message=[
-                            text("run_analysis runs a document's views, and it has none; "),
-                            text("count_cohort counts its cohorts"),
-                        ],
-                    )
-                ]
+            none = Refusal(
+                code=RefusalCode.MISSING_MEMBER,
+                path="/views",
+                message=[
+                    text("run_analysis runs a document's views, and it has none; "),
+                    text("count_cohort counts its cohorts"),
+                ],
             )
-        views = found.views
-        for view in views:
-            if withheld(view.analysis, view.disclosure):
-                raise ValueError("a view refused for disclosure is never run (§8.4, D353)")
-        cohorts: dict[str, CanonicalCohort] = {}
-        for view in views:
-            for cohort in view.cohorts:
-                cohorts.setdefault(cohort.computation_id, cohort)
-        crossings: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
-        asked: list[tuple[list[ResolvedCohort], list[ResolvedCohort]]] = []
-        materialisations: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
-        read: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
-        shared_asked: list[bool] = []
-        listings: dict[str, int] = {}
-        listed: list[ResolvedCohort] = []
-        handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
-        inputs: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
-        for view in views:
-            if isinstance(view.params, PackParams | SurvivalParams):
-                key = _inputs_key(view)
-                if key not in handed:
-                    handed[key] = len(inputs)
-                    inputs.append(
-                        ([cohort.resolved for cohort in view.cohorts], _listed_variables(view))
+            raise ToolRefused([refusal_as_written(none, found.loaded.positions)])
+        try:
+            views = found.views
+            for view in views:
+                if withheld(view.analysis, view.disclosure):
+                    raise ValueError("a view refused for disclosure is never run (§8.4, D353)")
+            cohorts: dict[str, CanonicalCohort] = {}
+            for view in views:
+                for cohort in view.cohorts:
+                    cohorts.setdefault(cohort.computation_id, cohort)
+            crossings: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
+            asked: list[tuple[list[ResolvedCohort], list[ResolvedCohort]]] = []
+            materialisations: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
+            read: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
+            shared_asked: list[bool] = []
+            listings: dict[str, int] = {}
+            listed: list[ResolvedCohort] = []
+            handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
+            inputs: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
+            for view in views:
+                if isinstance(view.params, PackParams | SurvivalParams | CoxParams):
+                    key = _inputs_key(view)
+                    if key not in handed:
+                        handed[key] = len(inputs)
+                        inputs.append(
+                            ([cohort.resolved for cohort in view.cohorts], _listed_variables(view))
+                        )
+                    continue
+                if isinstance(view.params, MembersParams):
+                    [cohort] = view.cohorts
+                    if cohort.computation_id not in listings:
+                        listings[cohort.computation_id] = len(listed)
+                        listed.append(cohort.resolved)
+                    continue
+                members_of = [cohort.resolved for cohort in view.cohorts]
+                if view.variables:
+                    key = _materialisation_key(view)
+                    if key not in materialisations:
+                        materialisations[key] = len(read)
+                        read.append((members_of, _distinct(view)))
+                        shared_asked.append(False)
+                    shared_asked[materialisations[key]] |= _counts_shared(view)
+                    continue
+                key = _crossing_key(view)
+                if key not in crossings:
+                    crossings[key] = len(asked)
+                    asked.append(
+                        (members_of, [predicate.resolved for predicate in view.predicates])
                     )
-                continue
-            if isinstance(view.params, MembersParams):
-                [cohort] = view.cohorts
-                if cohort.computation_id not in listings:
-                    listings[cohort.computation_id] = len(listed)
-                    listed.append(cohort.resolved)
-                continue
-            members_of = [cohort.resolved for cohort in view.cohorts]
-            if view.variables:
-                key = _materialisation_key(view)
-                if key not in materialisations:
-                    materialisations[key] = len(read)
-                    read.append((members_of, _distinct(view)))
-                    shared_asked.append(False)
-                shared_asked[materialisations[key]] |= _counts_shared(view)
-                continue
-            key = _crossing_key(view)
-            if key not in crossings:
-                crossings[key] = len(asked)
-                asked.append((members_of, [predicate.resolved for predicate in view.predicates]))
-        manifests = sorted({cohort.release.manifest for cohort in cohorts.values()})
-        sources = {manifest: store.sources(manifest) for manifest in manifests}
-        ran_views = _run(
-            [cohort.resolved for cohort in cohorts.values()],
-            asked,
-            read,
-            sources,
-            workers,
-            deadline,
-            _widest(views),
-            listed,
-            shared_asked,
-            inputs,
-            _first_readers(views, handed),
-        )
-        by_id = dict(zip(cohorts, ran_views.counted, strict=True))
-        written = dict(request.document)
-        params = dict(found.loaded.params_used)
-        outcomes: list[Outcome] = []
-        issues: list[Issue] = []
-        in_order: dict[int, list[Listed]] = {}
-        for view in views:
-            positions = [
-                CohortAt(cohort, by_id[cohort.computation_id].accounting) for cohort in view.cohorts
-            ]
-            used = [by_id[cohort.computation_id] for cohort in view.cohorts]
-            queries: list[JsonValue] = [
-                {"statements": list(run.sql), "parameters": dict(run.parameters)} for run in used
-            ]
-            if isinstance(view.params, MembersParams):
-                [position] = positions
-                run_listed = ran_views.listed[listings[position.cohort.computation_id]]
-                outcomes.append(_listed(view, position, run_listed.keys, deadline))
-                queries.append(
-                    {"statements": list(run_listed.sql), "parameters": dict(run_listed.parameters)}
-                )
-                issues.append(_result_issue(view, {"queries": queries}, written, params))
-                continue
-            if isinstance(view.params, SurvivalParams):
-                given = ran_views.inputs[handed[_inputs_key(view)]]
-                outcomes.append(
-                    _survived(
-                        catalog,
-                        view,
-                        positions,
-                        given.listed,
-                        sources,
-                        workers,
-                        deadline,
-                        erasures,
-                        written,
-                        params,
+            manifests = sorted({cohort.release.manifest for cohort in cohorts.values()})
+            sources = {manifest: store.sources(manifest) for manifest in manifests}
+            ran_views = _run(
+                [cohort.resolved for cohort in cohorts.values()],
+                asked,
+                read,
+                sources,
+                workers,
+                deadline,
+                _widest(views),
+                listed,
+                shared_asked,
+                inputs,
+                _first_readers(views, handed),
+            )
+            by_id = dict(zip(cohorts, ran_views.counted, strict=True))
+            written = dict(request.document)
+            params = dict(found.loaded.params_used)
+            outcomes: list[Outcome] = []
+            issues: list[Issue] = []
+            in_order: dict[int, list[Listed]] = {}
+            for view in views:
+                positions = [
+                    CohortAt(cohort, by_id[cohort.computation_id].accounting)
+                    for cohort in view.cohorts
+                ]
+                used = [by_id[cohort.computation_id] for cohort in view.cohorts]
+                queries: list[JsonValue] = [
+                    {"statements": list(run.sql), "parameters": dict(run.parameters)}
+                    for run in used
+                ]
+                if isinstance(view.params, MembersParams):
+                    [position] = positions
+                    run_listed = ran_views.listed[listings[position.cohort.computation_id]]
+                    outcomes.append(_listed(view, position, run_listed.keys, deadline))
+                    queries.append(
+                        {
+                            "statements": list(run_listed.sql),
+                            "parameters": dict(run_listed.parameters),
+                        }
                     )
-                )
-                queries.append(
-                    {"statements": list(given.sql), "parameters": dict(given.parameters)}
-                )
-                issues.append(_result_issue(view, {"queries": queries}, written, params))
-                continue
-            if isinstance(view.params, PackParams):
-                at = handed[_inputs_key(view)]
-                given = ran_views.inputs[at]
-                if at not in in_order:
-                    in_order[at] = _in_order(given.listed, deadline)
-                outcomes.append(
-                    _packed(
-                        catalog,
-                        view,
-                        positions,
-                        in_order[at],
-                        sources,
-                        workers,
-                        deadline,
-                        erasures,
-                        written,
-                        params,
-                    )
-                )
-                queries.append(
-                    {"statements": list(given.sql), "parameters": dict(given.parameters)}
-                )
-                issues.append(_result_issue(view, {"queries": queries}, written, params))
-                continue
-            if isinstance(view.params, DistributionParams):
-                made = ran_views.materialised[materialisations[_materialisation_key(view)]]
-                try:
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                if isinstance(view.params, SurvivalParams):
+                    given = ran_views.inputs[handed[_inputs_key(view)]]
                     outcomes.append(
-                        distribution.summarise(
+                        _survived(
+                            catalog,
+                            view,
                             positions,
-                            view.variables,
-                            _expanded(view, made.materialised),
-                            view.params,
-                            k=view.disclosure,
-                            ends=None if deadline is None else deadline.at - RECORD_SECONDS,
+                            given.listed,
+                            sources,
+                            workers,
+                            deadline,
+                            erasures,
+                            written,
+                            params,
                         )
                     )
-                except CallerDeadline:
-                    raise late(cast(Deadline, deadline)) from None
-                except distribution.TooManyCategories as many:
-                    raise _too_many(view, many.column) from None
-                except distribution.TooLarge as large:
-                    raise _too_large(view, large.column) from None
-                own = made.sql[:-1] if made.shared else made.sql
-                queries.append({"statements": list(own), "parameters": dict(made.parameters)})
-                issues.append(_result_issue(view, {"queries": queries}, written, params))
-                continue
-            if isinstance(view.params, ColumnsParams):
-                made = ran_views.materialised[materialisations[_materialisation_key(view)]]
-                together = [
-                    pair
-                    for pair, count in zip(pairs(len(view.cohorts)), made.shared, strict=True)
-                    if count
-                ]
-                if together and not view.overlap:
+                    queries.append(
+                        {"statements": list(given.sql), "parameters": dict(given.parameters)}
+                    )
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                if isinstance(view.params, CoxParams):
+                    given = ran_views.inputs[handed[_inputs_key(view)]]
+                    outcomes.append(
+                        _coxed(
+                            catalog,
+                            view,
+                            positions,
+                            given.listed,
+                            sources,
+                            workers,
+                            deadline,
+                            erasures,
+                            written,
+                            params,
+                        )
+                    )
+                    queries.append(
+                        {"statements": list(given.sql), "parameters": dict(given.parameters)}
+                    )
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                if isinstance(view.params, PackParams):
+                    at = handed[_inputs_key(view)]
+                    given = ran_views.inputs[at]
+                    if at not in in_order:
+                        in_order[at] = _in_order(given.listed, deadline)
+                    outcomes.append(
+                        _packed(
+                            catalog,
+                            view,
+                            positions,
+                            in_order[at],
+                            sources,
+                            workers,
+                            deadline,
+                            erasures,
+                            written,
+                            params,
+                        )
+                    )
+                    queries.append(
+                        {"statements": list(given.sql), "parameters": dict(given.parameters)}
+                    )
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                if isinstance(view.params, DistributionParams):
+                    made = ran_views.materialised[materialisations[_materialisation_key(view)]]
+                    try:
+                        outcomes.append(
+                            distribution.summarise(
+                                positions,
+                                view.variables,
+                                _expanded(view, made.materialised),
+                                view.params,
+                                k=view.disclosure,
+                                ends=None if deadline is None else deadline.at - RECORD_SECONDS,
+                            )
+                        )
+                    except CallerDeadline:
+                        raise late(cast(Deadline, deadline)) from None
+                    except distribution.TooManyCategories as many:
+                        raise _too_many(view, many.column) from None
+                    except distribution.TooLarge as large:
+                        raise _too_large(view, large.column) from None
+                    own = made.sql[:-1] if made.shared else made.sql
+                    queries.append({"statements": list(own), "parameters": dict(made.parameters)})
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                if isinstance(view.params, ColumnsParams):
+                    made = ran_views.materialised[materialisations[_materialisation_key(view)]]
+                    together = [
+                        pair
+                        for pair, count in zip(pairs(len(view.cohorts)), made.shared, strict=True)
+                        if count
+                    ]
+                    if together and not view.overlap:
+                        _overlap(
+                            catalog,
+                            view,
+                            together,
+                            sources,
+                            workers,
+                            deadline,
+                            erasures,
+                            written,
+                            params,
+                        )
+                    try:
+                        outcomes.append(
+                            columns.compare_columns(
+                                positions,
+                                view.variables,
+                                _expanded(view, made.materialised),
+                                view.params,
+                                reference=view.reference,
+                                overlap=bool(together),
+                                k=view.disclosure,
+                                computation=view.identity.computation_id,
+                                ends=None if deadline is None else deadline.at - RECORD_SECONDS,
+                            )
+                        )
+                    except CallerDeadline:
+                        raise late(cast(Deadline, deadline)) from None
+                    except distribution.TooManyCategories as many:
+                        raise _too_many(view, many.column) from None
+                    except distribution.TooLarge as large:
+                        raise _too_large(view, large.column) from None
+                    queries.append(
+                        {"statements": list(made.sql), "parameters": dict(made.parameters)}
+                    )
+                    issues.append(_result_issue(view, {"queries": queries}, written, params))
+                    continue
+                ran = ran_views.crossed[crossings[_crossing_key(view)]]
+                shared = ran.crossing.overlapping()
+                if (
+                    shared
+                    and view.analysis.entry.fields.assumes_independent_groups
+                    and not view.overlap
+                ):
                     _overlap(
-                        catalog,
-                        view,
-                        together,
-                        sources,
-                        workers,
-                        deadline,
-                        erasures,
-                        written,
-                        params,
+                        catalog, view, shared, sources, workers, deadline, erasures, written, params
                     )
-                try:
-                    outcomes.append(
-                        columns.compare_columns(
-                            positions,
-                            view.variables,
-                            _expanded(view, made.materialised),
-                            view.params,
-                            reference=view.reference,
-                            overlap=bool(together),
-                            k=view.disclosure,
-                            computation=view.identity.computation_id,
-                            ends=None if deadline is None else deadline.at - RECORD_SECONDS,
-                        )
+                params_of = view.params
+                assert isinstance(params_of, ExistenceParams), "the core's analyses are known"
+                outcomes.append(
+                    compare(
+                        positions,
+                        view.predicates,
+                        ran.crossing,
+                        params_of,
+                        reference=view.reference,
+                        overlap=bool(shared) and view.overlap,
+                        k=view.disclosure,
                     )
-                except CallerDeadline:
-                    raise late(cast(Deadline, deadline)) from None
-                except distribution.TooManyCategories as many:
-                    raise _too_many(view, many.column) from None
-                except distribution.TooLarge as large:
-                    raise _too_large(view, large.column) from None
-                queries.append({"statements": list(made.sql), "parameters": dict(made.parameters)})
+                )
+                queries.append({"statements": list(ran.sql), "parameters": dict(ran.parameters)})
                 issues.append(_result_issue(view, {"queries": queries}, written, params))
-                continue
-            ran = ran_views.crossed[crossings[_crossing_key(view)]]
-            shared = ran.crossing.overlapping()
-            if (
-                shared
-                and view.analysis.entry.fields.assumes_independent_groups
-                and not view.overlap
-            ):
-                _overlap(
-                    catalog, view, shared, sources, workers, deadline, erasures, written, params
+            for identifier, cohort in cohorts.items():
+                run = by_id[identifier]
+                _, issue = counted_cohort(
+                    cohort,
+                    run.accounting,
+                    run.sql,
+                    run.parameters,
+                    written,
+                    params,
+                    tool="run_analysis",
                 )
-            params_of = view.params
-            assert isinstance(params_of, ExistenceParams), "the core's analyses are known"
-            outcomes.append(
-                compare(
-                    positions,
-                    view.predicates,
-                    ran.crossing,
-                    params_of,
-                    reference=view.reference,
-                    overlap=bool(shared) and view.overlap,
-                    k=view.disclosure,
-                )
-            )
-            queries.append({"statements": list(ran.sql), "parameters": dict(ran.parameters)})
-            issues.append(_result_issue(view, {"queries": queries}, written, params))
-        for identifier, cohort in cohorts.items():
-            run = by_id[identifier]
-            _, issue = counted_cohort(
-                cohort,
-                run.accounting,
-                run.sql,
-                run.parameters,
-                written,
-                params,
-                tool="run_analysis",
-            )
-            issues.append(issue)
-        issued = _issue(catalog, issues, deadline, erasures)
+                issues.append(issue)
+            issued = _issue(catalog, issues, deadline, erasures)
+        except ToolRefused as refused:
+            substituted = found.loaded.positions
+            raise ToolRefused(
+                [refusal_as_written(refusal, substituted) for refusal in refused.refusals]
+            ) from None
     results = [
         envelope(
             view,
@@ -658,18 +697,122 @@ def _survived(
             ]
         ) from None
     except survival.TooLarge:
-        raise ToolRefused(
-            [
-                Refusal(
-                    code=RefusalCode.NOT_SUPPORTED,
-                    path=pointer(["views", view.index]),
-                    message=[
-                        text("A unit's time or entry in this view's endpoint rows lies beyond "),
-                        text("±(2^53 − 1), which an output does not hold (§8.2, D348)"),
-                    ],
-                )
-            ]
+        raise _time_too_large(view) from None
+
+
+def _time_too_large(view: CheckedView) -> ToolRefused:
+    """A survival view refused for a unit's time or entry that no output holds (D348, D368)."""
+    return ToolRefused(
+        [
+            Refusal(
+                code=RefusalCode.NOT_SUPPORTED,
+                path=pointer(["views", view.index]),
+                message=[
+                    text("A unit's time or entry in this view's endpoint rows lies beyond "),
+                    text("±(2^53 − 1), which an output does not hold (§8.2, D348)"),
+                ],
+            )
+        ]
+    )
+
+
+def _coxed(
+    catalog: Catalog,
+    view: CheckedView,
+    positions: Sequence[CohortAt],
+    listed: Sequence[Listed],
+    sources: Mapping[str, Mapping[str, TableSource]],
+    workers: Workers,
+    deadline: Deadline | None,
+    erasures: int,
+    written: dict[str, JsonValue],
+    params: dict[str, JsonValue],
+) -> cox.Outcome:
+    """A ``survival.cox`` view run on its members' cells (D368): each position's listing put in
+    the order of §9.3; cohorts that share units refuse the view without ``overlap: "allow"``, as
+    ``survival.km``'s do (§7.4, D339); a unit's time or entry beyond ±(2^53 − 1) refuses it
+    ``NOT_SUPPORTED`` at the view, as ``survival.km``'s; a number covariate's value beyond it, or
+    one whose column the fit cannot scale, ``NOT_SUPPORTED`` at the covariate, and a level longer
+    than a result writes ``LIMIT_EXCEEDED`` there; more columns than a model has after coding
+    ``LIMIT_EXCEEDED`` at ``covariates``, and more stratum levels than it takes at ``stratum``."""
+    assert isinstance(view.params, CoxParams), "a survival.cox view"
+    cox_params = view.params
+    ends = None if deadline is None else deadline.at - RECORD_SECONDS
+    try:
+        found = [ordered(one, ends) for one in listed]
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+    together = shared(found)
+    if together and not view.overlap:
+        _overlap(catalog, view, together, sources, workers, deadline, erasures, written, params)
+    [endpoint] = view.endpoints
+    covariates: list[cox.Covariate] = []
+    for variable in view.variables[: len(cox_params.covariates)]:
+        coded = cox.covariate_of(variable.resolved)
+        assert coded is not None, "phase 2 refuses a covariate of no coding"
+        covariates.append(coded)
+    at: list[str | int] = ["views", view.index, "params"]
+    try:
+        return cox.analyse(
+            positions,
+            found,
+            endpoint,
+            covariates,
+            cox_params,
+            reference=view.reference,
+            overlap=bool(together),
+            ends=ends,
+        )
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+    except survival.TooLarge:
+        raise _time_too_large(view) from None
+    except cox.TooLarge as large:
+        raise _refused(
+            RefusalCode.NOT_SUPPORTED,
+            [*at, "covariates", large.covariate],
+            text("The covariate's values lie beyond ±(2^53 − 1) among the complete cases, where "),
+            text("an integer has no exact double (D368)"),
         ) from None
+    except cox.Unscalable as unscalable:
+        raise _refused(
+            RefusalCode.NOT_SUPPORTED,
+            [*at, "covariates", unscalable.covariate],
+            text("The covariate's values spread too little or too much for the fit to scale "),
+            text("them in a double (D368)"),
+        ) from None
+    except cox.LongLevel as long:
+        raise _refused(
+            RefusalCode.LIMIT_EXCEEDED,
+            [*at, "covariates", long.covariate],
+            text(f"A level of the covariate has more than {MAX_TEXT} characters, more than a "),
+            text("result writes (§14, D368)"),
+            limit=Limit(name=TEXT_CHARACTERS, max=MAX_TEXT),
+        ) from None
+    except cox.TooManyParameters as many:
+        raise _refused(
+            RefusalCode.LIMIT_EXCEEDED,
+            [*at, "covariates"],
+            text(f"The covariates code to {many.count} columns among the complete cases, and a "),
+            text(f"model has at most {cox.MAX_PARAMETERS} (§9.5, D363): a category has a column "),
+            text("per level but its baseline; give fewer covariates or categories of fewer levels"),
+            limit=Limit(name=COX_PARAMETERS, max=cox.MAX_PARAMETERS),
+        ) from None
+    except cox.TooManyStrata as many:
+        raise _refused(
+            RefusalCode.LIMIT_EXCEEDED,
+            [*at, "stratum"],
+            text(f"The stratum has {many.count} levels among the complete cases, and a model has "),
+            text(f"at most {MAX_STRATA} (§9.5, D363)"),
+            limit=Limit(name=STRATA, max=MAX_STRATA),
+        ) from None
+
+
+def _refused(
+    code: RefusalCode, path: list[str | int], *message: Segment, limit: Limit | None = None
+) -> ToolRefused:
+    """One refusal at ``path`` after substitution, which ``run_analysis`` points as written."""
+    return ToolRefused([Refusal(code=code, path=pointer(path), message=list(message), limit=limit)])
 
 
 def _packed(
@@ -746,7 +889,7 @@ def _first_readers(
     """The first view that reads each listing of inputs, by the listing's index."""
     firsts: dict[int, CheckedView] = {}
     for view in views:
-        if isinstance(view.params, PackParams | SurvivalParams):
+        if isinstance(view.params, PackParams | SurvivalParams | CoxParams):
             firsts.setdefault(handed[_inputs_key(view)], view)
     return [firsts[index] for index in range(len(firsts))]
 

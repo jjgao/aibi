@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
+import pytest
+
 from aibi.core.analyses import views
 from aibi.core.analyses.registry import Analyses
 from aibi.core.engine.canonical import Canonicalisation
@@ -115,15 +117,18 @@ def test_an_unknown_analysis_is_refused_listing_the_registry(check: Check, shop:
         {"data": "compare.existence"},
         {"data": "summary.distribution"},
         {"data": "summary.members"},
+        {"data": "survival.cox"},
         {"data": "survival.km"},
     ]
     assert found.views == []
 
 
 def test_a_core_analysis_of_a_later_slice_is_not_supported_naming_it(
-    check: Check, shop: Shop
+    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for analysis, slice_ in (("survival.cox", "M3.3e-2"),):
+    assert views.LATER == {}
+    monkeypatch.setattr(views, "LATER", {"summary.later": "M9"})
+    for analysis, slice_ in (("summary.later", "M9"),):
         found = check(document({"analysis": analysis, "cohorts": ["gold"]}), shop())
         [refusal] = found.refusals
         assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")

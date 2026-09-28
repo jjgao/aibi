@@ -939,26 +939,11 @@ def view_readback(
     """The view's readback (§7.7): a function of its canonical form and the release's
     descriptors, cohorts named by position."""
     level = data(number_text(params.level))
-    units: list[Segment] = [] if endpoint.units is None else [text(" in "), data(endpoint.units)]
     found: list[Segment] = [
         text("Kaplan–Meier survival of the endpoint "),
-        data(endpoint.endpoint),
-        text(": the time "),
-        data(endpoint.time.column),
-        *units,
-        text(", the status "),
-        data(endpoint.status.column),
-        text(" ("),
-        *_coding(endpoint.event),
-        text(" an event, "),
-        *_coding(endpoint.censored),
-        text(" censored)"),
+        *endpoint_readback(endpoint),
+        text(". For each cohort, the curve"),
     ]
-    if endpoint.entry is None:
-        found.append(text(", every unit entering at the origin"))
-    else:
-        found += [text(", each unit entering at "), data(endpoint.entry.column)]
-    found.append(text(". For each cohort, the curve"))
     if params.grid is None:
         found.append(text(" at each time a unit's follow-up ends"))
     else:
@@ -982,6 +967,30 @@ def view_readback(
             "its time is left out as INVALID_VALUE."
         )
     )
+    return found
+
+
+def endpoint_readback(endpoint: ResolvedEndpoint) -> list[Segment]:
+    """An endpoint's words in a survival analysis's readback (§7.7): its id, its time column
+    with its units, its status column with its coding, and its entry."""
+    units: list[Segment] = [] if endpoint.units is None else [text(" in "), data(endpoint.units)]
+    found: list[Segment] = [
+        data(endpoint.endpoint),
+        text(": the time "),
+        data(endpoint.time.column),
+        *units,
+        text(", the status "),
+        data(endpoint.status.column),
+        text(" ("),
+        *_coding(endpoint.event),
+        text(" an event, "),
+        *_coding(endpoint.censored),
+        text(" censored)"),
+    ]
+    if endpoint.entry is None:
+        found.append(text(", every unit entering at the origin"))
+    else:
+        found += [text(", each unit entering at "), data(endpoint.entry.column)]
     return found
 
 
@@ -1022,6 +1031,7 @@ __all__ = [
     "cohort_fit",
     "cohort_test",
     "endpoint_cells",
+    "endpoint_readback",
     "endpoint_rows",
     "hazard_ratio",
     "seed",

@@ -608,6 +608,25 @@ def as_written(
     return _as_written(position, index)
 
 
+def refusal_as_written(refusal: Refusal, positions: Mapping[Position, str]) -> Refusal:
+    """A refusal whose ``path`` points into the document after substitution, pointed instead
+    into the document as written and naming the parameter whose value holds it (§7.1, D368); one
+    with no path, or with a path under no parameter, is itself. Phase 2 and ``run_analysis``
+    refuse at paths after substitution, and give each refusal back through this once: a
+    refusal given back is pointed as written already, and another pass would name its parameter
+    twice."""
+    if refusal.path is None or not positions:
+        return refusal
+    tokens = tuple(
+        token.replace("~1", "/").replace("~0", "~") for token in refusal.path.split("/")[1:]
+    )
+    at, parameter = as_written(tokens, positions)
+    if parameter is None:
+        return refusal
+    message = [*refusal.message, text(" (in the value of parameter "), data(parameter), text(")")]
+    return refusal.model_copy(update={"path": pointer(list(at)), "message": message})
+
+
 def _as_written(position: Position, positions: _Positions) -> tuple[Position, str | None]:
     above = positions.above(position)
     if above is None:
