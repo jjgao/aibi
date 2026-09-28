@@ -746,18 +746,13 @@ def _coxed(
     if together and not view.overlap:
         _overlap(catalog, view, together, sources, workers, deadline, erasures, written, params)
     [endpoint] = view.endpoints
-    covariates: list[cox.Covariate] = []
-    for variable in view.variables[: len(cox_params.covariates)]:
-        coded = cox.covariate_of(variable.resolved)
-        assert coded is not None, "phase 2 refuses a covariate of no coding"
-        covariates.append(coded)
     at: list[str | int] = ["views", view.index, "params"]
     try:
         return cox.analyse(
             positions,
             found,
             endpoint,
-            covariates,
+            [variable.resolved for variable in view.variables],
             cox_params,
             reference=view.reference,
             overlap=bool(together),
@@ -908,6 +903,9 @@ def _listed_variables(view: CheckedView) -> list[ResolvedVariable]:
     """What a pack or survival view's inputs list of each member: its variables, then each of its
     endpoints' columns (D347, D352)."""
     found = [variable.resolved for variable in view.variables]
+    if isinstance(view.params, CoxParams):
+        [endpoint] = view.endpoints
+        return cox.listed_variables(found, endpoint)
     for endpoint in view.endpoints:
         found += endpoint.variables
     return found

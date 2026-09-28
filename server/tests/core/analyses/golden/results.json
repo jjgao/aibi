@@ -826,5 +826,71 @@
     "id": "drv:6bf0a431dd067282f08bd01510b468f2fbf3adb796f8ff0ac37aa0299c505a38",
     "computation_id": "drv:3f8244b6992157552c7ac6025573c71c52f59a8bd5f50c630f07037f808bed8d",
     "digest": "sha256:ddbc2e527407983cc6e2d4f7aeff0635bc5db0a1c88c6a2305817bafeb78d70c"
+  },
+  "cox_predicate_of_returns": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 50
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 50
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "survival.cox",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "params": {
+            "covariates": [
+              {
+                "column": "customers.age"
+              },
+              {
+                "predicate": {
+                  "kind": "exists",
+                  "table": "orders",
+                  "where": [
+                    {
+                      "kind": "exists",
+                      "table": "returns",
+                      "where": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "survived": "delayed"
+    },
+    "id": "drv:008d35c993f84841920531a9cf7c870a56ba9416b2877f2a049cc8bbdb7f3db9",
+    "computation_id": "drv:708e997c72c9432222854c1b6aba0edc6d0e27e6a35b2387b1d0d8a8024085b1",
+    "digest": "sha256:b065c7bcd9cc4158c082764ea3ffa1d764cbded95a8c16c166087ea4e2a15ee3"
   }
 }

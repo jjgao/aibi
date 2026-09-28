@@ -16,34 +16,34 @@ A view is checked in two steps, around phase 1:
    ``summary.members`` names exactly one cohort, listed in its ``cohorts`` (else ``INVALID_VALUE``
    there) or the document's only one (else ``MISSING_MEMBER`` at ``cohorts``) (D331); and a view of
    ``survival.cox`` that lists one cohort gives a covariate (else ``MISSING_MEMBER`` at
-   ``params/covariates``, D367). Its
-   predicates, variables (``survival.cox``'s covariates, then its stratum, D366) and endpoints (a
-   survival analysis's one, ``params.endpoint`` or the one usable endpoint on the unit table,
-   D347; a pack's by role, D352) are then handed to
-   ``canonicalise`` (``ViewPredicate``, ``ViewVariable``, ``ViewEndpoint``), resolved with the
-   cohorts in the release of the view's cohorts, on the unit table.
+   ``params/covariates``, D367). Its predicates (``survival.cox``'s predicate covariates too,
+   D370), variables (``survival.cox``'s column covariates, then its stratum, D366) and endpoints (a
+   survival analysis's one, ``params.endpoint`` or the one usable endpoint on the unit table, D347;
+   a pack's by role, D352) are then handed to ``canonicalise`` (``ViewPredicate``,
+   ``ViewVariable``, ``ViewEndpoint``), resolved with the cohorts in the release of the view's
+   cohorts, on the unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates, variables and endpoints all
    canonicalised, and whose variables its analysis takes (``summary.distribution``'s: categories or
    numbers, ``bins`` only for numbers, under *k* a number's histogram edges from ``bins`` or a
    declared range, and under *k* one set of edges for a column's values across the call's views,
    D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a pack's: no
    dates or datetimes, and each of its role's ``datatype`` and ``on``, D341; ``survival.cox``'s: a
-   coding for each covariate and the stratum, no identifier column's values, not the endpoint's
-   own time or status, and no ``bins``, D367), whose disclosure
+   coding for each covariate and the stratum, no identifier column's values, not the endpoint's own
+   time or status, and no ``bins``, D367, and predicates that test neither, D370), whose disclosure
    allows it (``_disclosure``, D353: no view of a ``refused`` analysis under any disclosure
-   setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands each
-   member's values in the keys' order where the dataset allows no row ids,
-   ``ROW_IDS_NOT_ALLOWED`` there), and, for a pack's analysis, whose requirement predicates hold
-   of the release (``NOT_SUPPORTED`` at ``analysis`` otherwise, D341), gets its canonical form
-   and ids (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none
-   (D284); its reference's position, for an analysis that declares ``uses_reference``, the
-   first cohort's by default; ``overlap``, for one that declares ``assumes_independent_groups``; its
-   canonical parameters, every default written, every predicate as its canonical clause tree, every
-   variable as its canonical form and every endpoint as its (``{"id", "time"}``); the effective *k*
-   over its cohorts and predicates and the floor; and the results versions of the packs of its
-   analysis, cohorts, predicates and variables. A view one of whose cohorts, predicates, variables
-   or endpoints was refused is left out; their refusals say why. A view whose cohorts are of more
-   than one release is ``MIXED_RELEASES``, which resolution refuses first.
+   setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands each member's
+   values in the keys' order where the dataset allows no row ids, ``ROW_IDS_NOT_ALLOWED`` there),
+   and, for a pack's analysis, whose requirement predicates hold of the release (``NOT_SUPPORTED``
+   at ``analysis`` otherwise, D341), gets its canonical form and ids (``ViewIdentity``): its
+   cohorts in view order, or by computation id when it lists none (D284); its reference's position,
+   for an analysis that declares ``uses_reference``, the first cohort's by default; ``overlap``,
+   for one that declares ``assumes_independent_groups``; its canonical parameters, every default
+   written, every predicate as its canonical clause tree, every variable as its canonical form and
+   every endpoint as its (``{"id", "time"}``); the effective *k* over its cohorts and predicates
+   and the floor; and the results versions of the packs of its analysis, cohorts, predicates and
+   variables. A view one of whose cohorts, predicates, variables or endpoints was refused is left
+   out; their refusals say why. A view whose cohorts are of more than one release is
+   ``MIXED_RELEASES``, which resolution refuses first.
 
 A view's readback is its analysis's, rendered from its canonical form and the release's descriptors
 (§7.7); its static caveats are those its result carries that need no data: the fields its cohorts,
@@ -54,7 +54,7 @@ which are the canonical parts of a view a pack can read (D287, D317).
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -73,6 +73,7 @@ from aibi.core.engine.canonical import (
     Canonicalisation,
     CanonicalVariable,
     ViewIdentity,
+    predicate_variable,
 )
 from aibi.core.engine.data import Release
 from aibi.core.engine.resolve import (
@@ -84,8 +85,10 @@ from aibi.core.engine.resolve import (
     ViewPredicate,
     ViewVariable,
     identifying,
+    in_document_order,
 )
 from aibi.core.engine.resolved import (
+    Origin,
     RAll,
     RAny,
     RClause,
@@ -103,6 +106,7 @@ from aibi.core.schema.analyses import (
     ExistenceParams,
     MembersParams,
     PackParams,
+    PredicateCovariate,
     SurvivalParams,
     Variable,
 )
@@ -110,6 +114,7 @@ from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_c
 from aibi.core.schema.descriptors import Disclosure
 from aibi.core.schema.document import (
     PARSED,
+    Clause,
     CohortLeaf,
     DocModel,
     Document,
@@ -157,6 +162,9 @@ class ParsedView:
     binds (D347, D352)."""
     endpoint_roles: tuple[str, ...] = ()
     """For a pack's analysis, the role each endpoint is bound to (D352)."""
+    forms: tuple[Literal["column", "predicate"], ...] = ()
+    """For ``survival.cox``, each covariate's form in order (D370): its ``variables`` hold the
+    column covariates, then the stratum, and its ``predicates`` the predicates."""
 
 
 class _Refusals:
@@ -270,7 +278,14 @@ def parse(
         first = view.cohorts[0] if view.cohorts else next(iter(document.cohorts), None)
         reference = _reference_of(document, first)
         if isinstance(params, ExistenceParams):
-            predicates = _predicates(params, index, reference, refusals)
+            predicates = _predicates(
+                [
+                    (("views", index, "params", "predicates", j), clause, f"{index}/{j}")
+                    for j, clause in enumerate(params.predicates)
+                ],
+                reference,
+                refusals,
+            )
         elif isinstance(params, DistributionParams | ColumnsParams):
             independent = bool(fields.assumes_independent_groups)
             written = [(("columns", j), v) for j, v in enumerate(params.columns)]
@@ -286,14 +301,31 @@ def parse(
                     params.endpoint,
                 ),
             )
+        forms: tuple[Literal["column", "predicate"], ...] = ()
         if isinstance(params, CoxParams):
             _modelled(view.cohorts, params, index, refusals)
             modelled: list[tuple[tuple[str | int, ...], Variable]] = [
-                (("covariates", j), v) for j, v in enumerate(params.covariates)
+                (("covariates", j), v)
+                for j, v in enumerate(params.covariates)
+                if isinstance(v, Variable)
             ]
             if params.stratum is not None:
                 modelled.append((("stratum",), params.stratum))
             variables = _variables(modelled, index, reference, refusals, True)
+            asked = [
+                (
+                    ("views", index, "params", "covariates", j, "predicate"),
+                    covariate.predicate,
+                    f"{index}/covariates/{j}",
+                )
+                for j, covariate in enumerate(params.covariates)
+                if isinstance(covariate, PredicateCovariate)
+            ]
+            predicates = _predicates(asked, reference, refusals)
+            forms = tuple(
+                "predicate" if isinstance(covariate, PredicateCovariate) else "column"
+                for covariate in params.covariates
+            )
         elif isinstance(params, PackParams):
             cohorts = len(view.cohorts) if view.cohorts is not None else len(document.cohorts)
             written = _pack_params(found, params, cohorts, index, analyses, refusals)
@@ -317,6 +349,7 @@ def parse(
                 roles=roles,
                 endpoints=endpoints,
                 endpoint_roles=endpoint_roles,
+                forms=forms,
             )
         )
     return parsed, refusals.found
@@ -519,40 +552,37 @@ def _modelled(
 
 
 def _predicates(
-    params: ExistenceParams, index: int, reference: str | None, refusals: _Refusals
+    written: Sequence[tuple[Position, Clause, str]], reference: str | None, refusals: _Refusals
 ) -> tuple[ViewPredicate, ...]:
-    base: list[str | int] = ["views", index, "params", "predicates"]
+    """A view's predicates to resolve, each with its place in the document and its key: each
+    holds no ``ids`` and no ``cohort`` leaf and at most as many pack leaves as a cohort (D317,
+    D370)."""
     before = len(refusals.found)
-    pack_leaves = [0] * len(params.predicates)
-    for leaf, path, _ in walk(list(params.predicates), base):
-        position = int(path[len(base)])
-        pack_leaves[position] += isinstance(leaf, PackLeaf)
-        if isinstance(leaf, IdsLeaf | CohortLeaf):
-            refusals.add(
-                RefusalCode.LEAF_NOT_ALLOWED,
-                tuple(path),
-                text(f"A predicate holds no {leaf.kind} leaf: it is asked of every unit of the "),
-                text("view's cohorts, and a list of units or another cohort belongs in a cohort"),
-            )
-    for position, count in enumerate(pack_leaves):
-        if count > MAX_PACK_LEAVES:
+    for at, clause, _ in written:
+        pack_leaves = 0
+        for leaf, path, _ in walk([clause], []):
+            pack_leaves += isinstance(leaf, PackLeaf)
+            if isinstance(leaf, IdsLeaf | CohortLeaf):
+                refusals.add(
+                    RefusalCode.LEAF_NOT_ALLOWED,
+                    (*at, *path[1:]),
+                    text(f"A predicate holds no {leaf.kind} leaf: it is asked of every unit of "),
+                    text("the view's cohorts, and a list of units or another cohort belongs in a "),
+                    text("cohort"),
+                )
+        if pack_leaves > MAX_PACK_LEAVES:
             refusals.add(
                 RefusalCode.LIMIT_EXCEEDED,
-                (*base, position),
-                text(f"The predicate has {count} pack leaves, and at most "),
+                at,
+                text(f"The predicate has {pack_leaves} pack leaves, and at most "),
                 text(f"{MAX_PACK_LEAVES} may be: each is compiled by its pack (D285)"),
                 limit=Limit(name=PACK_LEAVES, max=MAX_PACK_LEAVES),
             )
     if reference is None or len(refusals.found) > before:
         return ()
     return tuple(
-        ViewPredicate(
-            key=f"{index}/{position}",
-            reference=reference,
-            at=(*base, position),
-            clause=clause,
-        )
-        for position, clause in enumerate(params.predicates)
+        ViewPredicate(key=key, reference=reference, at=at, clause=clause)
+        for at, clause, key in written
     )
 
 
@@ -668,7 +698,12 @@ class CheckedView:
         if isinstance(self.params, CoxParams):
             [endpoint] = self.endpoints
             return cox.view_readback(
-                len(self.cohorts), self.reference, endpoint, self.variables, self.params
+                len(self.cohorts),
+                self.reference,
+                endpoint,
+                self.variables,
+                self.params,
+                self.predicates,
             )
         if isinstance(self.params, PackParams):
             fields = self.analysis.entry.fields
@@ -822,9 +857,11 @@ def checked(
                 continue
         if isinstance(view.params, CoxParams):
             wrong = _coxed(view, cohorts[0], variables, endpoints)
+            wrong += _coxed_predicates(view, cohorts[0], predicates, endpoints)
             if wrong:
                 refusals += wrong
                 continue
+            variables = _interleaved(view, variables, predicates)
         identity = ViewIdentity(
             analysis=view.analysis.id,
             version=view.analysis.entry.version,
@@ -1051,13 +1088,19 @@ def _coxed(
     endpoints: Sequence[ResolvedEndpoint],
 ) -> list[Refusal]:
     """What phase 2 refuses of a ``survival.cox`` view's resolved covariates and stratum once its
-    disclosure is checked (``_disclosure``; D367): a column whose values have no coding
-    (``cox.covariate_of``: dates and datetimes, which resolution leaves only as columns), an
-    identifier column's values (§5.4; ``count`` reads none), which name units, rows or people and
-    as numbers mean nothing, the endpoint's own time or status column, which would model the
-    outcome by itself (an endpoint is on the unit table, so its columns are read as they are,
-    and a covariate or stratum that names one reads it so too: resolution takes no question or
-    aggregate of a unit's own column), and ``bins``, which divide only a histogram."""
+    disclosure is checked (``_disclosure``; D367):
+
+    - a column whose values have no coding (``cox.covariate_of``: dates and datetimes, which
+      resolution leaves only as columns);
+    - an identifier column's values (§5.4; ``count`` reads none), which name units, rows or
+      people and as numbers mean nothing;
+    - the endpoint's own time or status column, which would model the outcome by itself (an
+      endpoint is on the unit table, so its columns are read as they are, and a covariate or
+      stratum that names one reads it so too: resolution takes no question or aggregate of a
+      unit's own column);
+    - an aggregate whose rows' conditions test an identifier or the endpoint's columns
+      (``_leaves_refused``), as a predicate's would (D370);
+    - ``bins``, which divide only a histogram."""
     release = cohort.resolved.release
     [endpoint] = endpoints
     outcome = {endpoint.time.column, endpoint.status.column}
@@ -1065,6 +1108,8 @@ def _coxed(
     for given, variable in zip(view.variables, variables, strict=True):
         resolved = variable.resolved
         column = pointer([*given.at, "column"])
+        if resolved.rows is not None:
+            found += _leaves_refused(release, endpoint, resolved.rows, (*given.at, "where"))
         if cox.covariate_of(resolved) is None:
             found.append(
                 Refusal(
@@ -1118,6 +1163,80 @@ def _coxed(
                 )
             )
     return found
+
+
+def _coxed_predicates(
+    view: ParsedView,
+    cohort: CanonicalCohort,
+    predicates: Sequence[CanonicalCohort],
+    endpoints: Sequence[ResolvedEndpoint],
+) -> list[Refusal]:
+    """What phase 2 refuses of a ``survival.cox`` view's predicates (D370), as ``_coxed``
+    refuses a variable: each leaf ``_leaves_refused`` refuses."""
+    release = cohort.resolved.release
+    [endpoint] = endpoints
+    found: list[Refusal] = []
+    for given, predicate in zip(view.predicates, predicates, strict=True):
+        found += _leaves_refused(release, endpoint, predicate.resolved.tree, given.at)
+    return found
+
+
+def _leaves_refused(
+    release: Release, endpoint: ResolvedEndpoint, clause: RClause, at: Position
+) -> list[Refusal]:
+    """The leaves of a ``survival.cox`` covariate's clause (a predicate, or an aggregate's rows'
+    conditions) that phase 2 refuses (D367, D370): one that tests an identifier column (a value
+    leaf on one, or a ``covered`` leaf scoped by one: §5.4), which marks named units, and one that
+    tests the endpoint's own time or status, which models the outcome by itself; each
+    ``INVALID_VALUE`` at the first place it was written (``at`` where none is known)."""
+    outcome = {endpoint.time.column, endpoint.status.column}
+    found: list[Refusal] = []
+    for column, origin in _tested(clause):
+        path = pointer(list(min(origin, key=in_document_order, default=at)))
+        if _identifies(release, column):
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=path,
+                    message=[
+                        text("A covariate's conditions test no identifier column, whose values "),
+                        text("name units, rows or people (§5.4): "),
+                        data(column),
+                    ],
+                )
+            )
+        elif column in outcome:
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=path,
+                    message=[
+                        text("The endpoint's time or status is the outcome the model "),
+                        text("explains, and no covariate's conditions test it: "),
+                        data(column),
+                    ],
+                )
+            )
+    return found
+
+
+def _interleaved(
+    view: ParsedView,
+    variables: Sequence[CanonicalVariable],
+    predicates: Sequence[CanonicalCohort],
+) -> tuple[CanonicalVariable, ...]:
+    """A ``survival.cox`` view's variables in its covariates' order, then its stratum (D370): a
+    column covariate its variable, a predicate its truth (``predicate_variable``)."""
+    columns = iter(variables)
+    asked = iter(zip(view.predicates, predicates, strict=True))
+    found: list[CanonicalVariable] = []
+    for form in view.forms:
+        if form == "column":
+            found.append(next(columns))
+        else:
+            given, predicate = next(asked)
+            found.append(predicate_variable(given.key, predicate))
+    return (*found, *columns)
 
 
 def _distributed(
@@ -1264,28 +1383,33 @@ def _identifies(release: Release, column: str) -> bool:
     return descriptor is not None and identifying(release, descriptor)
 
 
-def _identifiers_tested(release: Release, variable: ResolvedVariable) -> list[str]:
-    """The identifier columns an aggregate's ``where`` tests, sorted: the value leaves of its
-    rows' conditions, and the scope columns of its ``covered`` leaves (D342). A question takes no
-    ``where``, and the column it asks about is the variable's own."""
-    found: set[str] = set()
-    pending: list[RClause] = [] if variable.rows is None else [variable.rows]
+def _tested(clause: RClause) -> list[tuple[str, Origin]]:
+    """The columns a clause tests, each with the places it was written: the column of each value
+    leaf, and the scope columns of each ``covered`` leaf, in the order they are met (D370)."""
+    found: list[tuple[str, Origin]] = []
+    pending: list[RClause] = [clause]
     while pending:
         node = pending.pop()
         if isinstance(node, RValue):
-            if _identifies(release, node.column):
-                found.add(node.column)
+            found.append((node.column, node.origin))
         elif isinstance(node, RCovered):
-            for column, _ in node.scope or ():
-                if _identifies(release, f"{node.table}.{column}"):
-                    found.add(f"{node.table}.{column}")
+            found += [(f"{node.table}.{column}", node.origin) for column, _ in node.scope or ()]
         elif isinstance(node, RExists):
             pending.extend(node.where)
         elif isinstance(node, RAll | RAny):
             pending.extend(node.members)
         elif isinstance(node, RNot | RKnown | RUnknown):
             pending.append(node.member)
-    return sorted(found)
+    return found
+
+
+def _identifiers_tested(release: Release, variable: ResolvedVariable) -> list[str]:
+    """The identifier columns an aggregate's ``where`` tests, sorted: the value leaves of its
+    rows' conditions, and the scope columns of its ``covered`` leaves (D342). A question takes no
+    ``where``, and the column it asks about is the variable's own."""
+    if variable.rows is None:
+        return []
+    return sorted({column for column, _ in _tested(variable.rows) if _identifies(release, column)})
 
 
 def _setting(settings: Disclosure | None, k: int, published: int | None) -> str:
