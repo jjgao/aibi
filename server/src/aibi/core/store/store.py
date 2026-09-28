@@ -77,7 +77,7 @@ from pydantic import JsonValue
 from aibi.core.engine.data import Release
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
-from aibi.core.schema.limits import LogLimits
+from aibi.core.schema.limits import CacheLimits, LogLimits
 from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
@@ -85,6 +85,7 @@ from aibi.core.store import build, parquet, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
+from aibi.core.store.cache import ResultCache
 from aibi.core.store.derivations import (
     OPEN_BATCHES,
     DerivationLog,
@@ -218,12 +219,18 @@ class Store:
     """The blobs under ``root``/blobs and the app DB at ``root``/app.db."""
 
     def __init__(
-        self, root: Path, *, clock: Callable[[], datetime] = _now, log: LogLimits | None = None
+        self,
+        root: Path,
+        *,
+        clock: Callable[[], datetime] = _now,
+        log: LogLimits | None = None,
+        cache: CacheLimits | None = None,
     ) -> None:
         """Opens the store; ``StoreLockedError`` if another process has it open. ``log`` is how
         long the derivation log keeps ``count_cohort``'s issuances and how large it grows
         (D300): up to ``OPEN_BATCHES`` batches of the expired ones are pruned now, and the log's
-        thread prunes the rest, and what expires later, until the store closes."""
+        thread prunes the rest, and what expires later, until the store closes; ``cache`` bounds
+        the result cache (``results``, D375)."""
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self.clock = clock
@@ -235,6 +242,8 @@ class Store:
             self.db = db = AppDB(root / APP_DB)
             self.lock: threading.RLock = self.db.lock
             self.derivations = DerivationLog(self.db, self.now, limits=log)
+            self.results = ResultCache(self.db, cache)
+            self.results.trim()
             self.pinned: Counter[str] = Counter()
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}

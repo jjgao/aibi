@@ -89,7 +89,8 @@ LOG_DERIVATION_BYTES = 256
 ids, twice over, as for a text's digest."""
 LOG_RELEASE_FACTOR = 4
 """What a derivation's releases take, in bytes for each byte of its list of them: a
-``derivation_releases`` row of each and their entries in its two indexes, each twice over."""
+``derivation_releases`` row of each and their entries in its indexes, each twice over (two of
+them, and from migration 7 a third, by manifest, which the factor still covers, D375)."""
 LOG_ISSUANCE_BYTES = 1024
 """What an issuance takes beyond its packs' text: its row, of which only the packs and the
 engine vary, the entries of its six indexes, the three of random keys (derivation, request and
@@ -567,6 +568,84 @@ MIGRATIONS: tuple[str, ...] = (
             )
         )
         BEGIN SELECT RAISE(ABORT, 'an issuance is removed only by erasure or pruning'); END;
+    """,
+    # 7: M3 (#44), the result cache (D375)
+    """
+    CREATE TABLE result_cache (
+        result TEXT PRIMARY KEY CHECK (result GLOB 'drv:*' AND length(result) = 68),
+        issuance TEXT NOT NULL REFERENCES issuances (id) ON DELETE CASCADE,
+        engine TEXT NOT NULL,
+        packs TEXT NOT NULL CHECK (json_valid(packs)),
+        k INTEGER CHECK (k IS NULL OR k >= 2),
+        bytes INTEGER NOT NULL CHECK (bytes > 0),
+        used INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX result_cache_by_use ON result_cache (used);
+    CREATE INDEX result_cache_by_issuance ON result_cache (issuance);
+    CREATE TABLE result_cache_contents (
+        result TEXT PRIMARY KEY REFERENCES result_cache (result) ON DELETE CASCADE,
+        content BLOB NOT NULL
+    ) STRICT;
+    CREATE INDEX derivation_releases_by_manifest ON derivation_releases (manifest);
+    CREATE TABLE result_cache_usage (
+        one INTEGER PRIMARY KEY CHECK (one = 1),
+        bytes INTEGER NOT NULL,
+        used INTEGER NOT NULL
+    ) STRICT;
+    INSERT INTO result_cache_usage (one, bytes, used) VALUES (1, 0, 0);
+    CREATE TRIGGER result_cache_usage_kept BEFORE DELETE ON result_cache_usage
+        BEGIN SELECT RAISE(ABORT, 'the result cache''s size is never removed'); END;
+    CREATE TRIGGER result_cache_filled_once BEFORE INSERT ON result_cache
+        WHEN EXISTS (SELECT 1 FROM result_cache WHERE result = NEW.result)
+        BEGIN SELECT RAISE(ABORT, 'a cached result is removed before it is filled again'); END;
+    CREATE TRIGGER result_cache_filled_by_its_result BEFORE INSERT ON result_cache
+        WHEN NOT EXISTS (
+            SELECT 1 FROM issuances i JOIN derivations d ON d.id = i.derivation
+            WHERE i.id = NEW.issuance AND i.values_from = i.id AND i.derivation = NEW.result
+                AND d.kind = 'result' AND d.hashed IS NOT NULL
+                AND i.engine = NEW.engine AND i.packs = NEW.packs
+                AND NEW.k IS json_extract(d.hashed, '$.disclosure.min_cell_count')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'a cached result is filled by an issuance of it whose queries ran');
+        END;
+    CREATE TRIGGER result_cache_over_published_releases BEFORE INSERT ON result_cache
+        WHEN NOT EXISTS (SELECT 1 FROM derivation_releases WHERE derivation = NEW.result)
+            OR EXISTS (
+                SELECT 1 FROM derivation_releases r LEFT JOIN manifests m ON m.hash = r.manifest
+                WHERE r.derivation = NEW.result AND (m.hash IS NULL OR m.withdrawn_at IS NOT NULL)
+            )
+        BEGIN
+            SELECT RAISE(ABORT, 'a cached result reads published releases not withdrawn only');
+        END;
+    CREATE TRIGGER result_cache_fixed BEFORE UPDATE OF result, issuance, engine, packs, k, bytes
+        ON result_cache
+        BEGIN SELECT RAISE(ABORT, 'a cached result is changed only by being used'); END;
+    CREATE TRIGGER result_cache_contents_counted BEFORE INSERT ON result_cache_contents
+        WHEN NOT EXISTS (
+            SELECT 1 FROM result_cache
+            WHERE result = NEW.result AND bytes >= length(NEW.content)
+        )
+        BEGIN SELECT RAISE(ABORT, 'a cached result''s content is counted in its bytes'); END;
+    CREATE TRIGGER result_cache_contents_once BEFORE INSERT ON result_cache_contents
+        WHEN EXISTS (SELECT 1 FROM result_cache_contents WHERE result = NEW.result)
+        BEGIN SELECT RAISE(ABORT, 'a cached result''s content is never changed'); END;
+    CREATE TRIGGER result_cache_contents_fixed BEFORE UPDATE ON result_cache_contents
+        BEGIN SELECT RAISE(ABORT, 'a cached result''s content is never changed'); END;
+    CREATE TRIGGER result_cache_contents_kept BEFORE DELETE ON result_cache_contents
+        WHEN EXISTS (SELECT 1 FROM result_cache WHERE result = OLD.result)
+        BEGIN SELECT RAISE(ABORT, 'a cached result''s content goes only with its row'); END;
+    CREATE TRIGGER result_cache_withdrawn AFTER UPDATE OF withdrawn_at ON manifests
+        WHEN NEW.withdrawn_at IS NOT NULL
+        BEGIN
+            DELETE FROM result_cache WHERE result IN (
+                SELECT derivation FROM derivation_releases WHERE manifest = NEW.hash
+            );
+        END;
+    CREATE TRIGGER result_cache_counted AFTER INSERT ON result_cache
+        BEGIN UPDATE result_cache_usage SET bytes = bytes + NEW.bytes; END;
+    CREATE TRIGGER result_cache_uncounted AFTER DELETE ON result_cache
+        BEGIN UPDATE result_cache_usage SET bytes = bytes - OLD.bytes; END;
     """,
 )
 

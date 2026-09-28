@@ -27,6 +27,7 @@ from aibi.core.schema.limits import (
     MAX_KEEP_DAYS,
     MIN_LOG_BYTES,
     MIN_QUERY_MEMORY,
+    CacheLimits,
     ImportLimits,
     LogLimits,
     QueryLimits,
@@ -502,6 +503,19 @@ def test_the_derivation_log_s_period_and_size_are_configured(write_config: Write
     assert kept.log.limits().keep_count_issuances_days == MAX_KEEP_DAYS
     with pytest.raises(ValueError, match="keep_count_issuances_days"):
         LogLimits(keep_count_issuances_days=MAX_KEEP_DAYS + 1)
+
+
+def test_the_result_cache_s_size_is_configured_and_0_caches_none(write_config: Write) -> None:
+    config = load_config(write_config(minimal(cache=f"result_bytes = {1 << 20}")))
+    assert config.cache.limits() == CacheLimits(result_bytes=1 << 20)
+    assert load_config(write_config(minimal(cache="result_bytes = 0"))).cache.limits() == (
+        CacheLimits(result_bytes=0)
+    )
+    assert load_config(write_config(minimal())).cache.limits() == CacheLimits()
+    [found] = problems(write_config, minimal(cache="result_bytes = -1"))
+    assert found.startswith("cache.result_bytes: ")
+    with pytest.raises(ValueError, match="result_bytes"):
+        CacheLimits(result_bytes=-1)
 
 
 def test_the_period_results_are_kept_is_configured_apart_from_counts(write_config: Write) -> None:

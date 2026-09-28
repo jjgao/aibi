@@ -63,6 +63,9 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # keep_result_issuances_days = 365  # the issuances of results (run_analysis) likewise
 # log_bytes = 8589934592          # what pruning the derivation log can free; past it counts are refused
 
+[cache]
+# result_bytes = 1073741824  # the most the result cache takes; the least used go first; 0 off
+
 [disclosure]
 # min_cell_count_floor = 5
 
