@@ -75,7 +75,10 @@ rows of the endpoints it requires. From M3.3b, `core/analyses/coxfit.py` is the 
 fit of cohorts, its separation decided on the risk sets' graph and its fit and `cox.zph`'s test
 held to R (`reference/cox.R`), which `survival.km` 1.1.0 shows as hazard ratios. From M3.3c,
 `core/analyses/coxph.py` is the Cox model of a design (covariates per unit, strata, delayed entry),
-held to R (`reference/coxph.R`).
+held to R (`reference/coxph.R`). From M3.3d, `core/analyses/cone.py` is the likelihood's recession
+cone in exact integers (the pairs' span by components, an exact column-generation simplex, the
+levels), and `coxph.separated` decides each column estimated, `separation` or `zero_variance` by
+it and fits the finite part, `coxph.separated_hazards` testing it (`reference/cone.R`).
 
 ## Non-negotiables
 
