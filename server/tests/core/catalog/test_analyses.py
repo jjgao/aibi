@@ -461,7 +461,7 @@ def test_a_comparison_and_a_distribution_of_one_column_share_one_materialisation
         return given(cohorts, crossings, read, *args, **kw)
 
     monkeypatch.setattr(analyses_module, "run_views", counted)
-    catalog = catalog_of(world)
+    catalog = catalog_of(world, cache=False)
     alone = run(catalog, distribution_document(COMPARED[1:2])).results[0]
     written = columns_document(COMPARED[1:2])
     written["views"].insert(
@@ -870,7 +870,7 @@ def test_a_result_is_issued_with_its_cohorts_and_explain_resolves_every_id(
     assert after.views[0].status == "issued"
 
 
-def test_a_run_made_again_gives_one_id_and_one_digest_in_a_new_issuance(
+def test_a_run_made_again_gives_one_id_and_one_digest_in_a_hit_of_the_first(
     world: World, orchard: Orchard
 ) -> None:
     world.publish("orchard", orchard())
@@ -887,7 +887,10 @@ def test_a_run_made_again_gives_one_id_and_one_digest_in_a_new_issuance(
     [second] = run(catalog, renamed).results
     assert (first.derivation.id, first.digest) == (second.derivation.id, second.digest)
     assert first.issuance.id != second.issuance.id
-    assert not second.issuance.cache_hit
+    assert second.issuance.cache_hit
+    assert second.issuance.values_from == first.issuance.id
+    [third] = run(catalog_of(world, cache=False), renamed).results
+    assert (third.digest, third.issuance.cache_hit) == (first.digest, False)
 
 
 def test_cohorts_that_share_units_are_refused_with_the_count_of_what_they_share(
@@ -1026,6 +1029,7 @@ def test_a_query_two_views_ask_runs_once(
 
     monkeypatch.setattr(analyses_module, "run_views", counted)
     [once] = run(catalog, document()).results
+    catalog = catalog_of(world, cache=False)
     written = document()
     written["views"] = written["views"] * 4 + [
         {"analysis": "compare.existence", "cohorts": ["pear"], "params": {"predicates": [APPLE]}}
@@ -1058,12 +1062,20 @@ def test_a_view_refused_refuses_count_cohort_too(world: World, orchard: Orchard)
 
 
 def test_a_draft_s_result_says_so_and_is_never_a_cache_hit(world: World, orchard: Orchard) -> None:
+    """Not even of the published result a draft over the same release has the id of."""
     world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    [published] = run(catalog, document()).results
+    used = world.store.results.usage()
+    assert used > 0
     world.open("orchard")
-    [result] = run(catalog_of(world), document(dataset="orchard@draft")).results
+    run(catalog, document(dataset="orchard@draft"))
+    [result] = run(catalog, document(dataset="orchard@draft")).results
     assert result.derivation.releases[0].status == "draft"
     assert CaveatCode.DRAFT_RELEASE in {caveat.code for caveat in result.caveats}
     assert not result.issuance.cache_hit
+    assert result.derivation.id == published.derivation.id
+    assert world.store.results.usage() == used
 
 
 # --- list_analyses, describe_dataset and resources -----------------------------------------

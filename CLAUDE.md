@@ -93,7 +93,9 @@ and CI runs them in a job of their own. From M3.5a, `core/analyses/results.py` g
 digested content (`digested`, a `Digested` that is written as JSON and read back through the
 analysis's values model, `CoreAnalysis.values`) apart from its rendering for an issuance
 (`render`). From M3.5b, `core/store/cache.py` is the result cache
-(`Store.results`: migration 7's tables, kept by triggers, `[cache] result_bytes`).
+(`Store.results`: migration 7's tables, kept by triggers, `[cache] result_bytes`). From M3.5c,
+`run_analysis` gives a result from the cache and fills it (`_hits`, `issue_all`'s `then`), and
+`Catalog.cache` turns that off.
 
 ## Non-negotiables
 

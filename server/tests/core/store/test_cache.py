@@ -547,3 +547,17 @@ def test_the_cache_counts_at_least_the_pages_its_rows_take(
     with store.db.lock:
         ratio = (_pages(store) - pages) / (store.results.usage() - used)
     assert 0.45 <= ratio <= 1
+
+
+def test_a_dropped_result_is_gone_and_is_dropped_only_in_a_transaction(
+    store: Store, imported: str
+) -> None:
+    cohort = cohort_of(store, imported)
+    result, issuance = result_of(store, cohort)
+    assert fill(store, result, issuance)
+    with store.db.lock, pytest.raises(RuntimeError, match="transaction"):
+        store.results.drop(store.db.connection, result)
+    with store.db.transaction() as db:
+        store.results.drop(db, result)
+    assert rows(store) == {"result_cache": 0, "result_cache_contents": 0}
+    assert store.results.usage() == 0

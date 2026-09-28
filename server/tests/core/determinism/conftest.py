@@ -228,9 +228,11 @@ class Orchard:
     manifest: str
 
     def catalog(self, threads: int, registry: PackRegistry | None = None) -> Catalog:
-        """A catalogue whose query workers run DuckDB on ``threads`` threads."""
+        """A catalogue whose query workers run DuckDB on ``threads`` threads, and which neither
+        gives nor fills the result cache (D376), so that each call runs its queries: a hit would
+        compare one answer with another's copy."""
         limits = QueryLimits(query_seconds=SECONDS, query_memory=MEMORY, query_threads=threads)
-        return Catalog(self.store, workers=Workers(limits), registry=registry)
+        return Catalog(self.store, workers=Workers(limits), registry=registry, cache=False)
 
     def rows(self) -> dict[str, int]:
         """Each table blob's rows."""
