@@ -622,12 +622,13 @@ class SurvivalPosition(Estimable):
 
 
 class SurvivalView(Output):
-    """``survival.km`` across the view's cohorts (D348): the log-rank test, absent for a view of
-    one cohort, and the difference in medians of each other position versus the reference, in
-    view order."""
+    """``survival.km`` across the view's cohorts (D348, D355): the log-rank test and the test of
+    proportional hazards, absent for a view of one cohort, and of each other position versus the
+    reference, in view order, the difference in medians and then the hazard ratio."""
 
     test: HypothesisTest | None = None
-    effects: Annotated[list[EffectSize], Field(max_length=MAX_COHORTS - 1)]
+    effects: Annotated[list[EffectSize], Field(max_length=2 * (MAX_COHORTS - 1))]
+    proportional_hazards: HypothesisTest | None = None
 
 
 class SurvivalValues(Output):

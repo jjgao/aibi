@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from aibi.core.analyses import ieee, survival, timetoevent
+from aibi.core.analyses import coxfit, ieee, survival, timetoevent
 
-MODULES = [Path(timetoevent.__file__), Path(survival.__file__)]
+MODULES = [Path(timetoevent.__file__), Path(survival.__file__), Path(coxfit.__file__)]
 
 PREDICATES = frozenset({"isfinite", "isinf", "isnan", "copysign"})
 CONSTANTS = frozenset({"inf", "nan"})
