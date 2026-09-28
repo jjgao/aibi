@@ -65,58 +65,42 @@ jobs:
         # checks API serves where the job's log cannot be read (D334).
         if: failure()
         env:
-          CORE_OUTCOME: ${{ steps.core.outcome }}
-          OTHER_OUTCOME: ${{ steps.other.outcome }}
-        run: |
-          python3 - <<'EOF'
-          import glob
-          import os
-          import xml.etree.ElementTree as ET
+          OUTCOMES: "Core tests=${{ steps.core.outcome }};Other tests=${{ steps.other.outcome }}"
+        run: python3 ../.github/scripts/annotations.py
 
-          def escaped(value, member=False):
-              value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              return value.replace(":", "%3A").replace(",", "%2C") if member else value
-
-          reports = sorted(glob.glob("reports/*.xml"))
-          # A test step that failed without a failed test ran out of its time limit, or was
-          # stopped, before or after pytest wrote its report (D340).
-          stopped = [
-              name
-              for name, outcome in (
-                  ("Core tests", os.environ.get("CORE_OUTCOME", "")),
-                  ("Other tests", os.environ.get("OTHER_OUTCOME", "")),
-              )
-              if outcome == "failure"
-          ]
-          after = (
-              f" ({' and '.join(stopped)} failed: a step's time limit, D340, or a check of the "
-              "whole session)"
-              if stopped
-              else ""
-          )
-          found = []
-          for report in reports:
-              for case in ET.parse(report).iter("testcase"):
-                  for failed in [*case.findall("failure"), *case.findall("error")]:
-                      name = "::".join(p for p in (case.get("classname"), case.get("name")) if p)
-                      where = f"server/{case.get('file', '')}"
-                      line = int(case.get("line") or 0) + 1
-                      said = f"{failed.get('message') or ''}\n{failed.text or ''}".strip()
-                      found.append(
-                          f"::error file={escaped(where, True)},line={line},"
-                          f"title={escaped(name[:200], True)}::{escaped(said[:4000])}"
-                      )
-          # A step keeps 10 error annotations: past that, one says how many the rest are.
-          if len(found) > 10:
-              print(f"::error title={len(found)} failed::{len(found)} tests failed; the first 9 "
-                    "are annotated, and the job's log holds the rest")
-              found = found[:9]
-          if found:
-              print(*found, sep="\n")
-          if not reports:
-              print("::error title=No report::pytest wrote no report: a step before the tests "
-                    f"failed, or pytest stopped before writing one{after}")
-          elif not found:
-              print("::error title=No failed test::No test failed in pytest's reports: a check "
-                    f"of the whole session failed, or a step outside the tests did{after}")
-          EOF
+  determinism:
+    name: Determinism at a million rows
+    # The thread-count determinism tests of §9.3 (D372), on a runner of their own beside the
+    # server checks: they build a release of a million trees once (about a minute and 2 GB) and
+    # run each call at several DuckDB thread counts.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Thread-count determinism tests (SPEC §9.3)
+        id: million
+        timeout-minutes: 20
+        run: >-
+          uv run pytest tests/core/determinism -m million --durations=0 --tb=short
+          -o junit_family=xunit1 --junitxml=reports/determinism.xml
+      - name: Every determinism test ran and passed
+        run: python3 ../.github/scripts/determinism_report.py reports/determinism.xml
+      - name: Failed tests as annotations
+        if: failure()
+        env:
+          OUTCOMES: "Determinism tests=${{ steps.million.outcome }}"
+        run: python3 ../.github/scripts/annotations.py
