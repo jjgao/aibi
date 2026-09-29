@@ -25,6 +25,7 @@ from aibi.core.engine.canonical import (
     canonical_clause,
     canonicalise,
     category_clause,
+    category_key,
     variable_form,
 )
 from aibi.core.engine.data import Release, key_part
@@ -38,7 +39,7 @@ from aibi.core.engine.resolve import (
     resolve,
 )
 from aibi.core.engine.sql import CompileError, compile_inputs, compile_materialised
-from aibi.core.engine.variables import Memberships, evaluate_variable, joint, materialise
+from aibi.core.engine.variables import Memberships, evaluate_variable
 from aibi.core.schema.analyses import Variable
 from aibi.core.schema.limits import MAX_CATEGORIES
 from aibi.core.schema.loading import load_document
@@ -302,24 +303,12 @@ OTHERS: list[dict[str, Any]] = [
 
 def _expected(resolution: Resolution, variables: Sequence[ResolvedVariable]) -> list[Any]:
     """Each cohort's variables materialised by the reference evaluator, and their joint counts
-    for two or more."""
-    found: list[Any] = []
-    for cohort in resolution.cohorts.values():
-        members = evaluate(cohort).members
-        read: list[Any] = []
-        units: list[Any] = []
-        for variable in variables:
-            if variable.kind == "memberships":
-                answers = reference.evaluate(variable)
-                read.append(reference.materialise(answers, members))
-                units.append(reference.membership_units(answers, members))
-            else:
-                values = evaluate_variable(variable)
-                read.append(materialise(values, members, rows=variable.kind == "rows"))
-                units.append(values)
-        counted = len(variables) > 1 and all(one is not None for one in units)
-        found.append((tuple(read), joint(units, members) if counted else None))
-    return found
+    for two or more (``memberships.materialise_over``)."""
+    given = [reference.evaluated(variable) for variable in variables]
+    return [
+        reference.materialise_over(variables, given, evaluate(cohort).members)
+        for cohort in resolution.cohorts.values()
+    ]
 
 
 def _variables(resolution: Resolution) -> list[ResolvedVariable]:
@@ -1287,6 +1276,44 @@ def test_a_value_held_only_under_an_unknown_filter_is_listed_with_its_units_unkn
     assert _unknown(found, "noise") == {"NO_INFORMATION": 1}
 
 
+def test_a_unit_whose_unknown_answers_are_all_the_cohort_lists_is_excluded_and_else_known(
+    city: City, doc: Doc, variables_of: Resolved, materialised: Materialise
+) -> None:
+    """``analysed`` depends on the categories a cohort lists (m1, D382): a unit whose one
+    complaint, of a topic, is on no known channel is UNKNOWN for that topic and FALSE, its
+    default, for every other; in a cohort of it alone that topic is all that is listed, so it is
+    excluded, and beside a unit with a complaint of another topic it is known, FALSE for that
+    one, in the evaluator and in SQL, with the joint counts beside another variable."""
+    release = city(
+        {
+            "establishments": [
+                {"establishment_id": "e0", "chain": True},
+                {"establishment_id": "e1", "chain": False},
+            ],
+            "complaints": [
+                {"complaint_id": "c0", "establishment_id": "e0", "channel": None, "topic": "noise"},
+                {"complaint_id": "c1", "establishment_id": "e1", "channel": "web", "topic": "dust"},
+            ],
+        },
+        extra=[TOPIC],
+    )
+    chained = {"kind": "value", "column": "establishments.chain", "values": [True]}
+    topics = {"column": "complaints.topic", "each": "category"}
+    written = doc({"alone": [chained], "both": []})
+    (alone, _), (both, _) = _agree(variables_of(written, release, [topics]), materialised)
+    [read] = alone
+    assert _counts(read) == {"noise": (0, 0, 1)}
+    assert (read.n, read.excluded_units) == (0, 1)
+    assert {r.value: n for r, n in read.excluded.items() if n} == {"NO_INFORMATION": 1}
+    [read] = both
+    assert _counts(read) == {"dust": (1, 1, 0), "noise": (0, 1, 1)}
+    assert (read.n, read.excluded_units) == (2, 0)
+    beside = variables_of(written, release, [topics, {"column": "establishments.chain"}])
+    (_, lone), (_, pair) = _agree(beside, materialised)
+    assert (lone.known, lone.none) == (1, 0)
+    assert (pair.known, pair.none) == (2, 0)
+
+
 def test_a_list_s_repeated_item_makes_its_unit_a_member_once_and_an_unknown_item_unknown(
     city: City, doc: Doc, variables_of: Resolved, materialised: Materialise
 ) -> None:
@@ -1480,7 +1507,7 @@ def _predicate_key(run: Callable[..., Any], doc: Doc, release: Release, clause: 
 def test_a_declared_category_s_key_is_compare_existence_s_however_the_path_is_written(
     run: Callable[..., Any], city: City, doc: Doc, variables_of: Resolved, lift: dict[str, Any]
 ) -> None:
-    """A category's leaf key (``category_clause``, m7) is that of ``compare.existence``'s
+    """A category's leaf key (``category_key``, m7) is that of ``compare.existence``'s
     predicate ``some`` row with that value, over the variable's path and lift, written directly,
     with its path, as a two-step ``exists`` or as nested ``exists`` leaves (§6.1); and the
     variable's form, written with or without its path, is one."""
@@ -1511,7 +1538,10 @@ def test_a_declared_category_s_key_is_compare_existence_s_however_the_path_is_wr
     direct, written = _variables(resolution)
     assert variable_form(direct) == variable_form(written)
     assert direct.question is not None
-    assert keys == {leaf_key(canonical_clause(category_clause(direct.question, "temp")))}
+    assert keys == {category_key(direct.question, "temp")}
+    assert category_key(direct.question, "temp") == leaf_key(
+        canonical_clause(category_clause(direct.question, "temp"))
+    )
 
 
 def test_a_list_s_and_a_looked_up_column_s_category_keys_are_their_predicates(
@@ -1532,12 +1562,8 @@ def test_a_list_s_and_a_looked_up_column_s_category_keys_are_their_predicates(
     assert grade.question is not None
     listed = _value("establishments.tags", values=["vegan"], match="any")
     graded = _value("establishments.grade", values=["B"], via=looked)
-    assert _predicate_key(run, doc, release, listed) == leaf_key(
-        canonical_clause(category_clause(tags.question, "vegan"))
-    )
-    assert _predicate_key(run, doc, release, graded) == leaf_key(
-        canonical_clause(category_clause(grade.question, "B"))
-    )
+    assert _predicate_key(run, doc, release, listed) == category_key(tags.question, "vegan")
+    assert _predicate_key(run, doc, release, graded) == category_key(grade.question, "B")
 
 
 def test_the_memberships_form_is_its_template_with_no_value_which_no_other_form_holds(

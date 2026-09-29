@@ -4,7 +4,7 @@ reference evaluator."""
 
 import json
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -382,10 +382,17 @@ def test_a_cohort_with_more_members_than_a_listing_reads_is_not_listed(
         members.list_members(position, listed, MembersParams(), k=None)
 
 
-def test_a_page_holding_a_text_key_longer_than_a_result_writes_is_refused_naming_its_column(
-    check: Check,
+@pytest.mark.parametrize(
+    "longest", ["k" * (MAX_TEXT + 1), "k\ufdd0", "k\ufffe"], ids=["longer", "noncharacters", "fffe"]
+)
+def test_a_page_holding_a_text_key_longer_than_a_result_writes_or_not_unicode_is_refused(
+    check: Check, longest: str
 ) -> None:
-    long, longest = "a" * MAX_TEXT, "k" * (MAX_TEXT + 1)
+    """D331, m1 of round 2 of #72's review: a page holding a text key more than ``MAX_TEXT``
+    characters long raises ``LongKey``, and one holding a key that is not Unicode text
+    ``NonTextKey`` (``common.unwritable``), each naming the key column and never the key; a page
+    without it is written."""
+    long = "a" * MAX_TEXT
     release = build.release(
         [
             build.dataset(),
@@ -399,10 +406,15 @@ def test_a_page_holding_a_text_key_longer_than_a_result_writes_is_refused_naming
     [cohort] = view.cohorts
     position = CohortAt(cohort, evaluate(cohort.resolved))
     listed = keys(cohort.resolved)
-    with pytest.raises(members.LongKey) as raised:
+    long_key = len(longest) > MAX_TEXT
+    with pytest.raises(members.LongKey if long_key else members.NonTextKey) as raised:
         members.list_members(position, listed, MembersParams(), k=None)
-    assert (raised.value.column, raised.value.most) == ("things.thing_id", MAX_TEXT)
+    assert cast(members.LongKey | members.NonTextKey, raised.value).column == "things.thing_id"
+    assert isinstance(raised.value, members.LongKey) == long_key
+    if isinstance(raised.value, members.LongKey):
+        assert raised.value.most == MAX_TEXT
     assert "kkk" not in str(raised.value)
+    assert longest[1:] not in str(raised.value)
     page = members.list_members(position, listed, MembersParams(limit=2), k=None)
     [shown] = page.values.positions
     assert shown.keys == [[Data(data=long)], [Data(data="b")]]

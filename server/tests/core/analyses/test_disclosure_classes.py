@@ -308,7 +308,10 @@ def test_only_a_disclosed_analysis_withholds_a_form_and_says_why() -> None:
         if analysis.withheld_forms:
             assert analysis.disclosure is DisclosureClass.DISCLOSED
             assert all(why.strip() for why in analysis.withheld_forms.values())
-    assert set(CORE["summary.distribution"].withheld_forms) == {"columns/*/count"}
+    assert set(CORE["summary.distribution"].withheld_forms) == {
+        "columns/*/count",
+        "columns/*/each",
+    }
     distribution = CORE["summary.distribution"]
     for disclosure, forms, because in (
         (DisclosureClass.REFUSED, {"columns/*/count": "why"}, "no"),
@@ -427,3 +430,57 @@ def test_phase_2_withholds_a_disclosed_analysis_s_form_exactly_under_k_and_it_st
     dumped = json.dumps(refusal.model_dump(mode="json"))
     for value in ('"c1"', '"gold"', '"web"', '"orders.channel"'):
         assert value not in dumped
+
+
+EACH = {"column": "orders.channel", "each": "category"}
+"""Memberships, which ``summary.distribution`` withholds under any setting (D382)."""
+
+
+@pytest.mark.parametrize("setting", list(SETTINGS))
+def test_phase_2_withholds_memberships_exactly_under_k_offering_the_questions_of_one_category(
+    check: Check, shop: Shop, setting: str
+) -> None:
+    """D382: under every source of *k*, memberships are ``WITHHELD_UNDER_K`` at their ``each``,
+    the first withheld member in the parameters' order, naming the setting and why and no
+    value, offering ``some`` and ``every`` with ``values``; the analysis stays available."""
+    disclosure, floor, published = SETTINGS[setting]
+    release = shop(survived="delayed", disclosure=disclosure)
+    written = document("summary.distribution")
+    written["views"][0]["params"] = {"columns": [TIER, EACH, ROWS]}
+    found = check(written, release, floor=floor, published=published)
+    k = max(
+        (x for x in (floor, published, (disclosure or {}).get("min_cell_count")) if x),
+        default=None,
+    )
+    status, missing = _statuses(release, Analyses(), k)["summary.distribution"]
+    assert status != "unavailable"
+    assert "min_cell_count" not in missing
+    if k is None:
+        assert found.refusals == []
+        [view] = found.views
+        assert view.variables[1].resolved.kind == "memberships"
+        return
+    [refusal] = found.refusals
+    assert found.views == []
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/1/each",
+    )
+    shown = [part.model_dump() for part in refusal.message]
+    said = "".join(part.get("text", "") for part in shown)
+    assert [part["data"] for part in shown if "data" in part] == ["summary.distribution"]
+    assert f"({SOURCES[setting]})" in said
+    assert CORE["summary.distribution"].withheld_forms["columns/*/each"] in said
+    assert [one.text for one in refusal.alternatives or []] == [
+        'aggregate: "some" with values',
+        'aggregate: "every" with values',
+    ]
+    dumped = json.dumps(refusal.model_dump(mode="json"))
+    for value in ('"c1"', '"gold"', '"web"', '"orders.channel"'):
+        assert value not in dumped
+    [summary] = [a for a in Analyses().all() if a.id == "summary.distribution"]
+    given = CORE["summary.distribution"].params.model_validate({"columns": [TIER, EACH, ROWS]})
+    assert registry.withheld_form(summary, given, k) == (
+        ("columns", 1, "each"),
+        CORE["summary.distribution"].withheld_forms["columns/*/each"],
+    )

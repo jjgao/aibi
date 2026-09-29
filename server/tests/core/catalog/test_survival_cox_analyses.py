@@ -420,13 +420,27 @@ def test_cohorts_that_share_units_are_refused_unless_the_view_allows_overlap(
             ),
         ),
         (
+            {"soil": lambda n: "s\ufdd0" if n % 2 else "y"},
+            [{"column": "trees.soil"}],
+            {},
+            (RefusalCode.NOT_SUPPORTED, "/views/0/params/covariates/0", None, "not Unicode text"),
+        ),
+        (
             {"months": lambda n: 2**60 if n == 1 else n + 1},
             [GIRTH],
             {},
             (RefusalCode.NOT_SUPPORTED, "/views/0", None, "time or entry"),
         ),
     ],
-    ids=["parameters", "strata", "a huge number", "unscalable", "a long level", "a huge time"],
+    ids=[
+        "parameters",
+        "strata",
+        "a huge number",
+        "unscalable",
+        "a long level",
+        "a level that is not Unicode text",
+        "a huge time",
+    ],
 )
 def test_what_only_the_data_show_is_refused_where_it_is_written(
     world: World,

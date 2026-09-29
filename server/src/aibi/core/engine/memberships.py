@@ -35,7 +35,9 @@ UNKNOWN is excluded under its reasons; ``NO_ROWS`` is never given. Where the lis
 
 ``materialise`` counts a variable's memberships over a cohort's units (``Materialised`` with
 ``Memberships``); the SQL compiler counts the same (``sql.compile_materialised``), and the
-differential tests hold the two together (§13.3).
+differential tests hold the two together (§13.3). ``materialise_over`` counts a view's variables
+over a cohort, memberships or not, and their joint counts, as ``run_analysis`` reads them by SQL
+(D382).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -50,13 +52,17 @@ from aibi.core.engine.resolve import Coverage, ResolvedCohort, ResolvedVariable,
 from aibi.core.engine.resolved import RExists, RValue
 from aibi.core.engine.truth import Mark, TruthValue
 from aibi.core.engine.variables import (
+    Joint,
     Materialised,
     Membership,
     Memberships,
     UnitValue,
     Value,
+    evaluate_variable,
     excluded_reason,
+    joint,
 )
+from aibi.core.engine.variables import materialise as materialise_values
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.limits import MAX_CATEGORIES
 from aibi.core.schema.semantics import ExclusionReason
@@ -287,6 +293,49 @@ def _membership(answers: Answers, rows: Sequence[int], category: Value) -> Membe
     return Membership(category, true, false, unknown, MappingProxyType(by_reason), frozenset(marks))
 
 
+# --- A view's variables ---------------------------------------------------------------------------
+
+Evaluated = Answers | tuple[UnitValue, ...]
+"""A variable by the reference evaluator, unit by unit: memberships' answers, or else each unit's
+value (``variables.evaluate_variable``)."""
+
+
+def evaluated(variable: ResolvedVariable) -> Evaluated:
+    """A variable by the reference evaluator over the unit table: its memberships' answers
+    (``evaluate``), or each unit's value."""
+    if variable.kind == "memberships":
+        return evaluate(variable)
+    return evaluate_variable(variable)
+
+
+def materialise_over(
+    variables: Sequence[ResolvedVariable], evaluations: Sequence[Evaluated], members: Sequence[int]
+) -> tuple[tuple[Materialised, ...], Joint | None]:
+    """A view's variables over a cohort's members, each as ``evaluated`` gave it, by the reference
+    evaluator (D382): each materialised (memberships by ``materialise``, a count of rows with its
+    rows), and for two or more their joint counts over the units each gives, a membership's by
+    ``membership_units``, so that a unit is known where some variable knows it; ``None`` for one
+    variable, or where some memberships' listing is ``over``, which gives no units, as SQL gives
+    none (``sql.CompiledMaterialised.read``). It lives here, not in ``variables``, since memberships
+    are this module's and it reads them beside every other variable."""
+    if len(variables) != len(evaluations):
+        raise ValueError("each variable evaluated")
+    found: list[Materialised] = []
+    units: list[Sequence[UnitValue] | None] = []
+    for variable, given in zip(variables, evaluations, strict=True):
+        if isinstance(given, Answers):
+            if variable.kind != "memberships":
+                raise ValueError("memberships' answers are a memberships variable's")
+            found.append(materialise(given, members))
+            units.append(membership_units(given, members))
+        else:
+            found.append(materialise_values(given, members, rows=variable.kind == "rows"))
+            units.append(given)
+    if len(variables) < 2 or any(one is None for one in units):
+        return tuple(found), None
+    return tuple(found), joint([cast(Sequence[UnitValue], one) for one in units], members)
+
+
 # --- Candidates -----------------------------------------------------------------------------------
 
 
@@ -367,12 +416,15 @@ def _fresh(release: Release) -> str:
 
 __all__ = [
     "Answers",
+    "Evaluated",
     "Template",
     "closed_listing",
     "evaluate",
+    "evaluated",
     "fixed",
     "listing",
     "materialise",
+    "materialise_over",
     "membership_units",
     "template",
     "utf16",

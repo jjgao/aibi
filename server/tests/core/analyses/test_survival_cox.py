@@ -9,7 +9,7 @@ import random
 import sys
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -246,6 +246,34 @@ def test_a_covariate_or_stratum_it_cannot_model_is_refused_where_it_is_written(
         ]
 
 
+@pytest.mark.parametrize("place", ["covariates/0", "stratum"])
+def test_a_covariate_of_several_categories_per_unit_is_offered_aggregates_alone(
+    check: Check, store: Store, place: str
+) -> None:
+    """A Cox model reads one value per unit (D335, D367): a bare column of several categories
+    per unit is ``AGGREGATE_REQUIRED``, offered the aggregates its column takes and neither
+    ``count: "rows"`` nor ``each: "category"`` (D378, D382), and its memberships are invalid."""
+    channel = {"column": "orders.channel"}
+    params = (
+        {"covariates": [channel]}
+        if place != "stratum"
+        else {"covariates": [AGE], "stratum": channel}
+    )
+    [refusal] = check(document(params=params), store()).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.AGGREGATE_REQUIRED,
+        f"/views/0/params/{place}/column",
+    )
+    assert [one.text for one in refusal.alternatives or []] == ["count", "some", "every"]
+    each = {**channel, "each": "category"}
+    params = (
+        {"covariates": [each]} if place != "stratum" else {"covariates": [AGE], "stratum": each}
+    )
+    assert refusals(check(document(params=params), store())) == [
+        (RefusalCode.INVALID_VALUE, f"/views/0/params/{place}/each")
+    ]
+
+
 def test_the_count_of_an_identifier_s_rows_is_a_number_covariate(
     check: Check, store: Store
 ) -> None:
@@ -300,7 +328,7 @@ def test_memberships_are_no_covariate_and_their_refusal_offers_only_what_the_mod
         RefusalCode.INVALID_VALUE,
         f"/views/0/params/{place}/each",
     )
-    assert ("reads no form of this column" in said(refusal.message)) is not offered
+    assert ("reads no form of this column" in said(refusal.message)) == (not offered)
     assert [one.text for one in refusal.alternatives or []] == offered
     bare = check(written({"column": column}), release)
     if column.startswith("orders."):
@@ -620,11 +648,26 @@ def test_a_view_whose_values_are_labelled_before_any_fit_never_scales_a_column(
     }
 
 
-def test_a_level_longer_than_a_result_writes_is_refused(analyse: Analyse, store: Store) -> None:
-    long = store(customers=40, edit=edited(note=lambda n: "x" * (MAX_TEXT + 1) if n % 2 else "y"))
-    with pytest.raises(cox.LongLevel) as raised:
-        analyse(document(params={"covariates": [AGE, {"column": "customers.note"}]}), long)
-    assert raised.value.covariate == 1
+@pytest.mark.parametrize(
+    ("label", "raised_as"),
+    [
+        ("x" * (MAX_TEXT + 1), cox.LongLevel),
+        ("n\ufdd0te", cox.NonTextLevel),
+        ("\ufffe", cox.NonTextLevel),
+    ],
+    ids=["longer", "holding a noncharacter", "a noncharacter"],
+)
+def test_a_level_longer_than_a_result_writes_or_not_unicode_is_refused(
+    analyse: Analyse, store: Store, label: str, raised_as: type[Exception]
+) -> None:
+    """D368, m1 of round 2 of #72's review: a level more than ``MAX_TEXT`` characters long raises
+    ``LongLevel``, and one that is not Unicode text ``NonTextLevel`` (``common.unwritable``),
+    neither quoting it; one of ``MAX_TEXT`` characters runs."""
+    unwritten = store(customers=40, edit=edited(note=lambda n: label if n % 2 else "y"))
+    with pytest.raises(raised_as) as raised:
+        analyse(document(params={"covariates": [AGE, {"column": "customers.note"}]}), unwritten)
+    assert cast(cox.LongLevel | cox.NonTextLevel, raised.value).covariate == 1
+    assert label not in str(raised.value)
     fits = store(customers=40, edit=edited(note=lambda n: "x" * MAX_TEXT if n % 2 else "y"))
     analyse(document(params={"covariates": [AGE, {"column": "customers.note"}]}), fits)
 
@@ -1056,12 +1099,20 @@ def test_a_number_is_refused_exactly_beyond_2_53_less_1(value: float, refused: b
         run()
 
 
-def test_a_long_baseline_is_refused_and_a_constant_long_level_is_not() -> None:
-    long = "x" * (MAX_TEXT + 1)
+@pytest.mark.parametrize(
+    ("long", "raised_as"),
+    [("x" * (MAX_TEXT + 1), cox.LongLevel), ("\ufdd0", cox.NonTextLevel)],
+    ids=["longer", "a noncharacter"],
+)
+def test_a_long_baseline_is_refused_and_a_constant_long_level_is_not(
+    long: str, raised_as: type[Exception]
+) -> None:
+    """D368, m1 of round 2 of #72's review: a baseline no output holds, too long or not Unicode
+    text, is refused as a level is, and a constant covariate's shows no level, so it runs."""
     values = [long, long, long, "y", "y", long]
     events = [True, True, True, True, False, True]
     positions = [members(values, events), members(values, events)]
-    with pytest.raises(cox.LongLevel):
+    with pytest.raises(raised_as):
         cox.model(
             positions,
             [Covariate("category")],

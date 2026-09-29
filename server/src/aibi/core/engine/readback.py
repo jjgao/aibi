@@ -29,7 +29,8 @@ marked (§8.1). Everything read from data is a data token, never template text (
 ``variable_readback`` states a view's variable the same way (D325): its column and lookups; for
 an aggregate, the function, the rows reached at its last down step with their conditions, then
 each earlier step they are pooled through, and what a unit with no value takes; for ``some`` or
-``every``, its question.
+``every``, its question; for memberships (D382), its template's question for each category, its
+value leaf *is that category*, which only a template's leaf, asking about no value, reads.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -127,6 +128,8 @@ class _Reader:
 
     release: Release
     coverage: Mapping[str, Coverage]
+    template: bool = False
+    """Whether it reads a memberships' template, whose value leaf asks about no value (D382)."""
 
     def label(self, identifier: str) -> Segment:
         descriptor = self.release.by_id.get(identifier)
@@ -207,6 +210,9 @@ class _Reader:
                 found += [text(" and " if index else ""), text(words), data(constant_text(bound))]
             if node.negate:
                 found.append(text(")"))
+        elif not predicate.values:
+            assert self.template, "only a memberships' template asks about no value"
+            found.append(text(" is that category"))
         else:
             listed = _in_order(constant_json(value) for value in predicate.values)
             if len(listed) == 1:
@@ -426,6 +432,15 @@ def _variable_text(variable: CanonicalVariable) -> list[Segment]:
     if resolved.kind == "question":
         assert resolved.question is not None
         return [text("whether "), *reader.clause(resolved.question)]
+    if resolved.kind == "memberships":
+        assert resolved.question is not None
+        template = _Reader(resolved.release, dict(resolved.coverage), template=True)
+        return [
+            text("for each category of the "),
+            reader.label(resolved.column),
+            text(", whether "),
+            *template.clause(resolved.question),
+        ]
     if resolved.kind == "rows":
         return [
             text("the rows reached, by the "),

@@ -118,6 +118,32 @@ def test_a_result_run_again_is_given_from_the_cache_without_running_a_query(
     assert explained.issuance.values_from == first.issuance.id
 
 
+def test_memberships_run_again_are_given_from_the_cache_as_they_were_computed(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D374, D382: a result of memberships is cached as digested content, read back through the
+    distribution's values model, and given again from the cache, its values and charts as the
+    run's that filled it."""
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world)
+    columns = [
+        {"column": "trees.height_m"},
+        {"column": "harvests.grade", "each": "category"},
+        {"column": "trees.tags", "each": "category"},
+    ]
+    view = {**DISTRIBUTION, "params": {"columns": columns}}
+    [first] = run(catalog, document(view))
+    runs = workers_run(monkeypatch)
+    [second] = run(catalog, document(view))
+    assert runs == []
+    assert second.issuance.cache_hit
+    assert without_issuance(second) == without_issuance(first)
+    kinds = [
+        one["kind"] for one in second.model_dump(mode="json")["values"]["positions"][0]["columns"]
+    ]
+    assert kinds == ["numbers", "memberships", "memberships"]
+
+
 def test_a_hit_is_rendered_with_its_own_call_s_names_and_document(
     world: World, orchard: Orchard
 ) -> None:

@@ -680,6 +680,29 @@ def test_a_count_of_rows_is_refused_for_a_pack_s_analysis_before_phase_1_whateve
     assert echo.handed == []
 
 
+@pytest.mark.parametrize("independent", [False, True])
+def test_a_pack_s_analysis_is_offered_no_memberships_and_takes_none_whatever_it_assumes(
+    check: Check, shop: Shop, independent: bool
+) -> None:
+    """A pack's analysis is handed one value per unit (D335, D341): a bare column of several
+    categories per unit is ``AGGREGATE_REQUIRED``, offered neither ``count: "rows"`` nor
+    ``each: "category"`` (D382), and memberships are invalid where written; the pack is not
+    run."""
+    echo = Echo(entry(independent=independent))
+    bare = document({"measure": [{"column": "orders.channel"}]})
+    found = check(bare, shop(), analyses=tallies(echo))
+    [refusal] = found.refusals
+    assert (refusal.code, refusal.path) == (
+        "AGGREGATE_REQUIRED",
+        "/views/0/params/columns/measure/0/column",
+    )
+    assert [one.text for one in refusal.alternatives or []] == ["count", "some", "every"]
+    each = document({"measure": [{"column": "orders.channel", "each": "category"}]})
+    found = check(each, shop(), analyses=tallies(echo))
+    assert refusals(found) == [("INVALID_VALUE", "/views/0/params/columns/measure/0/each")]
+    assert echo.handed == []
+
+
 def test_a_column_requirement_without_a_minimum_needs_one_column(check: Check, shop: Shop) -> None:
     requires = [
         {"role": "measure", "kind": "column"},
@@ -1873,7 +1896,7 @@ def packed_each(
         "/views/0/params/columns/measure/0/each",
     )
     assert "compares units" not in said(refusal)
-    assert ("reads no form of this column" in said(refusal)) is not offered
+    assert ("reads no form of this column" in said(refusal)) == (not offered)
     assert [one.text for one in refusal.alternatives or []] == offered
     bare = check(document({"measure": [{"column": column}]}), release, analyses=analyses)
     if column.startswith("orders."):

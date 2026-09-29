@@ -26,7 +26,9 @@ applicability says it is unavailable there (``registry``);
 refuses the call, ``LIMIT_EXCEEDED`` naming ``listed_members``), and the page is taken without an
 object per member, by the call's deadline (``members.select``). A page holding a text key of more
 than ``MAX_TEXT`` characters, more than a result writes as data, is refused (``LongKey``,
-``LIMIT_EXCEEDED`` naming ``text_characters`` and the key column, never the key).
+``LIMIT_EXCEEDED`` naming ``text_characters`` and the key column, never the key), and so is one
+that is not Unicode text (a lone surrogate or a noncharacter, ``NonTextKey``, ``NOT_SUPPORTED``
+naming the key column; ``common.unwritable``, D271's rule).
 
 **Determinism** (§9.3). No statistic is computed: the keys are read as stored and ordered by their
 serialisation, so the only method is the order, which the tests hold to an independent sort. The
@@ -38,7 +40,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import cast
 
-from aibi.core.analyses.common import CohortAt, cohort_caveats, populations
+from aibi.core.analyses.common import CohortAt, cohort_caveats, populations, unwritable
 from aibi.core.engine.canonical import CanonicalCohort
 from aibi.core.engine.members import Key, key_columns, select
 from aibi.core.engine.resolve import UNCONFIRMED, FieldRead
@@ -140,6 +142,15 @@ class LongKey(Exception):  # noqa: N818 - a limit reached, as the refusal names 
         self.most = most
 
 
+class NonTextKey(Exception):  # noqa: N818 - raised like a limit's refusal
+    """A page holding a text key in ``column`` that is not Unicode text (a lone surrogate or a
+    noncharacter), which a result does not write (§8.2, D331)."""
+
+    def __init__(self, column: str) -> None:
+        super().__init__(f"a key in {column} that is not Unicode text")
+        self.column = column
+
+
 def list_members(
     position: CohortAt,
     keys: Sequence[Key],
@@ -152,7 +163,8 @@ def list_members(
     any order (``engine.members``: read by SQL, or from the reference evaluator's truth values),
     the page taken in the canonical form's order by ``ends`` (``members.select``, which raises
     ``CallerDeadline``). Raises ``TooManyMembers`` for more than ``MAX_LISTED`` keys, and
-    ``LongKey`` for a text key on the page of more than ``MAX_TEXT`` characters."""
+    ``LongKey`` for a text key on the page of more than ``MAX_TEXT`` characters, and
+    ``NonTextKey`` for one that is not Unicode text (``common.unwritable``)."""
     if k is not None:
         raise ValueError("summary.members lists no key under a disclosure setting (D332)")
     if len(keys) > MAX_LISTED:
@@ -168,8 +180,11 @@ def list_members(
     ]
     for key in listed:
         for name, value in zip(names, key, strict=True):
-            if isinstance(value, str) and len(value) > MAX_TEXT:
+            why = unwritable(value) if isinstance(value, str) else None
+            if why == "long":
                 raise LongKey(name, MAX_TEXT)
+            if why == "not_text":
+                raise NonTextKey(name)
     columns = [Data(data=name) for name in names]
     values = MembersValues(
         positions=[
@@ -238,6 +253,7 @@ __all__ = [
     "METHODS",
     "VERSION",
     "LongKey",
+    "NonTextKey",
     "Outcome",
     "TooManyMembers",
     "key_part",

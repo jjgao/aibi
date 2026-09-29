@@ -4,9 +4,10 @@ its issuance, whatever DuckDB's ``query_threads``, over an orchard of a million 
 
 Each call drives the SQL paths its analysis reads (D372): cohort counts with a lift; the crossing of
 predicates, the other lift rule's included; materialisations (joint values, a ``mean``'s value rows,
-extremes, empty rows, counts of rows two down steps deep) and the units cohorts share; a member
-listing; input listings with an endpoint's rows, aggregates and a predicate. The cheap calls run at
-one thread, at four twice and at three (an uneven split), the others at one and four.
+extremes, empty rows, counts of rows two down steps deep, memberships as pairs plus default) and the
+units cohorts share; a member listing; input listings with an endpoint's rows, aggregates and a
+predicate. The cheap calls run at one thread, at four twice and at three (an uneven split), the
+others at one and four.
 ``validate_document`` and ``explain`` run no query and are not compared.
 
 They run only with ``-m million`` (``addopts`` deselects them), as
@@ -137,6 +138,17 @@ VIEWS: list[dict[str, Any]] = [
         },
     },
     {
+        "analysis": "summary.distribution",
+        "cohorts": ["every"],
+        "params": {
+            "columns": [
+                {"column": "harvests.grade", "each": "category"},
+                {"column": "weighings.scale", "each": "category", "lift": "assessed"},
+                {"column": "trees.tags", "each": "category"},
+            ]
+        },
+    },
+    {
         "analysis": "compare.columns",
         "cohorts": ["apple", "pear"],
         "params": {
@@ -168,8 +180,10 @@ VIEWS: list[dict[str, Any]] = [
         },
     },
 ]
-"""A view of each core analysis but ``compare.existence``, whose crossing has a test of its own, and
-a second of ``summary.distribution``, of counts of rows (D378)."""
+"""A view of each core analysis but ``compare.existence``, whose crossing has a test of its own, a
+second of ``summary.distribution``, of counts of rows (D378), and a third, of memberships over
+every tree (D382): a category one step down, one two steps down through the weighings' partial
+coverage under ``assessed``, and a list, each counted as pairs plus default (D381)."""
 ECHO: dict[str, Any] = {
     "analysis": "echoes.echo",
     "cohorts": ["wide_clay_apple"],
@@ -292,6 +306,9 @@ def test_every_core_analysis_gives_the_same_result_whatever_duckdb_s_threads(
     [first, *_] = at_each(orchard, answer, "run_analysis", written, COSTLY)
     assert isinstance(first, AnalysisResults)
     assert [r.derivation.analysis.id for r in first.results] == [v["analysis"] for v in VIEWS]
+    members: Any = first.results[2].values.positions[0]["columns"]
+    assert [one["kind"] for one in members] == ["memberships"] * 3
+    assert all(one["categories"] for one in members)
     cox: Any = first.results[-1].values.positions
     assert any(lift["lift_differs"] for at in cox for lift in at.get("lifts") or [])
 

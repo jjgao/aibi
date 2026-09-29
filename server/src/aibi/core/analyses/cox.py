@@ -21,8 +21,8 @@ TRUE; one that holds a lift is also listed flipped (``lifted``), and ``CoxPositi
 value, the stratum's, then its endpoint row (``survival.endpoint_cells``). A unit's time or entry
 beyond ±(2^53 − 1) refuses the view, as ``survival.km``'s (``survival.TooLarge``), and so does a
 number covariate's value there among the complete cases (``TooLarge``), a category's level longer
-than ``MAX_TEXT`` (``LongLevel``) and a number covariate whose column the design's fit cannot scale
-(``Unscalable``).
+than ``MAX_TEXT`` (``LongLevel``) or not Unicode text (``NonTextLevel``; ``common.unwritable``),
+and a number covariate whose column the design's fit cannot scale (``Unscalable``).
 
 **The model** (D362–D365). A view's positions each hand every member's cells (``Member``): its
 endpoint row or the reasons it has none, and per covariate, then the stratum, its value or the
@@ -71,7 +71,14 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from aibi.core.analyses import coxfit, coxph, ieee, survival, timetoevent
-from aibi.core.analyses.common import CohortAt, caveat, cohort_caveats, flag_caveats, populations
+from aibi.core.analyses.common import (
+    CohortAt,
+    caveat,
+    cohort_caveats,
+    flag_caveats,
+    populations,
+    unwritable,
+)
 from aibi.core.analyses.coxph import Unit
 from aibi.core.analyses.distribution import category_label
 from aibi.core.analyses.stats import z
@@ -99,7 +106,7 @@ from aibi.core.schema.digests import order_key
 from aibi.core.schema.export import params_schema, values_schema
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
 from aibi.core.schema.jsonio import number_text
-from aibi.core.schema.limits import MAX_COHORTS, MAX_STRATA, MAX_TEXT, MAX_VARIABLES
+from aibi.core.schema.limits import MAX_COHORTS, MAX_STRATA, MAX_VARIABLES
 from aibi.core.schema.numbers import Interval, NotEstimableReason
 from aibi.core.schema.output import Data, Segment, data, text
 from aibi.core.schema.results import Analysed, AnalysedCounts, Population
@@ -153,6 +160,16 @@ class TooLarge(ValueError):  # noqa: N818 - raised like a limit's refusal
 class LongLevel(ValueError):  # noqa: N818 - raised like a limit's refusal
     """A category covariate, ``covariate`` its index, a level or baseline of which, shown as
     data, is longer than ``MAX_TEXT`` characters (D368)."""
+
+    def __init__(self, covariate: int) -> None:
+        super().__init__(covariate)
+        self.covariate = covariate
+
+
+class NonTextLevel(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A category covariate, ``covariate`` its index, a level or baseline of which, shown as
+    data, is not Unicode text (a lone surrogate or a noncharacter), which no output's text holds
+    (§8.2, D368)."""
 
     def __init__(self, covariate: int) -> None:
         super().__init__(covariate)
@@ -477,10 +494,14 @@ def model(
     coding = [_coded(covariate, j, pooled, watch) for j, covariate in enumerate(covariates)]
     for j, coded in enumerate(coding):
         shown = () if coded.constant or coded.baseline is None else (*coded.levels, coded.baseline)
-        if covariates[j].kind == "category" and any(
-            len(category_label(value)) > MAX_TEXT for value in shown
-        ):
-            raise LongLevel(j)
+        if covariates[j].kind != "category":
+            continue
+        for value in shown:
+            why = unwritable(category_label(value))
+            if why == "long":
+                raise LongLevel(j)
+            if why == "not_text":
+                raise NonTextLevel(j)
     parameters = sum(coded.width for coded in coding)
     if parameters > MAX_PARAMETERS:
         raise TooManyParameters(parameters)
@@ -960,8 +981,8 @@ def analyse(
     ``covariate_of``, and ``overlap`` says that the view allows overlap and its cohorts share
     units. The members whose truth the other lift rule changes are counted for each predicate
     covariate that holds a lift (``lifted``, D371). Raises ``survival.TooLarge``, ``TooLarge``,
-    ``LongLevel``, ``Unscalable``, ``TooManyParameters``, ``TooManyStrata``, and
-    ``CallerDeadline`` once ``time.monotonic()`` has passed ``ends`` (``timetoevent.Watch``,
+    ``LongLevel``, ``NonTextLevel``, ``Unscalable``, ``TooManyParameters``, ``TooManyStrata``,
+    and ``CallerDeadline`` once ``time.monotonic()`` has passed ``ends`` (``timetoevent.Watch``,
     D350)."""
     covariates: list[Covariate] = []
     for variable in variables[: len(params.covariates)]:
@@ -1244,6 +1265,7 @@ __all__ = [
     "LongLevel",
     "Member",
     "Model",
+    "NonTextLevel",
     "Outcome",
     "TooLarge",
     "TooManyParameters",

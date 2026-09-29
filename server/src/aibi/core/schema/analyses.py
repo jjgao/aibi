@@ -36,7 +36,8 @@ mean, standard deviation, median, quartiles, minimum, maximum and a histogram, a
 disclosure setting only the histogram's merged bins and the quartiles' bins. A variable that
 counts rows (``count: "rows"``) gives the same over the rows it pools, with the rows excluded by
 reason (``CategoryRows``, ``NumberRows``), and is withheld under any disclosure setting (D378,
-D379).
+D379); so are a variable's memberships (``each: "category"``), each category's units over those
+for which it is known, a unit counting in each it holds (``MembershipDistribution``, D380, D382).
 
 ``compare.columns`` (D336) takes ``columns``, one to ``MAX_VARIABLES`` variables, and ``level``.
 Its values, per position and column: for categories, the cohort's units per category over those
@@ -256,7 +257,8 @@ class Variable(DocModel):
     """``"category"`` asks, for each category of a multi-valued categorical column, whether some
     row (or item) of the unit has it, an existence question per category whose units are counted
     over those for which it is known (§9.2, D380): without an ``aggregate``, ``values``,
-    ``empty``, ``count`` or ``where``, in a descriptive analysis alone."""
+    ``empty``, ``count``, ``where`` or ``bins``, in a descriptive analysis alone, and withheld
+    under any disclosure setting (D382)."""
 
     @model_validator(mode="after")
     def _check_members(self) -> Self:
@@ -268,11 +270,12 @@ class Variable(DocModel):
             or self.empty is not None
             or rows
             or self.where is not None
+            or self.bins is not None
         ):
             raise PydanticCustomError(
                 "conflicting_members",
                 'each "category" asks of every category whether some row has it, so it takes no '
-                "aggregate, values, empty, count or where; for rows with conditions, ask a "
+                "aggregate, values, empty, count, where or bins; for rows with conditions, ask a "
                 "compare.existence predicate",
             )
         if rows and (aggregate is not None or self.values is not None or self.empty is not None):
@@ -423,8 +426,34 @@ class NumberRows(Estimable):
     histogram: Annotated[Histogram | None, COMPUTED]
 
 
+class MembershipDistribution(Output):
+    """A variable's memberships (``each: "category"``) at one position (D380, D382): for each
+    category listed over the cohort (the declared values in their order, zeros included, then
+    the others in UTF-16 order, or a filtered column's allowed values), the units for which some
+    row (or item) has it over the units for which that is known, its UNKNOWN units in the
+    proportion's ``excluded`` by reason and its ``denominator_definition`` naming the category's
+    leaf key (``counts: "known"``). A unit may count in several categories, so the proportions
+    need not sum to 1 (``multi_membership``); nothing is listed where no category is. It is never
+    under a disclosure setting (D382), so nothing is merged or suppressed."""
+
+    kind: Literal["memberships"]
+    multi_membership: Literal[True]
+    """A unit may be a member of several categories, and each category has its own
+    denominator (§9.2)."""
+    categories: Annotated[list[CategoryShare], Field(max_length=MAX_CATEGORIES)]
+
+    @model_validator(mode="after")
+    def _check_rows(self) -> Self:
+        for share in self.categories:
+            if len(share.values) != 1 or share.other_values is not None:
+                raise PydanticCustomError(
+                    "membership_row", "A membership's row names one category and no other values"
+                )
+        return self
+
+
 _KINDS = ("categories", "numbers")
-_POSITION_KINDS = (*_KINDS, "category_rows", "number_rows")
+_POSITION_KINDS = (*_KINDS, "category_rows", "number_rows", "memberships")
 
 
 def _kind(value: object) -> object:
@@ -449,13 +478,14 @@ ColumnDistribution = Annotated[
     Annotated[CategoryDistribution, Tag("categories")]
     | Annotated[NumberDistribution, Tag("numbers")]
     | Annotated[CategoryRows, Tag("category_rows")]
-    | Annotated[NumberRows, Tag("number_rows")],
+    | Annotated[NumberRows, Tag("number_rows")]
+    | Annotated[MembershipDistribution, Tag("memberships")],
     Discriminator(
         _position_kind,
         custom_error_type="wrong_type",
         custom_error_message=(
-            'A column\'s distribution is of kind "categories", "numbers", "category_rows" or '
-            '"number_rows"'
+            'A column\'s distribution is of kind "categories", "numbers", "category_rows", '
+            '"number_rows" or "memberships"'
         ),
     ),
 ]
@@ -990,6 +1020,7 @@ __all__ = [
     "MembersParams",
     "MembersPosition",
     "MembersValues",
+    "MembershipDistribution",
     "ModelTest",
     "NoViewValues",
     "NumberComparison",

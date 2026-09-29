@@ -20,7 +20,9 @@ histogram bin as the pass left the bins, its count, one row of the facet per coh
 labelled by its interval (``[0, 30)``, ``(-∞, 0)``, ``[60, 100]``), so that bins merged in one
 cohort and not in another are told apart, in order of their edges. A position whose categories or
 histogram are suppressed has no row. A column that counts rows (D378) is drawn alike, its bars
-the rows' proportions or the rows per bin, and says rows where the others say units.
+the rows' proportions or the rows per bin, and says rows where the others say units. A column of
+memberships (D382) is drawn as categories are, a bar per category and cohort, not stacked, since a
+unit may count in several and each category has its own denominator, and says so.
 
 ``compare.columns`` has one chart per column, in parameter order (D336): for categories, the
 bars of each cohort's categories as ``summary.distribution`` draws them; for numbers, each
@@ -55,6 +57,7 @@ from aibi.core.schema.analyses import (
     DistributionValues,
     ExistenceValues,
     HistogramBin,
+    MembershipDistribution,
     NumberComparison,
     NumberDistribution,
     NumberRows,
@@ -136,7 +139,9 @@ def distribution_charts(
 
 
 def _category_rows(
-    found: CategoryDistribution | CategoryRows, position: int, labels: Sequence[str]
+    found: CategoryDistribution | CategoryRows | MembershipDistribution,
+    position: int,
+    labels: Sequence[str],
 ) -> list[JsonValue]:
     rows: list[JsonValue] = []
     for share in found.categories or []:
@@ -159,12 +164,16 @@ def _category_rows(
 
 
 def _category_chart(
-    rows: list[JsonValue], column: int, counted: str = "units"
+    rows: list[JsonValue], column: int, counted: str = "units", *, members: bool = False
 ) -> dict[str, JsonValue]:
     return {
         "description": (
-            f"Column {column}: the proportion of each cohort's {counted} in each category, among "
-            "those with a value"
+            f"Column {column}: the proportion of each cohort's units that have each category, "
+            "among those for which that is known; a unit may have several, so the bars need not "
+            "sum to 1"
+            if members
+            else f"Column {column}: the proportion of each cohort's {counted} in each category, "
+            "among those with a value"
         ),
         "data": {"values": rows},
         "facet": {"row": _cohort_row()},
@@ -193,7 +202,7 @@ def _column_chart(
     counted = "rows" if isinstance(first, CategoryRows | NumberRows) else "units"
     for position, at in enumerate(values.positions):
         found = at.columns[column]
-        if isinstance(found, CategoryDistribution | CategoryRows):
+        if isinstance(found, CategoryDistribution | CategoryRows | MembershipDistribution):
             rows += _category_rows(found, position, labels)
         elif found.histogram is not None:
             for one in found.histogram.bins:
@@ -238,7 +247,7 @@ def _column_chart(
                 },
             },
         }
-    return _category_chart(rows, column, counted)
+    return _category_chart(rows, column, counted, members=isinstance(first, MembershipDistribution))
 
 
 def columns_charts(values: ColumnsValues, labels: Sequence[str]) -> list[dict[str, JsonValue]]:

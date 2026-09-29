@@ -24,7 +24,8 @@ The packs involved in a cohort run their caveat rules on its canonical form (D28
 raise is static, like ``UNCONFIRMED_SEMANTICS``, and joins its caveats.
 
 A variable's memberships (``each``, D380) have the form of their template, whose value leaf asks
-about no value; ``category_clause`` gives each category's question, and its leaf key.
+about no value; ``category_clause`` gives each category's question, and ``category_key`` its
+leaf key.
 
 Phase 2 is the registry's (``aibi.core.analyses.views``, D317): it checks each view against its
 analysis, and hands the clauses of its parameters (``ViewPredicate``) to ``canonicalise``, which
@@ -637,6 +638,13 @@ def category_clause(template: RClause, category: Constant) -> RClause:
     raise ValueError("a memberships' template is a chain of questions over one value leaf")
 
 
+def category_key(template: RClause, category: Constant) -> str:
+    """A category's leaf key of a variable's memberships (D380, D382): the leaf key of its
+    question's canonical clause (``category_clause``), which its row's denominator definition
+    names as a predicate's proportion names the predicate's."""
+    return leaf_key(canonical_clause(category_clause(template, category)))
+
+
 def predicate_variable(key: str, predicate: CanonicalCohort) -> CanonicalVariable:
     """A view's predicate as a variable of its units (D370): a question of its canonical clause
     tree and no aggregate, whose value is the clause's truth and a unit for which it is UNKNOWN
@@ -743,6 +751,7 @@ __all__ = [
     "canonical_clause",
     "canonicalise",
     "category_clause",
+    "category_key",
     "intersection",
     "predicate_variable",
     "variable_form",

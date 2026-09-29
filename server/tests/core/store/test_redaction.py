@@ -725,6 +725,21 @@ def test_the_bins_of_a_count_of_rows_bound_its_column_s_values_and_are_erased() 
     assert not redaction._params_hold(kept, terms)  # pyright: ignore[reportPrivateUsage]
 
 
+def test_memberships_hold_no_constant_as_written_or_canonical() -> None:
+    """A variable's memberships (D380, D382) name no category: as written they are a column and
+    ``each``, and canonical their template, whose value leaf holds ``"values": []`` (D290), so
+    erasure finds nothing in them, even of an identifier column."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    given: JsonValue = {"column": "loans.loan_id", "each": "category"}
+    written = _distribution([given])
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"]["columns"] == [given]
+    leaf: JsonValue = {"kind": "value", "column": "loans.loan_id", "values": []}
+    question: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": [leaf]}
+    canonical: JsonValue = {"columns": [{"each": "category", "question": question}]}
+    assert not redaction._params_hold(canonical, terms)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_a_result_s_canonical_variable_holds_its_empty_constant() -> None:
     terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
     rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}

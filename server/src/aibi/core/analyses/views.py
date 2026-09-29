@@ -24,11 +24,12 @@ A view is checked in two steps, around phase 1:
    cohorts, on the unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates, variables and endpoints all
    canonicalised, none of whose parameters' members its analysis withholds under the effective *k*
-   (``_withheld_form``, D379: ``summary.distribution``'s ``count: "rows"``, ``WITHHELD_UNDER_K`` at
-   the member, checked first), and whose variables its analysis takes (``summary.distribution``'s:
-   categories or numbers, ``bins`` only for numbers, under *k* a number's histogram edges from
-   ``bins`` or a declared range, and under *k* one set of edges for a column's values across the
-   call's views, D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a
+   (``_withheld_form``, D379, D382: ``summary.distribution``'s ``count: "rows"`` and ``each``,
+   ``WITHHELD_UNDER_K`` at the member, checked first), and whose variables its analysis takes
+   (``summary.distribution``'s: categories or numbers, ``bins`` only for numbers, under *k* a
+   number's histogram edges from ``bins`` or a declared range, and under *k* one set of edges for
+   a column's values across the call's views, D328, D329; ``compare.columns``': categories or
+   numbers, and no ``bins``, D336; a
    pack's: no dates or datetimes, and each of its role's ``datatype`` and ``on``, D341;
    ``survival.cox``'s: a coding for each covariate and the stratum, no identifier column's values,
    not the endpoint's own time or status, and no ``bins``, D367, and predicates that test neither,
@@ -81,7 +82,6 @@ from aibi.core.engine.canonical import (
 )
 from aibi.core.engine.data import Release
 from aibi.core.engine.resolve import (
-    MEMBERSHIPS,
     FieldRead,
     Reads,
     ResolvedEndpoint,
@@ -89,10 +89,8 @@ from aibi.core.engine.resolve import (
     ViewEndpoint,
     ViewPredicate,
     ViewVariable,
-    aggregates_over,
     identifying,
     in_document_order,
-    levels,
 )
 from aibi.core.engine.resolved import (
     Origin,
@@ -296,8 +294,9 @@ def parse(
         elif isinstance(params, DistributionParams | ColumnsParams):
             independent = bool(fields.assumes_independent_groups)
             written = [(("columns", j), v) for j, v in enumerate(params.columns)]
+            check = _summarises if isinstance(params, DistributionParams) else _compares
             variables = _variables(
-                written, index, reference, refusals, independent, [_summarises] * len(written)
+                written, index, reference, refusals, independent, [check] * len(written)
             )
         elif isinstance(params, MembersParams):
             _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
@@ -615,9 +614,8 @@ def _variables(
     one that assumes independent groups, or a pack's; §9.2, D335). Resolution refuses ``each``
     there, and where the column has no memberships, and a form the column does not take,
     offering only the forms that run in its place, by the analysis's own phase-2 checks of each
-    (``reads``, one for each: ``_summarises``, ``_coxes`` or ``_packs``);
-    ``summary.distribution`` refuses the memberships it resolved (``_distributed``) until
-    ``MEMBERSHIPS`` (D380)."""
+    (``reads``, one for each: ``_summarises``, ``_compares``, ``_coxes`` or ``_packs``, D380);
+    ``summary.distribution`` reads memberships (D382)."""
     base: list[str | int] = ["views", index, "params"]
     before = len(refusals.found)
     for place, variable in written:
@@ -976,11 +974,13 @@ def _withheld_form(
     that binds (``_setting``) and why, never a value; checked before the analysis's own checks of
     its variables (``_distributed``), so that none reports another member of a view that is not
     run, and none records edges it would not read. It offers the forms of the variable that holds
-    the member which run under ``k`` in its place: for ``summary.distribution``'s ``count:
-    "rows"``, each aggregate the column takes, with the ``bins`` or ``values`` it needs
-    (``distribution.forms_under_k``), ``count`` counting each unit's rows as its value, which the
-    pass protects. Leaving ``count`` out is none of them: a column that counts rows is below the
-    unit, so without an aggregate it is refused (``resolve._not_single``)."""
+    the member which run under ``k`` in its place (``distribution.forms_under_k``): for
+    ``summary.distribution``'s ``count: "rows"``, each aggregate the column takes, with the
+    ``bins`` or ``values`` it needs, ``count`` counting each unit's rows as its value, which the
+    pass protects; for its ``each``, ``some`` and ``every`` with ``values`` where the path allows
+    them (``resolve.aggregates_of``), each a predicate's split, which the pass protects one at a
+    time (D382). Leaving ``count`` or ``each`` out is none of them: the column is multi-valued,
+    so without an aggregate it is refused (``resolve._not_single``)."""
     found = withheld_form(view.analysis, view.params, k)
     if found is None:
         return None
@@ -1238,13 +1238,16 @@ def _pack_unread(
     first that holds: the values of an identifier column (``count`` reads none), a ``where``
     that tests one, values that are none of ``packs.TAKEN``, a column not of its role's
     datatype, and one not read as it is on the unit table where its role requires that; ``None``
-    where it refuses none."""
+    where it refuses none. A pack is handed one value per unit of each column (D335, D341), so a
+    count of rows and memberships are values it is not handed; that check of their kinds is
+    defensive, since resolution refuses both there and never offers either in place of another
+    form (``ViewVariable.independent``, D380, D382)."""
     table, _, _ = variable.column.partition(".")
     if _identifies(release, variable.column) and variable.function != "count":
         return "identifier"
     if _identifiers_tested(release, variable):
         return "tested"
-    if not packs.taken(variable):
+    if variable.kind in ("rows", "memberships") or not packs.taken(variable):
         return "values"
     if requirement.datatype is not None and variable.datatype != requirement.datatype:
         return "datatype"
@@ -1262,8 +1265,11 @@ def _cox_unread(
     (``_coxed``, D367, D370), the first that holds: a column with no coding, an identifier's
     values (``count`` reads none), the endpoint's time or status (``outcome``), and conditions of
     its rows that test either (``_leaves_refused``, which phase 2 refuses beside the others);
-    ``None`` where it refuses none."""
-    if cox.covariate_of(variable) is None:
+    ``None`` where it refuses none. A covariate is one value per unit (D335, D367), so a count
+    of rows and memberships have no coding; that check of their kinds is defensive, since
+    resolution refuses both there and never offers either in place of another form
+    (``ViewVariable.independent``, D380, D382)."""
+    if variable.kind in ("rows", "memberships") or cox.covariate_of(variable) is None:
         return "coding"
     if _identifies(release, variable.column) and variable.function != "count":
         return "identifier"
@@ -1280,9 +1286,19 @@ def _outcome(endpoint: ResolvedEndpoint) -> frozenset[str]:
 
 
 def _summarises(variable: ResolvedVariable, endpoints: Mapping[str, ResolvedEndpoint]) -> bool:
-    """Whether ``summary.distribution`` or ``compare.columns`` reads a variable in a form offered
-    in place of another (``resolve.Reads``): as their phase 2 does (``distribution.summarises``)."""
+    """Whether ``summary.distribution`` reads a variable in a form offered in place of another
+    (``resolve.Reads``): as its phase 2 does (``distribution.summarises``), a count of rows and
+    memberships included (D378, D382)."""
     return distribution.summarises(variable)
+
+
+def _compares(variable: ResolvedVariable, endpoints: Mapping[str, ResolvedEndpoint]) -> bool:
+    """Whether ``compare.columns`` reads a variable in a form offered in place of another
+    (``resolve.Reads``): as its phase 2 does (``distribution.summarises``), one value per unit
+    (D335, D336), so neither a count of rows nor memberships; that check of their kinds is
+    defensive, since resolution refuses both there and never offers either in place of another
+    form (``ViewVariable.independent``, D380, D382)."""
+    return variable.kind not in ("rows", "memberships") and distribution.summarises(variable)
 
 
 def _coxes(key: str, variable: ResolvedVariable, endpoints: Mapping[str, ResolvedEndpoint]) -> bool:
@@ -1385,9 +1401,9 @@ def _distributed(
     k: int | None,
     edges_of: dict[tuple[str, ...], JsonValue],
 ) -> list[Refusal]:
-    """What ``summary.distribution`` refuses of its resolved variables (D328, D329): memberships
-    until ``MEMBERSHIPS`` (``_memberships_later``, D380), a column whose values are neither
-    categories nor numbers, ``bins`` for categories, under *k* a number's histogram whose edges
+    """What ``summary.distribution`` refuses of its resolved variables (D328, D329): a column
+    whose values are neither categories nor numbers, ``bins`` for categories (memberships, which
+    take none, and are categories, D382), under *k* a number's histogram whose edges
     only the data would give (§8.4), and, under *k*, a histogram of a column that the call, in
     this view or an earlier one, reads already with other edges (``edges_of``, shared by the
     call's views; the edges it takes, from ``bins`` or the declared range, so that writing the
@@ -1402,9 +1418,6 @@ def _distributed(
     edges: dict[tuple[str, ...], JsonValue] = {}
     for position, (variable, given) in enumerate(zip(variables, params.columns, strict=True)):
         at: list[str | int] = ["views", index, "params", "columns", position]
-        if variable.resolved.kind == "memberships":
-            found.append(_memberships_later(variable, at))
-            continue
         if not distribution.summarised(variable):
             found.append(
                 Refusal(
@@ -1474,31 +1487,6 @@ def _distributed(
     if not found:
         edges_of.update(edges)
     return found
-
-
-def _memberships_later(variable: CanonicalVariable, at: Sequence[str | int]) -> Refusal:
-    """A variable's memberships in ``summary.distribution`` before ``MEMBERSHIPS`` (D380):
-    ``NOT_SUPPORTED`` at ``each``, offering the aggregates its path allows its column
-    (``resolve.aggregates_over``, of each down step's coverage as resolved), each of which runs;
-    the column holds several values per unit, or resolution would have refused ``each``."""
-    resolved = variable.resolved
-    table, name = resolved.column.split(".", 1)
-    descriptor = resolved.release.column(table, name)
-    assert descriptor is not None, "a resolved variable's column is described"
-    question = resolved.question
-    steps = levels(question, resolved.depth) if isinstance(question, RExists) else []
-    scopes = [resolved.coverage[node.step.rel].scope_columns for node in steps]
-    taken = aggregates_over(descriptor, scopes, bool(steps) and bool(resolved.lookup))
-    return Refusal(
-        code=RefusalCode.NOT_SUPPORTED,
-        path=pointer([*at, "each"]),
-        message=[
-            text(f"Memberships per category are counted from {MEMBERSHIPS}; until then, give "),
-            text("one of the aggregates the column takes: "),
-            data(resolved.column),
-        ],
-        alternatives=[text(name) for name in taken],
-    )
 
 
 def _compared(
