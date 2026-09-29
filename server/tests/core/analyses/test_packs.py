@@ -664,6 +664,22 @@ def test_parameters_the_entry_does_not_take_are_refused_where_they_are_written(
     assert found.views == []
 
 
+@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("floor", [None, 3])
+def test_a_count_of_rows_is_refused_for_a_pack_s_analysis_before_phase_1_whatever_it_assumes(
+    check: Check, shop: Shop, independent: bool, floor: int | None
+) -> None:
+    """A pack's analysis is handed one value per unit (D335, D378), under a disclosure setting
+    or not: ``count: "rows"`` is refused where it is written as the view is parsed, before phase
+    1 resolves it and before the pack runs."""
+    echo = Echo(entry(independent=independent))
+    written = document({"measure": [{"column": "orders.amount", "count": "rows"}]})
+    found = check(written, shop(extended=True), analyses=tallies(echo), floor=floor)
+    assert refusals(found) == [("INVALID_VALUE", "/views/0/params/columns/measure/0/count")]
+    assert found.views == []
+    assert echo.handed == []
+
+
 def test_a_column_requirement_without_a_minimum_needs_one_column(check: Check, shop: Shop) -> None:
     requires = [
         {"role": "measure", "kind": "column"},

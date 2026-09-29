@@ -892,5 +892,105 @@
     "id": "drv:008d35c993f84841920531a9cf7c870a56ba9416b2877f2a049cc8bbdb7f3db9",
     "computation_id": "drv:708e997c72c9432222854c1b6aba0edc6d0e27e6a35b2387b1d0d8a8024085b1",
     "digest": "sha256:b065c7bcd9cc4158c082764ea3ffa1d764cbded95a8c16c166087ea4e2a15ee3"
+  },
+  "order_rows_distribution": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.distribution",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "columns": [
+              {
+                "column": "orders.channel",
+                "count": "rows"
+              },
+              {
+                "column": "orders.amount",
+                "count": "rows"
+              },
+              {
+                "column": "orders.amount",
+                "count": "rows",
+                "bins": [
+                  0,
+                  50,
+                  100,
+                  200
+                ]
+              },
+              {
+                "column": "customers.tier",
+                "via": [
+                  {
+                    "rel": "rel:orders.customer",
+                    "dir": "down"
+                  },
+                  {
+                    "rel": "rel:orders.customer",
+                    "dir": "up"
+                  }
+                ],
+                "count": "rows"
+              },
+              {
+                "column": "orders.channel",
+                "via": [
+                  {
+                    "rel": "rel:orders.customer",
+                    "dir": "down"
+                  },
+                  {
+                    "rel": "rel:orders.customer",
+                    "dir": "up"
+                  },
+                  {
+                    "rel": "rel:orders.customer",
+                    "dir": "down"
+                  }
+                ],
+                "count": "rows"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "extended": true
+    },
+    "id": "drv:0c5e63a335e34b6ffbba70934f645d5f814938e76e3a6f658e440f1dd4601301",
+    "computation_id": "drv:7f6208f4721c2007dcf7e4c88fff1232fec28c71ab9d16963b16201c86365da8",
+    "digest": "sha256:71a6dfff249be04b20888a07ef0ef1ea7120823ee260003efb39f54c33da619a"
   }
 }

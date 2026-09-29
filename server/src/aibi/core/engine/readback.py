@@ -414,7 +414,7 @@ _FUNCTIONS = {"max": "greatest", "min": "least", "mean": "mean"}
 def variable_readback(variable: CanonicalVariable) -> list[Segment]:
     """A view's variable (D325), for its view's readback: the column and the rows it reads,
     from the release's descriptors, followed by the pack summaries of its ``where``'s pack
-    leaves (D345)."""
+    leaves (D345); a count of rows states the rows it reaches and their multiplicity (D378)."""
     return [*_variable_text(variable), *_labelled(variable.leaves, variable.summaries)]
 
 
@@ -426,6 +426,15 @@ def _variable_text(variable: CanonicalVariable) -> list[Segment]:
     if resolved.kind == "question":
         assert resolved.question is not None
         return [text("whether "), *reader.clause(resolved.question)]
+    if resolved.kind == "rows":
+        return [
+            text("the rows reached, by the "),
+            reader.label(resolved.column),
+            *reader.lookups(resolved.lookup),
+            text(" of each of the "),
+            *reader.pooled(resolved),
+            text(", a row counted once for each unit and each path that reaches it"),
+        ]
     function = resolved.function
     assert function is not None
     if function == "count":

@@ -23,27 +23,29 @@ A view is checked in two steps, around phase 1:
    ``ViewVariable``, ``ViewEndpoint``), resolved with the cohorts in the release of the view's
    cohorts, on the unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates, variables and endpoints all
-   canonicalised, and whose variables its analysis takes (``summary.distribution``'s: categories or
-   numbers, ``bins`` only for numbers, under *k* a number's histogram edges from ``bins`` or a
-   declared range, and under *k* one set of edges for a column's values across the call's views,
-   D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a pack's: no
-   dates or datetimes, and each of its role's ``datatype`` and ``on``, D341; ``survival.cox``'s: a
-   coding for each covariate and the stratum, no identifier column's values, not the endpoint's own
-   time or status, and no ``bins``, D367, and predicates that test neither, D370), whose disclosure
-   allows it (``_disclosure``, D353: no view of a ``refused`` analysis under any disclosure
-   setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands each member's
-   values in the keys' order where the dataset allows no row ids, ``ROW_IDS_NOT_ALLOWED`` there),
-   and, for a pack's analysis, whose requirement predicates hold of the release (``NOT_SUPPORTED``
-   at ``analysis`` otherwise, D341), gets its canonical form and ids (``ViewIdentity``): its
-   cohorts in view order, or by computation id when it lists none (D284); its reference's position,
-   for an analysis that declares ``uses_reference``, the first cohort's by default; ``overlap``,
-   for one that declares ``assumes_independent_groups``; its canonical parameters, every default
-   written, every predicate as its canonical clause tree, every variable as its canonical form and
-   every endpoint as its (``{"id", "time"}``); the effective *k* over its cohorts and predicates
-   and the floor; and the results versions of the packs of its analysis, cohorts, predicates and
-   variables. A view one of whose cohorts, predicates, variables or endpoints was refused is left
-   out; their refusals say why. A view whose cohorts are of more than one release is
-   ``MIXED_RELEASES``, which resolution refuses first.
+   canonicalised, none of whose parameters' members its analysis withholds under the effective *k*
+   (``_withheld_form``, D379: ``summary.distribution``'s ``count: "rows"``, ``WITHHELD_UNDER_K`` at
+   the member, checked first), and whose variables its analysis takes (``summary.distribution``'s:
+   categories or numbers, ``bins`` only for numbers, under *k* a number's histogram edges from
+   ``bins`` or a declared range, and under *k* one set of edges for a column's values across the
+   call's views, D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a
+   pack's: no dates or datetimes, and each of its role's ``datatype`` and ``on``, D341;
+   ``survival.cox``'s: a coding for each covariate and the stratum, no identifier column's values,
+   not the endpoint's own time or status, and no ``bins``, D367, and predicates that test neither,
+   D370), whose disclosure allows it (``_disclosure``, D353: no view of a ``refused`` analysis under
+   any disclosure setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands
+   each member's values in the keys' order where the dataset allows no row ids,
+   ``ROW_IDS_NOT_ALLOWED`` there), and, for a pack's analysis, whose requirement predicates hold of
+   the release (``NOT_SUPPORTED`` at ``analysis`` otherwise, D341), gets its canonical form and ids
+   (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none (D284);
+   its reference's position, for an analysis that declares ``uses_reference``, the first cohort's by
+   default; ``overlap``, for one that declares ``assumes_independent_groups``; its canonical
+   parameters, every default written, every predicate as its canonical clause tree, every variable
+   as its canonical form and every endpoint as its (``{"id", "time"}``); the effective *k* over its
+   cohorts and predicates and the floor; and the results versions of the packs of its analysis,
+   cohorts, predicates and variables. A view one of whose cohorts, predicates, variables or
+   endpoints was refused is left out; their refusals say why. A view whose cohorts are of more than
+   one release is ``MIXED_RELEASES``, which resolution refuses first.
 
 A view's readback is its analysis's, rendered from its canonical form and the release's descriptors
 (§7.7); its static caveats are those its result carries that need no data: the fields its cohorts,
@@ -67,6 +69,7 @@ from aibi.core.analyses.registry import (
     DisclosureClass,
     Registered,
     disclosure_of,
+    withheld_form,
 )
 from aibi.core.engine.canonical import (
     CanonicalCohort,
@@ -77,7 +80,6 @@ from aibi.core.engine.canonical import (
 )
 from aibi.core.engine.data import Release
 from aibi.core.engine.resolve import (
-    PER_CATEGORY,
     FieldRead,
     ResolvedEndpoint,
     ResolvedVariable,
@@ -596,8 +598,8 @@ def _variables(
     """A view's variables to resolve (D325), each with its place below ``params``: the ``where``
     of each holds no ``ids`` and no ``cohort`` leaf, as a predicate holds none, and at most as
     many pack leaves as a cohort, which resolution expands (D345); ``count: "rows"`` is a
-    descriptive analysis's, from M3.2e, and never one that assumes independent groups
-    (``independent``), which compares units (§9.2, D335)."""
+    descriptive analysis's (D378), never one that assumes independent groups (``independent``),
+    which compares units (§9.2, D335)."""
     base: list[str | int] = ["views", index, "params"]
     before = len(refusals.found)
     for place, variable in written:
@@ -607,13 +609,6 @@ def _variables(
                 (*base, *place, "count"),
                 text("This analysis compares units, one value each (§9.2), so a variable counts "),
                 text("units, not rows: leave count out"),
-            )
-        elif variable.count is not None:
-            refusals.add(
-                RefusalCode.NOT_SUPPORTED,
-                (*base, *place, "count"),
-                text(f'Counting rows (count: "rows", §9.2) comes with {PER_CATEGORY}; a '),
-                text("variable counts units until then"),
             )
         where: list[str | int] = [*base, *place, "where"]
         pack_leaves = 0
@@ -835,6 +830,11 @@ def checked(
         settings = [part.identity.disclosure for part in (*cohorts, *predicates)]
         given = [k for k in settings if k is not None]
         disclosure = max(given) if given else None
+        published = canonical.published.get(cohorts[0].release.manifest)
+        form = _withheld_form(view, cohorts[0], variables, disclosure, published)
+        if form is not None:
+            refusals.append(form)
+            continue
         if isinstance(view.params, DistributionParams):
             wrong = _distributed(view.index, view.params, variables, disclosure, edges_of)
             if wrong:
@@ -845,7 +845,6 @@ def checked(
             if wrong:
                 refusals += wrong
                 continue
-        published = canonical.published.get(cohorts[0].release.manifest)
         withheld = _disclosure(view, cohorts[0], disclosure, published)
         if withheld is not None:
             refusals.append(withheld)
@@ -943,6 +942,51 @@ def _disclosure(
             alternatives=_alternatives(),
         )
     return None
+
+
+def _withheld_form(
+    view: ParsedView,
+    cohort: CanonicalCohort,
+    variables: Sequence[CanonicalVariable],
+    k: int | None,
+    published: int | None,
+) -> Refusal | None:
+    """What phase 2 refuses of a view of a ``disclosed`` analysis for a form of its parameters
+    the analysis withholds (``registry.withheld_form``, D379): under the effective setting ``k``,
+    whatever its cohorts' sizes, ``WITHHELD_UNDER_K`` at the first such member, naming the setting
+    that binds (``_setting``) and why, never a value; checked before the analysis's own checks of
+    its variables (``_distributed``), so that none reports another member of a view that is not
+    run, and none records edges it would not read. It offers the forms of the variable that holds
+    the member which run under ``k`` in its place: for ``summary.distribution``'s ``count:
+    "rows"``, each aggregate the column takes, with the ``bins`` or ``values`` it needs
+    (``distribution.forms_under_k``), ``count`` counting each unit's rows as its value, which the
+    pass protects. Leaving ``count`` out is none of them: a column that counts rows is below the
+    unit, so without an aggregate it is refused (``resolve._not_single``)."""
+    found = withheld_form(view.analysis, view.params, k)
+    if found is None:
+        return None
+    assert k is not None, "a form is withheld under a disclosure setting"
+    place, because = found
+    at = ("views", view.index, "params", *place)
+    alternatives: list[Segment] = [
+        text(form)
+        for given, variable in zip(view.variables, variables, strict=True)
+        if at[: len(given.at)] == given.at
+        for form in distribution.forms_under_k(variable, given.variable)
+    ]
+    dataset = cohort.resolved.release.dataset_descriptor
+    settings = None if dataset is None else dataset.fields.disclosure
+    source = _setting(settings, k, published)
+    return Refusal(
+        code=RefusalCode.WITHHELD_UNDER_K,
+        path=pointer(list(at)),
+        message=[
+            text(f"Under a disclosure setting ({source}, {k}) no view of "),
+            data(view.analysis.id),
+            text(f" gives this member, whatever its cohorts' sizes: {because} (§8.4, D379)"),
+        ],
+        alternatives=alternatives,
+    )
 
 
 def _packed(

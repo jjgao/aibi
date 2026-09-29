@@ -19,6 +19,17 @@ same between the least and the greatest value; bins are [eᵢ, eᵢ₊₁), the 
 open bin below the first edge and above the last. The analysis is descriptive: no test and no
 contrast, so ``values.view`` is empty.
 
+**Rows** (§9.2, D378). A variable that counts rows (``count: "rows"``) summarises the rows a
+numeric aggregate of its column would pool, each once for every path and unit that reaches it:
+for categories (a category or boolean column) the rows of each category over the rows with a
+value (``counts: "rows"``), listed as a column's categories are without a disclosure setting; for
+numbers, n rows and the same statistics and histogram over their values (a declared range divides
+it as it does the column's). A pooled row whose value is not PRESENT is left out of them and
+counted by reason in ``excluded_rows``, and never excludes its unit; ``analysed`` counts the
+units, those pooled (with no rows included) and those excluded, for their pooling's reasons, as
+an aggregate's are. It is withheld under any disclosure setting (D379), which phase 2 refuses and
+``summarise`` asserts.
+
 **Accounting** (§8.1). ``analysed`` counts, per position, the units a variable has a value for
 (``n``) and those it excludes (``excluded_units``, and ``excluded`` by every reason): a column's
 cell NOT_APPLICABLE, NOT_ASSESSED or empty, a missing row, a question UNKNOWN, an aggregate
@@ -52,7 +63,7 @@ in phase 2 (``needs_edges``).
 
 import bisect
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -70,11 +81,13 @@ from aibi.core.analyses.common import (
 from aibi.core.analyses.disclosure import merged
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.readback import variable_readback
-from aibi.core.engine.variables import Joint, Materialised, Value
+from aibi.core.engine.resolve import aggregates_taken
+from aibi.core.engine.variables import Joint, Materialised, RowCounts, Value
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.analyses import (
     BINS_OF_A_RANGE,
     CategoryDistribution,
+    CategoryRows,
     CategoryShare,
     ColumnDistribution,
     DistributionParams,
@@ -84,9 +97,11 @@ from aibi.core.schema.analyses import (
     HistogramBin,
     NoViewValues,
     NumberDistribution,
+    NumberRows,
+    Variable,
 )
 from aibi.core.schema.caveats import Caveat, CaveatCode
-from aibi.core.schema.descriptors import AnalysisDescriptor
+from aibi.core.schema.descriptors import AnalysisDescriptor, ColumnDescriptor
 from aibi.core.schema.export import params_schema, values_schema
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
 from aibi.core.schema.jsonio import utf16_key
@@ -128,7 +143,9 @@ ENTRY = AnalysisDescriptor.model_validate(
         "definition": (
             "Per column and cohort: for categories, the units per category over those whose "
             "value is known; for numbers, n, mean, standard deviation, median, quartiles, "
-            "minimum, maximum and a histogram; each column's excluded units by reason. "
+            "minimum, maximum and a histogram; each column's excluded units by reason. A "
+            'column with count "rows" gives the same over the rows its units reach, with the '
+            "rows excluded by reason, and is withheld under a disclosure setting. "
             "Descriptive only."
         ),
         "fields": {
@@ -188,10 +205,19 @@ def categorical(variable: CanonicalVariable) -> bool:
     return resolved.datatype in _CATEGORIES
 
 
+def counts_rows(variable: CanonicalVariable) -> bool:
+    """Whether a variable counts rows (``count: "rows"``, D378)."""
+    return variable.resolved.kind == "rows"
+
+
 def summarised(variable: CanonicalVariable) -> bool:
-    """Whether the analysis summarises a variable's values: categories or numbers."""
+    """Whether the analysis summarises a variable's values: categories or numbers, a column's
+    or a count of rows' own."""
     resolved = variable.resolved
-    return resolved.kind != "column" or resolved.datatype in (*_CATEGORIES, *_NUMBERS)
+    return resolved.kind not in ("column", "rows") or resolved.datatype in (
+        *_CATEGORIES,
+        *_NUMBERS,
+    )
 
 
 def declared_range(variable: CanonicalVariable) -> tuple[float, float] | None:
@@ -200,12 +226,52 @@ def declared_range(variable: CanonicalVariable) -> tuple[float, float] | None:
     resolved = variable.resolved
     if resolved.kind == "question" or resolved.function == "count":
         return None
+    return _range_of(_descriptor(variable))
+
+
+def _descriptor(variable: CanonicalVariable) -> ColumnDescriptor | None:
+    resolved = variable.resolved
     table, column = resolved.column.split(".", 1)
-    descriptor = resolved.release.column(table, column)
+    return resolved.release.column(table, column)
+
+
+def _range_of(descriptor: ColumnDescriptor | None) -> tuple[float, float] | None:
     declared = None if descriptor is None else descriptor.fields.range
     if declared is None or isinstance(declared.min, str) or isinstance(declared.max, str):
         return None
     return float(declared.min), float(declared.max)
+
+
+def forms_under_k(variable: CanonicalVariable, written: Variable | None = None) -> list[str]:
+    """The forms of a variable that counts rows which the analysis gives under a disclosure
+    setting in its place (D379): each aggregate its column takes (``aggregates_taken``), with
+    ``bins`` where its histogram would otherwise take edges from the data (``needs_edges``: always
+    for ``count``, whose values have no range, and for a number's ``max``, ``min`` and ``mean``
+    where its column declares none), and ``some`` and ``every`` with ``values``. Of the variable
+    as ``written``, its ``where`` and ``bins`` are kept: ``some`` and ``every``, which take
+    neither, are not offered beside them, and an aggregate whose values are categories is
+    offered without the ``bins``."""
+    descriptor = _descriptor(variable)
+    if descriptor is None:
+        return []
+    numeric = descriptor.fields.datatype in _NUMBERS
+    ranged = _range_of(descriptor) is not None
+    where = written is not None and written.where is not None
+    binned = written is not None and written.bins is not None
+    found: list[str] = []
+    for name in aggregates_taken(descriptor):
+        given = f'aggregate: "{name}"'
+        if name in ("some", "every"):
+            if where or binned:
+                continue
+            given += " with values"
+        elif name == "count" or numeric:
+            if not binned and (name == "count" or not ranged):
+                given += " with bins"
+        elif binned:
+            given += " without bins"
+        found.append(given)
+    return found
 
 
 def needs_edges(variable: CanonicalVariable, bins: Sequence[float] | None) -> bool:
@@ -237,7 +303,9 @@ def category_label(value: Value) -> str:
 # --- Values ---------------------------------------------------------------------------------------
 
 
-def _proportion(count: int, n: int, position: int) -> Proportion:
+def _proportion(
+    count: int, n: int, position: int, counts: Literal["known", "rows"] = "known"
+) -> Proportion:
     reasons = None if n else dict.fromkeys(("/estimate",), _NO_UNITS)
     return Proportion.model_validate(
         {
@@ -245,7 +313,7 @@ def _proportion(count: int, n: int, position: int) -> Proportion:
             "numerator": count,
             "denominator": n,
             "denominator_definition": DenominatorDefinition(
-                position=position, predicate=None, counts="known"
+                position=position, predicate=None, counts=counts
             ),
             "not_estimable": reasons,
         }
@@ -264,8 +332,9 @@ def _category_distribution(
     undeclared = [value for value in found.values if value not in declared]
     open_list = open_categories(variable)
     if k is None:
-        others = sorted(undeclared, key=lambda value: utf16_key(category_label(value)))
-        rows: list[tuple[list[Value], bool]] = [([value], False) for value in [*declared, *others]]
+        rows: list[tuple[list[Value], bool]] = [
+            ([value], False) for value in _listed(declared, found.values)
+        ]
     else:
         rows = [([value], False) for value in declared] + ([([], True)] if open_list else [])
     if len(rows) > MAX_CATEGORIES:
@@ -293,6 +362,32 @@ def _category_distribution(
         for start, end in spans
     ]
     return CategoryDistribution(kind="categories", categories=shares)
+
+
+def _listed(declared: Sequence[Value], values: Iterable[Value]) -> list[Value]:
+    """The categories a distribution lists without a disclosure setting (D329, D378): the
+    declared ones in their order, zeros included, then the others ``values`` hold, in the UTF-16
+    order of their labels."""
+    others = [value for value in values if value not in declared]
+    return [*declared, *sorted(others, key=lambda value: utf16_key(category_label(value)))]
+
+
+def _category_rows(
+    variable: CanonicalVariable, rows: RowCounts, position: int, column: int
+) -> CategoryRows:
+    """A count of rows' categories (D378), listed as a column's are without a disclosure setting
+    (``_listed``), each the rows in it over the rows with a value."""
+    listed = _listed(declared_categories(variable), rows.values)
+    if len(listed) > MAX_CATEGORIES:
+        raise TooManyCategories(column)
+    shares = [
+        CategoryShare(
+            values=[Data(data=category_label(value))],
+            proportion=_proportion(rows.values.get(value, 0), rows.n, position, "rows"),
+        )
+        for value in listed
+    ]
+    return CategoryRows(kind="category_rows", categories=shares, excluded_rows=dict(rows.excluded))
 
 
 def open_categories(variable: CanonicalVariable) -> bool:
@@ -432,17 +527,13 @@ def _number_distribution(
                 ),
             }
         )
-    weighted: stats.Weighted = sorted(
-        (cast(int | float, value), times) for value, times in found.values.items() if times
-    )
+    weighted = _weighted(found.values)
     n = found.n
     reasons: dict[str, NotEstimableReason] = {}
     members: dict[str, object] = {"kind": "numbers", "n": n}
     members.update(dict.fromkeys(("mean", "sd", "median", "q1", "q3", "min", "max")))
-    if k is None and weighted:
-        least, most = float(weighted[0][0]), float(weighted[-1][0])
-        if max(abs(least), abs(most)) > MAX_SAFE_INTEGER:
-            raise TooLarge(column)
+    if k is None:
+        _bounded(weighted, column)
     edges = _edges(variable, bins, weighted)
     counted: list[HistogramBin] | None = None
     members["histogram"] = None
@@ -461,26 +552,77 @@ def _number_distribution(
             members[f"{name}_bin"] = at
             if at is None:
                 reasons[f"/{name}_bin"] = _SUPPRESSED if n else _NO_UNITS
-    elif not weighted:
-        reasons.update(dict.fromkeys(_STATISTICS, _NO_UNITS))
     else:
-        centre = stats.mean(weighted)
-        spread = stats.sd(weighted, centre)
-        members.update(
-            mean=centre,
-            sd=spread,
-            q1=stats.quantile(weighted, 0.25),
-            median=stats.quantile(weighted, 0.5),
-            q3=stats.quantile(weighted, 0.75),
-            min=float(weighted[0][0]),
-            max=float(weighted[-1][0]),
-        )
-        if spread is None:
-            reasons["/sd"] = NotEstimableReason.ZERO_VARIANCE
-        elif spread > MAX_SAFE_INTEGER:
-            raise TooLarge(column)
+        _described(weighted, column, members, reasons)
     members["not_estimable"] = reasons or None
     return NumberDistribution.model_validate(members)
+
+
+def _weighted(values: Mapping[Value, int]) -> stats.Weighted:
+    return sorted((cast(int | float, value), times) for value, times in values.items() if times)
+
+
+def _bounded(weighted: stats.Weighted, column: int) -> None:
+    """Values beyond ±(2^53 − 1), which an output does not hold (§8.2): ``TooLarge``."""
+    if weighted:
+        least, most = float(weighted[0][0]), float(weighted[-1][0])
+        if max(abs(least), abs(most)) > MAX_SAFE_INTEGER:
+            raise TooLarge(column)
+
+
+def _described(
+    weighted: stats.Weighted,
+    column: int,
+    members: dict[str, object],
+    reasons: dict[str, NotEstimableReason],
+) -> None:
+    """The statistics of the values themselves, without a disclosure setting, into ``members``
+    and their reasons into ``reasons``: none with no value (``no_units``), no standard deviation
+    of fewer than two or of values all the same (``zero_variance``), and ``TooLarge`` for one
+    beyond ±(2^53 − 1)."""
+    if not weighted:
+        reasons.update(dict.fromkeys(_STATISTICS, _NO_UNITS))
+        return
+    centre = stats.mean(weighted)
+    spread = stats.sd(weighted, centre)
+    members.update(
+        mean=centre,
+        sd=spread,
+        q1=stats.quantile(weighted, 0.25),
+        median=stats.quantile(weighted, 0.5),
+        q3=stats.quantile(weighted, 0.75),
+        min=float(weighted[0][0]),
+        max=float(weighted[-1][0]),
+    )
+    if spread is None:
+        reasons["/sd"] = NotEstimableReason.ZERO_VARIANCE
+    elif spread > MAX_SAFE_INTEGER:
+        raise TooLarge(column)
+
+
+def _number_rows(
+    variable: CanonicalVariable, rows: RowCounts, column: int, bins: Sequence[float] | None
+) -> NumberRows:
+    """A count of rows' numbers (D378): n rows with a value, their statistics and their
+    histogram, as a number's without a disclosure setting."""
+    weighted = _weighted(rows.values)
+    _bounded(weighted, column)
+    reasons: dict[str, NotEstimableReason] = {}
+    members: dict[str, object] = {
+        "kind": "number_rows",
+        "n": rows.n,
+        "excluded_rows": dict(rows.excluded),
+        **dict.fromkeys(("mean", "sd", "median", "q1", "q3", "min", "max")),
+        "histogram": None,
+    }
+    edges = _edges(variable, bins, weighted)
+    if edges is None:
+        reasons["/histogram"] = _NO_UNITS
+    else:
+        members["histogram"] = Histogram(edges_from=edges[1], bins=histogram(edges[0], weighted))
+    _described(weighted, column, members, reasons)
+    members["not_estimable"] = reasons or None
+    return NumberRows.model_validate(members)
 
 
 # --- The analysis ---------------------------------------------------------------------------------
@@ -515,6 +657,8 @@ def summarise(
         len(found) != len(variables) for found, _ in materialised
     ):
         raise ValueError("each variable materialised over each of the view's cohorts")
+    if k is not None and any(counts_rows(variable) for variable in variables):
+        raise ValueError("a count of rows is never summarised under a disclosure setting (D379)")
     population = populations(positions, k)
     at_positions: list[DistributionPosition] = []
     analysed: list[Analysed] = []
@@ -527,7 +671,15 @@ def summarise(
         for index, (variable, one, visible) in enumerate(zip(variables, found, split, strict=True)):
             if ends is not None and time.monotonic() >= ends:
                 raise CallerDeadline
-            if categorical(variable):
+            if counts_rows(variable):
+                assert one.rows is not None, "a count of rows is materialised with its rows"
+                bins = params.columns[index].bins
+                columns.append(
+                    _category_rows(variable, one.rows, position, index)
+                    if categorical(variable)
+                    else _number_rows(variable, one.rows, index, bins)
+                )
+            elif categorical(variable):
                 columns.append(_category_distribution(variable, one, position, index, visible, k))
             else:
                 bins = params.columns[index].bins
@@ -548,7 +700,9 @@ def _caveats(
 ) -> list[Caveat]:
     """The caveats that the view's data raise (module docstring); the static ones are the
     view's. ``UNKNOWN_EXCLUDED`` names the values wherever a unit is excluded from one for a
-    reason other than ``NOT_APPLICABLE``, and always under *k*, so that it says nothing of one."""
+    reason other than ``NOT_APPLICABLE``, and always under *k*, so that it says nothing of one;
+    and, in a message of its own, wherever a count of rows leaves a row out for such a reason
+    (D378), which no disclosure setting sees (D379)."""
     found_unknown = k is not None or any(
         count
         for row, _ in materialised
@@ -560,6 +714,25 @@ def _caveats(
     found += flag_caveats(
         (mark for row, _ in materialised for one in row for mark in one.marks), "/values"
     )
+    if any(
+        count
+        for row, _ in materialised
+        for one in row
+        if one.rows is not None
+        for reason, count in one.rows.excluded.items()
+        if reason is not ExclusionReason.NOT_APPLICABLE
+    ):
+        found.append(
+            caveat(
+                CaveatCode.UNKNOWN_EXCLUDED,
+                ["/values"],
+                text(
+                    "Rows whose value of a column that counts rows could not be decided or has "
+                    "none are left out of that column's rows; its excluded_rows counts them by "
+                    "reason"
+                ),
+            )
+        )
     if k is not None:
         affects = ["/population", "/values"]
         if any(
@@ -604,6 +777,15 @@ def view_readback(cohorts: int, variables: Sequence[CanonicalVariable]) -> list[
             "column's distribution and counted by reason."
         )
     )
+    if any(counts_rows(variable) for variable in variables):
+        found.append(
+            text(
+                " A column that counts rows gives the same over the rows its units reach, the "
+                "rows of each category over those with a value, and a row whose value cannot "
+                "be decided, or that has none, is left out of its column's rows and counted by "
+                "reason."
+            )
+        )
     return found
 
 
@@ -617,6 +799,7 @@ __all__ = [
     "TooLarge",
     "TooManyCategories",
     "categorical",
+    "counts_rows",
     "declared_range",
     "effective_edges",
     "histogram",

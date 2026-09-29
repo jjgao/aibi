@@ -419,7 +419,15 @@ def materialise_by_evaluator(
         truth = evaluate(cohort.resolved).values
         members = [row for row, value in enumerate(truth) if value.is_true]
         together = joint(values, members) if len(values) > 1 else None
-        found.append((tuple(materialise(value, members) for value in values), together))
+        found.append(
+            (
+                tuple(
+                    materialise(value, members, rows=variable.resolved.kind == "rows")
+                    for value, variable in zip(values, view.variables, strict=True)
+                ),
+                together,
+            )
+        )
     return found
 
 

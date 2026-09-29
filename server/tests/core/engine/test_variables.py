@@ -44,6 +44,7 @@ from aibi.core.store.tables import TableSource
 
 City = Callable[..., Release]
 Doc = Callable[..., dict[str, Any]]
+INSPECTED = "rel:inspections.establishment"
 
 
 def _agree(resolution: Resolution, materialised: Callable[..., Any]) -> list[Any]:
@@ -54,7 +55,10 @@ def _agree(resolution: Resolution, materialised: Callable[..., Any]) -> list[Any
     for cohort, (read, together) in zip(cohorts, found, strict=True):
         members = evaluate(cohort).members
         values = [evaluate_variable(variable) for variable in variables]
-        mine = tuple(materialise(value, members) for value in values)
+        mine = tuple(
+            materialise(value, members, rows=variable.kind == "rows")
+            for value, variable in zip(values, variables, strict=True)
+        )
         assert read == mine, (read, mine)
         if len(variables) > 1:
             assert together == joint(values, members)
@@ -342,8 +346,182 @@ def test_counts_per_category_of_a_multi_valued_column_are_not_supported_until_th
     [refusal] = resolution.refusals
     assert (refusal.code, refusal.path) == ("NOT_SUPPORTED", "/views/0/params/columns/0/column")
     said = json.dumps([part.model_dump() for part in refusal.message])
-    assert "M3.2e (#52)" in said
+    assert "M3.2e-2a (#52)" in said
     assert "M3.2b" not in said
+
+
+def test_a_count_of_rows_reads_each_pooled_row_once_for_every_path_that_reaches_it(
+    city: City, doc: Doc, variables_of: Callable[..., Resolution], materialised: Callable[..., Any]
+) -> None:
+    """A count of rows (D378) pools as an aggregate does: an establishment's grade looked up
+    from each of its inspections is one row per inspection, a unit's rows excluded by the
+    cell's state, and a unit with no inspection pooled with none."""
+    release = city(
+        {
+            "establishments": [
+                {"establishment_id": "e0", "grade": "A"},
+                {"establishment_id": "e1", "grade": "exempt"},
+                {"establishment_id": "e2", "grade": "pending"},
+                {"establishment_id": "e3", "grade": "B"},
+            ],
+            "inspections": [
+                {"inspection_id": "i0", "establishment_id": "e0", "rating": "high"},
+                {"inspection_id": "i1", "establishment_id": "e0", "rating": "n/a"},
+                {"inspection_id": "i2", "establishment_id": "e0", "rating": "extreme"},
+                {"inspection_id": "i3", "establishment_id": "e1", "rating": "later"},
+                {"inspection_id": "i4", "establishment_id": "e2", "rating": None},
+            ],
+        }
+    )
+    grades = {
+        "column": "establishments.grade",
+        "via": [{"rel": INSPECTED, "dir": "down"}, {"rel": INSPECTED, "dir": "up"}],
+        "count": "rows",
+    }
+    resolution = variables_of(
+        doc([]), release, [grades, {"column": "inspections.rating", "count": "rows"}]
+    )
+    assert resolution.refusals == []
+    [(graded, rated)] = _agree(resolution, materialised)
+    assert dict(graded.values) == {3: 1, 1: 2, 0: 1}
+    assert graded.excluded_units == 0
+    assert graded.rows is not None
+    assert dict(graded.rows.values) == {"A": 3}
+    assert (graded.rows.excluded["NOT_APPLICABLE"], graded.rows.excluded["NOT_ASSESSED"]) == (1, 1)
+    assert rated.rows is not None
+    assert dict(rated.rows.values) == {"high": 1, "extreme": 1}
+    assert (rated.rows.excluded["NOT_APPLICABLE"], rated.rows.excluded["NOT_ASSESSED"]) == (1, 1)
+    assert rated.rows.excluded["NO_INFORMATION"] == 1
+
+
+def test_a_row_reached_by_two_paths_within_one_unit_is_counted_once_for_each_path(
+    city: City, doc: Doc, variables_of: Callable[..., Resolution], materialised: Callable[..., Any]
+) -> None:
+    """Down, up and down the same relationship (D378): each of an establishment's two
+    inspections leads back to both, so its rows are four, each inspection twice, read directly
+    or through a lookup after the last down step; its aggregate ``count`` pools the same four."""
+    release = city(
+        {
+            "establishments": [{"establishment_id": "e0", "grade": "A"}],
+            "inspections": [
+                {"inspection_id": "i0", "establishment_id": "e0", "score": 10},
+                {"inspection_id": "i1", "establishment_id": "e0", "score": 20},
+            ],
+        }
+    )
+    again = [
+        {"rel": INSPECTED, "dir": "down"},
+        {"rel": INSPECTED, "dir": "up"},
+        {"rel": INSPECTED, "dir": "down"},
+    ]
+    resolution = variables_of(
+        doc([]),
+        release,
+        [
+            {"column": "inspections.score", "via": again, "count": "rows"},
+            {
+                "column": "establishments.grade",
+                "via": [*again, {"rel": INSPECTED, "dir": "up"}],
+                "count": "rows",
+            },
+            {"column": "inspections.score", "via": again, "aggregate": "count"},
+        ],
+    )
+    assert resolution.refusals == []
+    [(scores, grades, counted)] = _agree(resolution, materialised)
+    assert dict(scores.values) == {4: 1}
+    assert scores.rows is not None
+    assert dict(scores.rows.values) == {10: 2, 20: 2}
+    assert dict(grades.values) == {4: 1}
+    assert grades.rows is not None
+    assert dict(grades.rows.values) == {"A": 4}
+    assert dict(counted.values) == {4: 1}
+
+
+def test_a_count_of_rows_excludes_a_unit_for_its_pooling_and_a_row_for_its_value(
+    city: City, doc: Doc, variables_of: Callable[..., Resolution], materialised: Callable[..., Any]
+) -> None:
+    """An UNKNOWN ``where`` or coverage excludes the unit, its rows unread; an unknown value, or a
+    lookup that reaches no row, excludes the row alone (D378)."""
+    release = city(
+        {
+            "establishments": [{"establishment_id": f"e{n}"} for n in range(3)],
+            "inspections": [
+                {"inspection_id": "i0", "establishment_id": "e0", "kind": "routine", "score": 40},
+                {"inspection_id": "i1", "establishment_id": "e0", "kind": "routine"},
+                {"inspection_id": "i2", "establishment_id": "e1", "score": 90},
+            ],
+            "licence_types": [{"type_id": "t1", "tier": 1}],
+            "licences": [
+                {"licence_id": "l0", "establishment_id": "e0", "type_id": "t1"},
+                {"licence_id": "l1", "establishment_id": "e0", "type_id": "gone"},
+                {"licence_id": "l2", "establishment_id": "e2", "type_id": "t1"},
+            ],
+        }
+    )
+    routine = [{"kind": "value", "column": "inspections.kind", "values": ["routine"]}]
+    resolution = variables_of(
+        doc([]),
+        release,
+        [
+            {"column": "inspections.score", "where": routine, "count": "rows"},
+            {"column": "licence_types.tier", "count": "rows"},
+        ],
+    )
+    assert resolution.refusals == []
+    [(scores, tiers)] = _agree(resolution, materialised)
+    assert (scores.excluded_units, scores.excluded["NO_INFORMATION"]) == (1, 1)
+    assert dict(scores.values) == {2: 1, 0: 1}
+    assert scores.rows is not None
+    assert dict(scores.rows.values) == {40: 1}
+    assert scores.rows.excluded["NO_INFORMATION"] == 1
+    assert tiers.rows is not None
+    assert dict(tiers.rows.values) == {1: 2}
+    assert tiers.rows.excluded["NO_PARENT"] == 1
+    assert dict(tiers.values) == {2: 1, 0: 1, 1: 1}
+
+
+@pytest.mark.parametrize(
+    ("variable", "code", "at"),
+    [
+        ({"column": "establishments.seats", "count": "rows"}, "INVALID_VALUE", "/count"),
+        ({"column": "establishments.tags", "count": "rows"}, "NOT_SUPPORTED", "/count"),
+        ({"column": "violations.severity", "count": "rows"}, "OPEN_SCOPE", "/where"),
+        ({"column": "establishments.notes", "count": "rows"}, "UNDECLARED_DATATYPE", "/column"),
+    ],
+)
+def test_a_count_of_rows_its_column_does_not_take_is_refused_where_it_is_written(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Resolution],
+    variable: dict[str, Any],
+    code: str,
+    at: str,
+) -> None:
+    resolution = variables_of(doc([]), city(), [variable])
+    assert [(r.code, r.path) for r in resolution.refusals] == [
+        (code, "/views/0/params/columns/0" + at)
+    ]
+
+
+def test_a_count_of_rows_reads_no_identifier_column_where_row_ids_are_not_allowed(
+    city: City, doc: Doc, variables_of: Callable[..., Resolution]
+) -> None:
+    rows = {"column": "inspections.inspection_id", "count": "rows"}
+    resolution = variables_of(doc([]), city(allow_row_ids=False), [rows])
+    assert [(r.code, r.path) for r in resolution.refusals] == [
+        ("ROW_IDS_NOT_ALLOWED", "/views/0/params/columns/0/column")
+    ]
+
+
+def test_a_count_of_rows_is_never_listed_per_member(
+    city: City, doc: Doc, variables_of: Callable[..., Resolution], blobs: Callable[..., Any]
+) -> None:
+    release = city()
+    resolution = variables_of(doc([]), release, [{"column": "inspections.kind", "count": "rows"}])
+    [cohort] = resolution.cohorts.values()
+    with pytest.raises(sql_module.CompileError, match="never listed per member"):
+        sql_module.compile_inputs([cohort], list(resolution.variables.values()), blobs(release))
 
 
 def test_the_server_stops_reading_a_materialisation_at_the_call_s_deadline(

@@ -171,7 +171,15 @@ def evaluated(
                 ]
                 held.append(set(units))
                 together = joint(values, units) if len(values) > 1 else None
-                materialised.append((tuple(materialise(v, units) for v in values), together))
+                materialised.append(
+                    (
+                        tuple(
+                            materialise(v, units, rows=variable.resolved.kind == "rows")
+                            for v, variable in zip(values, view.variables, strict=True)
+                        ),
+                        together,
+                    )
+                )
             if isinstance(view.params, ColumnsParams):
                 shared = any(a & b for i, a in enumerate(held) for b in held[i + 1 :])
                 outcome = columns.compare_columns(
@@ -270,6 +278,69 @@ def test_a_distribution_run_by_sql_gives_the_reference_evaluator_s_result(
     assert result.values == expected.values
     assert result.derivation.analysis.id == "summary.distribution"
     assert len(result.charts) == len(COLUMNS)
+
+
+ROWS: list[dict[str, Any]] = [
+    {"column": "harvests.grade", "count": "rows"},
+    {"column": "harvests.kg", "count": "rows", "bins": [0, 12, 14, 16, 20]},
+    {
+        "column": "harvests.kg",
+        "count": "rows",
+        "where": [{"kind": "value", "column": "harvests.grade", "values": ["A"]}],
+    },
+]
+"""A distribution view's counts of rows over the orchard (D378): the harvests' grades, their
+weights, and the weights of the grade A harvests."""
+
+
+def test_a_distribution_of_rows_run_by_sql_gives_the_reference_evaluator_s_result(
+    world: World, orchard: Orchard
+) -> None:
+    published = world.publish("orchard", orchard(40, harvests=60))
+    written = distribution_document([COLUMNS[0], *ROWS])
+    [result] = run(catalog_of(world), written).results
+    [expected] = evaluated(world, published.manifest, written)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+    dumped = result.values.model_dump(mode="json")
+    kinds = [one["kind"] for one in dumped["positions"][0]["columns"]]
+    assert kinds == ["categories", "category_rows", "number_rows", "number_rows"]
+    assert len(result.charts) == 1 + len(ROWS)
+
+
+def test_under_a_floor_a_count_of_rows_is_withheld_and_no_query_runs(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world, floor=3)
+    ran: list[object] = []
+    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
+    written = distribution_document([COLUMNS[0], ROWS[0]])
+    for tool in ("validate_document", "count_cohort", "run_analysis"):
+        found = answer(catalog, tool, {"document": written})
+        dumped = json.dumps(
+            [refusal.model_dump(mode="json") for refusal in found]
+            if isinstance(found, list)
+            else found.model_dump(mode="json")
+        )
+        assert "WITHHELD_UNDER_K" in dumped, tool
+        assert '"/views/0/params/columns/1/count"' in dumped, tool
+        assert '"tree1"' not in dumped
+    assert ran == []
+
+
+def test_a_withheld_count_of_rows_that_reached_run_analysis_would_raise_before_any_query(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world, floor=3)
+    ran: list[object] = []
+    monkeypatch.setattr(views, "_withheld_form", lambda *_: None)
+    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
+    with pytest.raises(ValueError, match="never run"):
+        run(catalog, distribution_document([ROWS[0]]))
+    assert ran == []
 
 
 def test_a_distribution_s_issuance_records_its_materialisation_after_its_cohorts_counts(

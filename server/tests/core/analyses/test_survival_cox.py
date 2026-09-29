@@ -208,7 +208,7 @@ def test_a_model_of_one_cohort_without_covariates_is_refused_as_it_has_no_term(
         ({"column": "customers.left"}, (RefusalCode.INVALID_VALUE, "column")),
         ({"column": "customers.age", "bins": [0, 50, 100]}, (RefusalCode.INVALID_VALUE, "bins")),
         (
-            {"column": "orders.order_id", "aggregate": "count", "count": "rows"},
+            {"column": "orders.order_id", "count": "rows"},
             (RefusalCode.INVALID_VALUE, "count"),
         ),
         (

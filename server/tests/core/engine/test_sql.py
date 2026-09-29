@@ -513,6 +513,92 @@ def category_variables(draw: st.DrawFn) -> dict[str, Any]:
     return {**rows, "aggregate": ordered, "where": where, **filled}
 
 
+@st.composite
+def rows_variables(draw: st.DrawFn, scoped: bool) -> dict[str, Any]:
+    """A count of rows (``count: "rows"``, §9.2, D378) of a view on establishments, never
+    refused: the rows through one down step or two, with conditions, record filters, scope
+    columns restricted and lifts, read through a lookup after the last down step or not, over
+    categories ordered and not, booleans, integers and doubles, whose rows are drawn
+    NOT_APPLICABLE, NOT_ASSESSED, null, outside the list or of a dangling lookup, below units
+    in scope or not, closed or not, and units with none; and down, up and down the same
+    relationship, drawn more often, so that a unit reaches each of its rows once for each of its
+    rows' siblings, read directly or through a lookup after the last down step."""
+    pick = lambda options: draw(st.sampled_from(options))  # noqa: E731
+    lift = pick([{}, {"lift": "strict"}, {"lift": "assessed"}])
+    rows = {"count": "rows"}
+    choice = draw(st.integers(0, 11))
+    if choice == 0:
+        where = draw(
+            st.lists(
+                st.sampled_from(
+                    [
+                        _value("inspections.kind", values=["routine"]),
+                        _value("inspections.score", range={"gte": 50}),
+                    ]
+                ),
+                max_size=2,
+            )
+        )
+        return {"column": "inspections.score", "where": where, **rows}
+    if choice == 1:
+        where: list[Any] = (
+            [_value("violations.code", values=_subset(draw, ["temp", "pest"]))] if scoped else []
+        )
+        if draw(st.booleans()):
+            where.append(_value("violations.severity", range={"lt": 5}))
+        column = pick(["violations.severity", "violations.code"])
+        return {"column": column, "where": where, **lift, **rows}
+    if choice == 2:
+        where = [_value("readings.appliance", values=_subset(draw, ["fridge", "freezer"]))]
+        column = pick(["readings.celsius", "readings.appliance"])
+        return {"column": column, "where": where, **lift, **rows}
+    if choice == 3:
+        where = (
+            [_value("complaints.channel", values=_subset(draw, ["phone", "web"]))]
+            if draw(st.booleans())
+            else []
+        )
+        column = pick(["complaints.severity", "complaints.channel"])
+        return {"column": column, "where": where, **rows}
+    if choice == 4:
+        return {"column": "licence_types.tier", **rows}
+    if choice == 5:
+        where = [_value("inspections.kind", values=["routine"])] if draw(st.booleans()) else []
+        return {"column": "inspections.rating", "where": where, **rows}
+    if choice == 6:
+        return {
+            "column": pick(["establishments.grade", "establishments.seats"]),
+            "via": [{"rel": INSPECTED, "dir": "down"}, {"rel": INSPECTED, "dir": "up"}],
+            **rows,
+        }
+    if choice == 7:
+        return {"column": "inspections.kind", **rows}
+    if choice == 8:
+        return {"column": "staff.certified", **rows}
+    if choice in (9, 10):
+        again = [
+            {"rel": INSPECTED, "dir": "down"},
+            {"rel": INSPECTED, "dir": "up"},
+            {"rel": INSPECTED, "dir": "down"},
+        ]
+        if draw(st.booleans()):
+            looked = [*again, {"rel": INSPECTED, "dir": "up"}]
+            return {"column": "establishments.grade", "via": looked, **lift, **rows}
+        where = [_value("inspections.kind", values=["routine"])] if draw(st.booleans()) else []
+        column = pick(["inspections.score", "inspections.rating"])
+        return {"column": column, "via": again, "where": where, **lift, **rows}
+    return {
+        "column": "inspections.score",
+        "via": [
+            {"rel": OWNER, "dir": "up"},
+            {"rel": OWNER, "dir": "down"},
+            {"rel": INSPECTED, "dir": "down"},
+        ],
+        **lift,
+        **rows,
+    }
+
+
 def _resolved(run: Runner, doc: Doc, release: Release, written: list[Any] | dict[str, Any]) -> Any:
     result = run(doc(written), release)
     limits = {refusal.limit.name for refusal in result.resolution.refusals if refusal.limit}
@@ -665,6 +751,52 @@ def test_variables_materialised_by_the_compiler_count_what_the_evaluator_gives_e
         members = evaluate(cohort).members
         together = joint(values, members) if len(found) > 1 else None
         expected.append((tuple(materialise(value, members) for value in values), together))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(compiler, "MARK_BITS", 1)
+        assert materialised(cohorts, found) == tuple(expected)
+
+
+@EXAMPLES
+@given(data=city_data(), extra=st.data())
+def test_counts_of_rows_materialised_by_the_compiler_count_what_the_evaluator_reads_of_each_row(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    materialised: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """Counts of rows over cohorts (D378): the units pooled by the rows each reached and those
+    excluded by reason, the rows' values and the rows excluded by reason, and the flags, counted
+    in SQL as the reference evaluator reads each unit's rows, once for each path that reaches
+    them; beside other variables, whose joint counts count a pooled unit as one with a value;
+    with one flag to a word."""
+    rows, options = data
+    release = city(rows, **options)
+    scoped = options["violations"].get("parents") is GROUPED
+    written = {
+        f"c{index}": extra.draw(st.lists(clauses(scoped, 3), min_size=0, max_size=2))
+        for index in range(extra.draw(st.integers(min_value=1, max_value=2)))
+    }
+    counted = extra.draw(st.lists(rows_variables(scoped), min_size=1, max_size=2))
+    others = extra.draw(st.lists(variables(scoped), max_size=1))
+    given = extra.draw(st.permutations([*counted, *others]))
+    resolution = variables_of(doc(written), release, given)
+    limits = {refusal.limit.name for refusal in resolution.refusals if refusal.limit}
+    assume(not limits & {"clause_depth", "leaves_per_cohort"})
+    assert resolution.refusals == [], resolution.refusals
+    cohorts = [resolution.cohorts[name] for name in written]
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    values = [evaluate_variable(variable) for variable in found]
+    expected = []
+    for cohort in cohorts:
+        members = evaluate(cohort).members
+        together = joint(values, members) if len(found) > 1 else None
+        read = tuple(
+            materialise(value, members, rows=variable.kind == "rows")
+            for value, variable in zip(values, found, strict=True)
+        )
+        expected.append((read, together))
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(compiler, "MARK_BITS", 1)
         assert materialised(cohorts, found) == tuple(expected)
@@ -1045,6 +1177,39 @@ def test_the_counts_come_from_integer_aggregates_alone(
         if isinstance(node, exp.Min | exp.Max):
             assert isinstance(node.this, exp.Column)
             assert node.this.name in {"v", "rid"}
+
+
+def test_a_count_of_rows_is_counted_with_integer_aggregates_alone(
+    doc: Doc, variables_of: Callable[..., Any], blobs: Callable[..., Any], city: City
+) -> None:
+    """§9.3, D378: a count of rows groups its rows by value and counts them; no aggregate reads
+    a value, and no constant of the view is written into the SQL."""
+    release = city()
+    where = [_value("readings.appliance", values=["fridge"])]
+    resolution = variables_of(
+        doc([]),
+        release,
+        [
+            {"column": "readings.celsius", "where": where, "count": "rows"},
+            {"column": "licence_types.tier", "count": "rows"},
+            {"column": "inspections.rating", "count": "rows"},
+        ],
+    )
+    assert resolution.refusals == []
+    [cohort] = resolution.cohorts.values()
+    found = [resolution.variables[f"0/{index}"] for index in range(3)]
+    compiled = compiler.compile_materialised([cohort], found, blobs(release))
+    for statement in compiled.statements:
+        tree = parse_one(statement, dialect="duckdb")
+        for node in tree.find_all(exp.AggFunc):
+            assert node.sql_name() in _AGGREGATES, node.sql_name()
+            if isinstance(node, exp.Min | exp.Max):
+                assert isinstance(node.this, exp.Column)
+                assert node.this.name != "val"
+        assert "fridge" not in statement
+    assert "fridge" in [
+        item for value in compiled.parameters.values() if isinstance(value, tuple) for item in value
+    ]
 
 
 def _odd_names(columns: list[str]) -> Release:

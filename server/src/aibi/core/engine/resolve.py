@@ -67,7 +67,7 @@ from aibi.core.engine.resolved import (
     value_leaves,
 )
 from aibi.core.engine.units import convertible
-from aibi.core.schema.analyses import EXCLUDE, Variable
+from aibi.core.schema.analyses import EXCLUDE, Aggregate, Variable
 from aibi.core.schema.descriptors import (
     ColumnDescriptor,
     CoverageDescriptor,
@@ -251,6 +251,29 @@ def identifying(release: Release, descriptor: ColumnDescriptor) -> bool:
     )
 
 
+def aggregates_taken(descriptor: ColumnDescriptor) -> tuple[Aggregate, ...]:
+    """The aggregates a column of several values per unit takes (§9.2), in the order a refusal
+    lists them: ``count`` of any column's rows; ``max`` and ``min`` of numbers and of an ordered
+    category; ``mean`` of numbers; ``some`` and ``every`` of a column whose values can be typed;
+    and of a list's items ``some`` and ``every`` alone."""
+    fields = descriptor.fields
+    datatype = fields.datatype
+    if datatype is None:
+        return ("count",)
+    if datatype == "list<category>":
+        return ("some", "every")
+    allowed = fields.permissible_values
+    numeric = datatype in _NUMERIC
+    ordered = numeric or (datatype == "category" and allowed is not None and allowed.ordered)
+    return (
+        "count",
+        *(("max", "min") if ordered else ()),
+        *(("mean",) if numeric else ()),
+        "some",
+        "every",
+    )
+
+
 @dataclass(frozen=True, order=True)
 class FieldRead:
     """A descriptor field that resolution or evaluation reads, with its curation status."""
@@ -348,12 +371,12 @@ class ViewPredicate:
 
 Function = Literal["count", "max", "min", "mean"]
 """A numeric aggregate (§9.2)."""
-VariableKind = Literal["column", "aggregate", "question"]
+VariableKind = Literal["column", "aggregate", "question", "rows"]
 
 
-PER_CATEGORY = "M3.2e (#52)"
-"""The part that gives descriptive analyses per-category counts of multi-valued columns and
-counts of rows (D335)."""
+PER_CATEGORY = "M3.2e-2a (#52)"
+"""The part that gives descriptive analyses per-category counts of multi-valued columns, their
+memberships (D335, D377)."""
 
 
 @dataclass(frozen=True)
@@ -386,7 +409,10 @@ class ResolvedVariable:
       ``None`` to exclude it (``NO_ROWS``); ``order`` an ordered category's values in order,
       whose positions ``max`` and ``min`` compare;
     - ``question``: ``some`` or ``every`` of the rows (or a list's items), an existence
-      question on the unit table whose truth value is the unit's value."""
+      question on the unit table whose truth value is the unit's value;
+    - ``rows``: ``count: "rows"``, the rows an aggregate of the column would pool, ``rows`` and
+      ``depth`` and ``lookup`` as an aggregate's, each row's value read and counted rather than
+      aggregated into one per unit (D378); no ``function``, ``empty`` or ``order``."""
 
     key: str
     release: Release
@@ -497,14 +523,17 @@ def resolve(
     predicates: Sequence[ViewPredicate] = (),
     variables: Sequence[ViewVariable] = (),
     endpoints: Sequence[ViewEndpoint] = (),
+    under_k: frozenset[str] = frozenset(),
 ) -> Resolution:
     """Resolve a loaded document. ``releases`` maps each dataset reference as written (``d``,
     ``d@3``) to its release; ``positions`` are the loader's, so that refusals point into the
     document as written. ``registry`` holds the packs whose leaves may be expanded.
     ``predicates``, ``variables`` and ``endpoints`` are resolved after the cohorts, in the same
     resolution, so that their pack leaves share the document's budget of steps (D285, D317,
-    D325, D347)."""
-    resolver = _Resolver(document, releases, positions or {}, registry)
+    D325, D347). ``under_k`` holds the references whose releases are under a disclosure setting
+    (§8.4), whose variables are offered no ``count: "rows"``, which no analysis gives there
+    (D379)."""
+    resolver = _Resolver(document, releases, positions or {}, registry, under_k)
     return resolver.run(predicates, variables, endpoints)
 
 
@@ -703,10 +732,13 @@ class _Resolver:
         releases: Mapping[str, Release],
         positions: Mapping[Position, str],
         registry: PackRegistry | None = None,
+        under_k: frozenset[str] = frozenset(),
     ) -> None:
         self._given = document
         """The document resolved; a release's parent scopes are resolved without one."""
         self.releases = releases
+        self.under_k = under_k
+        """The references whose releases are under a disclosure setting (§8.4)."""
         self.positions = positions
         self.registry = registry
         self.refusals: list[Refusal] = []
@@ -1263,9 +1295,11 @@ class _Resolver:
             return None
         multi = bool(down_steps(path)) or datatype == "list<category>"
         base = ResolvedVariable(given.key, release, unit, descriptor.id, datatype, "column", path)
+        if variable.count is not None:
+            return self._rows(context, variable, base, descriptor, path, at)
         if aggregate is None:
             if multi:
-                self._not_single(descriptor, datatype, at, given.independent)
+                self._not_single(descriptor, at, given.independent, context.dataset)
                 return None
             self._read_column(context, descriptor)
             self._read_path(context, path)
@@ -1287,40 +1321,61 @@ class _Resolver:
                 text("A list column's items are asked about by some and every, not counted or "),
                 text("compared: "),
                 data(descriptor.id),
+                alternatives=[text(name) for name in aggregates_taken(descriptor)],
             )
             return None
         return self._aggregate(context, variable, base, descriptor, path, at)
 
     def _not_single(
-        self, descriptor: ColumnDescriptor, datatype: str | None, at: Position, independent: bool
+        self, descriptor: ColumnDescriptor, at: Position, independent: bool, reference: str
     ) -> None:
         """A variable that is multi-valued for the unit, given no aggregate (§9.2): for an
         analysis that assumes independent groups, or of numbers, an aggregate is required; a
-        descriptive analysis's per-category counts of categories come with M3.2e (D335)."""
-        categories = datatype in ("category", "boolean", "list<category>")
+        descriptive analysis's per-category counts of categories come with M3.2e-2a (D377).
+        Either lists the aggregates the column takes (``aggregates_taken``). A descriptive
+        analysis is offered ``count: "rows"`` too (D378) for numbers and for categories below the
+        unit, never for a list, whose items are no rows, and never under a disclosure setting,
+        which withholds it (``under_k``, D379)."""
+        datatype = descriptor.fields.datatype
+        listed = datatype == "list<category>"
+        categories = listed or datatype in ("category", "boolean")
+        rows = (
+            not independent
+            and reference not in self.under_k
+            and not listed
+            and (categories or datatype in _NUMERIC)
+        )
+        alternatives = [
+            *(text(name) for name in aggregates_taken(descriptor)),
+            *([text('count: "rows"')] if rows else []),
+        ]
         if categories and not independent:
+            kinds = "some or every" if listed else "count, some, every, or max or min of an "
             self.refuse(
                 RefusalCode.NOT_SUPPORTED,
                 (*at, "column"),
                 text("Counts per category of a column with several values per unit are "),
-                text(f"given from {PER_CATEGORY}; until then, give an aggregate (some, every, or "),
-                text("max or min of an ordered category): "),
+                text(f"given from {PER_CATEGORY}; until then, give an aggregate ({kinds}"),
+                text(")" if listed else "ordered category)"),
+                text(', or count its rows (count: "rows"): ' if rows else ": "),
                 data(descriptor.id),
+                alternatives=alternatives,
             )
             return
-        names = (
-            ("some", "every", "max", "min")
-            if categories
-            else ("count", "max", "min", "mean", "some", "every")
-        )
         self.refuse(
             RefusalCode.AGGREGATE_REQUIRED,
             (*at, "column"),
             text("The column has several values per unit, below it or in a list, so the view "),
             text("gives an aggregate, one value per unit (§9.2"),
-            text("; max and min of an ordered category): " if categories else "): "),
+            text(
+                "; max and min of an ordered category): "
+                if categories
+                else '), or counts its rows (count: "rows"): '
+                if rows
+                else "): "
+            ),
             data(descriptor.id),
-            alternatives=[text(name) for name in names],
+            alternatives=alternatives,
         )
 
     def _question(
@@ -1377,13 +1432,15 @@ class _Resolver:
         ordered = descriptor.fields.permissible_values
         order: tuple[str, ...] | None = None
         if function == "mean" and datatype not in _NUMERIC:
-            self._not_aggregated(function, descriptor, at, "numbers")
+            self._not_aggregated(function, descriptor, at, "numbers", variable)
             return None
         if function in ("max", "min"):
             if datatype in ("category",) and ordered is not None and ordered.ordered:
                 order = tuple(entry.value for entry in ordered.values)
             elif datatype not in _NUMERIC:
-                self._not_aggregated(function, descriptor, at, "numbers and ordered categories")
+                self._not_aggregated(
+                    function, descriptor, at, "numbers and ordered categories", variable
+                )
                 return None
         empty: Constant | None = None
         if variable.empty is not None and variable.empty != EXCLUDE:
@@ -1398,6 +1455,80 @@ class _Resolver:
                     alternatives=self.listed(list(order or ())),
                 )
                 return None
+        chain = self._pooling(context, variable, descriptor, path, at)
+        if chain is None:
+            return None
+        if function != "count":
+            self._read_column(context, descriptor)
+        return replace(
+            base,
+            kind="aggregate",
+            via=(),
+            function=function,
+            rows=chain,
+            depth=down_steps(path),
+            lookup=_trailing(path),
+            empty=empty,
+            order=order,
+        )
+
+    def _rows(
+        self,
+        context: _Cohort,
+        variable: Variable,
+        base: ResolvedVariable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+        at: Position,
+    ) -> ResolvedVariable | None:
+        """``count: "rows"``: the rows a numeric aggregate of the column would pool (§9.2, D378),
+        its chain as ``_pooling`` gives it, each row's value read through the lookups after the
+        last down step. A list column's items are no rows to pool, and are counted per category
+        from ``PER_CATEGORY``; a column with one value per unit has its units for rows."""
+        if base.datatype == "list<category>":
+            self.refuse(
+                RefusalCode.NOT_SUPPORTED,
+                (*at, "count"),
+                text("A list column's items are not rows: they are counted per category from "),
+                text(f"{PER_CATEGORY}; until then, give an aggregate (some or every): "),
+                data(descriptor.id),
+                alternatives=[text("some"), text("every")],
+            )
+            return None
+        if not down_steps(path):
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                (*at, "count"),
+                text("The column holds one value per unit, so its rows are its units: leave "),
+                text("count out: "),
+                data(descriptor.id),
+            )
+            return None
+        chain = self._pooling(context, variable, descriptor, path, at)
+        if chain is None:
+            return None
+        self._read_column(context, descriptor)
+        return replace(
+            base,
+            kind="rows",
+            via=(),
+            rows=chain,
+            depth=down_steps(path),
+            lookup=_trailing(path),
+        )
+
+    def _pooling(
+        self,
+        context: _Cohort,
+        variable: Variable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+        at: Position,
+    ) -> RExists | None:
+        """The chain of questions whose rows an aggregate, or a count of rows, pools (§9.2): its
+        last ``where`` the variable's conditions (resolved on the column's table, the trailing
+        lookups prefixed, as an ``exists`` leaf's ``where`` is), within a cohort's caps, and every
+        step able to close a unit (``_closable``)."""
         trailing = _trailing(path)
         served = context.served
         context.served = bool(trailing)
@@ -1428,30 +1559,33 @@ class _Resolver:
         chain = cast(RExists, top[0])
         if not self._closable(context, chain, depth, at):
             return None
-        if function != "count":
-            self._read_column(context, descriptor)
-        return replace(
-            base,
-            kind="aggregate",
-            via=(),
-            function=function,
-            rows=chain,
-            depth=depth,
-            lookup=trailing,
-            empty=empty,
-            order=order,
-        )
+        return chain
 
     def _not_aggregated(
-        self, function: str, descriptor: ColumnDescriptor, at: Position, takes: str
+        self,
+        function: str,
+        descriptor: ColumnDescriptor,
+        at: Position,
+        takes: str,
+        variable: Variable,
     ) -> None:
+        """An aggregate the column does not take, offering those it does that the variable's
+        other members allow (§9.2): not ``some`` or ``every`` beside a ``where``, and only
+        ``max``, ``min`` and ``mean`` beside an ``empty``."""
+        offered = [
+            name
+            for name in aggregates_taken(descriptor)
+            if name != function
+            and not (variable.where is not None and name in ("some", "every"))
+            and not (variable.empty is not None and name not in ("max", "min", "mean"))
+        ]
         self.refuse(
             RefusalCode.AGGREGATE_NOT_ALLOWED,
             (*at, "aggregate"),
             text(f"{function} takes {takes}; "),
             data(descriptor.id),
             text(f" is a {descriptor.fields.datatype} column"),
-            alternatives=[text("count"), *([] if function == "mean" else [text("mean")])],
+            alternatives=[text(name) for name in offered],
         )
 
     def _closable(self, context: _Cohort, chain: RExists, depth: int, at: Position) -> bool:
@@ -2987,6 +3121,7 @@ __all__ = [
     "ViewEndpoint",
     "ViewPredicate",
     "ViewVariable",
+    "aggregates_taken",
     "check_parent_scopes",
     "identifying",
     "levels",

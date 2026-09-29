@@ -21,6 +21,13 @@ that lists or hands each member's values in the keys' order (``lists_keys``: ``s
 and every pack's) is also refused, and ``unavailable`` naming ``allow_row_ids``, where the dataset
 allows no row ids.
 
+A ``disclosed`` analysis may also **withhold a variable form** under any setting
+(``CoreAnalysis.withheld_forms``, D379): a member of its parameters, by its path below them, whose
+presence the pass cannot protect (``summary.distribution``'s ``count: "rows"``, a sum of each
+unit's number of rows, a statistic of values D329 withholds). Under any setting a view that gives
+one is refused in phase 2 at that member, before anything else phase 2 checks of its variables
+(``withheld_form``), and the analysis stays ``available``: its other views run.
+
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
 kept: a requirement is met by the descriptors of its ``kind`` (endpoints an analysis can use,
@@ -48,9 +55,13 @@ analysis is also ``unavailable`` wherever it requires a column of a datatype no 
 handed (dates and datetimes), naming those roles, since every view of it is refused (D341).
 """
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
+from types import UnionType
+from typing import Annotated, Union, cast, get_args, get_origin
+
+from pydantic import BaseModel
 
 from aibi.core.analyses import columns, cox, distribution, existence, members, survival
 from aibi.core.engine.resolve import (
@@ -108,7 +119,9 @@ class CoreAnalysis:
     """One of the core's analyses: its entry, its parameters' model, its values' model (which
     reads its digested values back, D374), its disclosure class and whether it lists or hands
     each member's values in the keys' order (D353); ``because`` says why, for a ``refused`` one,
-    in a refusal's words."""
+    in a refusal's words; ``withheld_forms``, for a ``disclosed`` one, the members of its
+    parameters it withholds under any setting, each by its path below them (``/``-separated
+    member names, ``*`` for any item of a list) with why, in a refusal's words (D379)."""
 
     entry: AnalysisDescriptor
     params: type[DocModel]
@@ -116,6 +129,7 @@ class CoreAnalysis:
     disclosure: DisclosureClass
     lists_keys: bool = False
     because: str | None = None
+    withheld_forms: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def __post_init__(self) -> None:
         if (self.disclosure is DisclosureClass.REFUSED) != bool(
@@ -124,6 +138,47 @@ class CoreAnalysis:
             raise ValueError("a refused analysis says why, and only a refused one")
         if self.lists_keys and self.disclosure is not DisclosureClass.REFUSED:
             raise ValueError("an analysis that lists keys is refused under k (D332)")
+        if self.withheld_forms and self.disclosure is not DisclosureClass.DISCLOSED:
+            raise ValueError("only a disclosed analysis withholds a form, a refused one all (D379)")
+        for form, why in self.withheld_forms.items():
+            if not why.strip() or not all(form.split("/")):
+                raise ValueError("a withheld form is a path below the parameters, and says why")
+            _member_at(self.params, form)
+
+
+def _member_at(params: type[BaseModel], form: str) -> None:
+    """Refuses a withheld form (D379) whose path does not lie below ``params``: each name a
+    member of the model it is below, and each ``*`` an item of a list, so that a misspelt form
+    cannot stop withholding what it names."""
+    below: object = params
+    for segment in form.split("/"):
+        below = _unwrapped(below)
+        if segment == "*":
+            if get_origin(below) is not list:
+                raise ValueError(f"a withheld form's * is an item of a list: {form}")
+            below = get_args(below)[0]
+        elif isinstance(below, type) and issubclass(below, BaseModel):
+            found = below.model_fields.get(segment)
+            if found is None:
+                raise ValueError(f"a withheld form names a member of its model: {form}")
+            below = found.annotation
+        else:
+            raise ValueError(f"a withheld form names a member of its model: {form}")
+
+
+def _unwrapped(annotation: object) -> object:
+    """An annotation without its metadata (``Annotated``) and without ``None`` as an option."""
+    while True:
+        origin = get_origin(annotation)
+        if origin is Annotated:
+            annotation = get_args(annotation)[0]
+        elif origin in (Union, UnionType):
+            options = [one for one in get_args(annotation) if one is not type(None)]
+            if len(options) != 1:
+                return annotation
+            annotation = options[0]
+        else:
+            return annotation
 
 
 CORE: Mapping[str, CoreAnalysis] = {
@@ -131,7 +186,14 @@ CORE: Mapping[str, CoreAnalysis] = {
         existence.ENTRY, ExistenceParams, ExistenceValues, DisclosureClass.DISCLOSED
     ),
     distribution.ENTRY.id: CoreAnalysis(
-        distribution.ENTRY, DistributionParams, DistributionValues, DisclosureClass.DISCLOSED
+        distribution.ENTRY,
+        DistributionParams,
+        DistributionValues,
+        DisclosureClass.DISCLOSED,
+        withheld_forms={
+            "columns/*/count": "a column's rows total each unit's number of rows, a statistic of "
+            "values that the pass withholds, and one unit's rows can be k or more (D329)"
+        },
     ),
     members.ENTRY.id: CoreAnalysis(
         members.ENTRY,
@@ -220,6 +282,48 @@ def withheld(analysis: Registered, k: int | None) -> bool:
     """Whether a view of ``analysis`` under the effective disclosure setting ``k`` is refused
     (D353), which phase 2 refuses and each place that runs one asserts."""
     return k is not None and disclosure_of(analysis)[0] is DisclosureClass.REFUSED
+
+
+def withheld_form(
+    analysis: Registered, params: DocModel, k: int | None
+) -> tuple[tuple[str | int, ...], str] | None:
+    """The first member of a view's parameters, in their order (``_given``), that ``analysis``
+    withholds under the effective disclosure setting ``k`` (D379), its place below ``params``
+    and why, or ``None``: phase 2 refuses it, and each place that runs a view asserts none."""
+    core = None if analysis.pack is not None else CORE.get(analysis.id)
+    if k is None or core is None or not core.withheld_forms:
+        return None
+    forms = {tuple(form.split("/")): why for form, why in core.withheld_forms.items()}
+    below = {form[:end] for form in forms for end in range(1, len(form))}
+    for place in _given(params, (), below):
+        why = forms.get(_form(place))
+        if why is not None:
+            return place, why
+    return None
+
+
+def _form(place: tuple[str | int, ...]) -> tuple[str, ...]:
+    return tuple("*" if isinstance(segment, int) else segment for segment in place)
+
+
+def _given(
+    value: object, at: tuple[str | int, ...], below: set[tuple[str, ...]]
+) -> Iterator[tuple[str | int, ...]]:
+    """Each place below ``value`` that gives a member, in the parameters' order (a model's
+    members as it declares them, a list's items in turn, a member before those below it),
+    descending only where ``below`` holds a form's path so far."""
+    if value is None:
+        return
+    if at:
+        yield at
+        if _form(at) not in below:
+            return
+    if isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            yield from _given(getattr(value, name), (*at, name), below)
+    elif isinstance(value, list):
+        for index, item in enumerate(cast(list[object], value)):
+            yield from _given(item, (*at, index), below)
 
 
 @dataclass(frozen=True)
@@ -532,4 +636,5 @@ __all__ = [
     "Registered",
     "disclosure_of",
     "withheld",
+    "withheld_form",
 ]
