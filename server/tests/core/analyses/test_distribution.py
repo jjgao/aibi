@@ -675,6 +675,23 @@ def test_under_k_one_column_read_by_two_views_with_other_bins_is_refused(
     assert check(document, shop(extended=True), floor=3).refusals == []
 
 
+@pytest.mark.parametrize("refused", [{"column": "orders.channel", "each": "category"}, None])
+def test_under_k_a_view_that_is_refused_reads_no_bins_that_a_later_view_conflicts_with(
+    check: Check, shop: Shop, refused: dict[str, Any] | None
+) -> None:
+    """A view refused in phase 2, here for its memberships (D380), is not run, so its edges
+    constrain no later view; a view that runs still does (§8.4)."""
+    most = {"column": "orders.amount", "aggregate": "max", "bins": [0, 50, 200]}
+    document = shop_document(most, *([refused] if refused else []))
+    least = {"column": "orders.amount", "aggregate": "min", "bins": [0, 100, 200]}
+    document["views"].append({**document["views"][0], "params": {"columns": [least]}})
+    found = check(document, shop(extended=True), floor=3)
+    if refused:
+        assert _refusals(found) == [("NOT_SUPPORTED", "/views/0/params/columns/1/each")]
+    else:
+        assert _refusals(found) == [("CONFLICTING_MEMBERS", "/views/1/params/columns/0/bins")]
+
+
 def test_under_k_a_column_s_range_edges_and_the_same_edges_written_are_one_set_of_bins(
     check: Check, shop: Shop
 ) -> None:
@@ -1178,6 +1195,17 @@ VALUES: dict[str, list[Any]] = {
 }
 
 
+UNIT_EXTRAS = [
+    build.column("customers.flag", "boolean"),
+    build.column("customers.spent", "number"),
+    build.column("customers.waited", "time_offset", units="d"),
+    build.column("customers.born", "date"),
+    build.column("customers.seen", "datetime"),
+    build.column("customers.nick", "string"),
+]
+"""A column of the customers of each datatype their tier and age are not."""
+
+
 def _kinds(shop: Shop, disclosure: Mapping[str, Any] | None = None) -> Any:
     extras = [
         build.column("customers.labels", "list<category>"),
@@ -1188,6 +1216,7 @@ def _kinds(shop: Shop, disclosure: Mapping[str, Any] | None = None) -> Any:
             "category",
             permissible_values={"values": [{"value": v} for v in "abc"], "ordered": True},
         ),
+        *UNIT_EXTRAS,
     ]
     return shop(extended=True, extras=extras, disclosure=disclosure)
 
@@ -1216,6 +1245,103 @@ def _alternative(variable: Mapping[str, Any], alternative: str) -> dict[str, Any
     if alternative.endswith(" without bins"):
         del found["bins"]
     return found
+
+
+SINGLE: dict[str, tuple[str, list[str]]] = {
+    "a category on the unit": ("customers.tier", ["leave each out"]),
+    "a boolean on the unit": ("customers.flag", ["leave each out"]),
+    "an integer on the unit": ("customers.age", ["leave each out"]),
+    "a number on the unit": ("customers.spent", ["leave each out"]),
+    "a time offset on the unit": ("customers.waited", ["leave each out"]),
+    "a date on the unit": ("customers.born", []),
+    "a datetime on the unit": ("customers.seen", []),
+    "a string on the unit": ("customers.nick", []),
+}
+"""A column of one value per unit of each datatype, which has no memberships, and what a
+refusal of its memberships offers: leaving ``each`` out where the analysis summarises the
+column as it is, else nothing."""
+
+
+@pytest.mark.parametrize("kind", [*KINDS, *SINGLE])
+def test_memberships_offer_what_runs_in_their_place_until_their_part_reads_them(
+    check: Check, shop: Shop, kind: str
+) -> None:
+    """``each`` is the engine's in M3.2e-2a-1 (D380): ``summary.distribution`` refuses the
+    memberships it resolves at the member, naming the part that reads them, and resolution a
+    column that has none; either offers what runs in its place, and a view of each runs: the
+    aggregates the column takes (``resolve.aggregates_taken``) where it has several values per
+    unit, whatever its datatype, else leaving ``each`` out, but for a column whose datatype the
+    analysis does not summarise, which is offered nothing, since a view of it is refused."""
+    release = _kinds(shop)
+    if kind in SINGLE:
+        column, offered = SINGLE[kind]
+        code = RefusalCode.INVALID_VALUE
+        if not offered:
+            [bare] = check(shop_document({"column": column}), release).refusals
+            assert (bare.code, bare.path) == (
+                RefusalCode.NOT_SUPPORTED,
+                "/views/0/params/columns/0/column",
+            )
+    else:
+        column, several, offered, _ = KINDS[kind]
+        categorical = several == "NOT_SUPPORTED"
+        code = RefusalCode.NOT_SUPPORTED if categorical else RefusalCode.INVALID_VALUE
+    found = check(shop_document({"column": column, "each": "category"}), release)
+    [refusal] = found.refusals
+    assert (refusal.code, refusal.path) == (code, "/views/0/params/columns/0/each")
+    assert found.views == []
+    said = json.dumps([s.model_dump() for s in refusal.message])
+    assert ("M3.2e-2a-2 (#52)" in said) is (code == RefusalCode.NOT_SUPPORTED)
+    assert [one.text for one in refusal.alternatives or []] == offered
+    for alternative in offered:
+        given = (
+            {"column": column}
+            if alternative == "leave each out"
+            else _alternative({"column": column}, alternative)
+        )
+        assert check(shop_document(given), release).refusals == [], given
+
+
+BELOW_SCOPE: dict[str, tuple[str, list[str], list[Any]]] = {
+    "the scope column": ("visits.stall", ["some"], ["a"]),
+    "another column of its rows": ("visits.paid", ["some", "every"], [True]),
+}
+"""A column of rows whose coverage is scoped by value, and what runs in place of its memberships
+or of the bare column: the aggregates its path allows, and the values ``some`` and ``every``
+ask about."""
+REFUSED_BELOW_SCOPE = {"count": "OPEN_SCOPE", "every": "SCOPE_COLUMN_MENTION"}
+
+
+@pytest.mark.parametrize("each", [True, False])
+@pytest.mark.parametrize("kind", list(BELOW_SCOPE))
+def test_below_scoped_coverage_only_the_aggregates_the_path_allows_are_offered_and_each_runs(
+    check: Check, scoped: Shop, kind: str, each: bool
+) -> None:
+    """D377, D380: below a step whose coverage is scoped by value, an aggregate that pools rows
+    restricts its scope columns in its ``where`` (``OPEN_SCOPE``), and ``every`` may not mention
+    its scope column (``SCOPE_COLUMN_MENTION``), so the refusal of memberships and that of the
+    bare column offer neither, nor ``count: "rows"`` (``resolve.aggregates_over``); a view of
+    each alternative runs, and of each left out is refused."""
+    column, offered, values = BELOW_SCOPE[kind]
+    release = scoped()
+    given: dict[str, Any] = {"column": column, **({"each": "category"} if each else {})}
+    [refusal] = check(shop_document(given), release).refusals
+    member = "each" if each else "column"
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.NOT_SUPPORTED,
+        f"/views/0/params/columns/0/{member}",
+    )
+    assert [one.text for one in refusal.alternatives or []] == offered
+    for name in ("count", "some", "every"):
+        asked: dict[str, Any] = {"column": column, "aggregate": name}
+        if name != "count":
+            asked["values"] = values
+        found = check(shop_document(asked), release)
+        if name in offered:
+            assert found.refusals == [], name
+        else:
+            [left_out] = found.refusals
+            assert left_out.code == REFUSED_BELOW_SCOPE[name], name
 
 
 @pytest.mark.parametrize("kind", list(KINDS))
@@ -1338,6 +1464,47 @@ def test_under_a_disclosure_setting_what_a_refusal_offers_is_never_refused_for_t
             assert found.refusals == [], led
 
 
+@pytest.mark.parametrize("setting", list(SETTINGS))
+@pytest.mark.parametrize(
+    "kind", [*KINDS, *(kind for kind, (_, offered) in SINGLE.items() if offered)]
+)
+def test_under_a_disclosure_setting_what_a_refusal_of_memberships_offers_ends_in_a_view_that_runs(
+    check: Check, shop: Shop, kind: str, setting: str
+) -> None:
+    """D379, D380: under each source of *k*, following every alternative a refusal of ``each``
+    offers (leaving it out, or an aggregate with the values it needs), and giving the member a
+    later refusal names (``bins``), ends in a view that runs and never meets a refusal met on
+    the way, for a column of every datatype below the unit or on it."""
+    column = KINDS[kind][0] if kind in KINDS else SINGLE[kind][0]
+    disclosure, floor, published, _ = SETTINGS[setting]
+    release = _kinds(shop, disclosure)
+    ends = 0
+    walks: list[tuple[dict[str, Any], tuple[tuple[str, str | None], ...]]] = [
+        ({"column": column, "each": "category"}, ())
+    ]
+    while walks:
+        variable, met = walks.pop()
+        refusals = check(
+            shop_document(variable), release, floor=floor, published=published
+        ).refusals
+        if not refusals:
+            ends += 1
+            continue
+        [refusal] = refusals
+        reason = (refusal.code, refusal.path)
+        assert reason not in met, (variable, met)
+        assert len(met) < 3, (variable, met)
+        texts = [one.text for one in refusal.alternatives or []]
+        led = [
+            {"column": column} if one == "leave each out" else _alternative(variable, one)
+            for one in texts
+        ]
+        named = _followed(variable, refusal)
+        assert led or named is not None, (variable, refusal)
+        walks += [(given, (*met, reason)) for given in [*led, *([named] if named else [])]]
+    assert ends
+
+
 def test_a_count_of_rows_of_what_is_neither_categories_nor_numbers_is_not_supported(
     check: Check, shop: Shop
 ) -> None:
@@ -1365,13 +1532,15 @@ def test_an_aggregate_a_column_does_not_take_offers_only_those_its_other_members
     check: Check, shop: Shop
 ) -> None:
     """Beside a ``where`` no ``some`` or ``every``, beside an ``empty`` only ``max``, ``min``
-    and ``mean``: each alternative then runs as written (§9.2)."""
+    and ``mean``, where it is a value of theirs: each alternative then runs as written (§9.2),
+    and one whose ``empty`` is not is refused."""
     release = _kinds(shop)
     where = [{"kind": "value", "column": "orders.channel", "values": ["web"]}]
     cases = [
         ({"column": "orders.channel", "aggregate": "mean", "where": where}, ["count"]),
         ({"column": "orders.channel", "aggregate": "max", "empty": "web"}, []),
         ({"column": "orders.grade", "aggregate": "mean", "empty": "b"}, ["max", "min"]),
+        ({"column": "orders.grade", "aggregate": "mean", "empty": 0}, []),
     ]
     for variable, offered in cases:
         [refusal] = check(shop_document(variable), release).refusals
@@ -1380,3 +1549,109 @@ def test_an_aggregate_a_column_does_not_take_offers_only_those_its_other_members
         for name in offered:
             led = {**variable, "aggregate": name}
             assert check(shop_document(led), release).refusals == [], led
+    led = {"column": "orders.grade", "aggregate": "max", "empty": 0}
+    assert _refusals(check(shop_document(led), release)) == [
+        ("INVALID_CONSTANT", "/views/0/params/columns/0/empty")
+    ]
+
+
+STALL_A = {"kind": "value", "column": "visits.stall", "values": ["a"]}
+PAID = {"kind": "value", "column": "visits.paid", "values": [True]}
+NOT_TAKEN_BELOW_SCOPE: dict[str, tuple[dict[str, Any], list[str], dict[str, str]]] = {
+    "mean of the scope column": (
+        {"column": "visits.stall", "aggregate": "mean"},
+        ["some"],
+        {"count": "OPEN_SCOPE", "every": "SCOPE_COLUMN_MENTION"},
+    ),
+    "max of another column": (
+        {"column": "visits.paid", "aggregate": "max"},
+        ["some", "every"],
+        {"count": "OPEN_SCOPE"},
+    ),
+    "mean of the scope column restricted in where": (
+        {"column": "visits.stall", "aggregate": "mean", "where": [STALL_A]},
+        ["count"],
+        {},
+    ),
+    "max of another column, the scope column restricted in where": (
+        {"column": "visits.paid", "aggregate": "max", "where": [STALL_A]},
+        ["count"],
+        {},
+    ),
+    "max of another column, the scope column open in where": (
+        {"column": "visits.paid", "aggregate": "max", "where": [PAID]},
+        [],
+        {"count": "OPEN_SCOPE"},
+    ),
+}
+"""An aggregate a column below coverage scoped by value does not take, with and without a
+``where``, what its refusal offers, and the code of each aggregate it leaves out that the
+variable could be written with."""
+
+
+@pytest.mark.parametrize("kind", list(NOT_TAKEN_BELOW_SCOPE))
+def test_below_scoped_coverage_an_aggregate_not_taken_offers_only_those_that_run_there(
+    check: Check, scoped: Shop, kind: str
+) -> None:
+    """D377: the refusal of an aggregate a column does not take offers only those that run with
+    the variable's path and ``where``: one that pools rows where every scope column is
+    restricted in the ``where`` (``OPEN_SCOPE``), and without one ``some``, and ``every`` of no
+    scope column (``SCOPE_COLUMN_MENTION``); beside a ``where``, which they do not take, neither.
+    A view of each alternative runs, and of each left out is refused."""
+    variable, offered, refused = NOT_TAKEN_BELOW_SCOPE[kind]
+    values = ["a"] if variable["column"] == "visits.stall" else [True]
+    release = scoped()
+    [refusal] = check(shop_document(variable), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.AGGREGATE_NOT_ALLOWED,
+        "/views/0/params/columns/0/aggregate",
+    )
+    assert [one.text for one in refusal.alternatives or []] == offered
+    for name in [*offered, *refused]:
+        led = {**variable, "aggregate": name}
+        if name in ("some", "every"):
+            led["values"] = values
+        found = check(shop_document(led), release)
+        if name in offered:
+            assert found.refusals == [], led
+        else:
+            [left_out] = found.refusals
+            assert left_out.code == refused[name], led
+
+
+@pytest.mark.parametrize("each", [True, False])
+def test_every_of_a_column_looked_up_below_scoped_coverage_is_offered_whatever_its_name(
+    check: Check, scoped: Shop, each: bool
+) -> None:
+    """D377, D380: ``every`` may not mention a scope column of the last step's child row, and a
+    column its rows look up is none, though it be named as one is: ``booths.stall``, looked up
+    from visits whose coverage is scoped by their own ``stall``, is offered ``some`` and
+    ``every`` (``resolve.aggregates_over``'s ``trailing``, as resolution and phase 2 give it),
+    and a view of each runs."""
+    release = scoped()
+    given: dict[str, Any] = {"column": "booths.stall", **({"each": "category"} if each else {})}
+    [refusal] = check(shop_document(given), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.NOT_SUPPORTED,
+        f"/views/0/params/columns/0/{'each' if each else 'column'}",
+    )
+    assert [one.text for one in refusal.alternatives or []] == ["some", "every"]
+    for name in ("some", "every"):
+        led = {"column": "booths.stall", "aggregate": name, "values": ["a"]}
+        assert check(shop_document(led), release).refusals == [], name
+
+
+def test_a_list_on_the_unit_beside_a_where_is_offered_no_aggregate_since_it_has_no_rows_to_pool(
+    check: Check, shop: Shop
+) -> None:
+    """A list column on the unit has no rows to pool, and its items are asked about by ``some``
+    and ``every`` alone, which take no ``where`` (§9.2): beside a ``where`` its aggregate not
+    taken is refused offering nothing (D377, D380)."""
+    release = shop(extras=[build.column("customers.labels", "list<category>")])
+    where = [{"kind": "value", "column": "customers.labels", "values": ["new"]}]
+    for aggregate in ("mean", "count", "max"):
+        variable = {"column": "customers.labels", "where": where, "aggregate": aggregate}
+        refusals = check(shop_document(variable), release).refusals
+        assert [(r.code, r.path, r.alternatives) for r in refusals] == [
+            (RefusalCode.AGGREGATE_NOT_ALLOWED, "/views/0/params/columns/0/aggregate", [])
+        ], aggregate

@@ -254,6 +254,95 @@ def test_the_count_of_an_identifier_s_rows_is_a_number_covariate(
     assert cox.covariate_of(view.variables[0].resolved) == Covariate("number")
 
 
+COXED_EACH: dict[str, tuple[str, list[str], list[Any]]] = {
+    "a string": ("customers.note", ["leave each out"], []),
+    "a category": ("customers.tier", ["leave each out"], []),
+    "a date": ("customers.since", [], []),
+    "a datetime": ("customers.seen", [], []),
+    "an identifier": ("customers.customer_id", [], []),
+    "the endpoint's time": ("customers.tenure", [], []),
+    "the endpoint's status": ("customers.left", [], []),
+    "an identifier below the unit": ("orders.order_id", ["count"], []),
+    "an ordered category below the unit": (
+        "orders.priority",
+        ["count", "max", "min", "some", "every"],
+        ["low"],
+    ),
+}
+"""A column of each kind a covariate or stratum may name, what a refusal of its memberships
+offers in their place, and the values ``some`` and ``every`` ask about."""
+
+
+@pytest.mark.parametrize("kind", list(COXED_EACH))
+@pytest.mark.parametrize("place", ["covariates/0", "stratum"])
+def test_memberships_are_no_covariate_and_their_refusal_offers_only_what_the_model_takes(
+    check: Check, shop: Shop, rows: Rows, kind: str, place: str
+) -> None:
+    """The model reads one value per unit of each variable (D335, D367), so ``each`` is invalid,
+    and its refusal offers only what its phase 2 takes in its place (``views._cox_unread``,
+    D380): leaving ``each`` out for a column of one value per unit it codes, never for a date,
+    a datetime, an identifier or the endpoint's time or status, whose refusal says that nothing
+    runs, and of an identifier below the unit ``count`` alone, as the refusal of the bare column
+    offers; a view of each alternative runs."""
+    column, offered, values = COXED_EACH[kind]
+    seen = build.column("customers.seen", "datetime")
+    release = shop(
+        rows_with_extras(rows), extended=True, survived="delayed", extras=[*extras(), seen]
+    )
+
+    def written(variable: dict[str, Any]) -> dict[str, Any]:
+        if place == "stratum":
+            return document(params={"covariates": [AGE], "stratum": variable})
+        return document(params={"covariates": [variable]})
+
+    [refusal] = check(written({"column": column, "each": "category"}), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.INVALID_VALUE,
+        f"/views/0/params/{place}/each",
+    )
+    assert ("reads no form of this column" in said(refusal.message)) is not offered
+    assert [one.text for one in refusal.alternatives or []] == offered
+    bare = check(written({"column": column}), release)
+    if column.startswith("orders."):
+        [required] = bare.refusals
+        assert required.code == RefusalCode.AGGREGATE_REQUIRED
+        assert [one.text for one in required.alternatives or []] == offered
+    else:
+        assert (bare.refusals == []) is bool(offered)
+    for name in offered:
+        variable: dict[str, Any] = {"column": column}
+        if name != "leave each out":
+            variable["aggregate"] = name
+        if name in ("some", "every"):
+            variable["values"] = values
+        assert check(written(variable), release).refusals == [], variable
+
+
+@pytest.mark.parametrize(
+    ("tested", "offered"), [("orders.channel", ["count"]), ("orders.order_id", [])]
+)
+def test_an_aggregate_not_taken_offers_count_only_where_its_conditions_are_the_model_s(
+    check: Check, store: Store, tested: str, offered: list[str]
+) -> None:
+    """Beside a ``where``, the refusal of an aggregate the column does not take offers those
+    that pool rows only where phase 2 takes their conditions (D370, D377): a ``count`` of rows
+    whose conditions test an identifier is refused at the leaf, so none is offered."""
+    leaf = {"kind": "value", "column": tested, "values": ["web" if tested.endswith("l") else "o1"]}
+    variable = {"column": "orders.channel", "aggregate": "mean", "where": [leaf]}
+    release = store()
+    [refusal] = check(document(params={"covariates": [variable]}), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.AGGREGATE_NOT_ALLOWED,
+        "/views/0/params/covariates/0/aggregate",
+    )
+    assert [one.text for one in refusal.alternatives or []] == offered
+    counted = check(document(params={"covariates": [{**variable, "aggregate": "count"}]}), release)
+    expected = (
+        [] if offered else [(RefusalCode.INVALID_VALUE, "/views/0/params/covariates/0/where/0")]
+    )
+    assert refusals(counted) == expected
+
+
 def test_under_a_disclosure_setting_the_view_is_withheld_before_anything_else(
     check: Check, store: Store
 ) -> None:

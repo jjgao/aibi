@@ -24,7 +24,9 @@ unit table or of a row it looks up, or an aggregate of the rows below it (§9.2)
 their conditions, ``lift`` the rule of every earlier step, ``empty`` the value of a unit with no
 row to aggregate), or ``some`` or ``every`` with a ``values`` set, an existence question; or,
 with ``count: "rows"``, the rows themselves that a numeric aggregate pools, each row's value
-counted, for ``summary.distribution`` (D378).
+counted, for ``summary.distribution`` (D378); or, with ``each: "category"``, the unit's
+memberships: for each category of a multi-valued categorical column, whether some row (or
+item) has it (D380).
 
 ``summary.distribution`` (D328) takes ``columns``, one to ``MAX_VARIABLES`` variables. Its
 values, per position and column in parameter order: for categories, the cohort's units per
@@ -250,11 +252,29 @@ class Variable(DocModel):
     unit that reaches it, rather than units (§9.2, D378): without an ``aggregate``, ``values`` or
     ``empty``, in a descriptive analysis alone, and withheld under any disclosure setting
     (D379)."""
+    each: Literal["category"] | None = None
+    """``"category"`` asks, for each category of a multi-valued categorical column, whether some
+    row (or item) of the unit has it, an existence question per category whose units are counted
+    over those for which it is known (§9.2, D380): without an ``aggregate``, ``values``,
+    ``empty``, ``count`` or ``where``, in a descriptive analysis alone."""
 
     @model_validator(mode="after")
     def _check_members(self) -> Self:
         aggregate = self.aggregate
         rows = self.count is not None
+        if self.each is not None and (
+            aggregate is not None
+            or self.values is not None
+            or self.empty is not None
+            or rows
+            or self.where is not None
+        ):
+            raise PydanticCustomError(
+                "conflicting_members",
+                'each "category" asks of every category whether some row has it, so it takes no '
+                "aggregate, values, empty, count or where; for rows with conditions, ask a "
+                "compare.existence predicate",
+            )
         if rows and (aggregate is not None or self.values is not None or self.empty is not None):
             raise PydanticCustomError(
                 "conflicting_members",

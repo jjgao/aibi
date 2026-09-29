@@ -54,8 +54,9 @@ predicates, variables and endpoints read that are not confirmed (an undeclared e
 which are the canonical parts of a view a pack can read (D287, D317).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, cast
 
 from pydantic import JsonValue, ValidationError
@@ -80,14 +81,18 @@ from aibi.core.engine.canonical import (
 )
 from aibi.core.engine.data import Release
 from aibi.core.engine.resolve import (
+    MEMBERSHIPS,
     FieldRead,
+    Reads,
     ResolvedEndpoint,
     ResolvedVariable,
     ViewEndpoint,
     ViewPredicate,
     ViewVariable,
+    aggregates_over,
     identifying,
     in_document_order,
+    levels,
 )
 from aibi.core.engine.resolved import (
     Origin,
@@ -113,7 +118,7 @@ from aibi.core.schema.analyses import (
     Variable,
 )
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
-from aibi.core.schema.descriptors import Disclosure
+from aibi.core.schema.descriptors import Disclosure, Requirement
 from aibi.core.schema.document import (
     PARSED,
     Clause,
@@ -291,7 +296,9 @@ def parse(
         elif isinstance(params, DistributionParams | ColumnsParams):
             independent = bool(fields.assumes_independent_groups)
             written = [(("columns", j), v) for j, v in enumerate(params.columns)]
-            variables = _variables(written, index, reference, refusals, independent)
+            variables = _variables(
+                written, index, reference, refusals, independent, [_summarises] * len(written)
+            )
         elif isinstance(params, MembersParams):
             _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
         elif isinstance(params, SurvivalParams | CoxParams) and reference is not None:
@@ -313,7 +320,10 @@ def parse(
             ]
             if params.stratum is not None:
                 modelled.append((("stratum",), params.stratum))
-            variables = _variables(modelled, index, reference, refusals, True)
+            coxes: Reads = partial(_coxes, f"{index}/endpoint")
+            variables = _variables(
+                modelled, index, reference, refusals, True, [coxes] * len(modelled)
+            )
             asked = [
                 (
                     ("views", index, "params", "covariates", j, "predicate"),
@@ -331,7 +341,9 @@ def parse(
         elif isinstance(params, PackParams):
             cohorts = len(view.cohorts) if view.cohorts is not None else len(document.cohorts)
             written = _pack_params(found, params, cohorts, index, analyses, refusals)
-            variables = _variables(written, index, reference, refusals, True)
+            required = {r.role: r for r in found.entry.fields.requires if r.kind == "column"}
+            reads: list[Reads] = [partial(_packs, required[str(place[1])]) for place, _ in written]
+            variables = _variables(written, index, reference, refusals, True, reads)
             roles = tuple(str(place[1]) for place, _ in written)
             bound = _pack_endpoints(found, params, index, reference, refusals)
             endpoints = tuple(endpoint for _, endpoint in bound)
@@ -594,12 +606,18 @@ def _variables(
     reference: str | None,
     refusals: _Refusals,
     independent: bool,
+    reads: Sequence[Reads],
 ) -> tuple[ViewVariable, ...]:
     """A view's variables to resolve (D325), each with its place below ``params``: the ``where``
     of each holds no ``ids`` and no ``cohort`` leaf, as a predicate holds none, and at most as
     many pack leaves as a cohort, which resolution expands (D345); ``count: "rows"`` is a
-    descriptive analysis's (D378), never one that assumes independent groups (``independent``),
-    which compares units (§9.2, D335)."""
+    descriptive analysis's (D378), never one that reads one value per unit (``independent``:
+    one that assumes independent groups, or a pack's; §9.2, D335). Resolution refuses ``each``
+    there, and where the column has no memberships, and a form the column does not take,
+    offering only the forms that run in its place, by the analysis's own phase-2 checks of each
+    (``reads``, one for each: ``_summarises``, ``_coxes`` or ``_packs``);
+    ``summary.distribution`` refuses the memberships it resolved (``_distributed``) until
+    ``MEMBERSHIPS`` (D380)."""
     base: list[str | int] = ["views", index, "params"]
     before = len(refusals.found)
     for place, variable in written:
@@ -607,8 +625,8 @@ def _variables(
             refusals.add(
                 RefusalCode.INVALID_VALUE,
                 (*base, *place, "count"),
-                text("This analysis compares units, one value each (§9.2), so a variable counts "),
-                text("units, not rows: leave count out"),
+                text("This analysis reads one value per unit of each variable (§9.2, D335), not "),
+                text("its rows: leave count out"),
             )
         where: list[str | int] = [*base, *place, "where"]
         pack_leaves = 0
@@ -638,8 +656,9 @@ def _variables(
             at=(*base, *place),
             variable=variable,
             independent=independent,
+            reads=read,
         )
-        for place, variable in written
+        for (place, variable), read in zip(written, reads, strict=True)
     )
 
 
@@ -1014,9 +1033,9 @@ def _packed(
         written = pointer([*given.at, "column"])
         resolved = variable.resolved
         requirement = requirements[role]
-        table, _, _ = resolved.column.partition(".")
         tested = _identifiers_tested(release, resolved)
-        if _identifies(release, resolved.column) and resolved.function != "count":
+        unread = _pack_unread(release, requirement, resolved)
+        if unread == "identifier":
             found.append(
                 Refusal(
                     code=RefusalCode.ROW_IDS_NOT_ALLOWED,
@@ -1029,7 +1048,7 @@ def _packed(
                     alternatives=[data("count")],
                 )
             )
-        elif tested:
+        elif unread == "tested":
             found.append(
                 Refusal(
                     code=RefusalCode.ROW_IDS_NOT_ALLOWED,
@@ -1042,7 +1061,7 @@ def _packed(
                     ],
                 )
             )
-        elif not packs.taken(resolved):
+        elif unread == "values":
             found.append(
                 Refusal(
                     code=RefusalCode.NOT_SUPPORTED,
@@ -1055,22 +1074,20 @@ def _packed(
                     alternatives=[data(name) for name in packs.TAKEN],
                 )
             )
-        elif requirement.datatype is not None and resolved.datatype != requirement.datatype:
+        elif unread == "datatype":
             found.append(
                 Refusal(
                     code=RefusalCode.INVALID_VALUE,
                     path=written,
                     message=[
                         text("Its role takes columns of datatype "),
-                        data(requirement.datatype),
+                        data(str(requirement.datatype)),
                         text(", and this one is not: "),
                         data(resolved.column),
                     ],
                 )
             )
-        elif requirement.on == "unit" and (
-            table != resolved.unit or resolved.kind != "column" or resolved.via
-        ):
+        elif unread == "unit":
             found.append(
                 Refusal(
                     code=RefusalCode.INVALID_VALUE,
@@ -1147,14 +1164,15 @@ def _coxed(
     - ``bins``, which divide only a histogram."""
     release = cohort.resolved.release
     [endpoint] = endpoints
-    outcome = {endpoint.time.column, endpoint.status.column}
+    outcome = _outcome(endpoint)
     found: list[Refusal] = []
     for given, variable in zip(view.variables, variables, strict=True):
         resolved = variable.resolved
         column = pointer([*given.at, "column"])
         if resolved.rows is not None:
-            found += _leaves_refused(release, endpoint, resolved.rows, (*given.at, "where"))
-        if cox.covariate_of(resolved) is None:
+            found += _leaves_refused(release, outcome, resolved.rows, (*given.at, "where"))
+        unread = _cox_unread(release, outcome, resolved)
+        if unread == "coding":
             found.append(
                 Refusal(
                     code=RefusalCode.NOT_SUPPORTED,
@@ -1170,7 +1188,7 @@ def _coxed(
                     alternatives=[data(name) for name in cox.TAKEN],
                 )
             )
-        elif _identifies(release, resolved.column) and resolved.function != "count":
+        elif unread == "identifier":
             found.append(
                 Refusal(
                     code=RefusalCode.INVALID_VALUE,
@@ -1183,7 +1201,7 @@ def _coxed(
                     alternatives=[data("count")],
                 )
             )
-        elif resolved.column in outcome:
+        elif unread == "outcome":
             found.append(
                 Refusal(
                     code=RefusalCode.INVALID_VALUE,
@@ -1209,6 +1227,84 @@ def _coxed(
     return found
 
 
+_PackUnread = Literal["identifier", "tested", "values", "datatype", "unit"]
+_CoxUnread = Literal["coding", "identifier", "outcome", "conditions"]
+
+
+def _pack_unread(
+    release: Release, requirement: Requirement, variable: ResolvedVariable
+) -> _PackUnread | None:
+    """What phase 2 refuses of a pack analysis's input column (``_packed``, D341, D342), the
+    first that holds: the values of an identifier column (``count`` reads none), a ``where``
+    that tests one, values that are none of ``packs.TAKEN``, a column not of its role's
+    datatype, and one not read as it is on the unit table where its role requires that; ``None``
+    where it refuses none."""
+    table, _, _ = variable.column.partition(".")
+    if _identifies(release, variable.column) and variable.function != "count":
+        return "identifier"
+    if _identifiers_tested(release, variable):
+        return "tested"
+    if not packs.taken(variable):
+        return "values"
+    if requirement.datatype is not None and variable.datatype != requirement.datatype:
+        return "datatype"
+    if requirement.on == "unit" and (
+        table != variable.unit or variable.kind != "column" or variable.via
+    ):
+        return "unit"
+    return None
+
+
+def _cox_unread(
+    release: Release, outcome: Collection[str], variable: ResolvedVariable
+) -> _CoxUnread | None:
+    """What phase 2 refuses of a ``survival.cox`` covariate or stratum but its ``bins``
+    (``_coxed``, D367, D370), the first that holds: a column with no coding, an identifier's
+    values (``count`` reads none), the endpoint's time or status (``outcome``), and conditions of
+    its rows that test either (``_leaves_refused``, which phase 2 refuses beside the others);
+    ``None`` where it refuses none."""
+    if cox.covariate_of(variable) is None:
+        return "coding"
+    if _identifies(release, variable.column) and variable.function != "count":
+        return "identifier"
+    if variable.column in outcome:
+        return "outcome"
+    if variable.rows is not None and _leaves_refused(release, outcome, variable.rows, ()):
+        return "conditions"
+    return None
+
+
+def _outcome(endpoint: ResolvedEndpoint) -> frozenset[str]:
+    """An endpoint's time and status columns, the outcome a model explains (D367)."""
+    return frozenset({endpoint.time.column, endpoint.status.column})
+
+
+def _summarises(variable: ResolvedVariable, endpoints: Mapping[str, ResolvedEndpoint]) -> bool:
+    """Whether ``summary.distribution`` or ``compare.columns`` reads a variable in a form offered
+    in place of another (``resolve.Reads``): as their phase 2 does (``distribution.summarises``)."""
+    return distribution.summarises(variable)
+
+
+def _coxes(key: str, variable: ResolvedVariable, endpoints: Mapping[str, ResolvedEndpoint]) -> bool:
+    """Whether ``survival.cox`` reads a covariate or stratum in a form offered in place of
+    another (``resolve.Reads``), as its phase 2 does (``_cox_unread``) against the view's
+    endpoint, ``key``, as resolved; an endpoint refused is the view's refusal, and leaves no
+    column out."""
+    endpoint = endpoints.get(key)
+    outcome = frozenset[str]() if endpoint is None else _outcome(endpoint)
+    return _cox_unread(variable.release, outcome, variable) is None
+
+
+def _packs(
+    requirement: Requirement,
+    variable: ResolvedVariable,
+    endpoints: Mapping[str, ResolvedEndpoint],
+) -> bool:
+    """Whether a pack's analysis reads an input column of the role of ``requirement`` in a form
+    offered in place of another (``resolve.Reads``), as its phase 2 does (``_pack_unread``)."""
+    return _pack_unread(variable.release, requirement, variable) is None
+
+
 def _coxed_predicates(
     view: ParsedView,
     cohort: CanonicalCohort,
@@ -1221,19 +1317,18 @@ def _coxed_predicates(
     [endpoint] = endpoints
     found: list[Refusal] = []
     for given, predicate in zip(view.predicates, predicates, strict=True):
-        found += _leaves_refused(release, endpoint, predicate.resolved.tree, given.at)
+        found += _leaves_refused(release, _outcome(endpoint), predicate.resolved.tree, given.at)
     return found
 
 
 def _leaves_refused(
-    release: Release, endpoint: ResolvedEndpoint, clause: RClause, at: Position
+    release: Release, outcome: Collection[str], clause: RClause, at: Position
 ) -> list[Refusal]:
     """The leaves of a ``survival.cox`` covariate's clause (a predicate, or an aggregate's rows'
     conditions) that phase 2 refuses (D367, D370): one that tests an identifier column (a value
     leaf on one, or a ``covered`` leaf scoped by one: §5.4), which marks named units, and one that
-    tests the endpoint's own time or status, which models the outcome by itself; each
-    ``INVALID_VALUE`` at the first place it was written (``at`` where none is known)."""
-    outcome = {endpoint.time.column, endpoint.status.column}
+    tests the endpoint's own time or status (``outcome``), which models the outcome by itself;
+    each ``INVALID_VALUE`` at the first place it was written (``at`` where none is known)."""
     found: list[Refusal] = []
     for column, origin in _tested(clause):
         path = pointer(list(min(origin, key=in_document_order, default=at)))
@@ -1290,20 +1385,26 @@ def _distributed(
     k: int | None,
     edges_of: dict[tuple[str, ...], JsonValue],
 ) -> list[Refusal]:
-    """What ``summary.distribution`` refuses of its resolved variables (D328, D329): a column
-    whose values are neither categories nor numbers, ``bins`` for categories, under *k* a
-    number's histogram whose edges only the data would give (§8.4), and, under *k*, a histogram
-    of a column that the call, in this view or an earlier one, reads already with other edges
-    (``edges_of``, shared by the call's views; the edges it takes, from ``bins`` or the declared
-    range, so that writing the range's own edges is no conflict): a column's values by any
-    variable over it (the column itself, or ``max``, ``min`` or ``mean`` of it, whatever rows),
-    a ``count`` by the rows it counts (``_counted``), since two histograms of one quantity give
-    by difference the counts that merging hides. Without *k* every count is shown, so there is
-    nothing to difference. The key holds the release's manifest: columns of two datasets are
-    two quantities, which only views over several datasets (M6) can meet."""
+    """What ``summary.distribution`` refuses of its resolved variables (D328, D329): memberships
+    until ``MEMBERSHIPS`` (``_memberships_later``, D380), a column whose values are neither
+    categories nor numbers, ``bins`` for categories, under *k* a number's histogram whose edges
+    only the data would give (§8.4), and, under *k*, a histogram of a column that the call, in
+    this view or an earlier one, reads already with other edges (``edges_of``, shared by the
+    call's views; the edges it takes, from ``bins`` or the declared range, so that writing the
+    range's own edges is no conflict): a column's values by any variable over it (the column
+    itself, or ``max``, ``min`` or ``mean`` of it, whatever rows), a ``count`` by the rows it
+    counts (``_counted``), since two histograms of one quantity give by difference the counts
+    that merging hides. Without *k* every count is shown, so there is nothing to difference. The
+    key holds the release's manifest: columns of two datasets are two quantities, which only
+    views over several datasets (M6) can meet. A view's edges join ``edges_of`` only where it
+    is refused nothing here, since a view that is not run reads none."""
     found: list[Refusal] = []
+    edges: dict[tuple[str, ...], JsonValue] = {}
     for position, (variable, given) in enumerate(zip(variables, params.columns, strict=True)):
         at: list[str | int] = ["views", index, "params", "columns", position]
+        if variable.resolved.kind == "memberships":
+            found.append(_memberships_later(variable, at))
+            continue
         if not distribution.summarised(variable):
             found.append(
                 Refusal(
@@ -1354,7 +1455,8 @@ def _distributed(
             else (resolved.release.manifest, "values", resolved.column)
         )
         bins: JsonValue = list[JsonValue](distribution.effective_edges(variable, given.bins) or [])
-        if quantity in edges_of and edges_of[quantity] != bins:
+        taken = edges_of.get(quantity, edges.get(quantity))
+        if taken is not None and taken != bins:
             found.append(
                 Refusal(
                     code=RefusalCode.CONFLICTING_MEMBERS,
@@ -1368,8 +1470,35 @@ def _distributed(
                 )
             )
             continue
-        edges_of.setdefault(quantity, bins)
+        edges.setdefault(quantity, bins)
+    if not found:
+        edges_of.update(edges)
     return found
+
+
+def _memberships_later(variable: CanonicalVariable, at: Sequence[str | int]) -> Refusal:
+    """A variable's memberships in ``summary.distribution`` before ``MEMBERSHIPS`` (D380):
+    ``NOT_SUPPORTED`` at ``each``, offering the aggregates its path allows its column
+    (``resolve.aggregates_over``, of each down step's coverage as resolved), each of which runs;
+    the column holds several values per unit, or resolution would have refused ``each``."""
+    resolved = variable.resolved
+    table, name = resolved.column.split(".", 1)
+    descriptor = resolved.release.column(table, name)
+    assert descriptor is not None, "a resolved variable's column is described"
+    question = resolved.question
+    steps = levels(question, resolved.depth) if isinstance(question, RExists) else []
+    scopes = [resolved.coverage[node.step.rel].scope_columns for node in steps]
+    taken = aggregates_over(descriptor, scopes, bool(steps) and bool(resolved.lookup))
+    return Refusal(
+        code=RefusalCode.NOT_SUPPORTED,
+        path=pointer([*at, "each"]),
+        message=[
+            text(f"Memberships per category are counted from {MEMBERSHIPS}; until then, give "),
+            text("one of the aggregates the column takes: "),
+            data(resolved.column),
+        ],
+        alternatives=[text(name) for name in taken],
+    )
 
 
 def _compared(

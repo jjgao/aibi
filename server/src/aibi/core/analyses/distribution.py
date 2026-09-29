@@ -81,7 +81,7 @@ from aibi.core.analyses.common import (
 from aibi.core.analyses.disclosure import merged
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.readback import variable_readback
-from aibi.core.engine.resolve import aggregates_taken
+from aibi.core.engine.resolve import ResolvedVariable, aggregates_taken
 from aibi.core.engine.variables import Joint, Materialised, RowCounts, Value
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.analyses import (
@@ -170,6 +170,9 @@ _SUPPRESSED = NotEstimableReason.SUPPRESSED
 _NO_UNITS = NotEstimableReason.NO_UNITS
 _CATEGORIES = ("category", "boolean")
 _NUMBERS = ("number", "integer", "time_offset")
+SUMMARISED = (*_CATEGORIES, *_NUMBERS)
+"""The datatypes of the columns the analysis summarises as they are, as ``compare.columns``
+compares them: a column of another is ``NOT_SUPPORTED`` (``summarised``)."""
 _STATISTICS = ("/mean", "/sd", "/median", "/q1", "/q3", "/min", "/max")
 
 
@@ -211,13 +214,14 @@ def counts_rows(variable: CanonicalVariable) -> bool:
 
 
 def summarised(variable: CanonicalVariable) -> bool:
-    """Whether the analysis summarises a variable's values: categories or numbers, a column's
-    or a count of rows' own."""
-    resolved = variable.resolved
-    return resolved.kind not in ("column", "rows") or resolved.datatype in (
-        *_CATEGORIES,
-        *_NUMBERS,
-    )
+    """Whether the analysis summarises a variable's values (``summarises``)."""
+    return summarises(variable.resolved)
+
+
+def summarises(variable: ResolvedVariable) -> bool:
+    """Whether the analysis summarises a resolved variable's values: categories or numbers, a
+    column's or a count of rows' own; a form a refusal offers is checked so too (D380)."""
+    return variable.kind not in ("column", "rows") or variable.datatype in SUMMARISED
 
 
 def declared_range(variable: CanonicalVariable) -> tuple[float, float] | None:
@@ -806,5 +810,6 @@ __all__ = [
     "needs_edges",
     "summarise",
     "summarised",
+    "summarises",
     "view_readback",
 ]
