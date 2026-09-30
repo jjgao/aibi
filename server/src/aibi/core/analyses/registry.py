@@ -24,11 +24,12 @@ allows no row ids.
 A ``disclosed`` analysis may also **withhold a variable form** under any setting
 (``CoreAnalysis.withheld_forms``, D379): a member of its parameters, by its path below them, whose
 presence the pass cannot protect (``summary.distribution``'s ``count: "rows"``, a sum of each
-unit's number of rows, a statistic of values D329 withholds, and its ``each``, a split of the
-cohort's units per category, predicates that depend on one another, which no rule yet discloses
-together, D382). Under any setting a view that gives
+unit's number of rows, a statistic of values D329 withholds). Under any setting a view that gives
 one is refused in phase 2 at that member, before anything else phase 2 checks of its variables
-(``withheld_form``), and the analysis stays ``available``: its other views run.
+(``withheld_form``), and the analysis stays ``available``: its other views run. Its memberships
+(``each``) are disclosed by D383, but where the descriptors bound the rows each unit reaches,
+which they decide rather than a member's path, and which phase 2 withholds by the analysis's own
+check (``distribution.withheld_under_k``) in the same way.
 
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
@@ -195,9 +196,6 @@ CORE: Mapping[str, CoreAnalysis] = {
         withheld_forms={
             "columns/*/count": "a column's rows total each unit's number of rows, a statistic of "
             "values that the pass withholds, and one unit's rows can be k or more (D329)",
-            "columns/*/each": "a column's memberships split the cohort's units once for each of "
-            "its categories, predicates that depend on one another, which no rule yet discloses "
-            "together (D382)",
         },
     ),
     members.ENTRY.id: CoreAnalysis(

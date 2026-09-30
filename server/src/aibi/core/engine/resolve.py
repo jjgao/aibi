@@ -76,6 +76,7 @@ from aibi.core.schema.descriptors import (
     EndpointDescriptor,
     EntryColumn,
     GroupedCoverage,
+    derived_inputs,
 )
 from aibi.core.schema.document import (
     AllClause,
@@ -351,6 +352,159 @@ def aggregates_of(variable: "ResolvedVariable") -> tuple[Aggregate, ...]:
     )
     scopes = _scopes_of(variable.release, steps)
     return aggregates_over(descriptor, scopes, bool(variable.depth) and bool(variable.lookup))
+
+
+GATE_CHECKS: Mapping[tuple[str, str], Literal["unique", "domain", "presence", "none"]] = (
+    MappingProxyType(
+        {
+            ("key", "KEY_NULL"): "presence",
+            ("key", "KEY_NOT_UNIQUE"): "unique",
+            ("relationship", "KEY_NOT_UNIQUE"): "unique",
+            ("relationship", "DANGLING_REFERENCE"): "domain",
+            ("relationship", "CARDINALITY_VIOLATED"): "unique",
+            ("nulls_in", "COVERAGE_NULL"): "presence",
+            ("unknown_parents", "COVERAGE_UNKNOWN"): "domain",
+            ("unknown_groups", "COVERAGE_UNKNOWN"): "domain",
+            ("record_filter", "OUTSIDE_RECORD_FILTER"): "domain",
+            ("record_filter", "NOT_APPLICABLE_IN_FILTER"): "presence",
+            ("_drop", "UNKNOWN_DESCRIPTOR"): "none",
+        }
+    )
+)
+"""Every check of the gate (D230; ``store.gate``, by the function that makes it and its refusal
+code) and what it bounds, which ``open_step`` reads: ``unique`` keeps a set of a table's columns
+unique among its rows (``unique_columns``), ``domain`` restricts a column's values
+(``free_column``), and ``presence`` and ``none`` bound no value, only whether a cell is PRESENT
+or which descriptors an import keeps. A check added to the gate is classified here, or a test
+fails (D383)."""
+
+FREE_DATATYPES: frozenset[str] = frozenset(
+    {"number", "integer", "string", "category", "date", "datetime", "time_offset"}
+)
+"""The datatypes whose values nothing but a table's rows bounds: the typer takes any value of
+them, a category's undeclared values included, whereas a boolean has two values and a list is
+no key (§6.2, D383)."""
+
+
+def unique_columns(release: Release, table: str) -> list[tuple[str, ...]]:
+    """Every set of a table's columns that the gate keeps unique among its rows (D230), its
+    ``unique`` checks (``GATE_CHECKS``): its declared primary key (``KEY_NOT_UNIQUE``), the
+    parent columns of each relationship whose parent is the table (``KEY_NOT_UNIQUE``, whether
+    or not they are its key), and the child columns of each one-to-one relationship from it
+    (``CARDINALITY_VIOLATED``)."""
+    found: list[tuple[str, ...]] = []
+    described = release.table(table)
+    key = None if described is None else described.fields.primary_key
+    if key:
+        found.append(tuple(key))
+    for other in release.relationships:
+        if other.fields.parent_table == table:
+            found.append(tuple(other.fields.parent_columns))
+        if other.fields.child_table == table and other.fields.cardinality == "one-to-one":
+            found.append(tuple(other.fields.child_columns))
+    return found
+
+
+def _restricted(release: Release, table: str) -> set[str]:
+    """The columns of a step's child table whose values a ``domain`` check of the gate restricts
+    (``GATE_CHECKS``): the child columns of each relationship from the table
+    (``DANGLING_REFERENCE``) and the columns the record filter of a coverage of one names
+    (``OUTSIDE_RECORD_FILTER``); and the columns read, directly or through other derivations, by
+    a derived column the gate checks (one of those, or in a set the gate keeps unique), whose
+    values the derivation may bound (a value missing from a value map is UNKNOWN, §5.7). A
+    derivation the gate checks nowhere bounds nothing. ``COVERAGE_UNKNOWN`` restricts only the
+    columns of a table a coverage names, which no relationship joins (§5.6), so never a step's
+    child."""
+    found: set[str] = set()
+    for other in release.relationships:
+        if other.fields.child_table != table:
+            continue
+        found.update(other.fields.child_columns)
+        coverage = release.coverage(other.id)
+        filters = None if coverage is None else coverage.fields.record_filter
+        found.update(filters or {})
+    derivations = {
+        column: derived
+        for column in release.columns(table)
+        if (described := release.column(table, column)) is not None
+        and (derived := described.fields.derived) is not None
+    }
+    checked = found | {column for unique in unique_columns(release, table) for column in unique}
+    pending = [column for column in checked if column in derivations]
+    seen: set[str] = set()
+    while pending:
+        column = pending.pop()
+        if column in seen:
+            continue
+        seen.add(column)
+        for _, name in derived_inputs(derivations[column]):
+            found.add(name)
+            if name in derivations:
+                pending.append(name)
+    return found
+
+
+def free_column(release: Release, table: str, column: str) -> bool:
+    """Whether the descriptors leave a column's values unbounded, so that any number of rows can
+    hold distinct values of it (D383): it is described, stored rather than derived, of a free
+    datatype (``FREE_DATATYPES``), and neither restricted by a check of the gate nor read by a
+    derivation the gate checks (``_restricted``). Every other column is taken as bounded."""
+    described = release.column(table, column)
+    if described is None or described.fields.derived is not None:
+        return False
+    if described.fields.datatype not in FREE_DATATYPES:
+        return False
+    return column not in _restricted(release, table)
+
+
+def open_step(release: Release, relationship: str) -> bool:
+    """Whether a down step over ``relationship`` is proven to reach any number of child rows per
+    parent (D383): every set of the child table's columns the gate keeps unique
+    (``unique_columns``) holds a free column (``free_column``), so that rows of one parent that
+    differ in their free columns pass every check of the gate (``GATE_CHECKS``); a child table
+    of which the gate keeps no set unique is open too. Every other step is taken as bounded:
+    some unique set has no free column, so that the descriptors may bound the rows each parent
+    reaches by the values of its columns (one where the step's own foreign key holds them all,
+    two where a boolean completes it, as many as a record filter lists), and nothing short of
+    that proof is taken as open."""
+    found = release.relationship(relationship)
+    assert found is not None, "a path's relationships are described"
+    child = found.fields.child_table
+    return all(
+        any(free_column(release, child, column) for column in unique)
+        for unique in unique_columns(release, child)
+    )
+
+
+def open_path(release: Release, path: Path) -> bool:
+    """Whether the rows each unit reaches over ``path`` are proven unbounded (D383): the path is
+    one down step from the unit table, and that step is open (``open_step``), so that the
+    step's parent is the unit and the proof per parent is a proof per unit. A longer path is
+    not taken as open: a later child's unique set may lie within columns each unit fixes along
+    the path, such as the unit's key carried down a composite foreign key, whatever an earlier
+    step allows (round 3 of #74's review, B3); a per-unit proof over several steps is #75's. A
+    relationship of the unit table to itself is no open path: its child rows are the units
+    themselves, so the view's own population bounds the categories' TRUE counts (round 2 after
+    the redesign, m1)."""
+    if len(path) != 1 or path[0].dir != "down":
+        return False
+    found = release.relationship(path[0].rel)
+    assert found is not None, "a path's relationships are described"
+    if found.fields.child_table == found.fields.parent_table:
+        return False
+    return open_step(release, path[0].rel)
+
+
+def bounded_rows(release: Release, path: Path, datatype: str | None) -> bool:
+    """Whether the descriptors may bound how many categories of a column read over ``path`` each
+    unit can hold (D383): the column is not a list, whose items are any number, and the path is
+    not proven open (``open_path``). The categories' TRUE counts may then sum to at most some
+    number of times the units, so that shown counts bound a hidden one, which the rule of D383
+    does not protect; ``summary.distribution`` withholds such memberships under a disclosure
+    setting."""
+    if datatype == "list<category>":
+        return False
+    return not open_path(release, path)
 
 
 def _ordered(descriptor: ColumnDescriptor) -> tuple[str, ...] | None:
@@ -642,8 +796,9 @@ def resolve(
     ``predicates``, ``variables`` and ``endpoints`` are resolved after the cohorts, in the same
     resolution, so that their pack leaves share the document's budget of steps (D285, D317,
     D325, D347). ``under_k`` holds the references whose releases are under a disclosure setting
-    (§8.4), whose variables are offered no ``count: "rows"`` and no ``each: "category"``, which
-    no analysis gives there (D379, D382)."""
+    (§8.4), whose variables are offered no ``count: "rows"``, which no analysis gives there
+    (D379), and no ``each: "category"`` where the descriptors bound the categories each unit can
+    hold, which none gives there either (``bounded_rows``, D383)."""
     resolver = _Resolver(document, releases, positions or {}, registry, under_k)
     return resolver.run(predicates, variables, endpoints)
 
@@ -1815,14 +1970,15 @@ class _Resolver:
         rows its conditions; beside an ``empty``, ``max``, ``min`` and ``mean`` alone, where it
         is a value of theirs (``_empty_holds``). Then, asked for, ``count: "rows"`` (``rows``,
         D378) and ``each: "category"`` (``each``, D382), in a descriptive analysis alone
-        (``ViewVariable.independent``) and under no disclosure setting, which withholds both
-        (``under_k``, D379, D382): the rows of numbers, categories or booleans below the unit
-        and below no step with scope columns, whose rows they pool as ``count`` does; the
-        memberships of categories, booleans or a list, where the variable has none of the
-        members they take none of (``where``, ``bins``, ``values``, ``empty``). Beside ``bins``,
-        which divide numbers, only the forms whose values are numbers (``_divided``). Of those,
-        the ones the view's analysis reads (``_reads``), each as it would resolve
-        (``_as_offered``)."""
+        (``ViewVariable.independent``): the rows under no disclosure setting, which withholds
+        them (``under_k``, D379), and the memberships under one too but where the descriptors
+        bound the rows each unit reaches (``bounded_rows``, D383), which it withholds there: the
+        rows of numbers, categories or booleans below the unit and below no step with scope
+        columns, whose rows they pool as ``count`` does; the memberships of categories, booleans
+        or a list, where the variable has none of the members they take none of (``where``,
+        ``bins``, ``values``, ``empty``). Beside ``bins``, which divide numbers, only the forms
+        whose values are numbers (``_divided``). Of those, the ones the view's analysis reads
+        (``_reads``), each as it would resolve (``_as_offered``)."""
         variable = given.variable
         scopes = _scopes(context.release, path)
         over = aggregates_over(descriptor, scopes, bool(down_steps(path)) and bool(_trailing(path)))
@@ -1848,7 +2004,8 @@ class _Resolver:
                 continue
             if self._reads(given, _as_offered(base, descriptor, path, name, pooled)):
                 offered.append(text(name))
-        descriptive = not given.independent and context.dataset not in self.under_k
+        under_k = context.dataset in self.under_k
+        descriptive = not given.independent and not under_k
         if (
             rows
             and descriptive
@@ -1861,7 +2018,8 @@ class _Resolver:
             offered.append(text(_ROWS))
         if (
             each
-            and descriptive
+            and not given.independent
+            and not (under_k and bounded_rows(context.release, path, datatype))
             and datatype in _MEMBERSHIPS
             and (down_steps(path) or datatype == "list<category>")
             and all(
@@ -3449,6 +3607,8 @@ def _quantifier(given: object) -> tuple[Quantifier, int | None]:
 
 
 __all__ = [
+    "FREE_DATATYPES",
+    "GATE_CHECKS",
     "UNCONFIRMED",
     "Coverage",
     "FieldRead",
@@ -3467,11 +3627,16 @@ __all__ = [
     "aggregates_of",
     "aggregates_over",
     "aggregates_taken",
+    "bounded_rows",
     "check_parent_scopes",
+    "free_column",
     "identifying",
     "levels",
+    "open_path",
+    "open_step",
     "pack_failed",
     "resolve",
     "typed_constant",
+    "unique_columns",
     "usable_endpoint",
 ]

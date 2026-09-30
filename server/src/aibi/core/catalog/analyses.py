@@ -175,9 +175,12 @@ def _run(
     shared: Sequence[bool] = (),
     inputs: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedVariable]]] = (),
     packed: Sequence[CheckedView] = (),
+    declared: Sequence[bool] = (),
 ) -> ViewsRun:
     """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed,
-    ``shared`` the materialisations that count the units their cohorts share and ``inputs`` the
+    ``shared`` the materialisations that count the units their cohorts share, ``declared`` those
+    whose memberships list their declared categories alone (under a disclosure setting, D384),
+    and ``inputs`` the
     listings of packs' and survival analyses' inputs; an answer over the cap names the view to
     narrow (``widest``, module docstring), and a listing of inputs over its caps the first view
     that reads it (``packed``, a view per listing)."""
@@ -191,6 +194,7 @@ def _run(
                 workers,
                 members=listed,
                 shared=shared,
+                declared=declared,
                 inputs=inputs,
                 ends=ends,
             ),
@@ -485,8 +489,14 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
         try:
             views = found.views
             for view in views:
-                if withheld(view.analysis, view.disclosure) or withheld_form(
-                    view.analysis, view.params, view.disclosure
+                if (
+                    withheld(view.analysis, view.disclosure)
+                    or withheld_form(view.analysis, view.params, view.disclosure)
+                    or (
+                        view.disclosure is not None
+                        and isinstance(view.params, DistributionParams)
+                        and any(distribution.withheld_under_k(one) for one in view.variables)
+                    )
                 ):
                     raise ValueError("a view refused for disclosure is never run (§8.4, D353)")
             hits, unread = _hits(catalog, views) if cached else ({}, set[str]())
@@ -497,9 +507,10 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                     cohorts.setdefault(cohort.computation_id, cohort)
             crossings: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
             asked: list[tuple[list[ResolvedCohort], list[ResolvedCohort]]] = []
-            materialisations: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
+            materialisations: dict[tuple[tuple[str, ...], tuple[str, ...], bool], int] = {}
             read: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
             shared_asked: list[bool] = []
+            declared_asked: list[bool] = []
             listings: dict[str, int] = {}
             listed: list[ResolvedCohort] = []
             handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
@@ -526,6 +537,7 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                         materialisations[key] = len(read)
                         read.append((members_of, _distinct(view)))
                         shared_asked.append(False)
+                        declared_asked.append(view.disclosure is not None)
                     shared_asked[materialisations[key]] |= _counts_shared(view)
                     continue
                 key = _crossing_key(view)
@@ -549,6 +561,7 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                     shared_asked,
                     inputs,
                     _first_readers(missing, handed),
+                    declared_asked,
                 )
                 if missing
                 else None
@@ -1111,15 +1124,20 @@ def _forms(view: CheckedView) -> list[str]:
     return [canonical(variable.form).decode() for variable in view.variables]
 
 
-def _materialisation_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """A view's materialisation, by its cohorts' computation ids and its distinct variables'
-    canonical forms: views that read the same one share its run, and a variable a view reads
-    twice is read once (D327). It counts the units its cohorts share when one of its views asks
-    (``_counts_shared``), and a view that does not records its statements without that one
-    (D339)."""
+def _materialisation_key(
+    view: CheckedView,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+    """A view's materialisation, by its cohorts' computation ids, its distinct variables'
+    canonical forms and whether it is under a disclosure setting, whose memberships list their
+    declared categories alone (D384): views that read the same one share its run, and a variable
+    a view reads twice is read once (D327). It counts the units its cohorts share when one of its
+    views asks (``_counts_shared``), and a view that does not records its statements without that
+    one (D339). The disclosure flag is defensive: views whose cohorts share computation ids read
+    one release, and so one setting, so no test can tell it apart (an equivalent mutant)."""
     return (
         tuple(cohort.computation_id for cohort in view.cohorts),
         tuple(dict.fromkeys(_forms(view))),
+        view.disclosure is not None,
     )
 
 

@@ -172,7 +172,9 @@ def evaluated(
                     if value.is_true
                 ]
                 held.append(set(units))
-                materialised.append(materialise_over(resolved, given, units))
+                materialised.append(
+                    materialise_over(resolved, given, units, declared=view.disclosure is not None)
+                )
             if isinstance(view.params, ColumnsParams):
                 shared = any(a & b for i, a in enumerate(held) for b in held[i + 1 :])
                 outcome = columns.compare_columns(
@@ -366,35 +368,594 @@ def test_memberships_run_by_sql_give_the_reference_evaluator_s_result(
     assert len(result.charts) == 1 + len(EACH)
 
 
-def test_under_a_floor_memberships_are_withheld_and_no_query_runs(
-    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+def test_under_a_floor_memberships_run_by_sql_list_their_declared_categories_alone(
+    world: World, orchard: Orchard
 ) -> None:
-    world.publish("orchard", orchard())
-    catalog = catalog_of(world, floor=3)
-    ran: list[object] = []
-    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
-    written = distribution_document([COLUMNS[0], EACH[2]])
-    for tool in ("validate_document", "count_cohort", "run_analysis"):
-        found = answer(catalog, tool, {"document": written})
-        dumped = json.dumps(
-            [refusal.model_dump(mode="json") for refusal in found]
-            if isinstance(found, list)
-            else found.model_dump(mode="json")
+    """D383, D384: under a floor, memberships run, counted by SQL over their declared
+    categories alone (``compile_materialised(…, declared=True)``), and give the reference
+    evaluator's result over the same (``materialise_over(…, declared=True)``): values, joint
+    counts and digest; a column that declares no category lists none, and no undeclared value is
+    named, here the grade ``A`` every other harvest holds, which the curated grades do not
+    declare; each row's ``excluded`` and the view's ``analysed`` are suppressed."""
+    world.publish("orchard", orchard(40, harvests=60))
+    world.curate(
+        "orchard",
+        {
+            "op": "set",
+            "descriptor": "harvests.grade",
+            "pointer": "/fields/datatype",
+            "value": "category",
+        },
+        {
+            "op": "set",
+            "descriptor": "harvests.grade",
+            "pointer": "/fields/permissible_values",
+            "value": {"values": [{"value": v} for v in ("E", "B")], "ordered": False},
+        },
+    )
+    published = world.store.latest("orchard")
+    assert published is not None
+    written = distribution_document([COLUMNS[0], *EACH])
+    [result] = run(catalog_of(world, floor=3), written).results
+    [expected] = evaluated(world, published.manifest, written, floor=3)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+    assert result.analysed == expected.analysed
+    dumped = result.values.model_dump(mode="json")
+    columns = dumped["positions"][0]["columns"]
+    assert [one["kind"] for one in columns] == ["categories", *["memberships"] * len(EACH)]
+    release = world.store.load(published.manifest)
+    for column, given in zip(columns[1:], EACH, strict=True):
+        table, name = given["column"].split(".")
+        descriptor = release.column(table, name)
+        assert descriptor is not None
+        allowed = descriptor.fields.permissible_values
+        declared = [] if allowed is None else [entry.value for entry in allowed.values]
+        assert [row["values"][0]["data"] for row in column["categories"]] == declared
+        assert all(row["proportion"]["excluded"] is None for row in column["categories"])
+    everything = json.dumps(result.model_dump(mode="json"))
+    for undeclared in ('"old"', '"tall"', '"young"', '"A"'):
+        assert undeclared not in everything
+    assert [row["values"][0]["data"] for row in columns[1]["categories"]] == ["E", "B"]
+    for analysed in result.analysed:
+        assert analysed.variables is not None
+        assert all(one.n is None for one in analysed.variables[1:])
+
+
+TEN_APPLES = {"kind": "value", "column": "trees.variety", "values": ["apple"]}
+
+
+def _keyed_orchard(
+    world: World,
+    crops: Sequence[str],
+    key: str,
+    key_type: str,
+    key_values: Sequence[str] | None,
+    record_filter: Mapping[str, list[str]] | None,
+    grades: str,
+) -> None:
+    """Ten apple trees whose harvests are keyed by their tree and ``key`` (round 1 of #74's
+    review, B1), their grades declaring ``grades``, every tree's harvests recorded."""
+    trees = ["tree_id,variety"] + [f"tree{n},apple" for n in range(1, 11)]
+    world.publish(
+        "orchard",
+        {
+            "trees.csv": ("\n".join(trees) + "\n").encode(),
+            "harvests.csv": ("\n".join(crops) + "\n").encode(),
+        },
+    )
+    edits: list[Any] = [
+        {
+            "op": "set",
+            "descriptor": "harvests",
+            "pointer": "/fields/primary_key",
+            "value": ["tree_id", key],
+        },
+        {"op": "set", "descriptor": "harvests", "pointer": "/fields/role", "value": "event"},
+        {
+            "op": "set",
+            "descriptor": "harvests.grade",
+            "pointer": "/fields/datatype",
+            "value": "category",
+        },
+        {
+            "op": "set",
+            "descriptor": "harvests.grade",
+            "pointer": "/fields/permissible_values",
+            "value": {"values": [{"value": v} for v in grades], "ordered": False},
+        },
+        {
+            "op": "set",
+            "descriptor": f"harvests.{key}",
+            "pointer": "/fields/datatype",
+            "value": key_type,
+        },
+        {
+            "op": "put",
+            "descriptor": {
+                "kind": "relationship",
+                "id": "rel:harvests.tree_id",
+                "label": "A tree's harvest",
+                "fields": {
+                    "child_table": "harvests",
+                    "child_columns": ["tree_id"],
+                    "parent_table": "trees",
+                    "parent_columns": ["tree_id"],
+                    "cardinality": "many-to-one",
+                },
+            },
+        },
+        {
+            "op": "put",
+            "descriptor": {
+                "kind": "coverage",
+                "id": "cov:harvests.tree_id",
+                "label": "Harvests are recorded",
+                "fields": {
+                    "relationship": "rel:harvests.tree_id",
+                    "parents": "all",
+                    **({"record_filter": dict(record_filter)} if record_filter else {}),
+                },
+            },
+        },
+    ]
+    if key_values is not None:
+        edits.append(
+            {
+                "op": "set",
+                "descriptor": f"harvests.{key}",
+                "pointer": "/fields/permissible_values",
+                "value": {"values": [{"value": v} for v in key_values], "ordered": False},
+            }
         )
-        assert "WITHHELD_UNDER_K" in dumped, tool
-        assert '"/views/0/params/columns/1/each"' in dumped, tool
-        assert '"tree1"' not in dumped
-        assert '"old"' not in dumped
-    assert ran == []
+    world.curate("orchard", *edits)
+
+
+def _grades(world: World, floor: int | None) -> Output | list[Refusal]:
+    written = {
+        "aibi": "1",
+        "dataset": "orchard",
+        "unit": "trees",
+        "cohorts": {"all": {"all": [TEN_APPLES]}},
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "cohorts": ["all"],
+                "params": {"columns": [{"column": "harvests.grade", "each": "category"}]},
+            }
+        ],
+    }
+    return answer(catalog_of(world, floor=floor), "run_analysis", {"document": written})
+
+
+def _rows(found: Output | list[Refusal]) -> list[tuple[Any, Any, Any]]:
+    assert isinstance(found, AnalysisResults), found
+    column = found.results[0].values.model_dump(mode="json")["positions"][0]["columns"][0]
+    return [
+        (row["values"][0]["data"], row["proportion"]["numerator"], row["proportion"]["denominator"])
+        for row in column["categories"]
+    ]
+
+
+def test_memberships_of_one_row_per_unit_by_key_and_record_filter_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """Round 1 of #74's review, B1, repro 1: harvests keyed by their tree and a season the
+    record filter fixes to ``x1`` reach one row per tree, so of a, b and c held by 5, 4 and 1 a
+    shown 5 and 4 would pin c's 1. Under a floor the memberships are withheld (D383); without
+    one they run."""
+    crops = ["tree_id,season,grade"] + [
+        f"tree{n},x1,{g}" for n, g in enumerate(["a"] * 5 + ["b"] * 4 + ["c"], start=1)
+    ]
+    _keyed_orchard(world, crops, "season", "category", ["x1"], {"season": ["x1"]}, "abc")
+    found = refused(_grades(world, 3))
+    assert (found.code, found.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/0/each",
+    )
+    assert _rows(_grades(world, None)) == [("a", 5, 10), ("b", 4, 10), ("c", 1, 10)]
+
+
+def test_memberships_of_two_rows_per_unit_by_a_boolean_in_the_key_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """Round 1 of #74's review, B1, repro 2: harvests keyed by their tree and a boolean reach
+    two rows per tree, so of four grades a shown 10, 5 and 4 would pin c's 1. Under a floor the
+    memberships are withheld (D383); without one they run."""
+    crops = ["tree_id,first,grade"]
+    for n, g in enumerate(["b"] * 5 + ["d"] * 4 + ["c"], start=1):
+        crops += [f"tree{n},true,a", f"tree{n},false,{g}"]
+    _keyed_orchard(world, crops, "first", "boolean", None, None, "abcd")
+    found = refused(_grades(world, 3))
+    assert (found.code, found.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/0/each",
+    )
+    assert _rows(_grades(world, None))[2] == ("c", 1, 10)
+
+
+ONE_EACH = ["a"] * 5 + ["b"] * 4 + ["c"]
+"""Grades of ten trees' harvests, one each: shown 5 and 4 of 10 would pin c's 1 (round 2 of
+#74's review, B2)."""
+
+
+def _set(descriptor: str, at: str, value: Any) -> dict[str, Any]:
+    return {"op": "set", "descriptor": descriptor, "pointer": at, "value": value}
+
+
+def _put(kind: str, id: str, **fields: Any) -> dict[str, Any]:
+    return {"op": "put", "descriptor": {"kind": kind, "id": id, "label": id, "fields": fields}}
+
+
+def _link(
+    child: str,
+    columns: Sequence[str],
+    parent: str,
+    parent_columns: Sequence[str],
+    *,
+    role: str | None = None,
+    one_to_one: bool = False,
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "child_table": child,
+        "child_columns": list(columns),
+        "parent_table": parent,
+        "parent_columns": list(parent_columns),
+        "cardinality": "one-to-one" if one_to_one else "many-to-one",
+        **({"role": role} if role else {}),
+    }
+    return _put("relationship", f"rel:{child}.{role or '+'.join(columns)}", **fields)
+
+
+def _covered(relationship: str, record_filter: Mapping[str, list[str]] | None = None) -> Any:
+    given = {"record_filter": dict(record_filter)} if record_filter else {}
+    return _put(
+        "coverage", "cov:" + relationship[4:], relationship=relationship, parents="all", **given
+    )
+
+
+def _graded(grades: str) -> list[dict[str, Any]]:
+    values = {"values": [{"value": v} for v in grades], "ordered": False}
+    return [
+        _set("harvests.grade", "/fields/datatype", "category"),
+        _set("harvests.grade", "/fields/permissible_values", values),
+        _set("harvests", "/fields/role", "event"),
+    ]
+
+
+def _orchard_of(world: World, files: Mapping[str, Sequence[str]], *edits: Any) -> None:
+    """Ten apple trees, the tables ``files`` gives as CSV rows, curated by ``edits``."""
+    trees = ["tree_id,variety"] + [f"tree{n},apple" for n in range(1, 11)]
+    blobs = {"trees.csv": ("\n".join(trees) + "\n").encode()}
+    blobs |= {name: ("\n".join(rows) + "\n").encode() for name, rows in files.items()}
+    world.publish("orchard", blobs)
+    world.curate("orchard", *edits)
+
+
+def _offers_each(world: World) -> bool:
+    """Whether the grades asked bare under a floor are refused offering their memberships
+    (``resolve.bounded_rows``, which ``_offered`` reads)."""
+    written = {
+        "aibi": "1",
+        "dataset": "orchard",
+        "unit": "trees",
+        "cohorts": {"all": {"all": [TEN_APPLES]}},
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "cohorts": ["all"],
+                "params": {"columns": [{"column": "harvests.grade"}]},
+            }
+        ],
+    }
+    found = refused(answer(catalog_of(world, floor=3), "run_analysis", {"document": written}))
+    assert found.code == RefusalCode.AGGREGATE_REQUIRED
+    return {"text": 'each: "category"'} in [a.model_dump() for a in found.alternatives]
+
+
+def _withheld_and_pinned(world: World) -> None:
+    """Under a floor the grades' memberships are withheld (D383), and not offered for the bare
+    column; without one, c's count is 1, which a shown 5 and 4 of 10 would have pinned."""
+    found = refused(_grades(world, 3))
+    assert (found.code, found.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/0/each",
+    )
+    assert not _offers_each(world)
+    assert _rows(_grades(world, None)) == [("a", 5, 10), ("b", 4, 10), ("c", 1, 10)]
+
+
+def test_memberships_bounded_by_another_coverage_s_record_filter_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """B2, P1: harvests keyed by their tree and a season that the record filter of another
+    relationship's coverage (to their pickers) fixes to ``x1`` reach one row per tree."""
+    crops = ["tree_id,season,picker_id,grade"] + [
+        f"tree{n},x1,p1,{g}" for n, g in enumerate(ONE_EACH, start=1)
+    ]
+    _orchard_of(
+        world,
+        {"harvests.csv": crops, "pickers.csv": ["picker_id", "p1"]},
+        _set("harvests", "/fields/primary_key", ["tree_id", "season"]),
+        _set("harvests.season", "/fields/datatype", "category"),
+        *_graded("abc"),
+        _link("harvests", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:harvests.tree_id"),
+        _link("harvests", ["picker_id"], "pickers", ["picker_id"]),
+        _covered("rel:harvests.picker_id", {"season": ["x1"]}),
+    )
+    _withheld_and_pinned(world)
+
+
+def test_memberships_of_a_keyless_child_whose_columns_are_a_parent_s_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """B2, P2 (and m2): harvests without a key, whose tree is the parent columns of another
+    relationship (from notes), which the gate keeps unique (D230): one row per tree."""
+    crops = ["harvest_id,tree_id,grade"] + [
+        f"{n},tree{n},{g}" for n, g in enumerate(ONE_EACH, start=1)
+    ]
+    _orchard_of(
+        world,
+        {"harvests.csv": crops, "notes.csv": ["note_id,tree_ref", "1,tree1"]},
+        {"op": "remove", "descriptor": "harvests", "pointer": "/fields/primary_key"},
+        _set("harvests.harvest_id", "/fields/datatype", "integer"),
+        *_graded("abc"),
+        _link("harvests", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:harvests.tree_id"),
+        _link("notes", ["tree_ref"], "harvests", ["tree_id"]),
+    )
+    _withheld_and_pinned(world)
+
+
+def test_memberships_of_a_keyless_child_nothing_bounds_are_disclosed_under_a_floor(
+    world: World,
+) -> None:
+    """m2: harvests without a key, and no set of their columns the gate keeps unique, reach any
+    number of rows per tree: their memberships are disclosed under a floor, c's 1 hidden."""
+    crops = ["tree_id,grade"] + [f"tree{n},{g}" for n, g in enumerate(ONE_EACH, start=1)]
+    _orchard_of(
+        world,
+        {"harvests.csv": crops},
+        {"op": "remove", "descriptor": "harvests", "pointer": "/fields/primary_key"},
+        *_graded("abc"),
+        _link("harvests", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:harvests.tree_id"),
+    )
+    assert _rows(_grades(world, 3)) == [("a", 5, 10), ("b", 4, 10), ("c", None, 10)]
+    assert _offers_each(world)
+
+
+def test_memberships_bounded_by_another_one_to_one_relationship_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """B2, P3: harvests keyed by their own id, with a second, one-to-one relationship over their
+    tree (to a registry), which the gate refuses two children of (``CARDINALITY_VIOLATED``)."""
+    crops = ["harvest_id,tree_id,grade"] + [
+        f"{n},tree{n},{g}" for n, g in enumerate(ONE_EACH, start=1)
+    ]
+    registry = ["reg_id"] + [f"tree{n}" for n in range(1, 11)]
+    _orchard_of(
+        world,
+        {"harvests.csv": crops, "registry.csv": registry},
+        _set("harvests", "/fields/primary_key", ["harvest_id"]),
+        _set("harvests.harvest_id", "/fields/datatype", "integer"),
+        _set("registry", "/fields/primary_key", ["reg_id"]),
+        *_graded("abc"),
+        _link("harvests", ["tree_id"], "trees", ["tree_id"], role="tree"),
+        _covered("rel:harvests.tree"),
+        _link("harvests", ["tree_id"], "registry", ["reg_id"], role="registered", one_to_one=True),
+    )
+    _withheld_and_pinned(world)
+
+
+def test_memberships_bounded_by_a_derived_column_in_the_key_are_withheld_under_a_floor(
+    world: World,
+) -> None:
+    """B2, P5: harvests keyed by their tree and a column a value map derives onto one value,
+    which the gate checks the key's uniqueness on: one row per tree."""
+    crops = ["tree_id,season,grade"] + [f"tree{n},x1,{g}" for n, g in enumerate(ONE_EACH, start=1)]
+    derived = {"op": "value_map", "input": "season", "map": {"x1": "k", "x2": "k"}}
+    _orchard_of(
+        world,
+        {"harvests.csv": crops},
+        _put("column", "harvests.s", datatype="category", derived=derived),
+        _set("harvests", "/fields/primary_key", ["tree_id", "s"]),
+        _set("harvests.season", "/fields/datatype", "category"),
+        *_graded("abc"),
+        _link("harvests", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:harvests.tree_id"),
+    )
+    _withheld_and_pinned(world)
+
+
+VALUE_OF = {"category": "x1", "integer": "1", "boolean": "true"}
+
+
+def _two_steps(
+    world: World,
+    visit: tuple[str, str, Mapping[str, list[str]] | None],
+    crop: tuple[str, str],
+) -> None:
+    """m1: trees, their visits keyed by the tree and ``visit``'s column, and the visits'
+    harvests keyed by the visit (a composite foreign key) and ``crop``'s column; one visit and
+    one harvest per tree."""
+    column, datatype, record_filter = visit
+    crop_column, crop_type = crop
+    visits = [f"tree_id,{column}"] + [f"tree{n},{VALUE_OF[datatype]}" for n in range(1, 11)]
+    crops = [f"tree_id,{column},{crop_column},grade"] + [
+        f"tree{n},{VALUE_OF[datatype]},{VALUE_OF[crop_type]},{g}"
+        for n, g in enumerate(ONE_EACH, start=1)
+    ]
+    via = f"rel:harvests.tree_id+{column}"
+    _orchard_of(
+        world,
+        {"visits.csv": visits, "harvests.csv": crops},
+        _set("visits", "/fields/primary_key", ["tree_id", column]),
+        _set(f"visits.{column}", "/fields/datatype", datatype),
+        _set("harvests", "/fields/primary_key", ["tree_id", column, crop_column]),
+        _set(f"harvests.{column}", "/fields/datatype", datatype),
+        _set(f"harvests.{crop_column}", "/fields/datatype", crop_type),
+        *_graded("abc"),
+        _link("visits", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:visits.tree_id", record_filter),
+        _link("harvests", ["tree_id", column], "visits", ["tree_id", column]),
+        _covered(via),
+    )
+
+
+@pytest.mark.parametrize(
+    ("visit", "crop"),
+    [
+        (("season", "category", {"season": ["x1"]}), ("n", "integer")),
+        (("visit", "integer", None), ("first", "boolean")),
+        (("season", "category", {"season": ["x1"]}), ("first", "boolean")),
+        (("visit", "integer", None), ("n", "integer")),
+    ],
+    ids=["bounded-open", "open-bounded", "bounded-bounded", "open-open"],
+)
+def test_memberships_over_two_down_steps_are_withheld_under_a_floor(
+    world: World,
+    visit: tuple[str, str, Mapping[str, list[str]] | None],
+    crop: tuple[str, str],
+) -> None:
+    """m1 of round 2, and round 3's redesign: a path of two down steps over a composite foreign
+    key is withheld under a floor, and the bare column offers no ``each``, whichever of its
+    steps is open (D383: only a one-step path is proven open per unit)."""
+    _two_steps(world, visit, crop)
+    _withheld_and_pinned(world)
+
+
+def _visits_then_harvests(world: World, key: Sequence[str]) -> None:
+    """Round 3 of #74's review, B3: two visits per tree, keyed by the tree and an integer (an
+    open step), and harvests under a visit (the foreign key ``(tree_id, visit)``) keyed by
+    ``key``, within the tree and a boolean, so that each tree has one harvest, or two."""
+    visits = ["tree_id,visit"] + [f"tree{n},{v}" for n in range(1, 11) for v in (1, 2)]
+    if "first" in key:
+        crops = ["tree_id,visit,first,grade"]
+        for n, grade in enumerate(["b"] * 5 + ["d"] * 4 + ["c"], start=1):
+            crops += [f"tree{n},1,true,a", f"tree{n},2,false,{grade}"]
+    else:
+        crops = ["tree_id,visit,grade"] + [
+            f"tree{n},1,{g}" for n, g in enumerate(ONE_EACH, start=1)
+        ]
+    _orchard_of(
+        world,
+        {"visits.csv": visits, "harvests.csv": crops},
+        _set("visits", "/fields/primary_key", ["tree_id", "visit"]),
+        _set("visits.visit", "/fields/datatype", "integer"),
+        _set("harvests", "/fields/primary_key", list(key)),
+        _set("harvests.visit", "/fields/datatype", "integer"),
+        *([_set("harvests.first", "/fields/datatype", "boolean")] if "first" in key else []),
+        *_graded("abcd" if "first" in key else "abc"),
+        _link("visits", ["tree_id"], "trees", ["tree_id"]),
+        _covered("rel:visits.tree_id"),
+        _link("harvests", ["tree_id", "visit"], "visits", ["tree_id", "visit"]),
+        _covered("rel:harvests.tree_id+visit"),
+    )
+    release = world.store.load(world.store.latest("orchard").manifest)
+    proposed = [
+        {"op": "remove_descriptor", "descriptor": id}
+        for id in ("cov:harvests.tree_id", "rel:harvests.tree_id")
+        if id in release.by_id
+    ]
+    if proposed:
+        # The importer may propose harvests' tree as a relationship to trees, a second path.
+        world.curate("orchard", *proposed)
+
+
+def test_memberships_over_an_open_step_then_a_child_keyed_by_the_unit_are_withheld(
+    world: World,
+) -> None:
+    """B3, Q1: the visits step is open, but harvests keyed by the tree alone give one harvest
+    per tree, so a shown 5 and 4 of 10 would pin c's 1: withheld under a floor, with no
+    ``each`` offered."""
+    _visits_then_harvests(world, ["tree_id"])
+    _withheld_and_pinned(world)
+
+
+def test_memberships_over_an_open_step_then_a_child_keyed_by_the_unit_and_a_boolean_are_withheld(
+    world: World,
+) -> None:
+    """B3, Q2: harvests keyed by the tree and a boolean give two harvests per tree, so of four
+    grades a shown 10, 5 and 4 would pin c's 1 (20 − 19): withheld under a floor, with no
+    ``each`` offered."""
+    _visits_then_harvests(world, ["tree_id", "first"])
+    found = refused(_grades(world, 3))
+    assert (found.code, found.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/0/each",
+    )
+    assert not _offers_each(world)
+    assert _rows(_grades(world, None)) == [
+        ("a", 10, 10),
+        ("b", 5, 10),
+        ("c", 1, 10),
+        ("d", 4, 10),
+    ]
+
+
+def test_memberships_over_a_relationship_of_the_unit_table_to_itself_are_withheld(
+    world: World,
+) -> None:
+    """Round 2 after the redesign, m1 (S1): trees each the child of the next under a self
+    relationship reach one open step, but its child rows are the units themselves, so the
+    view's own ten units bound the grades' TRUE counts and a shown 5 and 4 would pin c's 1:
+    withheld under a floor, with no ``each`` offered (D383)."""
+    trees = ["tree_id,variety,parent_id,grade"] + [
+        f"tree{n},apple,tree{n % 10 + 1},{g}" for n, g in enumerate(ONE_EACH, start=1)
+    ]
+    world.publish("orchard", {"trees.csv": ("\n".join(trees) + "\n").encode()})
+    values = {"values": [{"value": v} for v in "abc"], "ordered": False}
+    world.curate(
+        "orchard",
+        _set("trees.grade", "/fields/datatype", "category"),
+        _set("trees.grade", "/fields/permissible_values", values),
+        _link("trees", ["parent_id"], "trees", ["tree_id"], role="parent"),
+        _covered("rel:trees.parent"),
+    )
+    via = [{"rel": "rel:trees.parent", "dir": "down"}]
+
+    def asked(floor: int | None, column: Mapping[str, Any]) -> Output | list[Refusal]:
+        written = {
+            "aibi": "1",
+            "dataset": "orchard",
+            "unit": "trees",
+            "cohorts": {"all": {"all": []}},
+            "views": [
+                {
+                    "analysis": "summary.distribution",
+                    "cohorts": ["all"],
+                    "params": {"columns": [dict(column)]},
+                }
+            ],
+        }
+        return answer(catalog_of(world, floor=floor), "run_analysis", {"document": written})
+
+    each = {"column": "trees.grade", "via": via, "each": "category"}
+    found = refused(asked(3, each))
+    assert (found.code, found.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/0/each",
+    )
+    bare = refused(asked(3, {"column": "trees.grade", "via": via}))
+    assert bare.code == RefusalCode.AGGREGATE_REQUIRED
+    assert {"text": 'each: "category"'} not in [a.model_dump() for a in bare.alternatives]
+    assert _rows(asked(None, each)) == [("a", 5, 10), ("b", 4, 10), ("c", 1, 10)]
 
 
 def test_withheld_memberships_that_reached_run_analysis_would_raise_before_any_query(
     world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """D383: memberships the analysis withholds under a floor (each unit holding one category
+    at most, ``distribution.withheld_under_k``) are refused in phase 2, and ``run_analysis``
+    raises before any query if one reached it."""
     world.publish("orchard", orchard())
     catalog = catalog_of(world, floor=3)
     ran: list[object] = []
     monkeypatch.setattr(views, "_withheld_form", lambda *_: None)
+    monkeypatch.setattr(distribution, "withheld_under_k", lambda *_: "withheld")
     monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
     with pytest.raises(ValueError, match="never run"):
         run(catalog, distribution_document([EACH[0]]))

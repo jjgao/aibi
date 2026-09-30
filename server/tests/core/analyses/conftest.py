@@ -448,7 +448,9 @@ def materialise_by_evaluator(
     for cohort in view.cohorts:
         truth = evaluate(cohort.resolved).values
         members = [row for row, value in enumerate(truth) if value.is_true]
-        found.append(materialise_over(resolved, given, members))
+        found.append(
+            materialise_over(resolved, given, members, declared=view.disclosure is not None)
+        )
     return found
 
 

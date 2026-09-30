@@ -42,8 +42,11 @@ denominator definition naming the category's leaf key (``canonical.category_key`
 them to ``n`` (``multi_membership``). ``analysed`` counts a unit where its answer for some listed
 category is known, which depends on the categories the cohort lists, and excludes it otherwise
 under the reasons of all its answers. More than ``MAX_CATEGORIES`` listed is ``TooManyCategories``.
-They are withheld under any disclosure setting (D382), which phase 2 refuses and ``summarise``
-asserts.
+Under a disclosure setting they list the column's declared categories alone, whatever the units
+hold (``memberships.listing(…, declared=True)``, D384), each row disclosed as a question's split
+(``disclosure.membership_shown``, D383), with no map of reasons, and ``analysed`` of the variable
+suppressed; where the descriptors bound the rows each unit reaches (``withheld_under_k``) they
+are withheld, which phase 2 refuses and ``summarise`` asserts.
 
 **Accounting** (§8.1). ``analysed`` counts, per position, the units a variable has a value for
 (``n``) and those it excludes (``excluded_units``, and ``excluded`` by every reason): a column's
@@ -73,7 +76,10 @@ merged bins' counts and each quartile as the index of the merged bin that holds 
 would depend on the values. With two variables or more, ``analysed``'s ``n``,
 ``excluded_units`` and ``excluded``, which combine them, are suppressed. Under *k*, a number's
 histogram needs edges the data do not set: its ``bins`` or its column's declared range, checked
-in phase 2 (``needs_edges``).
+in phase 2 (``needs_edges``). A variable's memberships list its declared categories, each shown
+as ``some`` of that one category would be (its split whole or not at all, its TRUE units only
+with it and where neither they nor its FALSE units are small, never its reasons), rows never
+merged, and its ``analysed`` suppressed, alone or beside others (D383).
 """
 
 import bisect
@@ -94,8 +100,9 @@ from aibi.core.analyses.common import (
     shown,
     unwritable,
 )
-from aibi.core.analyses.disclosure import merged
+from aibi.core.analyses.disclosure import CategoryShown, Split, membership_shown, merged
 from aibi.core.engine.canonical import CanonicalVariable, category_key
+from aibi.core.engine.memberships import bounded_rows, fixed
 from aibi.core.engine.readback import variable_readback
 from aibi.core.engine.resolve import ResolvedVariable, aggregates_of, aggregates_taken
 from aibi.core.engine.variables import Joint, Materialised, Membership, RowCounts, Value
@@ -165,8 +172,10 @@ ENTRY = AnalysisDescriptor.model_validate(
             "rows excluded by reason, and is withheld under a disclosure setting. "
             'A column with each "category" gives its memberships: for each category, the units '
             "for which some row or item has it over those for which that is known, its excluded "
-            "units by reason, a unit counting in each category it has (multi_membership), and is "
-            "withheld under a disclosure setting. Descriptive only."
+            "units by reason, a unit counting in each category it has (multi_membership); under "
+            "a disclosure setting, its declared categories alone, each disclosed as a question's "
+            "split, with no excluded units by reason, and withheld where the descriptors bound "
+            "the rows each unit reaches. Descriptive only."
         ),
         "fields": {
             "requires": [
@@ -293,14 +302,40 @@ def _range_of(descriptor: ColumnDescriptor | None) -> tuple[float, float] | None
     return float(declared.min), float(declared.max)
 
 
+WITHHELD_MEMBERSHIPS = (
+    "the descriptors bound how many rows, and so how many of the column's categories, each unit "
+    "can hold, so the categories' units sum to at most that many times the cohort's and would "
+    "pin a count the pass hides"
+)
+"""Why the analysis withholds memberships where the descriptors bound the rows each unit
+reaches."""
+
+
+def withheld_under_k(variable: CanonicalVariable) -> str | None:
+    """Why the analysis withholds a variable under any disclosure setting whatever its cohorts'
+    sizes, by what its descriptors say rather than by a member of its parameters
+    (``registry.withheld_form``), or ``None``: memberships where the descriptors may bound the
+    rows each unit reaches (``memberships.bounded_rows``: not a list, and its path not one down
+    step from the unit whose child's every set of columns the gate keeps unique holds a free
+    column, ``resolve.open_path``), whose TRUE counts then may sum to at most that bound times the
+    units, so that shown ones bound a hidden one (10 units under *k* = 3, one row each: 5, 4 and
+    a hidden one give it 1, since 0 would be shown; two rows each, four categories: 10, 5, 4 and
+    a hidden one give it 1, D383). Phase 2 refuses them at ``…/each`` (``views._withheld_form``),
+    and ``summarise`` and ``run_analysis`` assert none runs."""
+    if memberships(variable) and bounded_rows(variable.resolved):
+        return WITHHELD_MEMBERSHIPS
+    return None
+
+
 def forms_under_k(variable: CanonicalVariable, written: Variable | None = None) -> list[str]:
     """The forms of a variable the analysis withholds which it gives under a disclosure setting
     in its place, each of which runs there and the analysis reads (``summarises``: an aggregate
-    or a question). For memberships (D382): ``some`` and ``every`` with ``values`` where the
-    path allows them (``resolve.aggregates_of``, as resolution offers them: ``every`` of a
-    scope column of the last step's child row is ``SCOPE_COLUMN_MENTION``, and ``some`` always
-    runs), each an existence question whose split the pass protects as a predicate's (D320), one
-    category at a time; the variable took no ``where`` or ``bins``. For a count of rows (D379):
+    or a question). For memberships where the descriptors bound the rows each unit reaches
+    (``withheld_under_k``, D382, D383): ``some`` and ``every`` with ``values`` where the path
+    allows them (``resolve.aggregates_of``, as resolution offers them: ``every`` of a scope column
+    of the last step's child row is ``SCOPE_COLUMN_MENTION``, and ``some`` always runs), each an
+    existence question whose split the pass protects as a question's (D329), one category at a
+    time; the variable took no ``where`` or ``bins``. For a count of rows (D379):
     each aggregate its column takes over its path (``resolve.aggregates_of``; with a ``where``,
     whose conditions close every step for the count of rows as they do for an aggregate, each
     it takes, ``aggregates_taken``), with ``bins`` where its histogram would otherwise take edges
@@ -473,16 +508,28 @@ def _category_rows(
 
 
 def _memberships(
-    variable: CanonicalVariable, found: Materialised, position: int, column: int
+    variable: CanonicalVariable,
+    found: Materialised,
+    position: int,
+    column: int,
+    k: int | None,
+    size_shown: bool,
 ) -> MembershipDistribution:
     """A variable's memberships at a position (module docstring, D382): each listed category's
     units over those for which it is known, its UNKNOWN units by reason, its key the category's
     (``canonical.category_key``); past ``MAX_CATEGORIES``, ``TooManyCategories``, and a label
-    past ``MAX_TEXT``, ``LongCategory``, or not Unicode text, ``NonTextCategory``."""
+    past ``MAX_TEXT``, ``LongCategory``, or not Unicode text, ``NonTextCategory``. Under *k*, the
+    declared categories alone, which the engines list there (D384), each disclosed as
+    ``disclosure.membership_shown`` has it, with no map of reasons (D383)."""
     listed = found.memberships
     assert listed is not None, "memberships are materialised with their categories"
     if listed.over or len(listed.categories) > MAX_CATEGORIES:
         raise TooManyCategories(column)
+    if k is not None:
+        declared = fixed(variable.resolved)
+        assert tuple(one.category for one in listed.categories) == declared, (
+            "under a disclosure setting memberships list their declared categories alone (D384)"
+        )
     within_text((one.category for one in listed.categories), column)
     template = variable.resolved.question
     assert template is not None, "memberships have their template"
@@ -492,17 +539,54 @@ def _memberships(
         categories=[
             CategoryShare(
                 values=[Data(data=category_label(one.category))],
-                proportion=_membership(one, position, category_key(template, one.category)),
+                proportion=_membership(
+                    one,
+                    position,
+                    category_key(template, one.category),
+                    None
+                    if k is None
+                    else membership_shown(size_shown, Split(one.true, one.false, one.unknown), k),
+                ),
             )
             for one in listed.categories
         ],
     )
 
 
-def _membership(one: Membership, position: int, key: str) -> Proportion:
+def _membership(
+    one: Membership, position: int, key: str, shown: CategoryShown | None = None
+) -> Proportion:
     """A category's proportion (D382): TRUE over TRUE and FALSE, UNKNOWN in ``excluded`` by
-    every reason, zeros included; no interval, the analysis being descriptive."""
+    every reason, zeros included; no interval, the analysis being descriptive. Under *k*
+    (``shown``), its counts as the pass shows them, each one hidden ``suppressed`` and the
+    estimate with it, and ``excluded`` always suppressed (D383)."""
     known = one.true + one.false
+    if shown is not None:
+        numerator = one.true if shown.numerator else None
+        denominator = known if shown.split else None
+        reasons: dict[str, NotEstimableReason] = {"/excluded": _SUPPRESSED}
+        estimate: float | None = None
+        if numerator is None or denominator is None:
+            reasons["/estimate"] = _SUPPRESSED
+        elif denominator == 0:
+            reasons["/estimate"] = _NO_UNITS
+        else:
+            estimate = numerator / denominator
+        for member, value in (("/numerator", numerator), ("/denominator", denominator)):
+            if value is None:
+                reasons[member] = _SUPPRESSED
+        return Proportion.model_validate(
+            {
+                "estimate": estimate,
+                "numerator": numerator,
+                "denominator": denominator,
+                "denominator_definition": DenominatorDefinition(
+                    position=position, predicate=key, counts="known"
+                ),
+                "excluded": None,
+                "not_estimable": reasons,
+            }
+        )
     return Proportion.model_validate(
         {
             "estimate": one.true / known if known else None,
@@ -789,8 +873,11 @@ def summarise(
         raise ValueError("each variable materialised over each of the view's cohorts")
     if k is not None and any(counts_rows(variable) for variable in variables):
         raise ValueError("a count of rows is never summarised under a disclosure setting (D379)")
-    if k is not None and any(memberships(variable) for variable in variables):
-        raise ValueError("memberships are never summarised under a disclosure setting (D382)")
+    if k is not None and any(withheld_under_k(variable) for variable in variables):
+        raise ValueError(
+            "memberships whose rows per unit the descriptors bound are never summarised under a "
+            "disclosure setting (D383)"
+        )
     population = populations(positions, k)
     at_positions: list[DistributionPosition] = []
     analysed: list[Analysed] = []
@@ -798,7 +885,12 @@ def summarise(
         zip(materialised, population, strict=True)
     ):
         size_shown = counts.n_true is not None
-        split = [shown(one, size_shown, k) for one in found]
+        split = [
+            Shown(False, False)
+            if k is not None and memberships(variable)
+            else shown(one, size_shown, k)
+            for variable, one in zip(variables, found, strict=True)
+        ]
         columns: list[ColumnDistribution] = []
         for index, (variable, one, visible) in enumerate(zip(variables, found, split, strict=True)):
             if ends is not None and time.monotonic() >= ends:
@@ -812,7 +904,7 @@ def summarise(
                     else _number_rows(variable, one.rows, index, bins)
                 )
             elif memberships(variable):
-                columns.append(_memberships(variable, one, position, index))
+                columns.append(_memberships(variable, one, position, index, k, size_shown))
             elif categorical(variable):
                 columns.append(_category_distribution(variable, one, position, index, visible, k))
             else:
@@ -838,7 +930,11 @@ def _caveats(
     in a message of its own, wherever a count of rows leaves a row out for such a reason (D378),
     which no disclosure setting sees (D379); and in another, wherever a category of memberships
     leaves a unit out of its denominator, UNKNOWN for it (NOT_APPLICABLE is FALSE there, §6.4),
-    which no disclosure setting sees either (D382)."""
+    and under *k* wherever a view has memberships, so that it says nothing of one, saying there
+    that no count by reason is shown (D382, D383).
+    Under *k*, ``SUPPRESSED`` says what the pass does of memberships only where a view has them,
+    so that no other view's message changes (D383)."""
+    listing = any(one.memberships is not None for row, _ in materialised for one in row)
     found_unknown = k is not None or any(
         count
         for row, _ in materialised
@@ -869,7 +965,7 @@ def _caveats(
                 ),
             )
         )
-    if any(
+    if (k is not None and listing) or any(
         category.unknown
         for row, _ in materialised
         for one in row
@@ -882,8 +978,12 @@ def _caveats(
                 ["/values"],
                 text(
                     "Units for which a category of a column of memberships could not be decided "
-                    "are left out of that category's denominator; its proportion's excluded "
-                    "counts them by reason"
+                    "are left out of that category's denominator; "
+                    + (
+                        "its proportion's excluded counts them by reason"
+                        if k is None
+                        else "under the disclosure settings no count of them by reason is shown"
+                    )
                 ),
             )
         )
@@ -893,20 +993,21 @@ def _caveats(
             entry.reasons() or any(v.reasons() for v in entry.variables or []) for entry in analysed
         ):
             affects.append("/analysed")
-        found.append(
-            caveat(
-                CaveatCode.SUPPRESSED,
-                affects,
-                text(
-                    f"Counts from 1 to {k - 1}, what would reveal them and the values computed "
-                    "from them are suppressed (null), and categories and histogram bins with such "
-                    "counts merged with their neighbours; no statistic of the values themselves "
-                    "is reported, each quartile being given as the bin that holds it, and a "
-                    "column's undeclared values are one row that names none, under the "
-                    "disclosure settings"
-                ),
-            )
+        message = (
+            f"Counts from 1 to {k - 1}, what would reveal them and the values computed "
+            "from them are suppressed (null), and categories and histogram bins with such "
+            "counts merged with their neighbours; no statistic of the values themselves "
+            "is reported, each quartile being given as the bin that holds it, and a "
+            "column's undeclared values are one row that names none, under the "
+            "disclosure settings"
         )
+        if listing:
+            message += (
+                "; a column of memberships lists only its declared categories, each shown where "
+                "its units known and unknown, and its units with and without the category, are "
+                f"none from 1 to {k - 1}, with no excluded units by reason"
+            )
+        found.append(caveat(CaveatCode.SUPPRESSED, affects, text(message)))
     return found
 
 

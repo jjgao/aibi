@@ -105,8 +105,14 @@ question (`canonical.category_clause`): `core/engine/memberships.py` is the refe
 and `sql._Compiler.memberships` counts them as pairs plus default (`Materialised.memberships`,
 `membership_units`). From M3.2e-2a-2, `summary.distribution` gives them (`MembershipDistribution`,
 `distribution._memberships`, each category's key `canonical.category_key`), the evaluator's joint
-is `memberships.materialise_over`, a bare multi-valued column is `AGGREGATE_REQUIRED` offering
-`each`, and `withheld_forms` withholds `columns/*/each` under any *k*.
+is `memberships.materialise_over`, and a bare multi-valued column is `AGGREGATE_REQUIRED` offering
+`each`. From M3.2e-2b, memberships are disclosed under *k* (`disclosure.membership_shown`, D383):
+their declared categories alone (`memberships.listing(…, declared=True)`,
+`sql.compile_materialised(…, declared=True)`, D384), each row as a question's split, no reason
+maps, `analysed` `null`; unless the column is a list or its path is one down step from the
+unit to another table, open by the gate's checks (`resolve.open_path`, `resolve.open_step`,
+`resolve.GATE_CHECKS`), they are withheld (`distribution.withheld_under_k`,
+`views._withheld_form`), and `withheld_forms` withholds only `columns/*/count`.
 
 ## Non-negotiables
 

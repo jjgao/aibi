@@ -1055,10 +1055,13 @@ def compile_materialised(
     sources: Mapping[str, TableSource],
     *,
     shared: bool = False,
+    declared: bool = False,
 ) -> CompiledMaterialised:
     """The queries that materialise variables over cohorts of one release's unit table, their
     parts compiled once each over one compiler, with, when ``shared``, the units each pair of
-    cohorts shares. Raises ``CompileError``."""
+    cohorts shares; with ``declared``, as a view under a disclosure setting reads them, each
+    memberships' declared categories alone (``membership_listing``, D384). Raises
+    ``CompileError``."""
     if not cohorts or not variables:
         raise CompileError("a materialisation has cohorts and variables")
     first = cohorts[0]
@@ -1071,7 +1074,9 @@ def compile_materialised(
     for part in (*cohorts, *variables):
         coverage.update(part.coverage)
     merged = replace(first, coverage=dict(sorted(coverage.items())))
-    return _Compiler(merged, sources).materialised(cohorts, variables, shared=shared)
+    return _Compiler(merged, sources, declared=declared).materialised(
+        cohorts, variables, shared=shared
+    )
 
 
 _KEY_VALUES: tuple[PhysicalType, ...] = ("float64", "string")
@@ -1522,8 +1527,12 @@ class _Base:
 
 
 class _Compiler:
-    def __init__(self, cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> None:
+    def __init__(
+        self, cohort: ResolvedCohort, sources: Mapping[str, TableSource], *, declared: bool = False
+    ) -> None:
         self.cohort = cohort
+        self.declared = declared
+        """Memberships list their declared categories alone (``membership_listing``, D384)."""
         self.release: Release = cohort.release
         self.sources = sources
         self.coverage: Mapping[str, Coverage] = cohort.coverage
@@ -3130,13 +3139,19 @@ class _Compiler:
 
     def membership_listing(self, member: str, variable: ResolvedVariable) -> str:
         """The categories listed over a cohort's members (``memberships.listing``): the fixed
-        ones, each with its place (``rk``), and, but for a filtered column, the classes of the
-        members' pairs that are not among them, placed after them; ``MAX_CATEGORIES`` + 1 at
-        most, in no order, which the listing does not depend on: where at most
-        ``MAX_CATEGORIES`` are listed every one is kept, and past it the listing is ``over``
-        whichever are kept, and nothing is counted (D381). The server orders them, the others in
-        UTF-16 order."""
-        key = ("membership listing", member, canonical(variable_form(variable)))
+        ones, each with its place (``rk``), and, but for a filtered column or where the compiler
+        lists the declared ones alone (``declared``, D384), the classes of the members' pairs
+        that are not among them, placed after them; ``MAX_CATEGORIES`` + 1 at most, in no order,
+        which the listing does not depend on: where at most ``MAX_CATEGORIES`` are listed every
+        one is kept, and past it the listing is ``over`` whichever are kept, and nothing is
+        counted (D381). The server orders them, the others in UTF-16 order. A column that
+        declares none, listing its declared ones alone, lists nothing."""
+        key = (
+            "membership listing",
+            member,
+            canonical(variable_form(variable)),
+            self.declared,
+        )
         found = self.memo.get(key)
         if found is not None:
             return found
@@ -3153,7 +3168,7 @@ class _Compiler:
                     _as(_fn("unnest", self.parameter(list(range(len(declared))))), "rk"),
                 )
             )
-        if not closed_listing(variable):
+        if not closed_listing(variable) and not self.declared:
             conditions: list[Expression] = [_eq(_col("c", "v"), _num(TRUE_CODE))]
             if declared:
                 conditions.append(exp.Not(this=self.member(kind, _col("p", "cls"), declared)))
@@ -3165,7 +3180,11 @@ class _Compiler:
                 .distinct(copy=False)
             )
             parts.append(others)
-        assert parts, "a filtered column has allowed values"
+        if not parts:
+            assert self.declared, "a filtered column has allowed values"
+            parts.append(
+                _select(_as(exp.Null(), "cls"), _as(_num(0), "rk")).where(exp.false(), copy=False)
+            )
         union: exp.Query = parts[0]
         for part in parts[1:]:
             union = exp.Union(this=union, expression=part, distinct=False)
@@ -3183,7 +3202,7 @@ class _Compiler:
         listed pair is, or where it has fewer listed pairs than categories are listed (or none is
         listed) and its default is known; else excluded under its listed pairs' reasons and,
         where it has fewer, its default's; its flags theirs alike (M2, m2)."""
-        key = ("membership units", member, canonical(variable_form(variable)))
+        key = ("membership units", member, canonical(variable_form(variable)), self.declared)
         found = self.memo.get(key)
         if found is not None:
             return found, self.memo[(*key, "pairs")]

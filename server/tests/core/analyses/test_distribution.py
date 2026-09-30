@@ -690,14 +690,14 @@ REFUSED_VIEWS: dict[str, tuple[dict[str, Any], tuple[str, str]] | None] = {
         {"column": "customers.tier", "bins": [0, 1]},
         ("INVALID_VALUE", "/views/0/params/columns/1/bins"),
     ),
-    "memberships withheld": (
-        {"column": "orders.channel", "each": "category"},
-        ("WITHHELD_UNDER_K", "/views/0/params/columns/1/each"),
+    "rows withheld": (
+        {"column": "orders.channel", "count": "rows"},
+        ("WITHHELD_UNDER_K", "/views/0/params/columns/1/count"),
     ),
     "none": None,
 }
 """A column that has its view refused in phase 2 after an earlier column's edges are read, by
-the analysis's own checks (``_distributed``) or before them (``_withheld_form``, D382), and the
+the analysis's own checks (``_distributed``) or before them (``_withheld_form``, D379), and the
 refusal."""
 
 
@@ -705,8 +705,8 @@ refusal."""
 def test_under_k_a_view_that_is_refused_reads_no_bins_that_a_later_view_conflicts_with(
     check: Check, shop: Shop, refused: str
 ) -> None:
-    """A view refused in phase 2, here for its bins of categories (D328) or its memberships
-    (D382), is not run, so its edges constrain no later view; a view that runs still does
+    """A view refused in phase 2, here for its bins of categories (D328) or its count of rows
+    (D379), is not run, so its edges constrain no later view; a view that runs still does
     (§8.4)."""
     given = REFUSED_VIEWS[refused]
     most = {"column": "orders.amount", "aggregate": "max", "bins": [0, 50, 200]}
@@ -1173,15 +1173,15 @@ def test_a_count_of_rows_of_a_list_is_invalid_and_offers_its_aggregates_and_its_
     check: Check, shop: Shop
 ) -> None:
     """D382: a list's items are no rows a step pools, so its ``count: "rows"`` is
-    ``INVALID_VALUE``, offering ``some``, ``every`` and, but under *k*, ``each``, each of which
-    runs; beside ``bins``, which divide numbers, none of them (``resolve._divided``, round 1 of
-    #72's review), the message saying to leave ``bins`` out; no part number is named."""
+    ``INVALID_VALUE``, offering ``some``, ``every`` and ``each``, under *k* too (D383), each of
+    which runs; beside ``bins``, which divide numbers, none of them (``resolve._divided``, round
+    1 of #72's review), the message saying to leave ``bins`` out; no part number is named."""
     labels = build.column("customers.labels", "list<category>")
     release = shop(extras=[labels])
     written = {"column": "customers.labels", "count": "rows"}
     for floor, given, offered in (
         (None, written, ["some", "every", 'each: "category"']),
-        (3, written, ["some", "every"]),
+        (3, written, ["some", "every", 'each: "category"']),
         (None, {**written, "bins": [0, 1]}, []),
     ):
         [refusal] = check(shop_document(given), release, floor=floor).refusals
@@ -1547,8 +1547,9 @@ def _walked(
 ) -> int:
     """The views a walk from ``start`` under a disclosure setting ends in (D379): following every
     alternative a refusal offers, and giving the member one names (``bins``), each walk ends in a
-    view that runs and never meets a refusal met on the way, and none offers ``count: "rows"``
-    or ``each``."""
+    view that runs and never meets a refusal met on the way, and none offers ``count: "rows"``;
+    ``each``, which a path of one open down step gives under *k* too and a longer one withholds
+    (D383), leads to a view that runs."""
     ends = 0
     walks: list[tuple[dict[str, Any], tuple[tuple[str, str | None], ...]]] = [(start, ())]
     while walks:
@@ -1565,7 +1566,6 @@ def _walked(
         assert len(met) < 3, (variable, met)
         texts = [one.text for one in refusal.alternatives or []]
         assert 'count: "rows"' not in texts, variable
-        assert 'each: "category"' not in texts, variable
         led = [_alternative(variable, one) for one in texts]
         named = _followed(variable, refusal)
         assert led or named is not None, (variable, refusal)
@@ -1578,12 +1578,12 @@ def _walked(
 def test_under_a_disclosure_setting_what_a_refusal_offers_is_never_refused_for_the_same_reason(
     check: Check, shop: Shop, kind: str, start: str, setting: str
 ) -> None:
-    """D379, D382: under each source of *k*, following every alternative a refusal offers, and
+    """D379, D383: under each source of *k*, following every alternative a refusal offers, and
     giving the member one names (``bins``), ends in a view that runs and never meets a refusal
     met on the way, whatever ``where`` and ``bins`` the variable gives and from ``each``: no
-    ``count: "rows"`` and no ``each`` is offered, a withheld count of rows offers the aggregates
-    that run in its place, with the ``bins`` and ``values`` they need, keeping its ``where`` and
-    ``bins``, and withheld memberships ``some`` and ``every`` with ``values``."""
+    ``count: "rows"`` is offered, a withheld count of rows offers the aggregates that run in its
+    place, with the ``bins`` and ``values`` they need, keeping its ``where`` and ``bins``, and
+    memberships, on the shop's one-to-many paths, run."""
     column = KINDS[kind][0] if kind in KINDS else SINGLE[kind][0]
     disclosure, floor, published, _ = SETTINGS[setting]
     release = _kinds(shop, disclosure)
@@ -1598,14 +1598,8 @@ def test_under_a_disclosure_setting_what_a_refusal_offers_is_never_refused_for_t
         return
     withheld = check(shop_document(start_), release, floor=floor, published=published).refusals
     if "each" in given and kind in MEMBERED:
-        assert (withheld[0].code, withheld[0].path) == (
-            RefusalCode.WITHHELD_UNDER_K,
-            "/views/0/params/columns/0/each",
-        )
-        assert [one.text for one in withheld[0].alternatives or []] == [
-            'aggregate: "some" with values',
-            'aggregate: "every" with values',
-        ]
+        assert withheld == []
+        return
     if withheld[0].code == RefusalCode.WITHHELD_UNDER_K:
         for alternative in withheld[0].alternatives or []:
             led = _alternative(start_, alternative.text)
@@ -1825,13 +1819,13 @@ def _scoped_starts() -> list[tuple[str, str]]:
 def test_under_a_disclosure_setting_below_scoped_coverage_every_offer_ends_in_a_view_that_runs(
     check: Check, scoped: Shop, kind: str, start: str, coverage: str, setting: str
 ) -> None:
-    """D379, D382: below coverage scoped by value, direct or grouped, under each source of *k*,
-    a walk from each start ends in views that run (``_walked``): withheld memberships offer
-    ``some`` with ``values``, and ``every`` but of a scope column of the last step's child row
-    (``SCOPE_COLUMN_MENTION``), as resolution offers them without *k*
-    (``resolve.aggregates_of``), a column its rows look up included, whatever its name, and a
-    scope column of the second of two down steps, whose first step's scope columns do not name
-    it (NIT 2 of round 2 of #72's review)."""
+    """D379, D383: below coverage scoped by value, direct or grouped, under each source of *k*,
+    a walk from each start ends in views that run (``_walked``): memberships run there on the
+    visits, one open down step from the unit, and are withheld for a column their rows look up
+    and a scope column of the second of two down steps, whose paths are longer (D383); the bare
+    column offers ``some`` with ``values``, ``every`` but of a scope column of the last step's
+    child row (``SCOPE_COLUMN_MENTION``), as resolution offers them without *k*
+    (``resolve.aggregates_of``), and its memberships only where they run."""
     column = SCOPED_COLUMNS[kind]
     disclosure, floor, published, _ = SETTINGS[setting]
     release = scoped(grouped=coverage == "grouped", items=True, disclosure=disclosure)
@@ -1839,19 +1833,22 @@ def test_under_a_disclosure_setting_below_scoped_coverage_every_offer_ends_in_a_
     assert _walked(check, release, variable, floor, published)
     if "each" not in variable:
         return
-    [withheld] = check(shop_document(variable), release, floor=floor, published=published).refusals
-    assert (withheld.code, withheld.path) == (
-        RefusalCode.WITHHELD_UNDER_K,
-        "/views/0/params/columns/0/each",
-    )
+    found = check(shop_document(variable), release, floor=floor, published=published).refusals
+    one_step = column.startswith("visits.")
+    if one_step:
+        assert found == []
+    else:
+        [refusal] = found
+        assert (refusal.code, refusal.path) == (
+            RefusalCode.WITHHELD_UNDER_K,
+            "/views/0/params/columns/0/each",
+        )
     offered = ["some"] if column in ("visits.stall", "visit_items.kind") else ["some", "every"]
-    assert [one.text for one in withheld.alternatives or []] == [
-        f'aggregate: "{name}" with values' for name in offered
-    ]
     [bare] = check(
-        shop_document({"column": column}), scoped(grouped=coverage == "grouped", items=True)
+        shop_document({"column": column}), release, floor=floor, published=published
     ).refusals
-    assert [one.text for one in bare.alternatives or []] == [*offered, 'each: "category"']
+    each = ['each: "category"'] if one_step else []
+    assert [one.text for one in bare.alternatives or []] == [*offered, *each]
 
 
 BINNED: dict[str, list[str]] = {
@@ -1905,6 +1902,21 @@ def test_beside_bins_a_bare_column_is_offered_only_the_forms_whose_values_bins_d
 # --- Memberships (D380, D382) ---------------------------------------------------------------------
 
 REASONS = {"column": "returns.reason", "each": "category"}
+COMPLAINTS = [
+    build.table("complaints", ["complaint_id"], role="event"),
+    build.column("complaints.complaint_id", "string"),
+    build.column("complaints.customer_id", "string"),
+    build.column(
+        "complaints.reason",
+        "category",
+        permissible_values={"values": [{"value": v} for v in ("size", "late", "broken")]},
+    ),
+    build.relationship("complaints", ["customer_id"], "customers", role="customer"),
+    build.coverage("rel:complaints.customer", "all"),
+]
+"""A customer's complaints, keyed by their own id and declaring the returns' reasons: one open
+down step from the unit, which D383 discloses under *k* (a path of more steps is withheld)."""
+COMPLAINED = {"column": "complaints.reason", "each": "category"}
 BOX, STOP = "\U0001f4e6", "｡"
 """The shop's undeclared reasons with ``reasons``: U+1F4E6 comes first in UTF-16 order, its high
 surrogate below U+FF61, and last in code point order."""
@@ -2100,12 +2112,171 @@ def test_a_category_that_leaves_a_unit_out_raises_unknown_excluded_in_a_message_
     assert len(values) == 2
 
 
-def test_memberships_are_never_summarised_under_k(
+def test_under_k_each_declared_category_is_disclosed_as_a_question_s_split(
     distributed: Distributed, summarised: Summarised
 ) -> None:
-    view = distributed([REASONS])
-    with pytest.raises(ValueError, match="never summarised"):
-        summarised(view, [5], [([membered({"size": (1, 4, {})}, 5)], None)], k=3)
+    """D383: under *k*, each category's split (known and UNKNOWN units) is shown whole or not at
+    all, its TRUE units only with it and where neither they nor its FALSE units are small, its
+    estimate with both, its ``excluded`` never; rows are not merged, and the variable's
+    ``analysed`` is suppressed."""
+    view = distributed([COMPLAINED], k=3, extras=COMPLAINTS)
+    found = membered(
+        {
+            "size": (5, 5, {}),
+            "late": (1, 6, {"NO_INFORMATION": 3}),
+            "broken": (4, 4, {"NO_INFORMATION": 2}),
+        },
+        10,
+    )
+    outcome = summarised(view, [10], [([found], None)], k=3)
+    rows = column(outcome, 0, 0)["categories"]
+    assert [row["values"] for row in rows] == [[{"data": v}] for v in ("size", "late", "broken")]
+    shares = [row["proportion"] for row in rows]
+    assert [(p["numerator"], p["denominator"], p["estimate"]) for p in shares] == [
+        (5, 10, 0.5),
+        (None, 7, None),
+        (None, None, None),
+    ]
+    assert all(p["excluded"] is None for p in shares)
+    assert [p["not_estimable"] for p in shares] == [
+        {"/excluded": "suppressed"},
+        {"/excluded": "suppressed", "/estimate": "suppressed", "/numerator": "suppressed"},
+        {
+            "/excluded": "suppressed",
+            "/estimate": "suppressed",
+            "/numerator": "suppressed",
+            "/denominator": "suppressed",
+        },
+    ]
+    [analysed] = outcome.analysed
+    assert (analysed.n, analysed.excluded_units, analysed.excluded) == (None, None, None)
+    messages = [json.dumps(c.model_dump(mode="json")) for c in outcome.caveats]
+    assert any("column of memberships could not be decided" in one for one in messages)
+    assert any("lists only its declared categories" in one for one in messages)
+
+
+def test_under_k_a_category_known_for_no_unit_estimates_nothing_and_a_hidden_size_hides_rows(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """D383: a split of 0 known units shown whole has no estimate (``no_units``); where the
+    cohort's ``n_true`` is suppressed, every row stays listed with its counts ``null``; the
+    memberships' ``UNKNOWN_EXCLUDED`` message is carried under *k* whether or not a unit was
+    excluded."""
+    view = distributed([COMPLAINED], k=3, extras=COMPLAINTS)
+    none_known = membered(
+        {"size": (0, 0, {"NOT_COVERED": 5}), "late": (0, 5, {}), "broken": (5, 0, {})}, 5
+    )
+    rows = column(summarised(view, [5], [([none_known], None)], k=3), 0, 0)["categories"]
+    assert (rows[0]["proportion"]["denominator"], rows[0]["proportion"]["estimate"]) == (0, None)
+    assert rows[0]["proportion"]["not_estimable"]["/estimate"] == "no_units"
+    assert [(r["proportion"]["numerator"], r["proportion"]["denominator"]) for r in rows[1:]] == [
+        (0, 5),
+        (5, 5),
+    ]
+    small = membered({"size": (1, 1, {}), "late": (0, 2, {}), "broken": (2, 0, {})}, 2)
+    outcome = summarised(view, [2], [([small], None)], k=3)
+    hidden = column(outcome, 0, 0)["categories"]
+    assert len(hidden) == 3
+    assert all(
+        (r["proportion"]["numerator"], r["proportion"]["denominator"]) == (None, None)
+        for r in hidden
+    )
+    known = membered({"size": (1, 4, {}), "late": (0, 5, {}), "broken": (5, 0, {})}, 5)
+    messages = [
+        json.dumps(c.model_dump(mode="json"))
+        for c in summarised(view, [5], [([known], None)], k=3).caveats
+    ]
+    assert any("column of memberships could not be decided" in one for one in messages)
+
+
+def test_under_k_a_size_suppressed_by_its_complement_hides_every_row_s_counts(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """D383 (round 1 of #74's review, m1): a position of 10 members beside one other unit, whose
+    ``n_true`` the pass suppresses since its complement is 1, shows no row's counts, though each
+    row's split is large: the known and UNKNOWN units of a row sum to the size, which would give
+    the suppressed ``n_true`` and, through the table's size, the one unit outside."""
+    view = distributed([COMPLAINED], k=3, extras=COMPLAINTS)
+    found = membered({"size": (5, 5, {}), "late": (0, 10, {}), "broken": (10, 0, {})}, 10)
+    outcome = summarised(view, [10], [([found], None)], k=3, outside=1)
+    assert outcome.population[0].n_true is None
+    rows = column(outcome, 0, 0)["categories"]
+    assert len(rows) == 3
+    assert all(
+        (row["proportion"]["numerator"], row["proportion"]["denominator"]) == (None, None)
+        for row in rows
+    )
+
+
+UNDER_K_SUPPRESSED = (
+    "Counts from 1 to 2, what would reveal them and the values computed from them are suppressed "
+    "(null), and categories and histogram bins with such counts merged with their neighbours; no "
+    "statistic of the values themselves is reported, each quartile being given as the bin that "
+    "holds it, and a column's undeclared values are one row that names none, under the "
+    "disclosure settings"
+)
+"""``SUPPRESSED``'s message under *k* = 3 at ``81feb2d``, before memberships were disclosed."""
+
+
+def test_under_k_a_view_without_memberships_keeps_its_messages(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """Round 1 of #74's review, m2: the premise of D383's version argument, that no view
+    without memberships sees another message under *k*: ``SUPPRESSED``'s text is ``81feb2d``'s,
+    and no memberships' ``UNKNOWN_EXCLUDED`` message is carried; beside memberships the sentence
+    on them is added, and the memberships' message says no count by reason is shown."""
+    view = distributed([TIER], k=3)
+    outcome = summarised(view, [10], [([made({"gold": 4, "silver": 3, "bronze": 3})], None)], k=3)
+    texts = {
+        caveat.code: "".join(part.model_dump().get("text", "") for part in caveat.message)
+        for caveat in outcome.caveats
+        if caveat.code in ("SUPPRESSED",)
+    }
+    assert texts == {"SUPPRESSED": UNDER_K_SUPPRESSED}
+    dumped = json.dumps([c.model_dump(mode="json") for c in outcome.caveats])
+    assert "column of memberships" not in dumped
+    both = distributed([TIER, COMPLAINED], k=3, extras=COMPLAINTS)
+    found = membered({"size": (5, 5, {}), "late": (0, 10, {}), "broken": (10, 0, {})}, 10)
+    joint = Joint(10, 0, MappingProxyType(dict.fromkeys(ExclusionReason, 0)))
+    tiers = made({"gold": 4, "silver": 3, "bronze": 3})
+    beside = summarised(both, [10], [([tiers, found], joint)], k=3)
+    messages = [
+        "".join(part.model_dump().get("text", "") for part in caveat.message)
+        for caveat in beside.caveats
+    ]
+    assert any(one.startswith(UNDER_K_SUPPRESSED + "; a column of memberships") for one in messages)
+    assert any("no count of them by reason is shown" in one for one in messages)
+    assert not any("excluded counts them by reason" in one for one in messages)
+
+
+def test_under_k_memberships_beside_another_variable_show_nothing_of_their_own_analysed(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """D383: beside another variable, the memberships' entry of ``variables`` is suppressed,
+    whatever its counts, as the joint counts are; the other variable's is shown as D329 has it."""
+    view = distributed([COMPLAINED, {"column": "customers.tier"}], k=3, extras=COMPLAINTS)
+    found = membered({"size": (5, 5, {}), "late": (0, 10, {}), "broken": (10, 0, {})}, 10)
+    tiers = made({"gold": 4, "silver": 3, "bronze": 3})
+    joint = Joint(10, 0, MappingProxyType(dict.fromkeys(ExclusionReason, 0)))
+    [analysed] = summarised(view, [10], [([found, tiers], joint)], k=3).analysed
+    assert analysed.n is None
+    assert analysed.variables is not None
+    first, second = analysed.variables
+    assert (first.n, first.excluded_units, first.excluded) == (None, None, None)
+    assert (second.n, second.excluded_units) == (10, 0)
+
+
+def test_under_k_memberships_that_list_an_undeclared_category_are_never_summarised(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """D384: under *k* the engines list the declared categories alone, which ``summarise``
+    asserts."""
+    view = distributed([COMPLAINED], k=3, extras=COMPLAINTS)
+    found = membered(
+        {"size": (5, 5, {}), "late": (5, 5, {}), "broken": (5, 5, {}), BOX: (3, 7, {})}, 10
+    )
+    with pytest.raises(AssertionError, match="declared categories alone"):
+        summarised(view, [10], [([found], None)], k=3)
 
 
 def test_the_readback_and_chart_of_memberships_say_a_unit_may_count_in_several_categories(

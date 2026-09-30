@@ -24,8 +24,9 @@ A view is checked in two steps, around phase 1:
    cohorts, on the unit table.
 2. ``checked``, after phase 1: a view whose cohorts, predicates, variables and endpoints all
    canonicalised, none of whose parameters' members its analysis withholds under the effective *k*
-   (``_withheld_form``, D379, D382: ``summary.distribution``'s ``count: "rows"`` and ``each``,
-   ``WITHHELD_UNDER_K`` at the member, checked first), and whose variables its analysis takes
+   (``_withheld_form``, D379, D383: ``summary.distribution``'s ``count: "rows"``, and its ``each``
+   where the descriptors bound the rows each unit reaches, ``WITHHELD_UNDER_K`` at the member,
+   checked first), and whose variables its analysis takes
    (``summary.distribution``'s: categories or numbers, ``bins`` only for numbers, under *k* a
    number's histogram edges from ``bins`` or a declared range, and under *k* one set of edges for
    a column's values across the call's views, D328, D329; ``compare.columns``': categories or
@@ -977,16 +978,30 @@ def _withheld_form(
     the member which run under ``k`` in its place (``distribution.forms_under_k``): for
     ``summary.distribution``'s ``count: "rows"``, each aggregate the column takes, with the
     ``bins`` or ``values`` it needs, ``count`` counting each unit's rows as its value, which the
-    pass protects; for its ``each``, ``some`` and ``every`` with ``values`` where the path allows
-    them (``resolve.aggregates_of``), each a predicate's split, which the pass protects one at a
-    time (D382). Leaving ``count`` or ``each`` out is none of them: the column is multi-valued,
-    so without an aggregate it is refused (``resolve._not_single``)."""
-    found = withheld_form(view.analysis, view.params, k)
-    if found is None:
+    pass protects. ``summary.distribution`` also withholds its memberships (``each``) where the
+    descriptors bound the rows each unit reaches, which they decide rather than the member's
+    path (``distribution.withheld_under_k``, D383), refused so at ``…/each``, the first withheld
+    member in the columns' order refused, offering ``some`` and ``every`` with ``values`` where the
+    path allows them (``resolve.aggregates_of``), each a question's split, which the pass protects
+    one at a time (D329). Leaving ``count`` or ``each`` out is none of them: the column is
+    multi-valued, so without an aggregate it is refused (``resolve._not_single``)."""
+    if k is None:
         return None
-    assert k is not None, "a form is withheld under a disclosure setting"
-    place, because = found
-    at = ("views", view.index, "params", *place)
+    candidates: list[tuple[tuple[str | int, ...], str]] = []
+    found = withheld_form(view.analysis, view.params, k)
+    if found is not None:
+        place, because = found
+        candidates.append((("views", view.index, "params", *place), because))
+    if isinstance(view.params, DistributionParams):
+        candidates += [
+            ((*given.at, "each"), why)
+            for given, variable in zip(view.variables, variables, strict=True)
+            if (why := distribution.withheld_under_k(variable)) is not None
+        ]
+    if not candidates:
+        return None
+    at, because = min(candidates, key=lambda candidate: _column_of(candidate[0]))
+    decision = "D383" if at[-1] == "each" else "D379"
     alternatives: list[Segment] = [
         text(form)
         for given, variable in zip(view.variables, variables, strict=True)
@@ -1002,10 +1017,19 @@ def _withheld_form(
         message=[
             text(f"Under a disclosure setting ({source}, {k}) no view of "),
             data(view.analysis.id),
-            text(f" gives this member, whatever its cohorts' sizes: {because} (§8.4, D379)"),
+            text(f" gives this member, whatever its cohorts' sizes: {because} (§8.4, {decision})"),
         ],
         alternatives=alternatives,
     )
+
+
+def _column_of(at: tuple[str | int, ...]) -> int:
+    """The index among a view's variables of the member at ``at`` that is withheld, the order in
+    which a view's withheld members are refused: each lies below ``params/columns/<j>``."""
+    column = at[4]
+    assert at[3] == "columns", "a withheld member is a column's"
+    assert isinstance(column, int), "a withheld member is a column's"
+    return column
 
 
 def _packed(
