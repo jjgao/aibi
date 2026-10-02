@@ -46,10 +46,21 @@ SourceValue = None | bool | int | float | str | date | datetime | ErrorCell
 
 Kind = Literal["text", "rows"]
 ROWS_FORMAT = "aibi.rows/1"
+FIELD_CHARACTERS = 131_072
+"""The most characters a cell holds: a field of a text file (the ``csv`` module's field limit,
+which ``parse_text`` reads with) and a typed source's string (``long_cell``)."""
 
 
 class SourceError(ValueError):
     """A raw snapshot that cannot be read: an unparseable file (§13.2) or an invalid value."""
+
+
+class TooManyCells(SourceError):  # noqa: N818 - a SourceError, named as what it says
+    """A text file with more cells than it may have, found while it is parsed."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"more than {limit} cells")
+        self.limit = limit
 
 
 @dataclass(frozen=True)
@@ -92,6 +103,16 @@ class Parsed:
 
     names: tuple[str, ...]
     rows: Sequence[Sequence[SourceValue]]
+
+
+def long_cell(rows: Sequence[Sequence[object]]) -> tuple[int, int] | None:
+    """The row and column, from 1, of the first string of ``rows`` over ``FIELD_CHARACTERS``
+    characters, if there is one: a typed source has no cell a text file could not hold."""
+    for index, row in enumerate(rows):
+        for column, value in enumerate(row):
+            if isinstance(value, str) and len(value) > FIELD_CHARACTERS:
+                return index + 1, column + 1
+    return None
 
 
 def _check_value(value: object, row: int) -> None:
@@ -148,14 +169,16 @@ def encode(source: RawSource) -> bytes:
         raise SourceError(
             "a column name holds a lone surrogate, which UTF-8 cannot carry"
         ) from None
-    lines = [header]
-    for row in source.rows:
-        lines.append("[" + ",".join(_written(value) for value in row) + "]")
-    text = "\n".join(lines) + "\n"
+    # Each line is encoded as it is written, so that the rows' text is held once more in UTF-8
+    # and never as one Python string, whose every character is as wide as its widest.
+    lines = [header.encode("utf-8")]
     try:
-        return text.encode("utf-8")
+        for row in source.rows:
+            lines.append(("[" + ",".join(_written(value) for value in row) + "]").encode("utf-8"))
     except UnicodeEncodeError:
         raise SourceError("a string holds a lone surrogate, which UTF-8 cannot carry") from None
+    lines.append(b"")
+    return b"\n".join(lines)
 
 
 _NON_FINITE = {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}
@@ -261,7 +284,7 @@ def parse(source: RawSource, settings: ParseSettings | None) -> Parsed:
     return parse_text(source.data, settings)
 
 
-def parse_text(data: bytes, settings: ParseSettings) -> Parsed:
+def parse_text(data: bytes, settings: ParseSettings, *, max_cells: int | None = None) -> Parsed:
     """A delimited text file read with its parse settings (§5.3).
 
     The bytes are decoded strictly in the named encoding. ``skip_rows`` lines (ended by CRLF, LF
@@ -272,7 +295,9 @@ def parse_text(data: bytes, settings: ParseSettings) -> Parsed:
     fields than the header, a quoted field followed by anything but a delimiter or the end of
     the record, a field over 131,072 characters, or a file with no header row cannot be read,
     and the error names the line. With ``utf-8`` a byte order mark is the start of the first
-    field, as the bytes say; ``utf-8-sig`` reads past one.
+    field, as the bytes say; ``utf-8-sig`` reads past one. Given ``max_cells``, a file whose
+    header and rows have more cells (columns times rows, at least one row) raises
+    ``TooManyCells`` as soon as the parse passes it.
     """
     delimiter, quote = settings.delimiter, settings.quote
     if delimiter == quote:
@@ -321,6 +346,8 @@ def parse_text(data: bytes, settings: ParseSettings) -> Parsed:
                 )
             else:
                 rows.append(tuple(record))
+                if max_cells is not None and len(header) * len(rows) > max_cells:
+                    raise TooManyCells(max_cells)
     except csv.Error as error:
         raise SourceError(f"line {skipped + reader.line_num}: {error}") from None
     if header is None:
@@ -332,6 +359,7 @@ def parse_text(data: bytes, settings: ParseSettings) -> Parsed:
 
 
 __all__ = [
+    "FIELD_CHARACTERS",
     "ROWS_FORMAT",
     "ErrorCell",
     "Kind",
@@ -340,10 +368,12 @@ __all__ = [
     "SourceError",
     "SourceValue",
     "TextSource",
+    "TooManyCells",
     "TypedSource",
     "canonical_string",
     "decode",
     "encode",
+    "long_cell",
     "parse",
     "parse_text",
 ]

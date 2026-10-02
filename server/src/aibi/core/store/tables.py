@@ -66,6 +66,10 @@ class ColumnReport:
     item_states: Mapping[ObservationState, int]
     unparsed: tuple[tuple[str, int], ...]
     """Tokens that did not parse and were UNKNOWN, with their counts (at most ``MAX_UNPARSED``)."""
+    unparsed_cells: int = 0
+    """How many cells did not parse, whatever their tokens."""
+    unparsed_rows: tuple[int, ...] = ()
+    """The rows (from 0) of the first cells whose token did not parse (at most 5)."""
 
 
 @dataclass(frozen=True)
@@ -113,7 +117,11 @@ def build_table(
         typer = ColumnCells(fields.datatype, fields.missing_codes, fields.list_syntax)
         cells[name] = tuple(typer.cell(row[position]) for row in parsed.rows)
         report[name] = ColumnReport(
-            dict(typer.states), dict(typer.item_states), _most_frequent(typer.unparsed)
+            dict(typer.states),
+            dict(typer.item_states),
+            _most_frequent(typer.unparsed),
+            typer.unparsed_cells,
+            tuple(typer.unparsed_rows),
         )
     for name in derive.order(columns):
         computed = tuple(derive.compute(columns[name], cells, columns))

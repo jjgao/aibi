@@ -13,8 +13,12 @@ package skeleton, tooling and CI exist, and `core/schema/` holds the models of M
 analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
 `core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases
 held in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs,
-raw snapshots, typed tables, manifests, the app DB, pins, the sweep and erasure. Nothing imports
-files or answers tool calls yet (M1, M2).
+raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure and the validation
+gate. `core/importers/` holds the file importers (M1): confinement, archives and the upload
+area, CSV/TSV, workbooks and Parquet (read in a worker process that can be killed), the
+importer's proposals, and `import_dataset`, which builds an unpublished release through the gate
+for the core's importer or a pack's. Publishing imports, curation sessions, database snapshots
+and tool calls come next (M1, M2).
 
 ## Non-negotiables
 

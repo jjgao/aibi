@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -17,7 +18,7 @@ from pydantic import JsonValue
 from aibi.core.engine import build
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.store import parquet
-from aibi.core.store.build import Layout
+from aibi.core.store.build import BuildRefused, Layout
 from aibi.core.store.erasure import Erased, erase
 from aibi.core.store.manifest import hex_of
 from aibi.core.store.redaction import MARK, Terms
@@ -246,8 +247,16 @@ def test_labels_and_the_erasure_s_own_entry_are_kept_when_they_equal_a_term(
     ]
 
 
-def _publish_shelf(store: Store, holds: tuple[tuple[str, str], ...]) -> None:
-    """Members, books, and a link table of the books each member holds, keyed by both."""
+def _publish_shelf(
+    store: Store,
+    holds: tuple[tuple[str, str], ...],
+    *,
+    members: tuple[str, ...] | None = None,
+    books: tuple[str, ...] = ("b-1", "b-2"),
+    status: str = "asserted",
+) -> None:
+    """Members (those holding a book unless ``members`` are given), ``books``, and a link table
+    of the books each member holds, keyed by both, with relationships of ``status``."""
 
     def source(name: str) -> dict[str, Any]:
         return {"kind": "sheet", "name": name, "original_name": name}
@@ -261,13 +270,14 @@ def _publish_shelf(store: Store, holds: tuple[tuple[str, str], ...]) -> None:
         build.table("holds", ["member_id", "book_id"], role="link", source=source("holds")),
         build.column("holds.member_id", "string"),
         build.column("holds.book_id", "string"),
-        build.relationship("holds", ["member_id"], "members", role="member"),
-        build.relationship("holds", ["book_id"], "books", role="book"),
+        build.relationship("holds", ["member_id"], "members", role="member", status=status),
+        build.relationship("holds", ["book_id"], "books", role="book", status=status),
     ]
-    members = sorted({member for member, _ in holds})
+    if members is None:
+        members = tuple(sorted({member for member, _ in holds}))
     sources = {
         "members": TypedSource(("member_id",), tuple((member,) for member in members)),
-        "books": TypedSource(("book_id",), (("b-1",), ("b-2",))),
+        "books": TypedSource(("book_id",), tuple((book,) for book in books)),
         "holds": TypedSource(("member_id", "book_id"), holds),
     }
     layouts = {
@@ -285,6 +295,19 @@ def test_a_link_table_s_foreign_key_to_a_row_not_the_person_s_is_no_term(store: 
     _note(store, {"book": "b-2", "member": KEY})
     _publish_shelf(store, (("m-1", "b-1"),))
     assert erase(store, "lib", "members", [KEY], "operator:ada").terms == 1
+    assert _details(store, "note") == [{"book": "b-2", "member": MARK}]
+
+
+def test_an_orphan_s_foreign_key_to_a_row_not_the_person_s_is_no_term(store: Store) -> None:
+    """The hold left behind names neither its member nor its book in the second release: its
+    member is the person, so it is theirs, but its book is no one's there."""
+    _publish_shelf(store, (("m-1", "b-1"), (KEY, "b-2")))
+    _note(store, {"book": "b-2", "member": KEY})
+    left = (("m-1", "b-1"), (KEY, "b-2"))
+    _publish_shelf(store, left, members=("m-1",), books=("b-1",), status="proposed")
+    _publish_shelf(store, (("m-1", "b-1"),))
+    erased = erase(store, "lib", "members", [KEY], "operator:ada")
+    assert (erased.withdrawn, erased.terms) == ((1, 2), 1)
     assert _details(store, "note") == [{"book": "b-2", "member": MARK}]
 
 
@@ -483,7 +506,18 @@ GONE: dict[str, Rows] = {
 """The club re-imported without m-17, their loans and renewals, and every mention of them."""
 
 
-def _publish_club(store: Store, **rows: Rows) -> None:
+def _publish_club(
+    store: Store,
+    rows: Mapping[str, Rows] | None = None,
+    *,
+    status: str = "asserted",
+    loan_ids: str = "integer",
+) -> str:
+    """The club, with ``rows`` in place of its own, and relationships of ``status``: a
+    ``proposed`` one that a row left behind breaks is dropped by the gate (D230), as a re-import
+    that no longer finds it would leave it out, so the release keeps the row without it. Loan
+    ids, and the columns that name them, have the datatype ``loan_ids``."""
+
     def source(name: str) -> dict[str, Any]:
         return {"kind": "sheet", "name": name, "original_name": name}
 
@@ -496,21 +530,29 @@ def _publish_club(store: Store, **rows: Rows) -> None:
         build.column("guests.guest_id", "string"),
         build.column("guests.host_id", "string"),
         build.table("loans", ["loan_id"], role="event", source=source("loans")),
-        build.column("loans.loan_id", "integer"),
+        build.column("loans.loan_id", loan_ids),
         build.column("loans.member_id", "string"),
         build.table("renewals", ["renewal_id"], role="event", source=source("renewals")),
         build.column("renewals.renewal_id", "integer"),
-        build.column("renewals.loan_id", "integer"),
+        build.column("renewals.loan_id", loan_ids),
         build.table("staff", ["staff_id"], source=source("staff")),
         build.column("staff.staff_id", "string"),
-        build.column("staff.handled", "integer"),
-        build.relationship("members", ["referred_by"], "members", ["member_id"], role="referrer"),
-        build.relationship("guests", ["host_id"], "members", ["member_id"], role="host"),
-        build.relationship("loans", ["member_id"], "members", role="member"),
-        build.relationship("renewals", ["loan_id"], "loans", role="loan"),
-        build.relationship("staff", ["handled"], "loans", ["loan_id"], role="handler"),
+        build.column("staff.handled", loan_ids),
+        build.relationship(
+            "members", ["referred_by"], "members", ["member_id"], role="referrer", status=status
+        ),
+        build.relationship(
+            "guests", ["host_id"], "members", ["member_id"], role="host", status=status
+        ),
+        build.relationship("loans", ["member_id"], "members", role="member", status=status),
+        build.relationship("renewals", ["loan_id"], "loans", role="loan", status=status),
+        build.relationship(
+            "staff", ["handled"], "loans", ["loan_id"], role="handler", status=status
+        ),
     ]
-    tables = {name: (columns, rows.get(name, given)) for name, (columns, given) in CLUB.items()}
+    tables = {
+        name: (columns, (rows or {}).get(name, given)) for name, (columns, given) in CLUB.items()
+    }
     sources = {name: TypedSource(columns, given) for name, (columns, given) in tables.items()}
     layouts = {
         name: Layout(name, tuple((column, column) for column in columns))
@@ -519,6 +561,7 @@ def _publish_club(store: Store, **rows: Rows) -> None:
     with store.pin() as pin:
         built = store.import_release(pin, "lib", descriptors, sources, layouts)
         store.publish("lib", built.manifest.hash, "operator:ada")
+    return built.manifest.hash
 
 
 def test_the_rows_below_the_person_are_theirs_at_every_depth_and_other_people_are_not(
@@ -529,7 +572,7 @@ def test_the_rows_below_the_person_are_theirs_at_every_depth_and_other_people_ar
         store,
         {"member": KEY, "referred": "m-3", "guest": "g-1", "loans": [2, 3, 4], "renewals": [7, 8]},
     )
-    _publish_club(store, **GONE)
+    _publish_club(store, GONE)
     assert erase(store, "lib", "members", [KEY], "operator:ada").terms == 4  # m-17, 2, 3 and 7
     assert _details(store, "note") == [
         {"guest": "g-1", "loans": [MARK, MARK, 4], "member": MARK, "referred": "m-3",
@@ -538,21 +581,38 @@ def test_the_rows_below_the_person_are_theirs_at_every_depth_and_other_people_ar
     assert _holds(store, KEY) == []
 
 
-@pytest.mark.parametrize(
-    "left",
-    [
-        {"loans": ((2, KEY), (4, "m-3"))},  # a loan of theirs, whose member row is gone
-        {"renewals": ((7, 2), (8, 4))},  # a renewal of a loan of theirs, both gone
-        {"members": (("m-1", None), ("m-3", KEY))},  # another member, who names them
-        {"guests": (("g-1", KEY),)},  # a guest of theirs
-        {"staff": (("s-1", 3),)},  # a member of staff who handled a loan of theirs, gone
-    ],
-)
-def test_a_latest_release_still_holding_a_row_below_the_person_or_naming_them_is_refused(
-    store: Store, left: dict[str, Rows]
+LEFT = [
+    ({"loans": ((2, KEY), (4, "m-3"))}, "rel:loans.member"),  # a loan of theirs
+    ({"renewals": ((7, 2), (8, 4))}, "rel:renewals.loan"),  # a renewal of a loan of theirs
+    ({"members": (("m-1", None), ("m-3", KEY))}, "rel:members.referrer"),  # a member naming them
+    ({"guests": (("g-1", KEY),)}, "rel:guests.host"),  # a guest of theirs
+    ({"staff": (("s-1", 3),)}, "rel:staff.handler"),  # staff who handled a loan of theirs
+]
+"""A re-import that leaves a row behind whose parent is gone, and the relationship it breaks."""
+
+
+@pytest.mark.parametrize(("left", "broken"), LEFT)
+def test_a_declared_relationship_never_leaves_a_row_below_the_person_in_a_release(
+    store: Store, left: dict[str, Rows], broken: str
 ) -> None:
     _publish_club(store)
-    _publish_club(store, **{**GONE, **left})
+    with pytest.raises(BuildRefused) as refused:
+        _publish_club(store, {**GONE, **left})
+    assert [refusal.code for refusal in refused.value.refusals] == ["DANGLING_REFERENCE"]
+    assert [label.label for label in store.labels("lib")] == [1]
+
+
+@pytest.mark.parametrize(("left", "broken"), LEFT)
+def test_a_latest_release_still_holding_a_row_below_the_person_or_naming_them_is_refused(
+    store: Store, left: dict[str, Rows], broken: str
+) -> None:
+    """The relationship the row left behind breaks is dropped from the latest release, so only
+    the earlier release's relationship finds the row."""
+    _publish_club(store)
+    latest = _publish_club(store, {**GONE, **left}, status="proposed")
+    relationships = [relationship.id for relationship in store.load(latest).relationships]
+    assert broken not in relationships
+    assert len(relationships) == 4
     with pytest.raises(StoreRefused) as refused:
         erase(store, "lib", "members", [KEY], "operator:ada")
     assert refused.value.refusal.code == "ERASURE_BLOCKED"
@@ -561,34 +621,42 @@ def test_a_latest_release_still_holding_a_row_below_the_person_or_naming_them_is
 
 def test_an_earlier_release_holding_only_rows_below_the_person_holds_them(store: Store) -> None:
     _publish_club(store)
-    _publish_club(store, **{**GONE, "loans": CLUB["loans"][1], "renewals": CLUB["renewals"][1]})
-    _publish_club(store, **GONE)
+    kept = {"loans": CLUB["loans"][1], "renewals": CLUB["renewals"][1]}
+    second = _publish_club(store, {**GONE, **kept}, status="proposed")
+    assert "rel:loans.member" not in [r.id for r in store.load(second).relationships]
+    _publish_club(store, GONE)
     erased = erase(store, "lib", "members", [KEY], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1, 2), 4)
     assert _holds(store, KEY) == []
 
 
-def test_releases_holding_only_rows_below_the_person_hold_them(store: Store) -> None:
-    _publish_club(store, **{**GONE, "loans": CLUB["loans"][1], "renewals": CLUB["renewals"][1]})
-    _publish_club(store, **GONE)
-    erased = erase(store, "lib", "members", [KEY], "operator:ada")
-    assert (erased.withdrawn, erased.terms) == ((1,), 4)
-    assert _holds(store, KEY) == []
+def test_rows_below_a_person_no_release_holds_are_no_one_s(store: Store) -> None:
+    """With the person's row in no release, a relationship to it dangles in every release: the
+    gate refuses a declared one and drops a proposed one, so no release says whose the loans
+    are, and the key is held by none."""
+    kept = {"loans": CLUB["loans"][1], "renewals": CLUB["renewals"][1]}
+    with pytest.raises(BuildRefused) as refused:
+        _publish_club(store, {**GONE, **kept})
+    assert [refusal.code for refusal in refused.value.refusals] == ["DANGLING_REFERENCE"]
+    _publish_club(store, {**GONE, **kept}, status="proposed")
+    with pytest.raises(StoreRefused) as unheld:
+        erase(store, "lib", "members", [KEY], "operator:ada")
+    assert unheld.value.refusal.code == "INVALID_KEY"
 
 
 def test_other_people_s_rows_that_name_the_person_hold_them_but_are_not_theirs(
     store: Store,
 ) -> None:
     _publish_club(store)
-    _publish_club(store, **{**GONE, "staff": CLUB["staff"][1]})  # s-1 names the loan 3, gone
-    _publish_club(store, **GONE)
+    _publish_club(store, {**GONE, "staff": CLUB["staff"][1]}, status="proposed")  # loan 3 gone
+    _publish_club(store, GONE)
     erased = erase(store, "lib", "members", [KEY], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1, 2), 4)  # s-1 is no term
 
 
 def test_a_release_only_naming_a_person_no_release_holds_holds_them(store: Store) -> None:
-    _publish_club(store, **{**GONE, "guests": CLUB["guests"][1]})  # g-1, whose host is m-17
-    _publish_club(store, **GONE)
+    _publish_club(store, {**GONE, "guests": CLUB["guests"][1]}, status="proposed")  # g-1's host
+    _publish_club(store, GONE)
     erased = erase(store, "lib", "members", [KEY], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1,), 1)  # g-1 is no term
 
@@ -605,7 +673,7 @@ RENUMBERED: dict[str, Rows] = {
 def test_a_key_reused_by_a_re_import_names_another_person_s_row_there(store: Store) -> None:
     _publish_club(store)
     _note(store, {"renewals": [7, 9]})
-    _publish_club(store, **RENUMBERED)
+    _publish_club(store, RENUMBERED)
     erased = erase(store, "lib", "members", [KEY], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1,), 4)  # m-17, 2, 3 and 7
     assert _details(store, "note") == [{"renewals": [MARK, 9]}]
@@ -614,10 +682,10 @@ def test_a_key_reused_by_a_re_import_names_another_person_s_row_there(store: Sto
 def test_a_release_that_never_held_the_person_is_not_withdrawn_for_a_key_it_reuses(
     store: Store,
 ) -> None:
-    _publish_club(store, **RENUMBERED)
+    _publish_club(store, RENUMBERED)
     _publish_club(store)
     _note(store, {"renewals": [7, 9]})
-    _publish_club(store, **GONE)
+    _publish_club(store, GONE)
     assert erase(store, "lib", "members", [KEY], "operator:ada").withdrawn == (2,)
     assert [label.withdrawn for label in store.labels("lib")] == [False, True, False]
     assert _details(store, "note") == [{"renewals": [MARK, 9]}]
@@ -627,17 +695,34 @@ def test_a_row_left_dangling_on_a_row_of_theirs_in_a_later_release_is_theirs(
     store: Store,
 ) -> None:
     _publish_club(store)
-    _publish_club(store, **{**GONE, "renewals": ((8, 4), (9, 2))})  # 9 renews loan 2, gone
+    renewed = {**GONE, "renewals": ((8, 4), (9, 2))}  # 9 renews loan 2, gone
+    _publish_club(store, renewed, status="proposed")
     _note(store, {"renewals": [7, 8, 9]})
-    _publish_club(store, **GONE)
+    _publish_club(store, GONE)
     erased = erase(store, "lib", "members", [KEY], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1, 2), 5)  # m-17, 2, 3, 7 and 9
     assert _details(store, "note") == [{"renewals": [MARK, 8, MARK]}]
 
 
-def _publish_branches(store: Store, members: Rows, loans: Rows) -> None:
+def test_a_row_left_dangling_is_theirs_whatever_datatype_a_re_import_gives_its_key(
+    store: Store,
+) -> None:
+    """Loan 2 is the integer 2 in the first release and the string ``2`` in the second, whose
+    renewal 7 names it: the keys are compared by their canonical strings."""
+    _publish_club(store)
+    renewed = {**GONE, "renewals": ((7, "2"), (8, "4"))}
+    _publish_club(store, renewed, status="proposed", loan_ids="string")
+    _publish_club(store, GONE)
+    erased = erase(store, "lib", "members", [KEY], "operator:ada")
+    assert (erased.withdrawn, erased.terms) == ((1, 2), 4)  # m-17, 2, 3 and 7
+
+
+def _publish_branches(
+    store: Store, members: Rows, loans: Rows, *, status: str = "asserted"
+) -> None:
     """Members, keyed by branch and number, with a phone number (an identifier), and their loans,
-    whose foreign key names the key's columns the other way round."""
+    whose foreign key names the key's columns the other way round, by a relationship of
+    ``status`` (a ``proposed`` one that a loan left behind breaks is dropped, D230)."""
 
     def source(name: str) -> dict[str, Any]:
         return {"kind": "sheet", "name": name, "original_name": name}
@@ -653,7 +738,12 @@ def _publish_branches(store: Store, members: Rows, loans: Rows) -> None:
         build.column("loans.number", "integer"),
         build.column("loans.branch", "string"),
         build.relationship(
-            "loans", ["number", "branch"], "members", ["number", "branch"], role="member"
+            "loans",
+            ["number", "branch"],
+            "members",
+            ["number", "branch"],
+            role="member",
+            status=status,
         ),
     ]
     tables = {
@@ -676,7 +766,7 @@ BRANCH_MEMBERS: Rows = (("n-1", 17, 5550123), ("n-1", 3, 5))
 def test_the_person_s_own_key_is_matched_in_the_order_a_relationship_names_its_columns(
     store: Store,
 ) -> None:
-    _publish_branches(store, BRANCH_MEMBERS[1:], ((5, 17, "n-1"), (6, 3, "n-1")))
+    _publish_branches(store, BRANCH_MEMBERS[1:], ((5, 17, "n-1"), (6, 3, "n-1")), status="proposed")
     _publish_branches(store, BRANCH_MEMBERS[1:], ((6, 3, "n-1"),))
     erased = erase(store, "lib", "members", ["n-1", "17"], "operator:ada")
     assert (erased.withdrawn, erased.terms) == ((1,), 3)  # n-1, 17 and the loan 5
@@ -686,7 +776,7 @@ def test_a_latest_release_holding_an_orphan_named_by_the_person_s_key_is_refused
     store: Store,
 ) -> None:
     _publish_branches(store, BRANCH_MEMBERS, ((5, 17, "n-1"),))
-    _publish_branches(store, BRANCH_MEMBERS[1:], ((5, 17, "n-1"),))
+    _publish_branches(store, BRANCH_MEMBERS[1:], ((5, 17, "n-1"),), status="proposed")
     with pytest.raises(StoreRefused) as refused:
         erase(store, "lib", "members", ["n-1", 17], "operator:ada")
     assert refused.value.refusal.code == "ERASURE_BLOCKED"

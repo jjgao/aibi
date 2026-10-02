@@ -1,0 +1,7 @@
+treatment_id,patient_id,drug,outcome
+T001,P001,Tamiflu,Recovered
+T002,P002,Rest,Recovered
+T003,P001,Tylenol,Improved
+T004,P003,Tamiflu,Failed
+T005,P005,Paxlovid,Recovered
+T006,P004,Claritin,Recovered

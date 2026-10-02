@@ -7,12 +7,19 @@ cannot remove rows (#10). ``erase`` does the rest, for the parts of the app DB t
 datatypes, and the rows below it: those whose foreign key holds the key of a row of theirs that
 the same release holds, through every relationship except those into the person's own table or
 into a table whose role is ``entity`` (other people: a member another referred, say), and so on
-down. A key of a row of theirs in another release counts only for an orphan: a row whose foreign
-key names no row of this release (a loan of the person's, left behind when a re-import dropped
-the member). So a re-import that numbers its rows afresh, and gives loan 2 to someone else, does
-not make that loan the person's. The person's own key is matched in every release. A release
-holds the person when it holds one of their rows, or a row whose foreign key names one of them,
-in the same way, through any relationship, since that row names the person too.
+down. The relationships are those that any published release declares, the same tables and
+columns counting once, each followed in every release whose child table has its columns: the
+gate refuses a dangling foreign key under a declared relationship (D230) but drops a proposed
+one, and the importer proposes none that no longer holds, so a re-import may keep a loan of the
+person's without the relationship that makes it theirs. A key of a row of theirs in another
+release counts only for an orphan: a row whose foreign key names no row of this release (that
+loan, left behind when a re-import dropped the member). So a re-import that numbers its rows
+afresh, and gives loan 2 to someone else, does not make that loan the person's. Keys are
+compared across releases by their values' canonical strings (§12.2), since a re-import may type
+a key column otherwise (loan 2 as the integer 2, then as the string ``2``). The person's own
+key is matched in every release. A release holds the person when it holds one of their rows, or
+a row whose foreign key names one of them, in the same way, through any relationship, since
+that row names the person too.
 
 1. Under the store's lock, so that no session opens and no release is withdrawn between its
    checks and its withdrawals, it checks that no curation session is open on the dataset, since
@@ -61,7 +68,6 @@ from dataclasses import dataclass, field
 from pydantic import JsonValue
 
 from aibi.core.engine.data import PRESENT, KeyPart, Release, key_part
-from aibi.core.schema.descriptors import RelationshipDescriptor
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.store.blobs import MissingBlobError
 from aibi.core.store.cells import ColumnCells
@@ -70,7 +76,13 @@ from aibi.core.store.sources import SourceValue, canonical_string
 from aibi.core.store.store import Store, StoreRefused
 
 Key = tuple[KeyPart, ...]
+Canonical = tuple[str, ...]
+"""A key as its values' canonical strings, compared across releases."""
 Row = tuple[str, int]
+
+
+def _canonical(key: Key) -> Canonical:
+    return tuple(canonical_string(value) or "" for _, value in key)
 
 
 @dataclass(frozen=True)
@@ -232,6 +244,76 @@ def _delete_uploads(store: Store, dataset: str, uploads: Callable[[str], None] |
         store.db.uploads_deleted(dataset)
 
 
+@dataclass(frozen=True, order=True)
+class _Link:
+    """A relationship's tables and columns, as some published release declares it: the same
+    relationship whatever its id, and whichever release declares it."""
+
+    child: str
+    child_columns: tuple[str, ...]
+    parent: str
+    parent_columns: tuple[str, ...]
+
+    def applies(self, release: Release) -> bool:
+        """Whether the release's child table has the relationship's columns."""
+        return release.table(self.child) is not None and set(self.child_columns) <= set(
+            release.columns(self.child)
+        )
+
+
+def _links(releases: Mapping[str, Release]) -> tuple[_Link, ...]:
+    """The relationships every published release declares, each once, its column pairs in
+    order of the child's columns."""
+    found: set[_Link] = set()
+    for release in releases.values():
+        for relationship in release.relationships:
+            fields = relationship.fields
+            pairs = sorted(zip(fields.child_columns, fields.parent_columns, strict=True))
+            found.add(
+                _Link(
+                    fields.child_table,
+                    tuple(child for child, _ in pairs),
+                    fields.parent_table,
+                    tuple(parent for _, parent in pairs),
+                )
+            )
+    return tuple(sorted(found))
+
+
+@dataclass(frozen=True)
+class _Index:
+    """One relationship's rows in one release: each child's parent (``None`` for an orphan or a
+    null key), each parent's children, and the orphans by their foreign key, canonical."""
+
+    parent: tuple[int | None, ...]
+    children: Mapping[int, tuple[int, ...]]
+    orphans: Mapping[Canonical, tuple[int, ...]]
+
+
+def _index(release: Release, link: _Link) -> _Index:
+    parents: dict[Key, int] = {}
+    for row in range(len(release.rows(link.parent))):
+        key = release.key(link.parent, row, link.parent_columns)
+        if key is not None:
+            parents.setdefault(key, row)
+    found: list[int | None] = []
+    children: dict[int, list[int]] = {}
+    orphans: dict[Canonical, list[int]] = {}
+    for row in range(len(release.rows(link.child))):
+        key = release.key(link.child, row, link.child_columns)
+        parent = None if key is None else parents.get(key)
+        found.append(parent)
+        if parent is not None:
+            children.setdefault(parent, []).append(row)
+        elif key is not None:
+            orphans.setdefault(_canonical(key), []).append(row)
+    return _Index(
+        tuple(found),
+        {p: tuple(rows) for p, rows in children.items()},
+        {k: tuple(rows) for k, rows in orphans.items()},
+    )
+
+
 @dataclass
 class _Person:
     """The person's rows in each release (see the module's docstring)."""
@@ -241,19 +323,23 @@ class _Person:
     given: Sequence[SourceValue]
     keys: dict[str, Key | None] = field(init=False)
     """The key, typed by each release's datatypes; ``None`` where it is not of them."""
+    links: dict[str, dict[_Link, _Index]] = field(init=False)
+    """By release: the relationships of every published release whose child table it has with
+    their columns, each with its rows there."""
     rows: dict[str, set[Row]] = field(init=False)
     """By release: the person's rows (the person's row being the one in ``table``)."""
-    known: dict[str, set[Key]] = field(init=False)
+    known: dict[_Link, set[Canonical]] = field(init=False)
     """By relationship: the keys its parent columns have in the person's rows, in any release."""
-    orphans: dict[str, dict[str, dict[Key, list[int]]]] = field(init=False)
-    """By release and relationship: the child rows whose foreign key names no row of the release,
-    by that key."""
 
     def __post_init__(self) -> None:
         self.keys = {
             m: _typed(release, self.table, self.given) for m, release in self.releases.items()
         }
-        self.orphans = {m: _orphans(release) for m, release in self.releases.items()}
+        every = _links(self.releases)
+        self.links = {
+            m: {link: _index(release, link) for link in every if link.applies(release)}
+            for m, release in self.releases.items()
+        }
         self.rows = {manifest: set() for manifest in self.releases}
         self.known = {}
         found: list[tuple[str, Row]] = []
@@ -266,10 +352,10 @@ class _Person:
                 for row in range(len(release.rows(self.table)))
                 if release.key(self.table, row, columns) == key
             )
-            for relationship in release.relationships:
-                own = self._own_key(manifest, relationship)
-                if own is not None and self._descends(release, relationship):
-                    found.extend(self._orphaned(manifest, relationship, own))
+            for link in self.links[manifest]:
+                own = self._own_key(manifest, link)
+                if own is not None and self._descends(release, link):
+                    found.extend(self._orphaned(manifest, link, own))
         while found:
             manifest, row = found.pop()
             if row not in self.rows[manifest]:
@@ -281,38 +367,32 @@ class _Person:
         orphans in every release whose foreign key holds one of its keys that is new."""
         release, (current, index) = self.releases[manifest], row
         reached: list[tuple[str, Row]] = []
-        for relationship in release.relationships:
-            fields = relationship.fields
-            if fields.parent_table != current:
+        for link, rows in self.links[manifest].items():
+            if link.parent != current:
                 continue
-            if self._descends(release, relationship):
+            if self._descends(release, link):
                 reached.extend(
-                    (manifest, (fields.child_table, child))
-                    for child in release.children(relationship.id, index)
+                    (manifest, (link.child, child)) for child in rows.children.get(index, ())
                 )
-            value = release.key(current, index, fields.parent_columns)
-            known = self.known.setdefault(relationship.id, set())
+            typed = release.key(current, index, link.parent_columns)
+            known = self.known.setdefault(link, set())
+            value = None if typed is None else _canonical(typed)
             if value is None or value in known:
                 continue
             known.add(value)
             for other, elsewhere in self.releases.items():
-                same = elsewhere.relationship(relationship.id)
-                if same is not None and self._descends(elsewhere, same):
-                    reached.extend(self._orphaned(other, same, value))
+                if link in self.links[other] and self._descends(elsewhere, link):
+                    reached.extend(self._orphaned(other, link, value))
         return reached
 
-    def _orphaned(
-        self, manifest: str, relationship: RelationshipDescriptor, value: Key
-    ) -> list[tuple[str, Row]]:
-        rows = self.orphans[manifest].get(relationship.id, {}).get(value, ())
-        return [(manifest, (relationship.fields.child_table, row)) for row in rows]
+    def _orphaned(self, manifest: str, link: _Link, value: Canonical) -> list[tuple[str, Row]]:
+        rows = self.links[manifest][link].orphans.get(value, ())
+        return [(manifest, (link.child, row)) for row in rows]
 
-    def _named(self, manifest: str, relationship: RelationshipDescriptor, value: Key) -> bool:
+    def _named(self, manifest: str, link: _Link, value: Canonical) -> bool:
         """Whether an orphan's foreign key through the relationship names the person: a key of
         the person's rows in any release, or the person's own key."""
-        return value in self.known.get(relationship.id, ()) or value == self._own_key(
-            manifest, relationship
-        )
+        return value in self.known.get(link, ()) or value == self._own_key(manifest, link)
 
     def holds(self, manifest: str) -> bool:
         """Whether the release holds one of the person's rows, or a row whose foreign key names
@@ -320,40 +400,43 @@ class _Person:
         of a row of theirs, which is a row of theirs or names one, or an orphan."""
         if self.rows[manifest]:
             return True
-        release = self.releases[manifest]
-        for relationship in release.relationships:
-            orphans = self.orphans[manifest].get(relationship.id, {})
-            if any(self._named(manifest, relationship, value) for value in orphans):
+        for link, rows in self.links[manifest].items():
+            if any(self._named(manifest, link, value) for value in rows.orphans):
                 return True
         return False
 
-    def _names(self, manifest: str, relationship: RelationshipDescriptor, row: int) -> bool:
+    def _names(self, manifest: str, link: _Link, row: int) -> bool:
         """Whether a row's foreign key through the relationship names one of the person's rows:
         its parent in the release, or, for an orphan, a key of theirs."""
-        release, fields = self.releases[manifest], relationship.fields
-        parent = release.parent(relationship.id, row)
+        release = self.releases[manifest]
+        parent = self.links[manifest][link].parent[row]
         if parent is not None:
-            return (fields.parent_table, parent) in self.rows[manifest]
-        value = release.key(fields.child_table, row, fields.child_columns)
-        return value is not None and self._named(manifest, relationship, value)
+            return (link.parent, parent) in self.rows[manifest]
+        value = release.key(link.child, row, link.child_columns)
+        return value is not None and self._named(manifest, link, _canonical(value))
 
-    def _own_key(self, manifest: str, relationship: RelationshipDescriptor) -> Key | None:
+    def _own_key(self, manifest: str, link: _Link) -> Canonical | None:
         """The person's key as a foreign key through the relationship holds it, if the
-        relationship is into the person's table: its columns in the relationship's order, since
-        a relationship leads to its parent's key in any order (§5.6)."""
-        release, fields, key = self.releases[manifest], relationship.fields, self.keys[manifest]
+        relationship is into the person's key in this release: its columns in the relationship's
+        order, since a relationship leads to its parent's key in any order (§5.6)."""
+        release, key = self.releases[manifest], self.keys[manifest]
         columns = release.primary_key(self.table)
-        if key is None or columns is None or fields.parent_table != self.table:
+        if key is None or columns is None or link.parent != self.table:
+            return None
+        if sorted(columns) != sorted(link.parent_columns):
             return None
         parts = dict(zip(columns, key, strict=True))
-        return tuple(parts[column] for column in fields.parent_columns)
+        return _canonical(tuple(parts[column] for column in link.parent_columns))
 
-    def _descends(self, release: Release, relationship: RelationshipDescriptor) -> bool:
+    def _descends(self, release: Release, link: _Link) -> bool:
         """Whether the person's rows go on through the relationship: not into the person's own
         table, nor into another table of things (other people)."""
-        child = relationship.fields.child_table
-        descriptor = release.table(child)
-        return child != self.table and descriptor is not None and descriptor.fields.role != "entity"
+        descriptor = release.table(link.child)
+        return (
+            link.child != self.table
+            and descriptor is not None
+            and descriptor.fields.role != "entity"
+        )
 
     def terms(self) -> Terms:
         person: set[str] = set(self.key_terms())
@@ -381,10 +464,9 @@ class _Person:
             descriptor = release.column(table, column)
             if descriptor is not None and descriptor.fields.identifier:
                 columns.add(column)
-        for relationship in release.relationships:
-            fields = relationship.fields
-            if fields.child_table == table and not self._names(manifest, relationship, row):
-                columns.difference_update(fields.child_columns)
+        for link in self.links[manifest]:
+            if link.child == table and not self._names(manifest, link, row):
+                columns.difference_update(link.child_columns)
         found: set[str] = set()
         for column in columns:
             cell = release.rows(table).cell(row, column)
@@ -425,22 +507,6 @@ class _Person:
         if store.db.upload_pending(dataset):
             reason += " and uploads, to delete the upload area still to delete"
         return reason
-
-
-def _orphans(release: Release) -> dict[str, dict[Key, list[int]]]:
-    """By relationship: the child rows whose foreign key names no row of the release, by that
-    key (a null key names none)."""
-    found: dict[str, dict[Key, list[int]]] = {}
-    for relationship in release.relationships:
-        fields = relationship.fields
-        by_key: dict[Key, list[int]] = {}
-        for row in range(len(release.rows(fields.child_table))):
-            if release.parent(relationship.id, row) is None:
-                value = release.key(fields.child_table, row, fields.child_columns)
-                if value is not None:
-                    by_key.setdefault(value, []).append(row)
-        found[relationship.id] = by_key
-    return found
 
 
 def _typed(release: Release, table: str, key: Sequence[SourceValue]) -> Key | None:

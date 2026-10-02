@@ -1767,7 +1767,19 @@
         "COLUMNS_CHANGED",
         "UNKNOWN_RELEASE",
         "RELEASE_WITHDRAWN",
-        "ERASURE_BLOCKED"
+        "ERASURE_BLOCKED",
+        "KEY_NULL",
+        "KEY_NOT_UNIQUE",
+        "CARDINALITY_VIOLATED",
+        "DANGLING_REFERENCE",
+        "COVERAGE_NULL",
+        "COVERAGE_UNKNOWN",
+        "OUTSIDE_RECORD_FILTER",
+        "NOT_APPLICABLE_IN_FILTER",
+        "PATH_NOT_CONFINED",
+        "ARCHIVE_REFUSED",
+        "UNSUPPORTED_FORMAT",
+        "EMPTY_SOURCE"
       ],
       "title": "RefusalCode",
       "type": "string"

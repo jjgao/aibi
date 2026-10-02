@@ -1,4 +1,4 @@
-"""Release manifests (SPEC §12.2, D213).
+"""Release manifests (SPEC §12.2, D213, D231).
 
 A release is a manifest: its dataset and its blobs by role and hash. Format 1:
 
@@ -11,7 +11,8 @@ A release is a manifest: its dataset and its blobs by role and hash. Format 1:
   "tables": [{"id": "<table>", "hash": "<hex>", "source": "<source>",
               "columns": [{"id": "<column>", "name": "<original name>"}]}],
   "statistics": "<hex>",           // optional: computed when the release is built (§5.2)
-  "tombstones": "<hex>"            // optional: removed inferred fields (§12.3)
+  "tombstones": "<hex>",           // optional: removed inferred fields (§12.3)
+  "report": "<hex>"                // optional: the import report (D231)
 }
 ```
 
@@ -72,6 +73,8 @@ class Manifest(_Model):
     tables: tuple[TableEntry, ...] = Field(default=())
     statistics: Hex | None = None
     tombstones: Hex | None = None
+    report: Hex | None = None
+    """The import report: notes for the curation queue, never cell values (D231)."""
 
     @model_validator(mode="after")
     def _ordered(self) -> Self:
@@ -98,7 +101,9 @@ class Manifest(_Model):
     def blobs(self) -> frozenset[str]:
         """Every blob the release references, the manifest itself left out."""
         found = {self.descriptors, *(s.hash for s in self.sources), *(t.hash for t in self.tables)}
-        found.update(blob for blob in (self.statistics, self.tombstones) if blob is not None)
+        found.update(
+            blob for blob in (self.statistics, self.tombstones, self.report) if blob is not None
+        )
         return frozenset(found)
 
     def table(self, table: str) -> TableEntry | None:
