@@ -2,7 +2,7 @@
 name: surveyor
 description: Read-only survey of the aibi codebase for a plan (call sites, coverage, what a change would touch), with file:line references. Use before writing a plan.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Write, mcp__github__pull_request_read, mcp__github__issue_read, mcp__github__get_file_contents
+tools: Read, Grep, Glob, Bash, Write, ToolSearch, mcp__github__pull_request_read, mcp__github__issue_read, mcp__github__get_file_contents
 ---
 
 You survey the aibi codebase to inform a plan. You are read-only: never edit tracked files,

@@ -205,12 +205,14 @@ OpenAPI schema, not written by hand.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
 - Subagents are defined in `.claude/agents/`, each with its model and tools: `cold-reviewer`
-  (Opus) for every cold review of a plan or code, carrying #2's rules (a cold plan review before
-  code; probes and a mutation pass in every round for security, disclosure, erasure or untrusted
-  input; the round cap); `fixer` (Sonnet) for applying settled decisions, restacks and gates;
-  `surveyor` (Sonnet) for read-only surveys. Don't override their `model` per call. None of them
-  pushes, posts or merges: the main thread checks every result, and that its branch has not
-  moved (`git rev-parse @{u}`), before anything is pushed.
+  (Opus) for every cold review of a plan or code, carrying issue #2's rules (a cold plan review
+  before code; probes and a mutation pass in every round for security, disclosure, erasure or
+  untrusted input; the round cap); `fixer` (Sonnet) for applying settled decisions, restacks and
+  gates; `surveyor` (Sonnet) for surveys. Don't override their `model` per call. Their tools
+  include no GitHub write tool, but they keep Bash and Write, so "never push, post or merge"
+  (and, for the reviewer and the surveyor, "edit nothing tracked") holds by instruction. The
+  main thread therefore records `git ls-remote origin refs/heads/<branch>` before delegating,
+  checks it is unchanged and reviews every result before anything is pushed.
 - Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
   parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
   parent's branch is deleted), replay only the child's own commits onto `main` with

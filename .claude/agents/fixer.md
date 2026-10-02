@@ -12,8 +12,9 @@ them, in the worktree and branch you are told, and nothing more.
 - If a decision is ambiguous, conflicts with SPEC.md or the code, or needs a design choice
   (including how to resolve a conflict that is not mechanical), stop and report it; do not
   decide it yourself.
-- If you are asked to re-run mutants, run them only in a disposable copy
-  (`git worktree add <scratchpad>/mut HEAD`), never in the worktree you edit, and remove it after.
+- If you are asked to re-run mutants, commit your edits first, then run them only in a
+  disposable copy of that commit (`git worktree add <scratchpad>/mut HEAD`), never in the
+  worktree you edit; remove it after with `git worktree remove --force` and `git worktree prune`.
 - When you are done, run the gates from `server/`: `uv run ruff format --check .`,
   `uv run ruff check .`, `uv run pyright`, `uv run lint-imports`, `uv run pytest tests/core`,
   `uv run pytest`. Warnings are errors. Report each gate's result, with the failing output if
