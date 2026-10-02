@@ -402,7 +402,7 @@ def test_at_most_reader_workers_run_at_once_and_an_import_waits_for_one() -> Non
     assert refusal.limit is not None
     assert (refusal.limit.name, refusal.limit.max) == ("reader_workers", 1)
     assert refusal.message == [
-        text("1 import was reading workbooks or Parquet files for more than 6 seconds")
+        text("1 import was reading workbooks, Parquet files or databases for more than 6 seconds")
     ]
     with Reader(one) as again:  # every worker was let go, the one refused included
         again.start()

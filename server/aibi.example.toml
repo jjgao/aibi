@@ -60,13 +60,22 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 [disclosure]
 # min_cell_count_floor = 5
 
-# Named database connections: credentials never go in this file.
+# Named database connections, which `aibi import <dataset> <name> --connection` snapshots:
+# credentials never go in this file.
 # [databases.sales]
-# kind = "postgres"
-# url_env = "AIBI_DB_SALES_URL"    # the environment variable that holds the URL
+# kind = "postgres"                # or "mysql"
+# url_env = "AIBI_DB_SALES_URL"    # the environment variable that holds the URL, read at each
+#                                  # import: postgresql://user:password@host[:port]/database,
+#                                  # percent-encoded, one host (a DNS name, a dotted IPv4
+#                                  # address or a [bracketed] IPv6 one), and only TLS and timeout
+#                                  # parameters (?sslmode=require…; MySQL: ?ssl_mode=…, ?socket=…,
+#                                  # which a MySQL host of localhost needs; no ? in any value)
+# schema = "public"                # Postgres and DuckDB only; MySQL reads the URL's database
 # [databases.archive]
-# kind = "sqlite"
-# path = "imports/archive.sqlite"  # inside an import directory
+# kind = "sqlite"                  # or "duckdb"
+# path = "imports/archive.sqlite"  # inside an import directory, a file that neither its group
+#                                  # nor others can write, in a directory that neither can write
+#                                  # (unless it has the sticky bit)
 
 # Model cards (SPEC §5.9):
 # [[models]]

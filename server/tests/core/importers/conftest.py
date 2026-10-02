@@ -54,6 +54,7 @@ from aibi.core.schema.pack_api import (
     ConfinedPath,
     ImportOptions,
     ImportResult,
+    ImportSource,
     Pack,
     PackManifest,
     PackRegistry,
@@ -665,7 +666,7 @@ class BirdImporter:
 
 
 class BirdValidator:
-    def validate_source(self, source: ConfinedPath, result: ImportResult) -> Sequence[Refusal]:
+    def validate_source(self, source: ImportSource, result: ImportResult) -> Sequence[Refusal]:
         counts = result.sources["counts"]
         assert isinstance(counts, TypedSource)
         negative = sum(1 for row in counts.rows if isinstance(row[2], int) and row[2] < 0)

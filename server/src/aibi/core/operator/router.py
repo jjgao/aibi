@@ -31,8 +31,10 @@ Uploads, imports, re-imports and erasures each take one of ``concurrent_imports`
 more is refused at once, never queued (``LIMIT_EXCEEDED`` naming ``concurrent_imports``, D266):
 each holds a worker thread while it runs, which the reads and the other operations share. An
 import's source is an absolute path on the server, confined by a fresh ``Confinement`` of the
-upload area and the import directories (D232), or an upload of the same dataset; its limits and
-its ``at`` are the server's. An upload declares its length in one ``Content-Length``, without
+upload area and the import directories (D232), an upload of the same dataset, or a named
+connection of the configuration (``INVALID_VALUE``, listing the connections, for a name it does
+not have), resolved when the import runs (``databases.resolve``, D305); its limits and its ``at``
+are the server's. An upload declares its length in one ``Content-Length``, without
 ``Transfer-Encoding`` (``LENGTH_REQUIRED``, 411, otherwise), and streams its body into the
 upload area (D234), never holding it in memory; a body that sends nothing for
 ``upload_idle_seconds`` is refused (``LIMIT_EXCEEDED`` naming ``upload_idle_seconds``, 408), and
@@ -43,7 +45,7 @@ for its gaps alone, and a trickle cannot hold a place for longer than its deadli
 """
 
 import threading
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
@@ -60,6 +62,8 @@ from starlette.responses import Response
 
 from aibi.core.bodies import Deadlines, declared_length
 from aibi.core.importers.confine import Confinement
+from aibi.core.importers.databases import Connection, Resolved, resolve
+from aibi.core.importers.errors import refused
 from aibi.core.importers.run import Published, import_dataset, reimport_dataset
 from aibi.core.importers.uploads import UploadArea
 from aibi.core.operator.auth import CSRF_KEY, OPERATOR_KEY, OPERATOR_PREFIX, valid_name
@@ -74,6 +78,7 @@ from aibi.core.schema.limits import (
 from aibi.core.schema.loading import RequestResult, load_request
 from aibi.core.schema.operator import (
     ChangeNote,
+    ConnectionSource,
     Csrf,
     Datasets,
     DatasetState,
@@ -107,7 +112,7 @@ from aibi.core.schema.operator import (
     WithdrawRequest,
     stored_secrets,
 )
-from aibi.core.schema.output import Output
+from aibi.core.schema.output import Output, data
 from aibi.core.schema.pack_api import ConfinedPath, ImportNote, ImportOptions, PackRegistry
 from aibi.core.schema.refusals import Limit, RefusalCode
 from aibi.core.store import sessions
@@ -159,6 +164,8 @@ class Services:
     deadline of a body that does not declare its length."""
     token_digest: bytes | None = field(default=None, repr=False)
     """The configured curator token's SHA-256, which stored text may not hold anywhere (D265)."""
+    connections: Mapping[str, Connection] = field(default_factory=dict[str, Connection])
+    """The named database connections of the configuration, by name (D253, D305)."""
 
 
 def require_operator(request: Request) -> str:
@@ -414,10 +421,22 @@ def operator_router(services: Services) -> APIRouter:
             await stream.aclose()
         return _json(Uploaded(dataset=dataset, upload=stored.name, bytes=size))
 
-    def source_of(confinement: Confinement, dataset: str, request: ImportRequest) -> ConfinedPath:
+    def source_of(
+        confinement: Confinement, dataset: str, request: ImportRequest
+    ) -> ConfinedPath | Resolved:
         given = request.source
         if isinstance(given, PathSource):
             return confinement.confine(given.path)
+        if isinstance(given, ConnectionSource):
+            connection = services.connections.get(given.connection)
+            if connection is None:
+                raise refused(
+                    RefusalCode.INVALID_VALUE,
+                    "The server has no connection named ",
+                    data(given.connection),
+                    alternatives=sorted(services.connections),
+                )
+            return resolve(connection, confinement)
         digest, _, extension = given.upload.partition(".")
         return confinement.confine(services.uploads.path(dataset, digest, extension))
 

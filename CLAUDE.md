@@ -16,6 +16,8 @@ in memory and evaluates them by the rules of §6. `core/store/` holds the store 
 snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure and the validation gate.
 `core/importers/` holds the file importers (M1): confinement, archives and the upload area, CSV/TSV,
 workbooks and Parquet (read in a worker process that can be killed), the importer's proposals,
+database snapshots of named connections (`databases.py`, read in that worker by `snapshot.py`:
+SQLite with `sqlite3`, DuckDB files, Postgres and MySQL through DuckDB's bundled scanners),
 `import_dataset`, which publishes a dataset's first release through the gate for the core's importer
 or a pack's, and `reimport_dataset`, which carries curation forward with tombstones. The release
 lifecycle is the store's (M1): per-dataset operation slots, curation sessions with handles, edits
@@ -36,13 +38,14 @@ leaf keys and a view's ids from its parts; `core/engine/ids.py` hashes, rounds a
 `core/engine/counts.py` makes the digested part of a cohort count; and `core/store/derivations.py`
 is the derivation log, which `Store.explain` reads. `core/engine/sql.py` compiles canonical cohorts
 to SQLGlot trees over the release's table blobs, three-valued with reasons and flags;
-`core/engine/worker.py` runs a document's queries in a child process that can be killed, the only
-process that loads DuckDB (`core/engine/duck.py`); `core/engine/queries.py` joins them for a caller, and
+`core/engine/worker.py` runs a document's queries in a child process that can be killed, which
+loads DuckDB (`core/engine/duck.py`), as an import's worker does for a snapshot, and the server's
+process never does; `core/engine/queries.py` joins them for a caller, and
 `Store.outline` and `Store.sources` give what they read. `core/engine/readback.py` renders
 readbacks from templates, `core/engine/suppression.py` runs the disclosure pass over cohort counts,
 `core/schema/digests.py` hashes and digests (outputs check their own), and `core/catalog/cohorts.py`
 holds the query tools' service functions (`validate_document`, `count_cohort`, `explain`), served
-beside the catalogue's. Database snapshots and the read-only catalogue page (M1) come next.
+beside the catalogue's. The read-only catalogue page (M1) comes next.
 
 ## Non-negotiables
 

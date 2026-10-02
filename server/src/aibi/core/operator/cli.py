@@ -267,9 +267,15 @@ def _parser() -> _Parser:
         importing = commands.add_parser(name, help=f"{name} a dataset")
         importing.add_argument("dataset")
         importing.add_argument(
-            "source", help="an absolute path on the server, or with --upload a file here"
+            "source",
+            help="an absolute path on the server, with --upload a file here, or with --connection "
+            "a named connection of the server's configuration",
         )
-        importing.add_argument("--upload", action="store_true", help="send the file first")
+        how = importing.add_mutually_exclusive_group()
+        how.add_argument("--upload", action="store_true", help="send the file first")
+        how.add_argument(
+            "--connection", action="store_true", help="snapshot the named database connection"
+        )
         importing.add_argument("--pack", help="the pack whose importer reads the source")
         if name == "import":
             importing.add_argument("--name", help="the dataset's name")
@@ -448,6 +454,8 @@ class _Run:
             sent = self.client.upload(dataset, file).value
             given = {"upload": sent.upload}
             options["original_name"] = file.name
+        elif self.args.connection:
+            given = {"connection": source}
         else:
             given = {"path": source}
         operation = self.client.reimport if reimport else self.client.import_

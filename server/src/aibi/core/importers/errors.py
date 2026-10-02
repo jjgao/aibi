@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 
+from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.store.sources import FIELD_CHARACTERS
@@ -16,10 +17,11 @@ class ImportRefused(Exception):  # noqa: N818 - the spec's word
 def refused(
     code: RefusalCode | str,
     *message: Segment | str,
-    alternatives: Sequence[str] = (),
+    alternatives: Sequence[Segment | str] = (),
     limit: tuple[str, int] | None = None,
 ) -> ImportRefused:
-    """An import refused with one refusal: text given as a string is the server's own."""
+    """An import refused with one refusal: text given as a string is the server's own, and a
+    segment is kept as it is (a name from the source is ``data``, A6)."""
     segments = [text(part) if isinstance(part, str) else part for part in message]
     return ImportRefused(
         [
@@ -27,10 +29,28 @@ def refused(
                 code=code,
                 path=None,
                 message=segments,
-                alternatives=[text(alternative) for alternative in alternatives],
+                alternatives=[
+                    text(alternative) if isinstance(alternative, str) else alternative
+                    for alternative in alternatives
+                ],
                 limit=None if limit is None else Limit(name=limit[0], max=limit[1]),
             )
         ]
+    )
+
+
+def escaped(name: str) -> str:
+    """``name`` with each lone surrogate and noncharacter written as its ``\\u`` escape, so that a
+    segment can hold a name a source gives that is not Unicode text (D309)."""
+    if is_text(name):
+        return name
+    return "".join(
+        character
+        if is_text(character)
+        else (
+            f"\\u{ord(character):04x}" if ord(character) <= 0xFFFF else f"\\U{ord(character):08x}"
+        )
+        for character in name
     )
 
 
@@ -76,4 +96,4 @@ def within(error: ImportRefused, name: str) -> ImportRefused:
     )
 
 
-__all__ = ["ImportRefused", "long_cell_refused", "out_of_memory", "refused", "within"]
+__all__ = ["ImportRefused", "escaped", "long_cell_refused", "out_of_memory", "refused", "within"]

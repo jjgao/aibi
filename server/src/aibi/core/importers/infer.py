@@ -44,6 +44,12 @@ Tables (D229):
 - **Coverage.** ``parents: "all"`` for every relationship whose child table is an entity or a
   link table (§5.6).
 
+Declared keys (D307): a database's declared primary key is the table's key, ``imported``, and no
+other is looked for; its declared foreign keys are relationships whose tables and columns are
+``imported``, their cardinality proposed from the rows as above, and no relationship is proposed
+by containment from a column they hold. Roles and coverage follow from declared and proposed keys
+and relationships alike.
+
 Evidence names rules and counts, never a cell value (A6).
 """
 
@@ -82,6 +88,15 @@ _OFFSET = re.compile(r"(?:[Zz]|[+-][0-9]{2}:[0-9]{2})[ \t\r\n\f\v]*$")
 
 
 @dataclass(frozen=True)
+class ForeignKey:
+    """A foreign key a database declares (D307), by column and table ids."""
+
+    columns: tuple[str, ...]
+    parent: str
+    parent_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SourceTable:
     """A table as read, before inference: its id, its column ids and rows of source values."""
 
@@ -92,6 +107,10 @@ class SourceTable:
         default_factory=dict[str, tuple[Datatype, Status]]
     )
     """Datatypes the source declares (a Parquet file's), with their status (D227)."""
+    primary_key: tuple[str, ...] | None = None
+    """The primary key a database declares, ``imported``; ``None`` when none is (D307)."""
+    foreign_keys: tuple[ForeignKey, ...] = ()
+    """The foreign keys a database declares, to tables of the same import (D307)."""
 
 
 @dataclass(frozen=True)
@@ -115,22 +134,36 @@ class TableGuess:
     key_evidence: str | None
     role: Role
     role_evidence: str
+    key_status: Status = "proposed"
+    """``imported`` for a key the database declares (D307)."""
 
 
 @dataclass(frozen=True)
 class RelationshipGuess:
     child: str
-    column: str
+    columns: tuple[str, ...]
     parent: str
-    parent_column: str
+    parent_columns: tuple[str, ...]
     one_to_one: bool
     evidence: str
     coverage: bool
     """Whether coverage ``parents: "all"`` is proposed: the child is an entity or a link."""
+    status: Status = "proposed"
+    """Of its tables and columns: ``imported`` for a foreign key the database declares (D307);
+    its cardinality is always proposed, from the rows."""
 
     @property
     def id(self) -> str:
-        return f"rel:{self.child}.{self.column}"
+        return f"rel:{self.child}.{'+'.join(self.columns)}"
+
+
+@dataclass(frozen=True)
+class _Link:
+    child: str
+    columns: tuple[str, ...]
+    parent: str
+    parent_columns: tuple[str, ...]
+    declared: bool = False
 
 
 @dataclass(frozen=True)
@@ -373,7 +406,13 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
     sizes = {table.id: len(table.rows) for table in tables}
     keys: dict[str, tuple[str, ...] | None] = {}
     key_evidence: dict[str, str] = {}
+    key_status: dict[str, Status] = {}
     for table in tables:
+        if table.primary_key is not None:
+            keys[table.id] = table.primary_key
+            key_evidence[table.id] = "The database declares the primary key (D307)"
+            key_status[table.id] = "imported"
+            continue
         for column, found in columns[table.id].items():
             if (
                 found.guess.datatype in ("string", "integer")
@@ -390,12 +429,20 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
     key_sets = {
         table: {key for key in columns[table][key_columns[0]].keys if key is not None}
         for table, key_columns in keys.items()
-        if key_columns is not None
+        if key_columns is not None and len(key_columns) == 1
     }
+    declared_links = [
+        _Link(table.id, key.columns, key.parent, key.parent_columns, declared=True)
+        for table in tables
+        for key in table.foreign_keys
+    ]
+    declared_columns = {(link.child, column) for link in declared_links for column in link.columns}
     found_parents: dict[tuple[str, str], list[str]] = {}
     for table in tables:
         for column, found in columns[table.id].items():
             if found.guess.datatype not in ("string", "integer"):
+                continue
+            if (table.id, column) in declared_columns:
                 continue
             values = {key for key in found.keys if key is not None}
             if not values:
@@ -435,7 +482,7 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                         "proposed, since two keys' values fit by chance (D229)",
                     )
                 )
-    relationships: list[tuple[str, str, str]] = []
+    relationships: list[_Link] = list(declared_links)
     for (table, column), parents in found_parents.items():
         if table in parents:
             notes.append(
@@ -457,8 +504,9 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                 )
             )
             continue
-        relationships.append((table, column, parents[0]))
-    foreign = {(table, column) for table, column, _ in relationships}
+        parent_key = cast(tuple[str, ...], keys[parents[0]])
+        relationships.append(_Link(table, (column,), parents[0], parent_key))
+    foreign = {(link.child, column) for link in relationships for column in link.columns}
     for table in tables:
         if table.id in keys:
             continue
@@ -500,8 +548,8 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
             special = column in in_key or (table.id, column) in foreign
             if found.tolerated is not None and not special:
                 columns[table.id][column] = found.tolerated
-    parents_of = {parent for _, _, parent in relationships}
-    children_of = {table for table, _, _ in relationships}
+    parents_of = {link.parent for link in relationships}
+    children_of = {link.child for link in relationships}
     roles: dict[str, tuple[Role, str]] = {}
     for table in tables:
         key = keys[table.id]
@@ -517,28 +565,33 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
         else:
             roles[table.id] = ("measurement", "None of the other roles' rules applies (D229)")
     proposed: list[RelationshipGuess] = []
-    for table, column, parent in relationships:
-        child = columns[table][column]
-        count = sum(1 for key in child.keys if key is not None)
-        one_to_one = child.distinct
-        role = roles[table][0]
+    for link in relationships:
+        found_keys = list(zip(*(columns[link.child][c].keys for c in link.columns), strict=True))
+        present = [key for key in found_keys if None not in key]
+        count = len(present)
+        one_to_one = bool(present) and len(set(present)) == count
+        if link.declared:
+            evidence = "The database declares the foreign key (D307)" + (
+                "; its present values are distinct, so the relationship is one-to-one"
+                if one_to_one
+                else ""
+            )
+        else:
+            evidence = (
+                f"Each of the column's {_plural(count, 'present value')} is a key of "
+                f"{link.parent}, and of no other table (containment, D229)"
+                + ("; they are distinct, so the relationship is one-to-one" if one_to_one else "")
+            )
         proposed.append(
             RelationshipGuess(
-                child=table,
-                column=column,
-                parent=parent,
-                parent_column=cast(tuple[str, ...], keys[parent])[0],
+                child=link.child,
+                columns=link.columns,
+                parent=link.parent,
+                parent_columns=link.parent_columns,
                 one_to_one=one_to_one,
-                evidence=(
-                    f"Each of the column's {_plural(count, 'present value')} is a key of "
-                    f"{parent}, and of no other table (containment, D229)"
-                    + (
-                        "; they are distinct, so the relationship is one-to-one"
-                        if one_to_one
-                        else ""
-                    )
-                ),
-                coverage=role in ("entity", "link"),
+                evidence=evidence,
+                coverage=roles[link.child][0] in ("entity", "link"),
+                status="imported" if link.declared else "proposed",
             )
         )
     guessed: list[TableGuess] = []
@@ -585,7 +638,15 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
             )
         role, role_evidence = roles[table.id]
         guessed.append(
-            TableGuess(table.id, described, key, key_evidence.get(table.id), role, role_evidence)
+            TableGuess(
+                table.id,
+                described,
+                key,
+                key_evidence.get(table.id),
+                role,
+                role_evidence,
+                key_status.get(table.id, "proposed"),
+            )
         )
     return Inferred(tuple(guessed), tuple(proposed), tuple(notes))
 
@@ -597,6 +658,7 @@ __all__ = [
     "TOLERANCE_CELLS",
     "ColumnGuess",
     "Datatype",
+    "ForeignKey",
     "Inferred",
     "RelationshipGuess",
     "Role",

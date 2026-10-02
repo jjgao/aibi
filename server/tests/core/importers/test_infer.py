@@ -324,10 +324,10 @@ def test_an_integer_foreign_key_may_name_its_parent_in_the_singular(
     parents = _table(parent, "id name", (1, "a"), (2, "b"), (3, "c"))
     loans = _table("loans", f"loan_id {column}", (10, 1), (11, 3), (12, 1))
     [relationship] = infer([parents, loans]).relationships
-    assert (relationship.id, relationship.parent, relationship.parent_column) == (
+    assert (relationship.id, relationship.parent, relationship.parent_columns) == (
         f"rel:loans.{column}",
         parent,
-        "id",
+        ("id",),
     )
 
 

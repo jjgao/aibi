@@ -83,7 +83,7 @@ _SKIPPED_KINDS = {
     "unconfined": "it could not be confined as it was listed",
 }
 
-_DECLARED: dict[parquet.ArrowKind, tuple[Datatype, Status]] = {
+DECLARED: dict[parquet.ArrowKind, tuple[Datatype, Status]] = {
     "integer": ("integer", "imported"),
     "number": ("number", "imported"),
     "boolean": ("boolean", "imported"),
@@ -91,6 +91,8 @@ _DECLARED: dict[parquet.ArrowKind, tuple[Datatype, Status]] = {
     "datetime": ("datetime", "imported"),
     "naive_datetime": ("datetime", "imported_default"),
 }
+"""The datatypes a typed source declares, by the Arrow kind a Parquet file or a database's column
+has, with their status (D227)."""
 
 
 @dataclass(frozen=True)
@@ -137,7 +139,7 @@ class _Reading:
         name = os.path.basename(source)
         original = self.options.original_name
         if original is not None:
-            _bounded(original, "The upload's original name")
+            bounded(original, "The upload's original name")
         if original and not os.path.isdir(source):
             name = f"{_stem(original)}.{_extension(name)}"
         if os.path.isdir(source):
@@ -188,10 +190,10 @@ class _Reading:
         return None
 
     def add(self, unit: _Unit) -> None:
-        _bounded(unit.original_name, "A table's original name")
-        _bounded(unit.label, "A table's original name")
+        bounded(unit.original_name, "A table's original name")
+        bounded(unit.label, "A table's original name")
         for name in unit.names:
-            _bounded(name, "A column's name")
+            bounded(name, "A column's name")
         if len(self.units) >= self.limits.import_tables:
             raise refused(
                 RefusalCode.LIMIT_EXCEEDED,
@@ -260,7 +262,7 @@ class _Reading:
         )
         rows = cast(tuple[tuple[SourceValue, ...], ...], read.rows)
         typed = TypedSource(read.names, rows)
-        declared = {i: _DECLARED[kind] for i, kind in enumerate(read.kinds) if kind in _DECLARED}
+        declared = {i: DECLARED[kind] for i, kind in enumerate(read.kinds) if kind in DECLARED}
         self.add(_Unit("file", name, stem, typed, read.names, rows, declared=declared))
 
 
@@ -277,7 +279,7 @@ class FileImporter:
         named = (
             options.name or _stem(options.original_name or os.path.basename(source)) or "dataset"
         )
-        _bounded(named, "The dataset's name")
+        bounded(named, "The dataset's name")
         reading = _Reading(options)
         files = reading.files(source)
         several = not (len(files) == 1 and _extension(files[0][0]) in WORKBOOKS)
@@ -302,12 +304,12 @@ class FileImporter:
         tables: list[SourceTable] = []
         for table, unit in zip(table_ids, units, strict=True):
             if table != unit.label:
-                notes.append(_renamed(table, unit.label))
+                notes.append(renamed(table, unit.label))
             columns_before = previous.columns.get(table) if previous is not None else None
             columns = normalise_names(unit.names, "column", columns_before)
             for column, original in zip(columns, unit.names, strict=True):
                 if column != original:
-                    notes.append(_renamed(f"{table}.{column}", original))
+                    notes.append(renamed(f"{table}.{column}", original))
             sources[table] = unit.raw
             layouts[table] = Layout(table, tuple(zip(columns, unit.names, strict=True)))
             origins[table] = TableOrigin(
@@ -323,7 +325,7 @@ class FileImporter:
         inferred = infer(tables)
         location = options.reader.location(source)
         dataset = DatasetOrigin(named, location if location != "." else os.path.basename(source))
-        _bounded(dataset.location, "The source's location")
+        bounded(dataset.location, "The source's location")
         descriptors = describe(
             dataset, origins, inferred, by=by_importer(NAME, self.version), at=options.at
         )
@@ -367,7 +369,7 @@ def _refused_kind(name: str, kinds: Sequence[str]) -> ImportRefused:
     )
 
 
-def _bounded(name: str, what: str) -> None:
+def bounded(name: str, what: str) -> None:
     """Refuse a name longer than a descriptor's string (§14)."""
     if len(name) > MAX_STRING:
         raise refused(
@@ -377,8 +379,8 @@ def _bounded(name: str, what: str) -> None:
         )
 
 
-def _renamed(subject: str, original: str) -> ImportNote:
+def renamed(subject: str, original: str) -> ImportNote:
     return ImportNote("renamed", subject, [text("The original name was "), data(original)])
 
 
-__all__ = ["NAME", "READ", "FileImporter"]
+__all__ = ["DECLARED", "NAME", "READ", "FileImporter", "bounded", "renamed"]
