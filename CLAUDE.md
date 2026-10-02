@@ -8,8 +8,8 @@ the same PR or don't make the change.
 
 ## Status
 
-Pre-code: the repository holds the spec only. Milestone M0 (SPEC.md §15) creates the skeleton
-below.
+Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
+package skeleton, tooling and CI exist; the schemas and everything after them do not yet.
 
 ## Non-negotiables
 
@@ -64,6 +64,7 @@ Python ≥ 3.12 with uv. Before pushing, run from `server/`:
 uv run ruff check . && uv run ruff format --check .
 uv run pyright
 uv run lint-imports      # core must not import packs
+uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
 ```
 
@@ -76,6 +77,11 @@ OpenAPI schema, not written by hand.
   open decisions) into the PR description, then implement.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
+- Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
+  parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
+  parent's branch is deleted), replay only the child's own commits onto `main` with
+  `git rebase --onto main <parent branch> <child branch>` (the parent's branch still holds the
+  commits the squash replaced), and push; retargeting alone doesn't re-run CI.
 
 ## Conventions
 
