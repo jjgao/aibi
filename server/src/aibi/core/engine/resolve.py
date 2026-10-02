@@ -2817,7 +2817,7 @@ class _Resolver:
             if owner != table:
                 continue
             simple = top and isinstance(leaf.predicate, Values) and not leaf.negate
-            at = min(leaf.origin, key=_in_document_order, default=())
+            at = min(leaf.origin, key=in_document_order, default=())
             if column in allowed:
                 values = leaf.predicate.values if isinstance(leaf.predicate, Values) else ()
                 if not simple or not set(cast(tuple[str, ...], values)) <= allowed[column]:
@@ -2908,7 +2908,7 @@ def _tokens(path: str) -> tuple[str | int, ...]:
     return tuple(tokens)
 
 
-def _in_document_order(position: Position) -> tuple[tuple[int, int, str], ...]:
+def in_document_order(position: Position) -> tuple[tuple[int, int, str], ...]:
     """A sort key that puts positions in the order of the document as written: list indexes
     as numbers, so that ``10`` comes after ``9``."""
     return tuple((0, part, "") if isinstance(part, int) else (1, 0, part) for part in position)

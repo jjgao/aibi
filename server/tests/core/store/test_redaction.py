@@ -920,3 +920,49 @@ def test_a_cox_view_s_covariates_and_stratum_are_erased_as_a_view_s_variables_ar
     assert holds(hashed([other, named], other), "sha256:x", terms)
     assert not holds(hashed([other], other), "sha256:x", terms)
     assert not holds(hashed([{"column": "loans.days"}], None), "sha256:x", terms)
+
+
+def test_a_cox_view_s_predicate_covariates_are_erased_as_a_view_s_predicates_are() -> None:
+    """``survival.cox``'s predicate covariates are clauses (D370): as written, given in place or
+    as a parameter, their constants are erased where a clause's are; canonical, a predicate
+    covariate that tests the person's value holds a term and one that tests another does not."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    leaf: JsonValue = {"kind": "value", "column": "loans.loan_id", "values": [2, 17]}
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "params": {"p": {"kind": "value", "column": "loans.loan_id", "values": [2]}},
+        "cohorts": {"a": {"all": []}, "b": {"all": []}},
+        "views": [
+            {
+                "analysis": "survival.cox",
+                "cohorts": ["a", "b"],
+                "params": {"covariates": [{"predicate": leaf}, {"predicate": "$p"}]},
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    first, second = found["views"][0]["params"]["covariates"]
+    assert first["predicate"]["values"] == [MARK, 17]
+    assert found["params"]["p"]["values"] == [MARK]
+    assert second == {"predicate": "$p"}
+
+    def hashed(clause: JsonValue) -> JsonValue:
+        return {
+            "view": {
+                "analysis": {"id": "survival.cox", "version": "1.0.0"},
+                "params": {
+                    "covariates": [{"column": "loans.days"}, {"predicate": clause}],
+                    "endpoint": {"id": "ep:returned", "time": "loans.days"},
+                    "level": 0.95,
+                    "stratum": None,
+                },
+            }
+        }
+
+    holds = redaction._object_holds  # pyright: ignore[reportPrivateUsage]
+    named: JsonValue = {"all": [{"kind": "value", "column": "loans.loan_id", "values": [2]}]}
+    other: JsonValue = {"all": [{"kind": "value", "column": "loans.loan_id", "values": [5]}]}
+    assert holds(hashed(named), "sha256:x", terms)
+    assert not holds(hashed(other), "sha256:x", terms)

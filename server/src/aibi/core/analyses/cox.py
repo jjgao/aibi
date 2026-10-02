@@ -11,7 +11,10 @@ sets, stratified by the stratum's levels (D366).
 ``count`` or a ``mean``, and ``max`` or ``min`` of numbers, a number; a category column a category,
 in its permissible values' order where it is ordered and in canonical order otherwise, a string
 column a category in canonical order, and ``max`` or ``min`` of an ordered category a category in
-its order. Anything else is refused in phase 2 (``views``), and so is the stratum's.
+its order. Anything else is refused in phase 2 (``views``), and so is the stratum's. A covariate
+may be a predicate (D370), listed as a question of its clause and so a boolean, 1 where it is
+TRUE; one that holds a lift is also listed flipped (``lifted``), and ``CoxPosition.lifts`` and
+``LIFT_DIFFERS`` count the members whose truth the other lift rule changes (D323, D371).
 
 **The rows** (D368). Each member's cells are listed as a pack analysis's inputs are
 (``engine.inputs``, by SQL or the reference evaluator, in the order of §9.3): each covariate's
@@ -64,7 +67,7 @@ Every loop spends its work through ``timetoevent.Watch`` (D350).
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from aibi.core.analyses import coxfit, coxph, ieee, survival, timetoevent
@@ -72,14 +75,16 @@ from aibi.core.analyses.common import CohortAt, caveat, cohort_caveats, flag_cav
 from aibi.core.analyses.coxph import Unit
 from aibi.core.analyses.distribution import category_label
 from aibi.core.analyses.stats import z
-from aibi.core.engine.canonical import CanonicalVariable
+from aibi.core.engine.canonical import CanonicalCohort, CanonicalVariable
 from aibi.core.engine.inputs import Listed
-from aibi.core.engine.readback import variable_readback
+from aibi.core.engine.readback import conditions, variable_readback
 from aibi.core.engine.resolve import ResolvedEndpoint, ResolvedVariable
+from aibi.core.engine.resolved import flipped
 from aibi.core.engine.truth import Mark
 from aibi.core.engine.variables import Value
 from aibi.core.schema.analyses import (
     CovariateTest,
+    CoxLift,
     CoxParams,
     CoxPosition,
     CoxTerm,
@@ -901,6 +906,33 @@ def _within(positions: Sequence[Sequence[Member]], watch: timetoevent.Watch) -> 
                 raise survival.TooLarge
 
 
+def lifted(variables: Sequence[ResolvedVariable]) -> list[tuple[int, ResolvedVariable]]:
+    """Each predicate covariate that holds a lift, by its index, with its truth under every lift
+    flipped (D323, D371), as a question the listing reads after the endpoint's columns."""
+    found: list[tuple[int, ResolvedVariable]] = []
+    for j, variable in enumerate(variables):
+        if variable.kind != "question" or variable.aggregate is not None:
+            continue
+        assert variable.question is not None
+        other = flipped(variable.question)
+        if other != variable.question:
+            found.append((j, replace(variable, key=f"{variable.key}/flipped", question=other)))
+    return found
+
+
+def listed_variables(
+    variables: Sequence[ResolvedVariable], endpoint: ResolvedEndpoint
+) -> list[ResolvedVariable]:
+    """What a view's listing reads of each member (D368, D371): its covariates in order, its
+    stratum, its endpoint's columns, then each predicate covariate that holds a lift, flipped
+    (``lifted``)."""
+    return [
+        *variables,
+        *endpoint.variables,
+        *(variable for _, variable in lifted(variables)),
+    ]
+
+
 @dataclass(frozen=True)
 class Outcome:
     """A view's digested parts, before its digest is taken, and its caveats."""
@@ -915,7 +947,7 @@ def analyse(
     positions: Sequence[CohortAt],
     listed: Sequence[Listed],
     endpoint: ResolvedEndpoint,
-    covariates: Sequence[Covariate],
+    variables: Sequence[ResolvedVariable],
     params: CoxParams,
     *,
     reference: int,
@@ -923,10 +955,20 @@ def analyse(
     ends: float | None = None,
 ) -> Outcome:
     """``survival.cox`` over a view's cohorts (module docstring), from each position's listing
-    in the order of §9.3 (``members_of``); ``overlap`` says that the view allows overlap and its
-    cohorts share units. Raises ``survival.TooLarge``, ``TooLarge``, ``LongLevel``,
-    ``Unscalable``, ``TooManyParameters``, ``TooManyStrata``, and ``CallerDeadline`` once
-    ``time.monotonic()`` has passed ``ends`` (``timetoevent.Watch``, D350)."""
+    of ``listed_variables(variables, endpoint)`` in the order of §9.3 (``members_of``);
+    ``variables`` are the view's covariates in order, then its stratum, each coded by
+    ``covariate_of``, and ``overlap`` says that the view allows overlap and its cohorts share
+    units. The members whose truth the other lift rule changes are counted for each predicate
+    covariate that holds a lift (``lifted``, D371). Raises ``survival.TooLarge``, ``TooLarge``,
+    ``LongLevel``, ``Unscalable``, ``TooManyParameters``, ``TooManyStrata``, and
+    ``CallerDeadline`` once ``time.monotonic()`` has passed ``ends`` (``timetoevent.Watch``,
+    D350)."""
+    covariates: list[Covariate] = []
+    for variable in variables[: len(params.covariates)]:
+        coded = covariate_of(variable)
+        assert coded is not None, "phase 2 refuses a covariate of no coding"
+        covariates.append(coded)
+    lifts = [j for j, _ in lifted(variables)]
     if len(listed) != len(positions):
         raise ValueError("a listing per position")
     width = len(covariates) + (params.stratum is not None)
@@ -944,9 +986,45 @@ def analyse(
         ends=ends,
     )
     population = populations(positions, None)
-    marks = [mark for one in listed for flags in one.marks for mark in flags]
-    caveats = _caveats(positions, population, found, marks, overlap)
-    return Outcome(population, found.analysed, found.values, caveats)
+    marks = [
+        mark
+        for one in listed
+        for flags in one.marks[: width + len(endpoint.variables)]
+        for mark in flags
+    ]
+    changed = [_lift_changes(one, lifts, width + len(endpoint.variables), watch) for one in listed]
+    values = found.values
+    if lifts:
+        values = values.model_copy(
+            update={
+                "positions": [
+                    at.model_copy(
+                        update={
+                            "lifts": [
+                                CoxLift(covariate=j, lift_differs=count)
+                                for j, count in counts.items()
+                            ]
+                        }
+                    )
+                    for at, counts in zip(values.positions, changed, strict=True)
+                ]
+            }
+        )
+    caveats = _caveats(positions, population, found, marks, overlap, changed)
+    return Outcome(population, found.analysed, values, caveats)
+
+
+def _lift_changes(
+    listed: Listed, lifts: Sequence[int], offset: int, watch: timetoevent.Watch
+) -> dict[int, int]:
+    """Per predicate covariate that holds a lift, the members whose truth the other lift rule
+    changes (D323): its listing from ``offset`` on is each such covariate flipped, in order."""
+    found: dict[int, int] = {}
+    for k, j in enumerate(lifts):
+        watch.spend(listed.members)
+        given, other = listed.values[j], listed.values[offset + k]
+        found[j] = sum(1 for a, b in zip(given, other, strict=True) if a != b)
+    return found
 
 
 def _estimated(term: CoxTerm) -> bool:
@@ -961,6 +1039,7 @@ def _caveats(
     found: Model,
     marks: Sequence[Mark],
     overlap: bool,
+    changed: Sequence[Mapping[int, int]],
 ) -> list[Caveat]:
     """The caveats that the view's data raise (module docstring); the static ones are the
     view's."""
@@ -984,6 +1063,23 @@ def _caveats(
                     "Units whose status is not in the endpoint's event coding, whose time is "
                     "negative, or whose entry is at or after their time are left out as "
                     "INVALID_VALUE (§5.8)"
+                ),
+            )
+        )
+    differs = [
+        f"covariate {j} for {count} units of the cohort at position {position}"
+        for position, counts in enumerate(changed)
+        for j, count in sorted(counts.items())
+        if count
+    ]
+    if differs:
+        caveats.append(
+            caveat(
+                CaveatCode.LIFT_DIFFERS,
+                ["/values"],
+                text(
+                    "The other lift rule would change the truth of these predicate covariates: "
+                    + "; ".join(differs)
                 ),
             )
         )
@@ -1074,12 +1170,14 @@ def view_readback(
     endpoint: ResolvedEndpoint,
     variables: Sequence[CanonicalVariable],
     params: CoxParams,
+    predicates: Sequence[CanonicalCohort] = (),
 ) -> list[Segment]:
     """The view's readback (§7.7): a function of its canonical form and the release's
     descriptors, cohorts named by position; ``variables`` are the covariates, then the stratum
-    where the view has one."""
+    where the view has one, and ``predicates`` the predicate covariates in order (D371)."""
     stratified = params.stratum is not None
     covariates = variables[: len(params.covariates)]
+    asks = bool(predicates)
     found: list[Segment] = [
         text("A Cox proportional hazards model, Efron ties, of the endpoint "),
         *survival.endpoint_readback(endpoint),
@@ -1091,7 +1189,15 @@ def view_readback(
                 f"versus the reference, the cohort at position {reference}"
             )
         )
+    asked = iter(predicates)
     for index, variable in enumerate(covariates):
+        if variable.resolved.kind == "question" and variable.resolved.aggregate is None:
+            found += [
+                text(f"; covariate {index} (1 where the predicate holds, 0 where it does not): "),
+                text("units for which "),
+                *conditions(next(asked)),
+            ]
+            continue
         coded = covariate_of(variable.resolved)
         assert coded is not None, "phase 2 refuses a covariate of no coding"
         found += [text(f"; covariate {index} ("), *_coding_readback(variable, coded)]
@@ -1104,11 +1210,16 @@ def view_readback(
         text(", each term's Wald p-value, the joint Wald test of each covariate of two or more "),
         text("columns, and the Grambsch–Therneau test of proportional hazards of the terms the "),
         text("fit estimated."),
+        text(" Complete cases only: a unit without a valid endpoint row"),
         text(
-            " Complete cases only: a unit without a valid endpoint row or without a value of "
-            "every covariate and of the stratum is left out and counted by reason; one whose "
-            "status is not coded, whose time is negative or whose entry is at or after its time "
-            "is left out as INVALID_VALUE."
+            ", without a value of every covariate and of the stratum, or for which a predicate "
+            "cannot be decided,"
+            if asks
+            else " or without a value of every covariate and of the stratum"
+        ),
+        text(
+            " is left out and counted by reason; one whose status is not coded, whose time is "
+            "negative or whose entry is at or after its time is left out as INVALID_VALUE."
         ),
     ]
     return found
@@ -1140,6 +1251,8 @@ __all__ = [
     "Unscalable",
     "analyse",
     "covariate_of",
+    "lifted",
+    "listed_variables",
     "members_of",
     "model",
     "view_readback",

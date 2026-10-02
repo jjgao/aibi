@@ -1109,6 +1109,34 @@ def test_a_pack_leaf_in_a_core_analysis_s_column_hashes_its_pack_s_results_versi
     assert "orders placed on the web" in shown
 
 
+def test_a_pack_leaf_in_a_predicate_covariate_hashes_its_pack_s_results_version_once_read(
+    check: Check, shop: Shop
+) -> None:
+    """A predicate covariate's packs, leaves and summaries are its predicate's, which the view
+    holds among its predicates (D371): they enter the id and the readback once."""
+    written = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "customers",
+        "cohorts": {"all": {"all": []}},
+        "views": [
+            {
+                "analysis": "survival.cox",
+                "cohorts": ["all"],
+                "params": {"covariates": [{"predicate": {"kind": "tallies.web"}}]},
+            }
+        ],
+    }
+    [first] = check(written, shop(survived="origin"), analyses=tallies()).views
+    [bumped] = check(written, shop(survived="origin"), analyses=tallies(results_version=2)).views
+    assert first.packs["tallies"].results_version == 1
+    assert first.identity.id != bumped.identity.id
+    shown = json.dumps([part.model_dump() for part in first.readback()])
+    assert shown.count("orders placed on the web") == 1
+    [predicate] = first.predicates
+    assert list(predicate.leaves) != []
+
+
 def test_a_pack_leaf_its_kind_s_schema_refuses_is_refused_where_it_is_written(
     check: Check, shop: Shop
 ) -> None:
@@ -1762,3 +1790,29 @@ def test_a_relationship_s_parent_columns_are_identifiers_even_off_the_parent_s_k
     badge = release.column("people", "badge")
     assert badge is not None
     assert identifying(release, badge)
+
+
+@pytest.mark.parametrize(
+    ("analysis", "params", "at"),
+    [
+        ("compare.existence", "predicates", "/views/0/params/predicates/0"),
+        ("survival.cox", "covariates", "/views/0/params/covariates/0/predicate"),
+    ],
+)
+def test_more_pack_leaves_in_a_predicate_than_a_cohort_may_have_are_refused(
+    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch, analysis: str, params: str, at: str
+) -> None:
+    monkeypatch.setattr(views, "MAX_PACK_LEAVES", 1)
+    clause = {"all": [{"kind": "tallies.web"}, {"kind": "tallies.web"}]}
+    given: list[Any] = [clause] if analysis == "compare.existence" else [{"predicate": clause}]
+    written = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "customers",
+        "cohorts": {"all": {"all": []}},
+        "views": [{"analysis": analysis, "cohorts": ["all"], "params": {params: given}}],
+    }
+    found = check(written, shop(survived="origin"), analyses=tallies())
+    assert refusals(found) == [("LIMIT_EXCEEDED", at)]
+    monkeypatch.setattr(views, "MAX_PACK_LEAVES", 2)
+    assert check(written, shop(survived="origin"), analyses=tallies()).refusals == []

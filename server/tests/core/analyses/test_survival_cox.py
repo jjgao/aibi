@@ -12,17 +12,19 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from aibi.core.analyses import cox, survival, timetoevent
 from aibi.core.analyses.charts import cox_chart
 from aibi.core.analyses.cox import Covariate, Member
 from aibi.core.analyses.existence import CohortAt
 from aibi.core.engine import build
+from aibi.core.engine.canonical import variable_form
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.inputs import Listed, listed, ordered
 from aibi.core.engine.truth import Mark
 from aibi.core.engine.worker import CallerDeadline
-from aibi.core.schema.analyses import CoxParams, CoxTerm, CoxValues
+from aibi.core.schema.analyses import CoxParams, CoxPosition, CoxTerm, CoxValues
 from aibi.core.schema.digests import order_key
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
 from aibi.core.schema.limits import MAX_TEXT
@@ -142,9 +144,14 @@ def said(parts: Sequence[Any]) -> str:
 
 def test_the_parameters_take_variables_as_covariates_and_a_stratum() -> None:
     params = CoxParams.model_validate({"covariates": [TIER, AGE], "stratum": {"column": "c.s"}})
-    assert [covariate.column for covariate in params.covariates] == [
+    assert [getattr(covariate, "column", None) for covariate in params.covariates] == [
         "customers.tier",
         "customers.age",
+    ]
+    asked = CoxParams.model_validate({"covariates": [{"predicate": {"all": []}}, AGE]})
+    assert [type(covariate).__name__ for covariate in asked.covariates] == [
+        "PredicateCovariate",
+        "Variable",
     ]
     assert params.stratum is not None
     assert (params.endpoint, params.level) == (None, 0.95)
@@ -834,13 +841,15 @@ def test_a_term_with_an_estimate_but_a_bound_beyond_range_keeps_its_point() -> N
 def _looks(
     check: Check, store: Store, monkeypatch: pytest.MonkeyPatch, passing: int | None
 ) -> tuple[Counter[str], int]:
-    """Each function that looks at the deadline in a stratified view of a category and a number,
-    with delayed entry, each loop looking every time, and how many looks it made; with
-    ``passing``, the deadline passes at that look."""
-    written = document(params={"covariates": [TIER, AGE], "stratum": {"column": "customers.vip"}})
+    """Each function that looks at the deadline in a stratified view of a category, a number and a
+    predicate that holds a lift, with delayed entry, each loop looking every time, and how many
+    looks it made; with ``passing``, the deadline passes at that look."""
+    covariates = [TIER, AGE, predicate(RETURNED)]
+    written = document(params={"covariates": covariates, "stratum": {"column": "customers.vip"}})
     [view] = check(written, store(customers=40)).views
     [endpoint] = view.endpoints
-    read = [*(v.resolved for v in view.variables), *endpoint.variables]
+    resolved = [v.resolved for v in view.variables]
+    read = cox.listed_variables(resolved, endpoint)
     listings = [ordered(listed(cohort.resolved, read)) for cohort in view.cohorts]
     positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
     sites: set[str] = set()
@@ -857,12 +866,11 @@ def _looks(
 
     monkeypatch.setattr(timetoevent, "time", type("Clock", (), {"monotonic": staticmethod(clock)}))
     monkeypatch.setattr(timetoevent, "LOOK_EVERY", 1)
-    covariates = [Covariate("category"), Covariate("number")]
     params = view.params
     assert isinstance(params, CoxParams)
     try:
         cox.analyse(
-            positions, listings, endpoint, covariates, params, reference=0, overlap=False, ends=1.0
+            positions, listings, endpoint, resolved, params, reference=0, overlap=False, ends=1.0
         )
     except CallerDeadline:
         assert passing is not None
@@ -875,9 +883,8 @@ def test_every_pass_of_the_analysis_looks_at_the_deadline(
     check: Check, store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     found, _ = _looks(check, store, monkeypatch, None)
-    assert {"endpoint_cells", "members_of", "_within", "analyse", "model", "_analysed"} <= set(
-        found
-    )
+    expected = {"endpoint_cells", "members_of", "_within", "analyse", "model", "_analysed"}
+    assert expected | {"_lift_changes"} <= set(found)
 
 
 def test_the_deadline_passed_at_any_look_stops_the_analysis_there(
@@ -1057,7 +1064,13 @@ def test_the_flags_of_the_cells_listed_are_the_values_caveats(check: Check, stor
     assert isinstance(params, CoxParams)
     positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
     found = cox.analyse(
-        positions, [given], endpoint, [Covariate("number")], params, reference=0, overlap=False
+        positions,
+        [given],
+        endpoint,
+        [v.resolved for v in view.variables],
+        params,
+        reference=0,
+        overlap=False,
     )
     flagged = [c for c in found.caveats if c.code == "SCOPE_PARTIAL"]
     assert [c.affects for c in flagged] == [["/values"]]
@@ -1169,7 +1182,13 @@ def test_units_left_out_for_a_reason_that_is_not_unknown_carry_no_unknown_exclud
     assert isinstance(params, CoxParams)
     positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
     found = cox.analyse(
-        positions, [given], endpoint, [Covariate("number")], params, reference=0, overlap=False
+        positions,
+        [given],
+        endpoint,
+        [v.resolved for v in view.variables],
+        params,
+        reference=0,
+        overlap=False,
     )
     assert found.analysed[0].excluded_units == 1
     assert "UNKNOWN_EXCLUDED" not in {caveat.code for caveat in found.caveats}
@@ -1202,3 +1221,563 @@ def test_the_range_of_the_numbers_is_a_pass_that_looks_at_the_deadline(
 ) -> None:
     found, _ = _looks(check, store, monkeypatch, None)
     assert "_in_range" in found
+
+
+# --- Predicates as covariates (D370, D371) -----------------------------------------------------
+
+VIP = {"kind": "value", "column": "customers.vip", "values": [True]}
+GOLD = {"kind": "value", "column": "customers.tier", "values": ["gold"]}
+RETURNED = {
+    "kind": "exists",
+    "table": "orders",
+    "where": [{"kind": "exists", "table": "returns", "where": []}],
+}
+WEB = {"column": "orders.channel", "aggregate": "some", "values": ["web"]}
+
+
+def predicate(clause: Any) -> dict[str, Any]:
+    return {"predicate": clause}
+
+
+@pytest.mark.parametrize(
+    ("covariate", "expected"),
+    [
+        (
+            {**predicate(VIP), "column": "customers.age"},
+            (RefusalCode.CONFLICTING_MEMBERS, "/views/0/params/covariates/0"),
+        ),
+        (
+            predicate({"kind": "nothing"}),
+            (RefusalCode.UNKNOWN_KIND, "/views/0/params/covariates/0/predicate"),
+        ),
+        (
+            predicate({"kind": "value", "column": "customers.vip"}),
+            (RefusalCode.CONFLICTING_MEMBERS, "/views/0/params/covariates/0/predicate"),
+        ),
+        (
+            {**predicate(VIP), "lift": "strict"},
+            (RefusalCode.UNKNOWN_MEMBER, "/views/0/params/covariates/0/lift"),
+        ),
+    ],
+    ids=["both forms", "an unknown kind", "a leaf without values", "a variable's member"],
+)
+def test_a_predicate_covariate_it_cannot_parse_is_refused_where_it_is_written(
+    check: Check, store: Store, covariate: Any, expected: tuple[RefusalCode, str]
+) -> None:
+    found = check(document(params={"covariates": [covariate]}), store())
+    assert [(r.code, r.path) for r in found.refusals][:1] == [expected]
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected"),
+    [
+        (
+            {"kind": "ids", "ids": ["d:c1"]},
+            (RefusalCode.LEAF_NOT_ALLOWED, "/views/0/params/covariates/1/predicate"),
+        ),
+        (
+            {"all": [VIP, {"kind": "cohort", "cohort": "young"}]},
+            (RefusalCode.LEAF_NOT_ALLOWED, "/views/0/params/covariates/1/predicate/all/1"),
+        ),
+        (
+            {"all": [VIP, {"kind": "value", "column": "customers.customer_id", "values": ["c1"]}]},
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/all/1"),
+        ),
+        (
+            {"kind": "value", "column": "customers.left", "values": ["yes"]},
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate"),
+        ),
+        (
+            {"not": {"kind": "value", "column": "customers.tenure", "range": {"gte": 12}}},
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/not"),
+        ),
+        (
+            {
+                "kind": "exists",
+                "table": "orders",
+                "where": [{"kind": "value", "column": "orders.order_id", "values": ["o1"]}],
+            },
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/where/0"),
+        ),
+        (
+            {
+                "not": {
+                    "all": [
+                        {"kind": "value", "column": "customers.age", "range": {"gte": 30}},
+                        {"kind": "value", "column": "customers.customer_id", "values": ["c1"]},
+                    ]
+                }
+            },
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/not/all/1"),
+        ),
+        (
+            {
+                "not": {
+                    "kind": "exists",
+                    "table": "orders",
+                    "where": [{"kind": "value", "column": "orders.order_id", "values": ["o1"]}],
+                }
+            },
+            (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/not/where/0"),
+        ),
+        *(
+            (
+                {
+                    "kind": "exists",
+                    "table": "orders",
+                    "where": [
+                        {"kind": "value", "column": "orders.channel", "values": ["web"]},
+                        {**leaf, "via": [{"rel": "rel:orders.customer", "dir": "up"}]},
+                    ],
+                },
+                (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/1/predicate/where/1"),
+            )
+            for leaf in (
+                {"kind": "value", "column": "customers.customer_id", "values": ["c1"]},
+                {"kind": "value", "column": "customers.tenure", "range": {"gte": 12}},
+            )
+        ),
+    ],
+    ids=[
+        "an ids leaf",
+        "a cohort leaf",
+        "an identifier",
+        "the status",
+        "the time",
+        "a row's key",
+        "an identifier among a negation's members",
+        "a row's key under a negation",
+        "an identifier looked up from a row",
+        "the time looked up from a row",
+    ],
+)
+def test_a_predicate_covariate_it_cannot_model_is_refused_at_the_leaf(
+    check: Check, store: Store, clause: Any, expected: tuple[RefusalCode, str]
+) -> None:
+    found = check(document(params={"covariates": [AGE, predicate(clause)]}), store())
+    assert [(r.code, r.path) for r in found.refusals] == [expected]
+    assert found.views == []
+
+
+def test_a_predicate_given_as_a_parameter_is_refused_at_its_reference(
+    check: Check, store: Store
+) -> None:
+    written = document(params={"covariates": [predicate("$p")]})
+    written["params"] = {"p": {"kind": "value", "column": "customers.left", "values": ["yes"]}}
+    [refusal] = check(written, store()).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.INVALID_VALUE,
+        "/views/0/params/covariates/0/predicate",
+    )
+    assert {"data": "p"} in [segment.model_dump() for segment in refusal.message]
+
+
+def test_under_a_floor_a_predicate_covariate_is_withheld_before_it_is_checked(
+    check: Check, store: Store
+) -> None:
+    clause = {"kind": "value", "column": "customers.left", "values": ["yes"]}
+    found = check(document(params={"covariates": [predicate(clause)]}), store(), floor=3)
+    assert refusals(found) == [(RefusalCode.WITHHELD_UNDER_K, "/views/0/analysis")]
+
+
+def test_the_canonical_covariates_interleave_predicates_as_written(
+    check: Check, store: Store
+) -> None:
+    params = {"covariates": [AGE, predicate(VIP), TIER]}
+    [view] = check(document(params=params), store()).views
+    [endpoint] = view.endpoints
+    covariates = view.identity.params["covariates"]
+    assert covariates[0] == {"column": "customers.age"}
+    assert covariates[2] == {"column": "customers.tier"}
+    [asked] = view.predicates
+    assert covariates[1] == {"predicate": asked.form[asked.release.manifest]}
+    assert [cox.covariate_of(v.resolved) for v in view.variables] == [
+        Covariate("number"),
+        Covariate("boolean"),
+        Covariate("category"),
+    ]
+    assert endpoint.form == view.identity.params["endpoint"]
+    [again] = check(document(params={"covariates": [AGE, TIER]}), store()).views
+    assert again.identity.params["covariates"] == [covariates[0], covariates[2]]
+
+
+def terms_of(analysed: Any) -> list[tuple[Any, Any, Any]]:
+    return [(t.estimate, t.ci.low, t.ci.high) for t in analysed.outcome.values.view.terms]
+
+
+def test_a_predicate_on_a_boolean_column_is_that_column_where_every_cell_has_a_value(
+    analyse: Analyse, store: Store
+) -> None:
+    given = store(customers=60)
+    [column] = analyse(document(params={"covariates": [{"column": "customers.vip"}]}), given)
+    [asked] = analyse(document(params={"covariates": [predicate(VIP)]}), given)
+    assert terms_of(asked) == terms_of(column)
+    assert asked.outcome.analysed == column.outcome.analysed
+    [some] = analyse(document(params={"covariates": [WEB]}), given)
+    question = {"kind": "value", "column": "orders.channel", "values": ["web"]}
+    [asked] = analyse(
+        document(
+            params={
+                "covariates": [
+                    predicate({"kind": "exists", "table": "orders", "where": [question]})
+                ]
+            }
+        ),
+        given,
+    )
+    assert terms_of(asked) == terms_of(some)
+
+
+def test_a_predicate_codes_a_cell_that_does_not_apply_as_false_where_a_column_excludes_it(
+    analyse: Analyse, shop: Shop, rows: Rows
+) -> None:
+    given = rows_with_extras(rows, 60)
+    for n, customer in enumerate(given["customers"], 1):
+        customer["size"] = "-" if n % 5 == 0 else SIZES[n % 3]
+    columns = extras()
+    columns[0] = build.column(
+        "customers.size",
+        "category",
+        permissible_values={"values": [{"value": v} for v in SIZES]},
+        missing_codes={"-": "NOT_APPLICABLE"},
+    )
+    release = shop(given, extended=True, survived="delayed", extras=columns)
+    small = {"kind": "value", "column": "customers.size", "values": ["small"]}
+    [column] = analyse(document(params={"covariates": [{"column": "customers.size"}]}), release)
+    [asked] = analyse(document(params={"covariates": [predicate(small)]}), release)
+    by_column = column.outcome.analysed[0]
+    by_predicate = asked.outcome.analysed[0]
+    assert by_column.excluded[ExclusionReason.NOT_APPLICABLE] > 0
+    assert by_predicate.excluded[ExclusionReason.NOT_APPLICABLE] == 0
+    assert by_predicate.n == by_column.n + by_column.excluded[ExclusionReason.NOT_APPLICABLE]
+
+
+def test_a_unit_for_which_a_predicate_is_unknown_is_left_out_by_its_reasons(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(document(params={"covariates": [predicate(GOLD)]}), store(customers=60))
+    for one, at in zip(analysed.outcome.analysed, analysed.outcome.values.positions, strict=True):
+        assert one.excluded[ExclusionReason.NOT_ASSESSED] > 0
+        counts = at.variables[0]
+        assert counts.excluded[ExclusionReason.NOT_ASSESSED] > 0
+        assert counts.n + counts.excluded_units == one.total()
+    assert "UNKNOWN_EXCLUDED" in codes(analysed.result)
+
+
+def test_a_predicate_true_of_every_unit_is_one_term_without_a_level(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(
+        document(params={"covariates": [predicate({"all": []})]}), store(customers=40)
+    )
+    [_, term] = analysed.outcome.values.view.terms
+    assert (term.level, term.reasons()["/estimate"]) == (None, "zero_variance")
+
+
+def test_a_predicate_equal_to_a_question_covariate_is_not_identified_with_it(
+    analyse: Analyse, store: Store
+) -> None:
+    question = {"kind": "value", "column": "orders.channel", "values": ["web"]}
+    exists = predicate({"kind": "exists", "table": "orders", "where": [question]})
+    [analysed] = analyse(document(params={"covariates": [WEB, exists]}), store(customers=60))
+    covariates = [t for t in analysed.outcome.values.view.terms if t.kind == "covariate"]
+    assert {t.reasons()["/estimate"] for t in covariates} == {"zero_variance"}
+
+
+def test_a_predicate_whose_truth_the_other_lift_changes_carries_lift_differs(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(
+        document(params={"covariates": [predicate(RETURNED)]}), store(customers=60)
+    )
+    [lift] = [
+        c for c in analysed.result.caveats if c.code == "LIFT_DIFFERS" and c.affects == ["/values"]
+    ]
+    assert "covariate 0" in said(lift.message)
+    lifts = [at.lifts for at in analysed.outcome.values.positions]
+    assert all(found is not None and [one.covariate for one in found] == [0] for found in lifts)
+    assert any(found and found[0].lift_differs for found in lifts)
+    [plain] = analyse(document(params={"covariates": [predicate(VIP)]}), store(customers=60))
+    assert not [
+        c for c in plain.result.caveats if c.code == "LIFT_DIFFERS" and c.affects == ["/values"]
+    ]
+
+
+def test_the_readback_of_a_predicate_covariate_states_its_conditions_and_coding(
+    check: Check, store: Store
+) -> None:
+    [view] = check(document(params={"covariates": [AGE, predicate(GOLD)]}), store()).views
+    text = said(view.readback())
+    assert (
+        "; covariate 1 (1 where the predicate holds, 0 where it does not): units for which " in text
+    )
+    assert "customers.tier" in text
+    assert "for which a predicate cannot be decided" in text
+
+
+def test_a_predicate_covariate_labels_its_term_true_against_false(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(document(params={"covariates": [predicate(VIP)]}), store(customers=60))
+    [chart] = analysed.result.charts
+    labels = {row["term"] for layer in chart["layer"] for row in layer["data"]["values"]}
+    assert 'covariate 0: "true" vs "false"' in labels
+
+
+def test_a_predicate_covariate_s_leaves_are_in_the_result_s_source(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(
+        document(params={"covariates": [AGE, predicate(GOLD)]}), store(customers=40)
+    )
+    assert "/views/0/params/covariates/1/predicate" in analysed.result.source.leaves
+
+
+def test_a_leaf_written_twice_is_refused_at_the_first_place_it_was_written(
+    check: Check, store: Store
+) -> None:
+    identifier = {"kind": "value", "column": "customers.customer_id", "values": ["c1"]}
+    members: list[Any] = [
+        {"kind": "value", "column": "customers.age", "range": {"gte": n}} for n in range(11)
+    ]
+    members[2] = members[10] = identifier
+    found = check(document(params={"covariates": [predicate({"any": members})]}), store())
+    assert refusals(found) == [
+        (RefusalCode.INVALID_VALUE, "/views/0/params/covariates/0/predicate/any/2")
+    ]
+
+
+def test_a_view_of_no_predicate_that_holds_a_lift_has_no_lifts(
+    analyse: Analyse, store: Store
+) -> None:
+    returned = {"column": "returns.reason", "aggregate": "some", "values": ["size"]}
+    for covariates in ([AGE, TIER], [returned], [predicate(VIP)]):
+        [analysed] = analyse(document(params={"covariates": covariates}), store(customers=60))
+        assert all(at.lifts is None for at in analysed.outcome.values.positions)
+
+
+def test_a_predicate_whose_lift_changes_no_unit_shows_its_zeros_and_raises_nothing(
+    analyse: Analyse, store: Store
+) -> None:
+    every = {
+        "kind": "exists",
+        "table": "orders",
+        "quantifier": "every",
+        "where": [{"kind": "exists", "table": "returns", "where": []}],
+    }
+    [analysed] = analyse(document(params={"covariates": [predicate(every)]}), store(customers=60))
+    lifts = [at.lifts for at in analysed.outcome.values.positions]
+    assert lifts == [[cox.CoxLift(covariate=0, lift_differs=0)]] * 2
+    assert not [
+        c for c in analysed.result.caveats if c.code == "LIFT_DIFFERS" and c.affects == ["/values"]
+    ]
+
+
+def test_a_position_s_lifts_are_absent_or_one_to_eight_never_an_empty_list(
+    analyse: Analyse, store: Store
+) -> None:
+    [analysed] = analyse(document(params={"covariates": [predicate(RETURNED)]}), store())
+    given = analysed.outcome.values.positions[0].model_dump()
+    lift = {"covariate": 0, "lift_differs": 0}
+    for lifts in (None, [lift], [lift] * 8):
+        CoxPosition.model_validate({**given, "lifts": lifts})
+    for lifts in ([], [lift] * 9):
+        with pytest.raises(ValidationError):
+            CoxPosition.model_validate({**given, "lifts": lifts})
+
+
+def test_the_counts_of_the_other_lift_are_compare_existence_s_for_the_predicate(
+    analyse: Analyse, store: Store
+) -> None:
+    for clause in (RETURNED, GOLD, {"not": RETURNED}, {"any": [RETURNED, VIP]}):
+        written = document(params={"covariates": [predicate(clause)]})
+        written["views"].append(
+            {
+                "analysis": "compare.existence",
+                "cohorts": ["young", "old"],
+                "params": {"predicates": [clause]},
+            }
+        )
+        modelled, compared = analyse(written, store(customers=60))
+        by_existence = [
+            position["predicates"][0]["lift_differs"]
+            for position in compared.result.values.positions
+        ]
+        lifts = [at.lifts for at in modelled.outcome.values.positions]
+        by_model = [0 if found is None else found[0].lift_differs for found in lifts]
+        assert by_model == by_existence
+
+
+def test_a_predicate_covariate_s_form_is_its_predicate_s_canonical_clause_under_predicate(
+    check: Check, store: Store
+) -> None:
+    """D371: the SQL listing memoises a variable by ``variable_form``, and a predicate's is
+    ``{"predicate": …}``, apart from a ``some`` question of the same clause."""
+    [view] = check(document(params={"covariates": [AGE, predicate(RETURNED)]}), store()).views
+    [canonical] = view.predicates
+    variable = view.variables[1]
+    expected = {"predicate": canonical.form[canonical.release.manifest]}
+    assert variable_form(variable.resolved) == variable.form == expected
+    assert variable.resolved.aggregate is None
+
+
+def test_the_readback_describes_each_covariate_once(check: Check, store: Store) -> None:
+    [view] = check(document(params={"covariates": [AGE, predicate(GOLD), TIER]}), store()).views
+    text = said(view.readback())
+    assert [text.count(f"; covariate {j} (") for j in range(3)] == [1, 1, 1]
+    [plain] = check(document(params={"covariates": [AGE]}), store()).views
+    assert "predicate" not in said(plain.readback())
+
+
+@pytest.mark.parametrize(
+    ("variable", "place"),
+    [
+        (
+            {
+                "column": "orders.order_id",
+                "aggregate": "count",
+                "where": [{"kind": "value", "column": "orders.order_id", "values": ["o1"]}],
+            },
+            "where/0",
+        ),
+        (
+            {
+                "column": "orders.amount",
+                "aggregate": "mean",
+                "where": [
+                    {"kind": "value", "column": "orders.channel", "values": ["web"]},
+                    {"kind": "value", "column": "orders.order_id", "values": ["o1"]},
+                ],
+            },
+            "where/1",
+        ),
+        (
+            {
+                "column": "orders.order_id",
+                "aggregate": "count",
+                "where": [
+                    {
+                        "kind": "value",
+                        "column": "customers.customer_id",
+                        "values": ["c1"],
+                        "via": [{"rel": "rel:orders.customer", "dir": "up"}],
+                    }
+                ],
+            },
+            "where/0",
+        ),
+    ],
+    ids=["a count", "a mean", "an identifier looked up from a row"],
+)
+@pytest.mark.parametrize("at", ["covariates/0", "stratum"])
+def test_an_aggregate_whose_rows_conditions_test_an_identifier_is_refused_at_the_leaf(
+    check: Check, store: Store, variable: dict[str, Any], place: str, at: str
+) -> None:
+    params = (
+        {"covariates": [variable]}
+        if at != "stratum"
+        else {"covariates": [AGE], "stratum": variable}
+    )
+    found = check(document(params=params), store())
+    assert refusals(found) == [(RefusalCode.INVALID_VALUE, f"/views/0/params/{at}/{place}")]
+
+
+def test_a_negated_predicate_codes_a_cell_that_does_not_apply_as_true(
+    check: Check, analyse: Analyse, shop: Shop, rows: Rows
+) -> None:
+    """A value leaf on a cell that does not apply is FALSE before any negation (§6.4), so the
+    negated predicate is TRUE there, and the unit is a complete case coded 1."""
+    given = rows_with_extras(rows, 60)
+    for n, customer in enumerate(given["customers"], 1):
+        customer["size"] = "-" if n % 5 == 0 else SIZES[n % 3]
+    columns = extras()
+    columns[0] = build.column(
+        "customers.size",
+        "category",
+        permissible_values={"values": [{"value": v} for v in SIZES]},
+        missing_codes={"-": "NOT_APPLICABLE"},
+    )
+    release = shop(given, extended=True, survived="delayed", extras=columns)
+    small = {"kind": "value", "column": "customers.size", "values": ["small"]}
+    params = {"covariates": [predicate({"not": small}), {"column": "customers.size"}]}
+    [view] = check(document(params=params), release).views
+    resolved = [v.resolved for v in view.variables]
+    seen = 0
+    for cohort in view.cohorts:
+        one = listed(cohort.resolved, resolved)
+        for negated, reasons in zip(one.values[0], one.excluded[1], strict=True):
+            if ExclusionReason.NOT_APPLICABLE in reasons:
+                seen += 1
+                assert negated is True
+    assert seen
+    [analysed] = analyse(document(params={"covariates": [predicate({"not": small})]}), release)
+    assert analysed.outcome.analysed[0].excluded[ExclusionReason.NOT_APPLICABLE] == 0
+
+
+def test_two_predicates_that_hold_lifts_are_each_counted_as_compare_existence_counts_them(
+    analyse: Analyse, store: Store
+) -> None:
+    web = {
+        "kind": "exists",
+        "table": "orders",
+        "where": [
+            {"kind": "value", "column": "orders.channel", "values": ["web"]},
+            {"kind": "exists", "table": "returns", "where": []},
+        ],
+    }
+    written = document(params={"covariates": [predicate(RETURNED), AGE, predicate(web)]})
+    written["views"].append(
+        {
+            "analysis": "compare.existence",
+            "cohorts": ["young", "old"],
+            "params": {"predicates": [RETURNED, web]},
+        }
+    )
+    modelled, compared = analyse(written, store(customers=60))
+    for at, position in zip(
+        modelled.outcome.values.positions, compared.result.values.positions, strict=True
+    ):
+        assert at.lifts is not None
+        assert [(one.covariate, one.lift_differs) for one in at.lifts] == [
+            (0, position["predicates"][0]["lift_differs"]),
+            (2, position["predicates"][1]["lift_differs"]),
+        ]
+    counts = {
+        (one.covariate, one.lift_differs)
+        for at in modelled.outcome.values.positions
+        for one in at.lifts or []
+    }
+    assert len({count for _, count in counts}) > 1
+
+
+def test_the_flags_of_the_flipped_columns_raise_no_caveat(check: Check, store: Store) -> None:
+    [view] = check(
+        document({"all": [EVERYONE]}, {"covariates": [predicate(RETURNED)]}), store()
+    ).views
+    [endpoint] = view.endpoints
+    [event] = endpoint.event
+    [censored] = endpoint.censored
+    count = 12
+    mark = Mark(Flag.SCOPE_PARTIAL, "rel:orders.customer")
+    none = tuple(NONE for _ in range(count))
+    values: tuple[tuple[Any, ...], ...] = (
+        tuple(n % 2 == 0 for n in range(count)),
+        tuple(float(n + 1) for n in range(count)),
+        tuple(event if n % 3 else censored for n in range(count)),
+        tuple(0.0 for _ in range(count)),
+        tuple(n % 2 == 0 for n in range(count)),
+    )
+    given = Listed(
+        [(str(n),) for n in range(count)],
+        list(range(count)),
+        values,
+        (none,) * 5,
+        (frozenset(), frozenset(), frozenset(), frozenset(), frozenset({mark})),
+    )
+    params = view.params
+    assert isinstance(params, CoxParams)
+    positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
+    resolved = [v.resolved for v in view.variables]
+    assert len(cox.listed_variables(resolved, endpoint)) == 5
+    found = cox.analyse(positions, [given], endpoint, resolved, params, reference=0, overlap=False)
+    assert "SCOPE_PARTIAL" not in {c.code for c in found.caveats}

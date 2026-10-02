@@ -652,17 +652,46 @@ class SurvivalValues(Output):
 # --- survival.cox (D366) ----------------------------------------------------------------------
 
 
+class PredicateCovariate(DocModel):
+    """A covariate that is a predicate (D370): the clause's truth for each unit, 1 where it is
+    TRUE against 0 where it is FALSE, a unit for which it is UNKNOWN left out by its reasons."""
+
+    predicate: Clause
+
+
+def _covariate_form(value: object) -> str | None:
+    """A covariate's form (D366, D370): ``predicate`` where it has a ``predicate`` member,
+    ``column`` otherwise, and none where it has both, which no form takes."""
+    if isinstance(value, dict):
+        members = cast(dict[str, object], value)
+        if "predicate" in members and "column" in members:
+            return None
+        return "predicate" if "predicate" in members else "column"
+    return "predicate" if isinstance(value, PredicateCovariate) else "column"
+
+
+CovariateForm = Annotated[
+    Annotated[Variable, Tag("column")] | Annotated[PredicateCovariate, Tag("predicate")],
+    Discriminator(
+        _covariate_form,
+        custom_error_type="conflicting_members",
+        custom_error_message="A covariate is a variable, with a column, or a predicate, not both",
+    ),
+]
+"""A covariate as written (D366, D370): a variable (§9.2), told by its ``column``, or a predicate,
+told by its ``predicate``, so that a variable is written with no tag."""
+
+
 class CoxParams(DocModel):
     """``survival.cox``'s parameters (D366)."""
 
     endpoint: EndpointId | None = None
     """The endpoint (§5.8); without one, the one usable endpoint on the unit table (D347)."""
-    covariates: Annotated[list[Variable], Field(max_length=MAX_VARIABLES), LimitName(VARIABLES)] = (
-        Field(default_factory=list[Variable])
-    )
-    """The covariates, variables (§9.2) one value per unit, in the order the terms give them;
-    none by default. M3.3f adds predicates, ``{"predicate": <clause>}``, told from a variable by
-    its members, so that neither how a variable is written nor its canonical form changes."""
+    covariates: Annotated[
+        list[CovariateForm], Field(max_length=MAX_VARIABLES), LimitName(VARIABLES)
+    ] = Field(default_factory=list[CovariateForm])
+    """The covariates, in the order the terms give them: variables (§9.2), one value per unit,
+    and predicates (D370); none by default."""
     stratum: Variable | None = None
     """The variable whose levels stratify the model; none by default."""
     level: Annotated[Level, Field(le=MAX_LEVEL)] = 0.95
@@ -751,6 +780,14 @@ class CovariateTest(Estimable):
     p: Annotated[Probability | None, COMPUTED]
 
 
+class CoxLift(Output):
+    """A predicate covariate that holds a lift, at one position (D323, D371): ``covariate`` its
+    index, and the position's members whose truth the other lift rule changes."""
+
+    covariate: Annotated[StrictInt, Field(ge=0, lt=MAX_VARIABLES)]
+    lift_differs: Count
+
+
 class CoxPosition(Output):
     """``survival.cox`` at one position (D365): the events among its complete cases, and per
     covariate, then the stratum, then the endpoint, in that order, the units for which it has a
@@ -758,6 +795,8 @@ class CoxPosition(Output):
 
     events: Count
     variables: Annotated[list[AnalysedCounts], Field(min_length=1, max_length=MAX_VARIABLES + 2)]
+    lifts: Annotated[list[CoxLift], Field(min_length=1, max_length=MAX_VARIABLES)] | None = None
+    """Each predicate covariate that holds a lift, in order; none where no covariate does."""
 
 
 class CoxView(Output):
@@ -836,7 +875,9 @@ __all__ = [
     "ColumnsPosition",
     "ColumnsValues",
     "ColumnsView",
+    "CovariateForm",
     "CovariateTest",
+    "CoxLift",
     "CoxParams",
     "CoxPosition",
     "CoxTerm",
@@ -869,6 +910,7 @@ __all__ = [
     "NumberSummary",
     "PackParams",
     "PredicateContrast",
+    "PredicateCovariate",
     "PredicateShare",
     "SurvivalMedian",
     "SurvivalParams",

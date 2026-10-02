@@ -353,20 +353,16 @@ def _survived_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> 
 def _coxed_by_evaluator(view: CheckedView, positions: Sequence[CohortAt]) -> cox.Outcome:
     assert isinstance(view.params, CoxParams)
     [endpoint] = view.endpoints
-    read = [*(variable.resolved for variable in view.variables), *endpoint.variables]
+    resolved = [variable.resolved for variable in view.variables]
+    read = cox.listed_variables(resolved, endpoint)
     found = [ordered_inputs(listed(c.resolved, read)) for c in view.cohorts]
     together = shared(found)
     assert not together or view.overlap, "cohorts that share units are refused"
-    covariates: list[cox.Covariate] = []
-    for variable in view.variables[: len(view.params.covariates)]:
-        coded = cox.covariate_of(variable.resolved)
-        assert coded is not None, "phase 2 refuses a covariate of no coding"
-        covariates.append(coded)
     return cox.analyse(
         positions,
         found,
         endpoint,
-        covariates,
+        resolved,
         view.params,
         reference=view.reference,
         overlap=bool(together),

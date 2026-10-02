@@ -130,6 +130,58 @@ def published(world: World, given: Mapping[str, bytes] | None = None) -> None:
     world.curate("orchard", *edits)
 
 
+CHECKED = {
+    "kind": "coverage",
+    "id": "cov:checks.harvest_id",
+    "label": "Harvests of grades A and B are checked where a checked harvest is listed",
+    "fields": {
+        "relationship": "rel:checks.harvest_id",
+        "parents": {"table": "checked_harvests", "parent_columns": {"harvest_id": "harvest_id"}},
+        "parent_scope": {"kind": "value", "column": "harvests.grade", "values": ["A", "B"]},
+    },
+}
+CHECKS = {
+    "kind": "relationship",
+    "id": "rel:checks.harvest_id",
+    "label": "A check of a harvest",
+    "fields": {
+        "child_table": "checks",
+        "child_columns": ["harvest_id"],
+        "parent_table": "harvests",
+        "parent_columns": ["harvest_id"],
+        "cardinality": "many-to-one",
+    },
+}
+
+
+def checked(world: World) -> None:
+    """The orchard with checks of its harvests, two down steps from a tree: every other harvest
+    is listed as checked, one in three of those has a check, and only grades A and B are in the
+    checks' scope, so a question through them depends on its lift (§6.5)."""
+    given = files()
+    checks = ["check_id,harvest_id,result"]
+    listed = ["harvest_id"]
+    for n in range(1, 151):
+        if n % 2:
+            listed.append(f"h{n}")
+            if n % 3 == 0:
+                checks.append(f"c{n},h{n},{'ok' if n % 4 else 'bad'}")
+    given["checks.csv"] = ("\n".join(checks) + "\n").encode()
+    given["checked_harvests.csv"] = ("\n".join(listed) + "\n").encode()
+    published(world, given)
+    world.curate(
+        "orchard",
+        {"op": "put", "descriptor": CHECKS},
+        {
+            "op": "set",
+            "descriptor": "checked_harvests",
+            "pointer": "/fields/role",
+            "value": "coverage",
+        },
+        {"op": "put", "descriptor": CHECKED},
+    )
+
+
 def document(
     covariates: Sequence[Any] | str = (),
     cohorts: Sequence[str] = ("apple", "pear"),
@@ -187,6 +239,7 @@ def evaluated(world: World, manifest: str, written: Mapping[str, Any]) -> list[R
         positions=loaded.positions,
         endpoints=[e for view in parsed for e in view.endpoints],
         variables=[v for view in parsed for v in view.variables],
+        predicates=[p for view in parsed for p in view.predicates],
     )
     checked, wrong = views.checked(loaded.document, parsed, canonical, analyses)
     assert wrong == []
@@ -194,18 +247,14 @@ def evaluated(world: World, manifest: str, written: Mapping[str, Any]) -> list[R
     for view in checked:
         assert isinstance(view.params, CoxParams)
         [endpoint] = view.endpoints
-        read = [*(v.resolved for v in view.variables), *endpoint.variables]
+        resolved = [variable.resolved for variable in view.variables]
+        read = cox.listed_variables(resolved, endpoint)
         given = [ordered(listed(c.resolved, read)) for c in view.cohorts]
-        covariates: list[cox.Covariate] = []
-        for variable in view.variables[: len(view.params.covariates)]:
-            coded = cox.covariate_of(variable.resolved)
-            assert coded is not None
-            covariates.append(coded)
         outcome = cox.analyse(
             [CohortAt(c, evaluate(c.resolved)) for c in view.cohorts],
             given,
             endpoint,
-            covariates,
+            resolved,
             view.params,
             reference=view.reference,
             overlap=bool(shared(given)) and view.overlap,
@@ -466,6 +515,7 @@ def test_a_run_over_its_caps_names_the_first_view_that_lists_inputs(world: World
         positions=loaded.positions,
         endpoints=[e for view in parsed for e in view.endpoints],
         variables=[v for view in parsed for v in view.variables],
+        predicates=[p for view in parsed for p in view.predicates],
     )
     checked, _ = views.checked(loaded.document, parsed, canonical, analyses)
     widest = analyses_module._widest(checked)  # pyright: ignore[reportPrivateUsage]
@@ -482,3 +532,138 @@ def test_a_document_whose_views_are_a_parameter_s_empty_value_is_refused_at_its_
     refusal = refusal_of(answer(catalog_of(world), "run_analysis", {"document": written}))
     assert (refusal.code, refusal.path) == (RefusalCode.MISSING_MEMBER, "/views")
     assert {"data": "v"} in [segment.model_dump() for segment in refusal.message]
+
+
+TALL = {"kind": "value", "column": "trees.tags", "values": ["tall"], "match": "any"}
+HEAVY = {
+    "kind": "exists",
+    "table": "harvests",
+    "quantifier": "some",
+    "where": [{"kind": "value", "column": "harvests.kg", "range": {"gte": 14}}],
+}
+PREDICATES: dict[str, list[Any]] = {
+    "a value of the unit": [
+        {"predicate": {"kind": "value", "column": "trees.grafted", "values": [True]}}
+    ],
+    "a list": [{"predicate": TALL}],
+    "rows below": [{"predicate": HEAVY}],
+    "every row below": [{"predicate": {**HEAVY, "quantifier": "every"}}],
+    "not and known": [
+        {
+            "predicate": {
+                "not": {"known": {"kind": "value", "column": "trees.girth", "range": {"gte": 30}}}
+            }
+        }
+    ],
+    "unknown": [
+        {"predicate": {"unknown": {"kind": "value", "column": "trees.girth", "range": {"gte": 30}}}}
+    ],
+    "any of two": [{"predicate": {"any": [TALL, HEAVY]}}],
+    "beside columns": [GIRTH, {"predicate": HEAVY}, {"column": "trees.soil"}],
+}
+
+
+@pytest.mark.parametrize("name", sorted(PREDICATES))
+def test_a_model_of_predicates_run_by_sql_gives_the_reference_evaluator_s_result(
+    world: World, name: str
+) -> None:
+    published(world)
+    written = document(
+        PREDICATES[name], stratum={"column": "trees.grafted"} if name == "rows below" else None
+    )
+    if name != "rows below":
+        written["views"][0]["params"].pop("stratum")
+    [result] = run(catalog_of(world), written).results
+    [expected] = evaluated(world, manifest_of(result), written)
+    assert result.digest == expected.digest
+    assert result.values == expected.values
+    assert result.analysed == expected.analysed
+
+
+def test_views_that_differ_only_in_a_predicate_list_their_cells_apart(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published(world)
+    listings: list[int] = []
+    given = analyses_module.run_views
+
+    def counted(*args: Any, **kw: Any) -> Any:
+        listings.append(len(kw["inputs"]))
+        return given(*args, **kw)
+
+    monkeypatch.setattr(analyses_module, "run_views", counted)
+    written = document([{"predicate": TALL}])
+    written["views"].append(document([{"predicate": HEAVY}])["views"][0])
+    first, second = run(catalog_of(world), written).results
+    assert listings == [2]
+    assert first.digest != second.digest
+
+
+CHECKED_HARVEST = {
+    "kind": "exists",
+    "table": "harvests",
+    "where": [{"kind": "exists", "table": "checks", "where": []}],
+}
+
+
+@pytest.mark.parametrize(
+    "covariates",
+    [
+        [{"predicate": CHECKED_HARVEST}],
+        [{"predicate": {**CHECKED_HARVEST, "lift": "assessed"}}, GIRTH],
+        [GIRTH, {"predicate": {"not": CHECKED_HARVEST}}, {"column": "trees.soil"}],
+    ],
+    ids=["strict", "assessed beside a number", "negated between columns"],
+)
+def test_a_predicate_whose_lift_changes_its_truth_runs_by_sql_as_by_the_evaluator(
+    world: World, covariates: list[Any]
+) -> None:
+    checked(world)
+    written = document(covariates)
+    [result] = run(catalog_of(world), written).results
+    [expected] = evaluated(world, manifest_of(result), written)
+    assert result.digest == expected.digest
+    assert result.values == expected.values
+    positions: Any = result.values.positions
+    counts = [lift["lift_differs"] for at in positions for lift in at["lifts"]]
+    assert any(counts)
+    assert "LIFT_DIFFERS" in {caveat.code for caveat in result.caveats}
+
+
+CHECKED_A_HARVEST = {
+    "kind": "exists",
+    "table": "harvests",
+    "where": [
+        {"kind": "value", "column": "harvests.grade", "values": ["A"]},
+        {"kind": "exists", "table": "checks", "where": []},
+    ],
+}
+
+
+def test_two_lifted_predicates_are_each_counted_against_their_own_flip_as_existence_counts_them(
+    world: World,
+) -> None:
+    checked(world)
+    clauses = [CHECKED_HARVEST, CHECKED_A_HARVEST]
+    alone = document([{"predicate": clause} for clause in clauses])
+    written = document([{"predicate": clause} for clause in clauses])
+    written["views"].append(
+        {
+            "analysis": "compare.existence",
+            "cohorts": ["apple", "pear"],
+            "params": {"predicates": clauses},
+        }
+    )
+    modelled, compared = run(catalog_of(world), written).results
+    [expected] = evaluated(world, manifest_of(modelled), alone)
+    assert modelled.values == expected.values
+    by_model: Any = modelled.values.positions
+    by_existence: Any = compared.values.positions
+    counts = [
+        [(lift["covariate"], lift["lift_differs"]) for lift in at["lifts"]] for at in by_model
+    ]
+    assert counts == [
+        [(k, position["predicates"][k]["lift_differs"]) for k in range(2)]
+        for position in by_existence
+    ]
+    assert any(first != second for (_, first), (_, second) in counts)

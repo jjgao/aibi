@@ -557,7 +557,8 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
     (D325). A column: ``column`` and its lookups ``via`` (if any); a question: ``aggregate``
     and its canonical clause tree ``question``; an aggregate: ``aggregate``, ``column``, the
     canonical question of its rows ``rows``, the lookups from each row ``lookup`` (if any) and,
-    for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value)."""
+    for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value); a predicate's
+    truth (``predicate_variable``): ``predicate``, its canonical clause tree."""
     if variable.kind == "column":
         found: dict[str, JsonValue] = {"column": variable.column}
         if variable.via:
@@ -565,7 +566,8 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
         return found
     if variable.kind == "question":
         assert variable.question is not None
-        assert variable.aggregate is not None
+        if variable.aggregate is None:
+            return {"predicate": canonical_clause(variable.question)}
         return {"aggregate": variable.aggregate, "question": canonical_clause(variable.question)}
     assert variable.rows is not None
     assert variable.function is not None
@@ -579,6 +581,33 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
     if variable.function != "count":
         found["empty"] = "exclude" if variable.empty is None else constant_json(variable.empty)
     return found
+
+
+def predicate_variable(key: str, predicate: CanonicalCohort) -> CanonicalVariable:
+    """A view's predicate as a variable of its units (D370): a question of its canonical clause
+    tree and no aggregate, whose value is the clause's truth and a unit for which it is UNKNOWN
+    excluded by its reasons, as a ``some`` or ``every`` question's is (§6.6); its form is
+    ``{"predicate": <the predicate's canonical form>}``, which no other variable's form holds.
+    Both engines list it as they list any question (``variables.evaluate_variable``,
+    ``sql.compile_inputs``). Its fields, packs, leaves and summaries are its predicate's, which
+    the view holds among its predicates and reads from there, so it carries none of them."""
+    resolved = predicate.resolved
+    variable = ResolvedVariable(
+        key=key,
+        release=resolved.release,
+        unit=resolved.unit,
+        column="",
+        datatype=None,
+        kind="question",
+        question=resolved.tree,
+        coverage=resolved.coverage,
+    )
+    return CanonicalVariable(
+        key=key,
+        resolved=variable,
+        form={"predicate": predicate.form[predicate.release.manifest]},
+        leaves={},
+    )
 
 
 # --- Phase 2 (M3) -------------------------------------------------------------------------------
@@ -660,5 +689,6 @@ __all__ = [
     "canonical_clause",
     "canonicalise",
     "intersection",
+    "predicate_variable",
     "variable_form",
 ]

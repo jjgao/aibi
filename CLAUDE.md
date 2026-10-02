@@ -84,6 +84,8 @@ it and fits the finite part, `coxph.separated_hazards` testing it (`reference/co
 From M3.3e-2, `survival.cox` is registered (`cox.ENTRY`, `CoxParams`): `cox.covariate_of`
 codes each covariate by its variable, `views` refuses what it cannot model, and `cox.analyse`
 runs the model on members listed as a pack's inputs are, refusing what only the data show.
+From M3.3f, a covariate may be a predicate, listed as a question of its clause
+(`canonical.predicate_variable`), with the other lift's changes counted (`cox.lifted`).
 
 ## Non-negotiables
 
