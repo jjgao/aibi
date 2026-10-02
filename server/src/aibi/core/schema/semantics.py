@@ -6,6 +6,11 @@ or excluded unit is counted by reason.
 
 from enum import StrEnum
 
+SEMANTICS_VERSION = 1
+"""The version of the core rules that decide cohort membership, counts, caveats and digests,
+hashed into every cohort id (SPEC §7.6, D282). It is bumped whenever a rule of §6, §7.6, the
+caveat rules of §8.3, §8.4 or §9.3 changes in a way that can change one of them."""
+
 
 class ObservationState(StrEnum):
     """The state of one (unit, variable) pair, or of one cell (SPEC §6.2)."""
@@ -59,4 +64,4 @@ class ExclusionReason(StrEnum):
     INVALID_VALUE = "INVALID_VALUE"
 
 
-__all__ = ["ExclusionReason", "Flag", "ObservationState", "Reason"]
+__all__ = ["SEMANTICS_VERSION", "ExclusionReason", "Flag", "ObservationState", "Reason"]

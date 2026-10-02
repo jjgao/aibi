@@ -2,7 +2,7 @@
 
 Names are descriptor ids, paths are explicit, constants are typed, and every existence question
 is an ``exists`` over one down step (§6.1). ``document`` writes a node with exactly the members of
-§7.6's table; M2.2 sorts the order-insensitive collections and hashes the result.
+§7.6's table; ``canonical`` sorts the order-insensitive collections and hashes the result.
 
 Each node records the positions of the leaves of the document as written that it came from
 (``origin``), which is not part of the form: it maps written leaves to top-level clauses (§6.6)
@@ -276,9 +276,9 @@ def measure(
     clause takes the origins of its duplicates, and so do the members of a kept ``all``, by
     key, and a combinator unwrapped or spliced gives its own to each member it leaves, so every
     leaf as written maps to exactly the top-level clauses it became part of (§6.6). The order
-    that step 8 also gives is M2.2's, and changes neither count. A node that cohort references
-    share is done once, so the work grows with the form, not with the tree of references
-    written.
+    that step 8 also gives is ``canonical``'s, and changes neither count. A node that cohort
+    references share is done once, so the work grows with the form, not with the tree of
+    references written.
 
     Every node without children counts as a leaf, an empty ``all`` or ``any`` included, so the
     form holds at most as many nodes as its depth times its leaves (D212). ``deduplicated``

@@ -9,7 +9,8 @@ Complaints are recorded only when made by phone or on the web (a record filter).
 up their type's tier. Staff have undeclared coverage.
 
 Test modules can't import one another (``--import-mode=importlib``), so the helpers are given as
-fixtures: ``city`` builds a release from rows, ``run`` resolves and evaluates a document.
+fixtures: ``city`` builds a release from rows, ``run`` resolves and evaluates a document, and
+``canon`` canonicalises one.
 """
 
 import json
@@ -20,11 +21,13 @@ from typing import Any
 import pytest
 
 from aibi.core.engine import build
+from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
 from aibi.core.engine.resolve import Resolution, resolve
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
+from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.schema.refusals import Refusal
 
 INSPECTED = "rel:inspections.establishment"
@@ -243,6 +246,35 @@ def run_document(written: Mapping[str, Any], releases: Release | Mapping[str, Re
     resolution = resolve(loaded.document, given, loaded.positions)
     results = {name: evaluate(cohort) for name, cohort in resolution.cohorts.items()}
     return Run(resolution, results)
+
+
+def canonicalise_document(
+    written: Mapping[str, Any],
+    releases: Release | Mapping[str, Release],
+    *,
+    labels: Mapping[str, Any] | None = None,
+    registry: PackRegistry | None = None,
+    floor: int | None = None,
+) -> Canonicalisation:
+    """Load and canonicalise a document; the loader must accept it. Every release is ``@1``
+    unless ``labels`` says otherwise."""
+    loaded = load_document(json.dumps(written))
+    assert loaded.refusals == [], loaded.refusals
+    assert loaded.document is not None
+    given = {"d": releases} if isinstance(releases, Release) else releases
+    return canonicalise(
+        loaded.document,
+        given,
+        labels=labels or {release.manifest: 1 for release in given.values()},
+        registry=registry,
+        floor=floor,
+        positions=loaded.positions,
+    )
+
+
+@pytest.fixture(scope="session")
+def canon() -> Callable[..., Canonicalisation]:
+    return canonicalise_document
 
 
 @pytest.fixture(scope="session")

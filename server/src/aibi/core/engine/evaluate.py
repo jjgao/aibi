@@ -55,7 +55,7 @@ from aibi.core.engine.truth import (
     unknown,
     unknown_of,
 )
-from aibi.core.engine.units import factor
+from aibi.core.engine.units import scale
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.semantics import Flag, ObservationState, Reason
 
@@ -112,8 +112,8 @@ class CohortResult:
     unknown_by_reason: Mapping[Reason, int]
     """Every reason, zeros included; a unit counts under each of its reasons."""
     unknown_by_clause: tuple[int, ...]
-    """For each top-level clause, the unknown units for which it is UNKNOWN (M2.2 keys them
-    ``leaf:<hash>``)."""
+    """For each top-level clause, the unknown units for which it is UNKNOWN (``counts`` keys them
+    by leaf key)."""
     lift_differs: int
     marks: frozenset[Mark]
     """The flags of every unit's cohort-level value, with their relationships."""
@@ -308,11 +308,10 @@ class Evaluator:
         column_units = None if descriptor is None else descriptor.fields.units
         if node.units is None or column_units is None or node.units == column_units:
             return constants
-        ratio = factor(node.units, column_units)
+        ratio = scale(node.units, column_units)
         assert ratio is not None, "units are checked when the document is resolved"
-        scale = float(ratio)
         return [
-            None if constant is None else float(cast(int | float, constant)) * scale
+            None if constant is None else float(cast(int | float, constant)) * ratio
             for constant in constants
         ]
 

@@ -8,8 +8,8 @@ the same PR or don't make the change.
 
 ## Status
 
-Milestone M1 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
-package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
+Milestones M1 and M2 (SPEC.md §15) are in progress; the roadmap issue lists the work order. The
+server package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
 analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
 `core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases held
 in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs, raw
@@ -30,8 +30,12 @@ built; `core/catalog/` holds the catalogue (M1): their disclosure and `stat:` re
 catalogue index in the app DB, and the service functions of the public tools (`search_catalog`,
 `describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`) and of the
 descriptor resources. `core/mcp/` serves them over the official MCP SDK at `/mcp`, stateless, and
-`core/api/tools.py` at `POST /api/tools/<name>`. Database snapshots and the read-only catalogue
-page come next (M1), then M2.
+`core/api/tools.py` at `POST /api/tools/<name>`. From M2, `core/engine/canonical.py` finishes
+canonicalisation (pack leaves expanded, collections sorted, caveat rules run) and gives cohort ids,
+leaf keys and a view's ids from its parts; `core/engine/ids.py` hashes, rounds and digests;
+`core/engine/counts.py` makes the digested part of a cohort count; and `core/store/derivations.py`
+is the derivation log, which `Store.explain` reads. The SQL compiler, readbacks and the query
+tools come next (M2), and database snapshots and the read-only catalogue page (M1).
 
 ## Non-negotiables
 

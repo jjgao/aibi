@@ -101,4 +101,11 @@ def convertible(given: str, to: str) -> bool:
     return factor(given, to) is not None
 
 
-__all__ = ["convertible", "factor"]
+def scale(given: str, to: str) -> float | None:
+    """The factor from ``given`` units to ``to`` units rounded to a double, by which evaluation
+    multiplies a constant once (D203), or ``None`` when no conversion exists."""
+    ratio = factor(given, to)
+    return None if ratio is None else float(ratio)
+
+
+__all__ = ["convertible", "factor", "scale"]

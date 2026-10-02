@@ -910,7 +910,6 @@ def test_one_document_uses_one_release_of_a_dataset(run: Runner, city: City, doc
 @pytest.mark.parametrize(
     ("clause", "path"),
     [
-        ({"kind": "p.leaf", "x": 1}, "/cohorts/c/all/0/kind"),
         (value("core:age_years", range={"gt": 3}), "/cohorts/c/all/0/column"),
         ({"kind": "exists", "table": "core:person"}, "/cohorts/c/all/0/table"),
     ],

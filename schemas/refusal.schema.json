@@ -1763,6 +1763,8 @@
         "INVALID_KEY",
         "MIXED_RELEASES",
         "NOT_SUPPORTED",
+        "PACK_UNAVAILABLE",
+        "PACK_FAILED",
         "UNPARSEABLE_SOURCE",
         "COLUMNS_CHANGED",
         "UNKNOWN_RELEASE",

@@ -83,6 +83,13 @@ class RefusalCode(StrEnum):
     MIXED_RELEASES = "MIXED_RELEASES"
     NOT_SUPPORTED = "NOT_SUPPORTED"
     """Not supported until a later milestone, which the message names."""
+    PACK_UNAVAILABLE = "PACK_UNAVAILABLE"
+    """A pack the document or a dataset names that is not registered, or whose installed version
+    the document's specifier does not admit (§7.6, D286)."""
+    PACK_FAILED = "PACK_FAILED"
+    """A pack's leaf compiler, summary or caveat rule gave what the core refuses: clauses that
+    are no expansion, text that is no segments, or a code the pack does not declare (D285,
+    D287)."""
     # Building a release from its raw snapshots (§12.2, §13.2):
     UNPARSEABLE_SOURCE = "UNPARSEABLE_SOURCE"
     """A raw snapshot its parse settings cannot read; the message names the line."""

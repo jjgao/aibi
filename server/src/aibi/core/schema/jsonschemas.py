@@ -595,15 +595,28 @@ def steps(value: JsonValue, ceiling: int = STEPS_MAX) -> int:
     return min(ceiling, STEPS_BASE + STEPS_PER_VALUE * _count(value))
 
 
+class StepBudget(_Budget):
+    """Steps that several evaluations share, such as those of a document's pack leaves (D285):
+    each spends what it takes from what the ones before it left."""
+
+    __slots__ = ()
+
+    def __init__(self, steps: int) -> None:
+        super().__init__(max(0, steps))
+
+
 class Checker:
     """Validates extension objects against one schema that ``problems`` accepted."""
 
     def __init__(self, schema: Mapping[str, JsonValue]) -> None:
         self._validator = _Validator(dict(schema), registry=Registry())
 
-    def failures(self, value: JsonValue, *, ceiling: int = STEPS_MAX) -> list[Failure]:
-        """Where ``value`` fails the schema, within ``steps(value, ceiling)`` steps."""
-        token = _BUDGET.set(_Budget(steps(value, ceiling)))
+    def failures(
+        self, value: JsonValue, *, ceiling: int = STEPS_MAX, budget: StepBudget | None = None
+    ) -> list[Failure]:
+        """Where ``value`` fails the schema, within ``steps(value, ceiling)`` steps, or within
+        what is left of ``budget``, which the evaluation spends."""
+        token = _BUDGET.set(_Budget(steps(value, ceiling)) if budget is None else budget)
         try:
             found = [
                 Failure(
@@ -632,6 +645,7 @@ __all__ = [
     "WRITE_STEPS_MAX",
     "Checker",
     "Failure",
+    "StepBudget",
     "problems",
     "steps",
 ]
