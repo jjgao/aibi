@@ -1167,6 +1167,7 @@ NO_SEGMENT: dict[str, str] = {
     "aibi.core.catalog.service._BY": "an operator's name: no segment",
     "aibi.core.engine.build._ADAPTER": "a descriptor read from the catalogue: no segment",
     "aibi.core.engine.resolve._CLAUSES": "clauses of a canonical document: no segment",
+    "aibi.core.importers.checks._DESCRIPTORS": "descriptors a pack's importer built: no segment",
     "aibi.core.importers.describe._ADAPTER": "a descriptor the importer built: no segment",
     "aibi.core.operator.auth._BY": "an operator's name: no segment",
     "aibi.core.schema.loading._DESCRIPTOR": "a descriptor from a file: no segment",

@@ -244,7 +244,10 @@ class ImportNote:
 @dataclass(frozen=True)
 class ImportResult:
     """What an importer returns: the raw snapshots by source name, each table's layout on
-    them, the descriptors with their proposals, and notes for the curation queue."""
+    them, the descriptors with their proposals, and notes for the curation queue.
+
+    A validator is given the core's checked copy of it (``importers.checks``), whose mappings
+    are read-only (``MappingProxyType``), which cannot be deep-copied or pickled."""
 
     sources: Mapping[str, "RawSource"]
     layouts: Mapping[str, "Layout"]

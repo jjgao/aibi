@@ -162,6 +162,9 @@ def kinds() -> dict[str, Kind]:
         "hygiene.costly": Kind(lambda m: [], COSTLY_SCHEMA),
         "hygiene.bad_summary": Kind(lambda m: [], summary=lambda leaf: ["plain text"]),
         "hygiene.long_summary": Kind(lambda m: [], summary=lambda leaf: [text("x")] * 65),
+        "hygiene.lying_summary": Kind(lambda m: [], summary=lambda leaf: [_lying_segment()]),
+        "hygiene.list_summary": Kind(lambda m: [], summary=lambda leaf: _SubList([text("x")])),
+        "hygiene.dumping_summary": Kind(lambda m: [], summary=lambda leaf: [_dumping_segment()]),
         "hygiene.raises": Kind(_raises),
         "hygiene.raising_summary": Kind(lambda m: [], summary=lambda leaf: _raises({})),
         "hygiene.greedy": Kind(_greedy),
@@ -172,6 +175,52 @@ def kinds() -> dict[str, Kind]:
             )
         ),
     }
+
+
+class _SaysSegment(type):
+    """A metaclass equal to every type, so that its class passes for a segment by ``==``."""
+
+    def __eq__(cls, other: object) -> bool:
+        return True
+
+    __hash__ = type.__hash__
+
+
+class _Reading:
+    def __getattr__(self, name: str) -> object:
+        raise RuntimeError("s3cr3t-summary")
+
+
+class _LyingSegment(metaclass=_SaysSegment):
+    """No segment, though its type compares equal to one; validated, it gives an object whose
+    every read raises, which a readback would read outside every guard (round 1 of #76's review
+    after its redesign, E3)."""
+
+    def model_dump(self) -> object:
+        return {}
+
+    @classmethod
+    def model_validate(cls, given: object) -> object:
+        return _Reading()
+
+
+class _SubList(list[Any]):
+    """A summary list whose iteration is the pack's, and gives segments of its choosing (round 3
+    of #76's review, m2): it is no list, so it is never iterated."""
+
+    def __iter__(self) -> Any:
+        return iter([text("chosen by the pack")])
+
+
+def _dumping_segment() -> object:
+    """An exact segment that holds a ``model_dump`` of its own, which says something else."""
+    segment = text("x")
+    vars(segment)["model_dump"] = lambda *given, **named: {"text": "chosen by the pack"}
+    return segment
+
+
+def _lying_segment() -> object:
+    return _LyingSegment()
 
 
 def _rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
@@ -364,7 +413,16 @@ def test_the_pack_s_summary_is_kept_beside_the_form_and_outside_the_id(
     assert b"establishments with" not in str(cohort.identity.hashed()).encode()
 
 
-@pytest.mark.parametrize("kind", ["hygiene.bad_summary", "hygiene.long_summary"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "hygiene.bad_summary",
+        "hygiene.long_summary",
+        "hygiene.lying_summary",
+        "hygiene.list_summary",
+        "hygiene.dumping_summary",
+    ],
+)
 def test_a_summary_that_is_not_a_short_list_of_segments_is_refused(
     canon: Canon, city: City, doc: Doc, kind: str
 ) -> None:

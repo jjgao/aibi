@@ -100,6 +100,8 @@ core/engine/worker.py	Workers._late	_refused	seconds	a number, or a word of the 
 core/engine/worker.py	Workers._memory	_refused	memory	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
 core/importers/archives.py	_limit	_over	message	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/archives.py	_walk	_over	message	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/checks.py	_message	text	cast(str, value)	a pack's own text segment, of Unicode text within the limits, copied as the pack wrote it (the pack's words, which D285 admits)
+core/importers/checks.py	run_importer	_failed	cast(_Failed, error).what	the checks' own sentence: every `_Failed` is raised with a literal, or an f-string of the numbers of the limits
 core/importers/confine.py	Confinement._too_large	refused	limit	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/confine.py	Confinement.files	_not_confined	message	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/confine.py	_not_confined	refused	[_WHERE]	the server's own sentence (a literal or a number of a limit), or a segment already

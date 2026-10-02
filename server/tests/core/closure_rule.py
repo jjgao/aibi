@@ -253,6 +253,19 @@ READS: dict[tuple[str, str, str], str] = {
         "reads a pack leaf's extra members, to check them"
     ),
     ("core/engine/resolve.py", "<module>", "vars"): "reads the built-in exceptions' names",
+    ("core/importers/checks.py", "<module>", "__dict__"): (
+        "reads the class dictionary of BaseException, for its own __traceback__ descriptor"
+    ),
+    ("core/importers/checks.py", "_descriptors", "__pydantic_serializer__"): (
+        "dumps a descriptor by its class's serializer, so that nothing the instance holds is "
+        "called; a descriptor holds no server text and is no Output, and what it dumps is read "
+        "back into descriptors only, whose strings are data"
+    ),
+    ("core/importers/checks.py", "_fields", "vars"): (
+        "reads the instance dictionary of an object a pack built, only when it is a plain dict of "
+        "exact str keys, so that no code of the pack's runs; what is read is copied through "
+        "text(), data() or a constructor, never handed on"
+    ),
 }
 """The reads of a banned name, by file, enclosing function and name, each with why."""
 

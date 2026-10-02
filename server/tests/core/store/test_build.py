@@ -147,6 +147,15 @@ def test_an_import_lays_out_every_table(store: Store, library: Library) -> None:
     assert [r.code for r in refused.value.refusals] == ["COLUMNS_CHANGED"]
 
 
+def test_every_source_is_read_by_a_table(store: Store, library: Library) -> None:
+    """A raw snapshot no table reads would be a blob no erasure's hold check sees (D400); the
+    core's importers never give one, and a pack's result is refused before the store (``checks``).
+    """
+    sources = {**library.sources(), "extra": TextSource(b"member_id\nm-1\n")}
+    with store.pin() as pin, pytest.raises(ValueError, match="no table reads the source extra"):
+        store.import_release(pin, "lib", library.descriptors(), sources, library.layouts)
+
+
 def test_a_token_beyond_a_decimal_s_exponents_is_reported_not_raised(
     store: Store, library: Library
 ) -> None:

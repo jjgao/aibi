@@ -5,7 +5,8 @@ D235–D242).
 
 1. The importer reads the source: the core's ``FileImporter``, or the importer of the pack the
    operator names, through the same ``Importer`` protocol and ``ImportOptions``, whose reader is
-   the only way either opens a file (§14); or, for a named connection resolved by
+   the only way either opens a file (§14), a pack's result checked by the core, which also
+   contains what its importer raises (``checks``, D400); or, for a named connection resolved by
    ``databases.resolve``, the core's ``DatabaseImporter``, and never a pack's (a pack named with
    one is ``CONFLICTING_MEMBERS``, D305). An entry by the importer without an ``inferred`` value
    takes its field's value as one, as the core's importer writes it (D227, D239).
@@ -43,6 +44,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from aibi.core.importers.checks import for_validator, run_importer
 from aibi.core.importers.databases import DatabaseImporter, Resolved
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
 from aibi.core.importers.files import FileImporter
@@ -147,9 +149,7 @@ def _slot(store: Store, dataset: str, kind: Literal["import", "reimport"]) -> Ge
         raise ImportRefused([error.refusal]) from None
 
 
-def _importer(registry: PackRegistry | None, pack: str | None) -> Importer:
-    if pack is None:
-        return FileImporter()
+def _importer(registry: PackRegistry | None, pack: str) -> Importer:
     found = None
     try:
         found = None if registry is None else registry.importer(pack)
@@ -194,15 +194,19 @@ def _read(
                 read = DatabaseImporter().import_database(source, options)
             except MemoryError:
                 raise out_of_memory(DECODED_BYTES, options.limits.decoded_bytes) from None
+        elif pack is None:
+            read = FileImporter().import_source(source, options)
         else:
-            read = _importer(registry, pack).import_source(source, options)
+            read = run_importer(_importer(registry, pack), pack, source, options)
     except MemoryError:
         raise out_of_memory(IMPORT_BYTES, options.limits.import_bytes) from None
-    result = replace(read, descriptors=with_inferences(read.descriptors))
+    result = replace(read, descriptors=tuple(with_inferences(read.descriptors)))
     consulted = {*packs_of(result.descriptors), *packs, *([pack] if pack is not None else [])}
     found = _validators(registry, consulted)
     given = source.source if isinstance(source, Resolved) else source
-    refusals = [r for validator in found for r in validator.validate_source(given, result)]
+    refusals = [
+        r for validator in found for r in validator.validate_source(given, for_validator(result))
+    ]
     if refusals:
         raise ImportRefused(refusals)
     return result, found
