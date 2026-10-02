@@ -45,6 +45,11 @@ cohort. Its values, at its one position: the unit table's key columns, and at mo
 its members' keys from the ``offset``-th, each its values in key order as they are stored, in the
 canonical form's order (§7.6, step 8), and whether more follow. It lists no key under a disclosure
 setting (D332).
+
+A view of a **pack's analysis** (``PackParams``, D341) takes ``columns``, the variables each of its
+entry's ``column`` requirements takes, by role, and ``options``, which its entry's ``params``
+schema checks. Its values are what the pack's ``run`` gives, checked against the entry's
+``returns`` schema (D343).
 """
 
 from itertools import pairwise
@@ -66,12 +71,14 @@ from aibi.core.schema.document import (
     ClauseList,
     ColumnOrConcept,
     DocModel,
+    DocumentJson,
     Lift,
+    ParamKey,
     Scalar,
     ValueList,
     Via,
 )
-from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER
+from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER, Identifier
 from aibi.core.schema.limits import (
     BIN_EDGES,
     MAX_BINS,
@@ -85,6 +92,7 @@ from aibi.core.schema.limits import (
     PREDICATES,
     VARIABLES,
     LimitName,
+    map_cap,
 )
 from aibi.core.schema.numbers import (
     ComputedCount,
@@ -530,6 +538,35 @@ class MembersValues(Output):
     view: NoViewValues
 
 
+# --- A pack's analysis (D341) -------------------------------------------------------------------
+
+
+class PackParams(DocModel):
+    """The parameters of a view of a pack's analysis (D341): the variables each of its ``column``
+    requirements takes, by role, at most ``MAX_VARIABLES`` in all, and its ``options``, which
+    the schema its entry declares as ``params`` checks as they are written."""
+
+    columns: (
+        Annotated[
+            dict[
+                Identifier,
+                Annotated[
+                    list[Variable],
+                    Field(min_length=1, max_length=MAX_VARIABLES),
+                    LimitName(VARIABLES),
+                ],
+            ],
+            Field(max_length=MAX_VARIABLES),
+            LimitName(VARIABLES),
+            map_cap(MAX_VARIABLES),
+        ]
+        | None
+    ) = None
+    """The variables of each ``column`` requirement, in the order its inputs give them."""
+    options: dict[ParamKey, DocumentJson] | None = None
+    """What else the analysis takes, as its entry's ``params`` schema has it."""
+
+
 __all__ = [
     "BINS_OF_A_RANGE",
     "EXCLUDE",
@@ -567,6 +604,7 @@ __all__ = [
     "NumberComparison",
     "NumberDistribution",
     "NumberSummary",
+    "PackParams",
     "PredicateContrast",
     "PredicateShare",
     "Variable",

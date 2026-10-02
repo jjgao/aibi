@@ -413,7 +413,12 @@ _FUNCTIONS = {"max": "greatest", "min": "least", "mean": "mean"}
 
 def variable_readback(variable: CanonicalVariable) -> list[Segment]:
     """A view's variable (D325), for its view's readback: the column and the rows it reads,
-    from the release's descriptors."""
+    from the release's descriptors, followed by the pack summaries of its ``where``'s pack
+    leaves (D345)."""
+    return [*_variable_text(variable), *_labelled(variable.leaves, variable.summaries)]
+
+
+def _variable_text(variable: CanonicalVariable) -> list[Segment]:
     resolved = variable.resolved
     reader = _Reader(resolved.release, dict(resolved.coverage))
     if resolved.kind == "column":
@@ -456,10 +461,18 @@ def _summaries(cohort: CanonicalCohort) -> list[Segment]:
     """The pack summaries, each labelled with the leaf keys of the conditions its leaf became
     part of, never with its pointer as written, which holds the cohort's name; in the order of
     those keys, then of the summaries' own text, each once (D296)."""
+    return _labelled(cohort.leaves, cohort.summaries)
+
+
+def _labelled(
+    leaves: Mapping[str, tuple[str, ...]], summaries: Mapping[str, tuple[Segment, ...]]
+) -> list[Segment]:
+    """Pack summaries, labelled as ``_summaries`` labels them: a cohort's, or a variable's
+    (D345)."""
     labelled = sorted(
         {
-            (cohort.leaves.get(at, ()), canonical(_segments(summary)).decode()): summary
-            for at, summary in cohort.summaries.items()
+            (leaves.get(at, ()), canonical(_segments(summary)).decode()): summary
+            for at, summary in summaries.items()
         }.items()
     )
     found: list[Segment] = []

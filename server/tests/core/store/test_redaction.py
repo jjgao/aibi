@@ -751,3 +751,59 @@ def test_a_members_view_s_offset_and_limit_are_settings_never_a_person_s_key() -
     found: Any = redaction._Written(terms, "loans", "d").document(written)  # pyright: ignore[reportPrivateUsage]
     assert found["views"][0]["params"] == {"offset": 2, "limit": 3}
     assert not redaction._params_hold({"limit": 3, "offset": 2}, terms)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_pack_view_s_options_are_erased_as_what_the_core_cannot_read() -> None:
+    """A pack analysis's ``options`` (D341) hold what the core cannot read, so every term goes by
+    every reading, numbers too, as in a pack leaf; its ``columns`` are variables, whose constants
+    are on their columns; a core analysis's settings stay."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "cohorts": {"all": {"all": []}},
+        "views": [
+            {
+                "analysis": "tallies.echo",
+                "params": {
+                    "columns": {
+                        "measure": [
+                            {"column": "loans.days", "aggregate": "max", "empty": 3},
+                            {"column": "loans.loan_id", "aggregate": "some", "values": [2, 17]},
+                        ]
+                    },
+                    "options": {"threshold": 2, "note": "for m-17", "keep": 17},
+                },
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    params = found["views"][0]["params"]
+    most, some = params["columns"]["measure"]
+    assert most["empty"] == MARK
+    assert some["values"] == [MARK, 17]
+    assert params["options"]["threshold"] == MARK
+    assert params["options"]["keep"] == 17
+    assert "m-17" not in params["options"]["note"]
+    hashed: JsonValue = {
+        "view": {
+            "analysis": {"id": "tallies.echo", "version": "1.0.0"},
+            "params": {"columns": {}, "options": {"threshold": 2}},
+        }
+    }
+    kept: JsonValue = {
+        "view": {
+            "analysis": {"id": "tallies.echo", "version": "1.0.0"},
+            "params": {"columns": {}, "options": {"threshold": 5}},
+        }
+    }
+    core: JsonValue = {
+        "view": {
+            "analysis": {"id": "compare.columns", "version": "1.0.0"},
+            "params": {"columns": [], "level": 2},
+        }
+    }
+    assert redaction._object_holds(hashed, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._object_holds(kept, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._object_holds(core, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]

@@ -3,15 +3,16 @@
 A view is checked in two steps, around phase 1:
 
 1. ``parse``, before the cohorts are resolved: its ``analysis`` is one the registry holds
-   (``UNKNOWN_ANALYSIS``, listing those it holds; a pack's analysis is ``NOT_SUPPORTED`` until
-   M3.2d, D316, D324; a core analysis of §9.5 a later slice implements is passed over, and
-   ``deferred`` gives its ``NOT_SUPPORTED``, D317); its ``params`` are the analysis's
-   parameters, refused where they are written in the document; an analysis that declares
+   (``UNKNOWN_ANALYSIS``, listing those it holds; a core analysis of §9.5 a later slice
+   implements is passed over, and ``deferred`` gives its ``NOT_SUPPORTED``, D317); its ``params``
+   are the analysis's parameters (a pack's, ``PackParams``: its ``column`` requirements bound by
+   role and its ``options`` checked against its ``params`` schema, and no endpoint required,
+   D341), refused where they are written in the document; an analysis that declares
    ``uses_reference`` has its ``cohorts`` listed (``MISSING_MEMBER``); and each predicate of
    its parameters holds no ``ids`` and no ``cohort`` leaf (``LEAF_NOT_ALLOWED``: a predicate is
    asked of every unit, and those belong in a cohort) and at most as many pack leaves as a
    cohort; and the ``where`` of each variable of its parameters holds no ``ids`` or ``cohort``
-   leaf either (``LEAF_NOT_ALLOWED``) and no pack leaf (``NOT_SUPPORTED`` until M3.2d, D324);
+   leaf either (``LEAF_NOT_ALLOWED``) and at most as many pack leaves as a cohort (D345);
    and a view of ``summary.members`` names exactly one cohort, listed in its ``cohorts`` (else
    ``INVALID_VALUE`` there) or the document's only one (else ``MISSING_MEMBER`` at ``cohorts``)
    (D331). Its predicates and variables are then handed to ``canonicalise`` (``ViewPredicate``,
@@ -21,15 +22,19 @@ A view is checked in two steps, around phase 1:
    whose variables its analysis takes (``summary.distribution``'s: categories or numbers, ``bins``
    only for numbers, under *k* a number's histogram edges from ``bins`` or a declared range, and
    under *k* one set of edges for a column's values across the call's views, D328, D329;
-   ``compare.columns``': categories or numbers, and no ``bins``, D336), and, for
+   ``compare.columns``': categories or numbers, and no ``bins``, D336; a pack's: no dates or
+   datetimes, and each of its role's ``datatype`` and ``on``, D341), and, for
    ``summary.members``, whose dataset allows row ids and which no disclosure setting covers
-   (``ROW_IDS_NOT_ALLOWED`` at ``analysis`` otherwise, D332), gets its canonical form and ids
+   (``ROW_IDS_NOT_ALLOWED`` at ``analysis`` otherwise, D332), and for a pack's analysis, which
+   no disclosure setting covers (D344) and whose requirement predicates hold of the release
+   (``NOT_SUPPORTED`` at ``analysis`` otherwise, D341), gets its canonical form and ids
    (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none (D284);
    its reference's position, for an analysis that declares ``uses_reference``, the first cohort's
    by default; ``overlap``, for one that declares ``assumes_independent_groups``; its canonical
    parameters, every default written, every predicate as its canonical clause tree and
    every variable as its canonical form; the effective *k* over its cohorts and predicates and the
-   floor; and the results versions of the packs of its analysis, cohorts and predicates. A view one
+   floor; and the results versions of the packs of its analysis, cohorts, predicates and
+   variables. A view one
    of whose cohorts or predicates was refused is left out; their refusals say why. A view whose
    cohorts are of more than one release is ``MIXED_RELEASES``, which resolution refuses first.
 
@@ -46,22 +51,44 @@ from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
-from aibi.core.analyses import columns, distribution, existence, members
-from aibi.core.analyses.registry import CORE, LATER, PACK_ANALYSES, Analyses, Registered
+from aibi.core.analyses import columns, distribution, existence, members, packs
+from aibi.core.analyses.registry import CORE, ENDPOINTS, LATER, Analyses, Registered
 from aibi.core.engine.canonical import (
     CanonicalCohort,
     Canonicalisation,
     CanonicalVariable,
     ViewIdentity,
 )
-from aibi.core.engine.resolve import PER_CATEGORY, FieldRead, ViewPredicate, ViewVariable
+from aibi.core.engine.data import Release
+from aibi.core.engine.resolve import (
+    PER_CATEGORY,
+    FieldRead,
+    ResolvedVariable,
+    ViewPredicate,
+    ViewVariable,
+    identifying,
+)
+from aibi.core.engine.resolved import (
+    RAll,
+    RAny,
+    RClause,
+    RCovered,
+    RExists,
+    RKnown,
+    RNot,
+    RUnknown,
+    RValue,
+)
 from aibi.core.schema.analyses import (
     ColumnsParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
+    PackParams,
+    Variable,
 )
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
+from aibi.core.schema.descriptors import Disclosure
 from aibi.core.schema.document import (
     PARSED,
     CohortLeaf,
@@ -72,7 +99,14 @@ from aibi.core.schema.document import (
     walk,
 )
 from aibi.core.schema.jsonio import canonical, pointer
-from aibi.core.schema.limits import MAX_PACK_LEAVES, PACK_LEAVES
+from aibi.core.schema.jsonschemas import OUT_OF_STEPS, UNEVALUABLE, WRITE_STEPS_MAX, steps
+from aibi.core.schema.limits import (
+    MAX_PACK_LEAVES,
+    MAX_VARIABLES,
+    PACK_LEAVES,
+    PACK_OPTION_STEPS,
+    VARIABLES,
+)
 from aibi.core.schema.loading import as_written, refusal_from_error
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.params import Position
@@ -96,6 +130,9 @@ class ParsedView:
     overlap: bool
     predicates: tuple[ViewPredicate, ...]
     variables: tuple[ViewVariable, ...] = ()
+    roles: tuple[str, ...] = ()
+    """For a pack's analysis, the role each variable is bound to, as ``variables`` orders them
+    (D341)."""
 
 
 class _Refusals:
@@ -199,21 +236,13 @@ def parse(
                 alternatives=_listed(analyses.ids()),
             )
             continue
-        if found.params is None:
-            refusals.add(
-                RefusalCode.NOT_SUPPORTED,
-                (*at, "analysis"),
-                text(f"A pack's analysis is run from {PACK_ANALYSES}, which gives it the inputs "),
-                text("its requirements name; this one is listed, not run: "),
-                data(view.analysis),
-            )
-            continue
         before = len(refusals.found)
+        model = found.params or PackParams
         params: DocModel | None = None
         try:
-            params = found.params.model_validate(view.params or {}, context={PARSED: True})
+            params = model.model_validate(view.params or {}, context={PARSED: True})
         except ValidationError as error:
-            refusals.of_error(error, found.params, (*at, "params"))
+            refusals.of_error(error, model, (*at, "params"))
         fields = found.entry.fields
         if fields.uses_reference and view.cohorts is None:
             refusals.add(
@@ -224,15 +253,22 @@ def parse(
             )
         predicates: tuple[ViewPredicate, ...] = ()
         variables: tuple[ViewVariable, ...] = ()
+        roles: tuple[str, ...] = ()
         first = view.cohorts[0] if view.cohorts else next(iter(document.cohorts), None)
         reference = _reference_of(document, first)
         if isinstance(params, ExistenceParams):
             predicates = _predicates(params, index, reference, refusals)
         elif isinstance(params, DistributionParams | ColumnsParams):
             independent = bool(fields.assumes_independent_groups)
-            variables = _variables(params, index, reference, refusals, independent)
+            written = [(("columns", j), v) for j, v in enumerate(params.columns)]
+            variables = _variables(written, index, reference, refusals, independent)
         elif isinstance(params, MembersParams):
             _one_cohort(view.cohorts, len(document.cohorts), index, refusals)
+        elif isinstance(params, PackParams):
+            cohorts = len(view.cohorts) if view.cohorts is not None else len(document.cohorts)
+            written = _pack_params(found, params, cohorts, index, analyses, refusals)
+            variables = _variables(written, index, reference, refusals, True)
+            roles = tuple(str(place[1]) for place, _ in written)
         if len(refusals.found) > before or params is None:
             continue
         parsed.append(
@@ -245,9 +281,135 @@ def parse(
                 overlap=view.overlap == "allow",
                 predicates=predicates,
                 variables=variables,
+                roles=roles,
             )
         )
     return parsed, refusals.found
+
+
+def _pack_params(
+    found: Registered,
+    params: PackParams,
+    cohorts: int,
+    index: int,
+    analyses: Analyses,
+    refusals: _Refusals,
+) -> list[tuple[tuple[str | int, ...], Variable]]:
+    """What phase 2 checks of a pack analysis's parameters before resolution (D341): its entry
+    requires no endpoint at least once, whose rows come with M3.3; the view's cohorts number what
+    its ``cohorts`` requirement allows; ``columns`` binds only the roles of its ``column``
+    requirements, each at least ``min`` (1 by default) and at most ``max`` variables, and at
+    most ``MAX_VARIABLES`` in all; and its ``options`` satisfy its ``params`` schema, within the
+    steps of an extension object of their size. Gives each variable with its place below
+    ``params``: ``("columns", <role>, <j>)``, roles in their entry's order."""
+    at: Position = ("views", index)
+    fields = found.entry.fields
+    if any(
+        requirement.kind == "endpoint" and (requirement.min is None or requirement.min > 0)
+        for requirement in fields.requires
+    ):
+        refusals.add(
+            RefusalCode.NOT_SUPPORTED,
+            (*at, "analysis"),
+            text(f"Endpoint rows are materialised from {ENDPOINTS}, with survival; this pack's "),
+            text("analysis requires an endpoint and is listed, not run: "),
+            data(found.id),
+        )
+    for requirement in fields.requires:
+        if requirement.role != "cohorts" or requirement.kind is not None:
+            continue
+        least = 1 if requirement.min is None else requirement.min
+        most = requirement.max
+        if cohorts < least or (most is not None and cohorts > most):
+            refusals.add(
+                RefusalCode.INVALID_VALUE,
+                (*at, "cohorts"),
+                text(f"This analysis takes {least} cohorts at least"),
+                text("" if most is None else f" and {most} at most"),
+                text(f", and the view has {cohorts}"),
+            )
+    column_roles = [r for r in fields.requires if r.kind == "column"]
+    given = params.columns or {}
+    known = {requirement.role for requirement in column_roles}
+    for role in given:
+        if role not in known:
+            refusals.add(
+                RefusalCode.UNKNOWN_MEMBER,
+                (*at, "params", "columns", role),
+                text("This analysis requires no columns of that role: "),
+                data(role),
+                alternatives=_listed(sorted(known)),
+            )
+    written: list[tuple[tuple[str | int, ...], Variable]] = []
+    for requirement in column_roles:
+        role = requirement.role
+        bound = given.get(role, [])
+        least = 1 if requirement.min is None else requirement.min
+        most = requirement.max
+        if len(bound) < least:
+            refusals.add(
+                RefusalCode.MISSING_MEMBER,
+                (*at, "params", "columns", *((role,) if bound else ())),
+                text(f"This analysis requires {least} columns at least of role "),
+                data(role),
+            )
+        elif most is not None and len(bound) > most:
+            refusals.add(
+                RefusalCode.INVALID_VALUE,
+                (*at, "params", "columns", role),
+                text(f"This analysis takes {most} columns at most of role "),
+                data(role),
+            )
+        written += [(("columns", role, j), variable) for j, variable in enumerate(bound)]
+    total = sum(len(bound) for bound in given.values())
+    if total > MAX_VARIABLES:
+        refusals.add(
+            RefusalCode.LIMIT_EXCEEDED,
+            (*at, "params", "columns"),
+            text(f"The view gives {total} columns, and at most {MAX_VARIABLES} may be: each is "),
+            text("resolved, queried and listed for every member of every cohort"),
+            limit=Limit(name=VARIABLES, max=MAX_VARIABLES),
+        )
+    _options(found, params, index, analyses, refusals)
+    return written
+
+
+def _options(
+    found: Registered, params: PackParams, index: int, analyses: Analyses, refusals: _Refusals
+) -> None:
+    """A pack analysis's ``options`` checked against its entry's ``params`` schema, as registered
+    (D341), each failure where it is written."""
+    options = cast(JsonValue, dict(params.options or {}))
+    checker, _ = analyses.implementation(found.id)[1:]
+    ceiling = steps(options, WRITE_STEPS_MAX)
+    at: Position = ("views", index, "params", "options")
+    for failure in checker.failures(options, ceiling=WRITE_STEPS_MAX):
+        if failure.keyword == OUT_OF_STEPS:
+            refusals.add(
+                RefusalCode.LIMIT_EXCEEDED,
+                at,
+                text("Checking the options against the analysis's params schema takes more "),
+                text("steps than it may; give fewer or smaller options"),
+                limit=Limit(name=PACK_OPTION_STEPS, max=ceiling),
+            )
+        elif failure.keyword == UNEVALUABLE:
+            refusals.add(
+                RefusalCode.INVALID_VALUE,
+                at,
+                text("The params schema of analysis "),
+                data(found.id),
+                text(" cannot evaluate these options"),
+            )
+        else:
+            refusals.add(
+                RefusalCode.INVALID_VALUE,
+                (*at, *failure.path),
+                text("The options do not satisfy the params schema of analysis "),
+                data(found.id),
+                text(": its keyword "),
+                data(failure.keyword),
+                text(" fails here"),
+            )
 
 
 def _one_cohort(
@@ -310,36 +472,38 @@ def _predicates(
 
 
 def _variables(
-    params: DistributionParams | ColumnsParams,
+    written: Sequence[tuple[tuple[str | int, ...], Variable]],
     index: int,
     reference: str | None,
     refusals: _Refusals,
     independent: bool,
 ) -> tuple[ViewVariable, ...]:
-    """A view's variables to resolve (D325): the ``where`` of each holds no ``ids`` and no
-    ``cohort`` leaf, as a predicate holds none, and no pack leaf, which the slice that runs
-    packs' analyses expands (D324); ``count: "rows"`` is a descriptive analysis's, from M3.2e,
-    and never one that assumes independent groups (``independent``), which compares units
-    (§9.2, D335)."""
-    base: list[str | int] = ["views", index, "params", "columns"]
+    """A view's variables to resolve (D325), each with its place below ``params``: the ``where``
+    of each holds no ``ids`` and no ``cohort`` leaf, as a predicate holds none, and at most as
+    many pack leaves as a cohort, which resolution expands (D345); ``count: "rows"`` is a
+    descriptive analysis's, from M3.2e, and never one that assumes independent groups
+    (``independent``), which compares units (§9.2, D335)."""
+    base: list[str | int] = ["views", index, "params"]
     before = len(refusals.found)
-    for position, variable in enumerate(params.columns):
+    for place, variable in written:
         if variable.count is not None and independent:
             refusals.add(
                 RefusalCode.INVALID_VALUE,
-                (*base, position, "count"),
+                (*base, *place, "count"),
                 text("This analysis compares units, one value each (§9.2), so a variable counts "),
                 text("units, not rows: leave count out"),
             )
         elif variable.count is not None:
             refusals.add(
                 RefusalCode.NOT_SUPPORTED,
-                (*base, position, "count"),
+                (*base, *place, "count"),
                 text(f'Counting rows (count: "rows", §9.2) comes with {PER_CATEGORY}; a '),
                 text("variable counts units until then"),
             )
-        where: list[str | int] = [*base, position, "where"]
+        where: list[str | int] = [*base, *place, "where"]
+        pack_leaves = 0
         for leaf, path, _ in walk(list(variable.where or []), where):
+            pack_leaves += isinstance(leaf, PackLeaf)
             if isinstance(leaf, IdsLeaf | CohortLeaf):
                 refusals.add(
                     RefusalCode.LEAF_NOT_ALLOWED,
@@ -347,24 +511,25 @@ def _variables(
                     text(f"A column's where holds no {leaf.kind} leaf: it is asked of the rows a "),
                     text("column aggregates, and a list of units or a cohort belongs in a cohort"),
                 )
-            elif isinstance(leaf, PackLeaf):
-                refusals.add(
-                    RefusalCode.NOT_SUPPORTED,
-                    tuple(path),
-                    text(f"A pack leaf in a column's where is expanded from {PACK_ANALYSES}; "),
-                    text("write its conditions with the core's leaves"),
-                )
+        if pack_leaves > MAX_PACK_LEAVES:
+            refusals.add(
+                RefusalCode.LIMIT_EXCEEDED,
+                tuple(where),
+                text(f"The column's where has {pack_leaves} pack leaves, and at most "),
+                text(f"{MAX_PACK_LEAVES} may be: each is compiled by its pack (D285)"),
+                limit=Limit(name=PACK_LEAVES, max=MAX_PACK_LEAVES),
+            )
     if reference is None or len(refusals.found) > before:
         return ()
     return tuple(
         ViewVariable(
-            key=f"{index}/{position}",
+            key="/".join(str(token) for token in (index, *place[1:])),
             reference=reference,
-            at=(*base, position),
+            at=(*base, *place),
             variable=variable,
             independent=independent,
         )
-        for position, variable in enumerate(params.columns)
+        for place, variable in written
     )
 
 
@@ -386,6 +551,8 @@ class CheckedView:
     identity: ViewIdentity
     packs: Mapping[str, PackVersion]
     variables: tuple[CanonicalVariable, ...] = ()
+    roles: tuple[str, ...] = ()
+    """For a pack's analysis, the role each variable is bound to (D341)."""
 
     @property
     def release(self) -> ReleaseRef:
@@ -405,6 +572,16 @@ class CheckedView:
         if isinstance(self.params, ColumnsParams):
             return columns.view_readback(
                 len(self.cohorts), self.reference, self.variables, self.params
+            )
+        if isinstance(self.params, PackParams):
+            fields = self.analysis.entry.fields
+            return packs.view_readback(
+                self.analysis.entry.label,
+                self.analysis.id,
+                len(self.cohorts),
+                self.reference if fields.uses_reference else None,
+                list(zip(self.roles, self.variables, strict=True)),
+                dict(self.params.options or {}),
             )
         assert isinstance(self.params, DistributionParams), "the core's analyses are known"
         return distribution.view_readback(len(self.cohorts), self.variables)
@@ -472,11 +649,15 @@ def _caveat(code: CaveatCode, affects: str, message: list[Segment]) -> Caveat:
 
 
 def checked(
-    document: Document, parsed: Sequence[ParsedView], canonical: Canonicalisation
+    document: Document,
+    parsed: Sequence[ParsedView],
+    canonical: Canonicalisation,
+    analyses: Analyses | None = None,
 ) -> tuple[list[CheckedView], list[Refusal]]:
     """The second step (module docstring): the views whose cohorts and predicates all
     canonicalised, in canonical form; and a refusal for a view whose cohorts are of more than
-    one release (``MIXED_RELEASES``), which resolution refuses first (§7.4)."""
+    one release (``MIXED_RELEASES``), which resolution refuses first (§7.4). ``analyses`` runs
+    a pack analysis's requirement predicates; without it, none holds."""
     found: list[CheckedView] = []
     refusals: list[Refusal] = []
     edges_of: dict[tuple[str, ...], JsonValue] = {}
@@ -507,9 +688,11 @@ def checked(
         variables = tuple(canonical.variables[v.key] for v in view.variables)
         fields = view.analysis.entry.fields
         reference = names.index(view.reference) if view.reference in names else 0
-        packs: dict[str, PackVersion] = {}
-        for part in (*cohorts, *predicates):
-            packs.update(part.packs)
+        involved: dict[str, PackVersion] = {}
+        for part in (*cohorts, *predicates, *variables):
+            involved.update(part.packs)
+        if view.analysis.version is not None and view.analysis.pack is not None:
+            involved[view.analysis.pack] = view.analysis.version
         settings = [part.identity.disclosure for part in (*cohorts, *predicates)]
         given = [k for k in settings if k is not None]
         disclosure = max(given) if given else None
@@ -529,12 +712,18 @@ def checked(
             if listing is not None:
                 refusals.append(listing)
                 continue
+        if isinstance(view.params, PackParams):
+            published = canonical.published.get(cohorts[0].release.manifest)
+            wrong = _packed(view, cohorts[0], variables, disclosure, published, analyses)
+            if wrong:
+                refusals += wrong
+                continue
         identity = ViewIdentity(
             analysis=view.analysis.id,
             version=view.analysis.entry.version,
             cohorts=tuple(cohort.identity for cohort in cohorts),
-            params=_canonical_params(view.params, predicates, variables),
-            packs={pack: version.results_version for pack, version in sorted(packs.items())},
+            params=_canonical_params(view.params, predicates, variables, view.roles),
+            packs={pack: version.results_version for pack, version in sorted(involved.items())},
             disclosure=disclosure,
             reference=reference if fields.uses_reference else None,
             overlap=view.overlap if fields.assumes_independent_groups else None,
@@ -549,11 +738,172 @@ def checked(
                 overlap=view.overlap,
                 predicates=predicates,
                 identity=identity,
-                packs=dict(sorted(packs.items())),
+                packs=dict(sorted(involved.items())),
                 variables=variables,
+                roles=view.roles,
             )
         )
     return found, refusals
+
+
+def _packed(
+    view: ParsedView,
+    cohort: CanonicalCohort,
+    variables: Sequence[CanonicalVariable],
+    k: int | None,
+    published: int | None,
+    analyses: Analyses | None,
+) -> list[Refusal]:
+    """What phase 2 refuses of a pack analysis's resolved view (D341, D342, D344): a dataset that
+    allows no row ids, since a pack handed each member's values in their keys' order can echo a
+    table of units, as ``summary.members`` would list them (D332); any disclosure setting, the
+    floor's included, since no rule over counts protects what a pack computes from every
+    member's values, the refusal naming the setting that binds (``_setting``); an input column
+    that reads the values of an identifier column (§5.4: declared so, a table's primary key or a
+    relationship's column; ``count`` reads no value), which would hand units', rows' or people's
+    identities, or whose ``where`` tests one; one whose values are dates or
+    datetimes; one whose column is not of the datatype, or not on the unit table, that its role
+    requires (as applicability matches them, on the column's own datatype); and a ``predicate``
+    requirement that does not hold of the release."""
+    at = pointer(["views", view.index, "analysis"])
+    alternatives: list[Segment] = [
+        data(name) for name in ("count_cohort", *sorted(set(CORE) - {members.ANALYSIS_ID}))
+    ]
+    dataset = cohort.resolved.release.dataset_descriptor
+    settings = None if dataset is None else dataset.fields.disclosure
+    if settings is not None and not settings.allow_row_ids:
+        return [
+            Refusal(
+                code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+                path=at,
+                message=[
+                    text(
+                        "The dataset does not allow row ids, so no pack's analysis is run: it is "
+                    ),
+                    text(
+                        "handed each member's values in their keys' order and can give them back "
+                    ),
+                    text("as a table of units (§8.4, D344): "),
+                    data(cohort.release.dataset),
+                ],
+                alternatives=alternatives,
+            )
+        ]
+    if k is not None:
+        source = _setting(settings, k, published)
+        return [
+            Refusal(
+                code=RefusalCode.NOT_SUPPORTED,
+                path=at,
+                message=[
+                    text(f"Under a disclosure setting ({source}, {k}) no pack's analysis is "),
+                    text("run: what it computes from every member's values is no count that the "),
+                    text("disclosure rules can protect (§8.4, D344)"),
+                ],
+                alternatives=alternatives,
+            )
+        ]
+    found: list[Refusal] = []
+    release = cohort.resolved.release
+    requirements = {r.role: r for r in view.analysis.entry.fields.requires if r.kind == "column"}
+    for role, given, variable in zip(view.roles, view.variables, variables, strict=True):
+        written = pointer([*given.at, "column"])
+        resolved = variable.resolved
+        requirement = requirements[role]
+        table, _, _ = resolved.column.partition(".")
+        tested = _identifiers_tested(release, resolved)
+        if _identifies(release, resolved.column) and resolved.function != "count":
+            found.append(
+                Refusal(
+                    code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+                    path=written,
+                    message=[
+                        text("A pack's analysis is handed no identifier column's values, which "),
+                        text("name units, rows or people (§5.4, D342); count its rows instead: "),
+                        data(resolved.column),
+                    ],
+                    alternatives=[data("count")],
+                )
+            )
+        elif tested:
+            found.append(
+                Refusal(
+                    code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+                    path=pointer([*given.at, "where"]),
+                    message=[
+                        text("A pack's analysis is handed no value computed from an identifier "),
+                        text("column, which names units, rows or people (§5.4, D342), and this "),
+                        text("variable's where tests one: "),
+                        data(tested[0]),
+                    ],
+                )
+            )
+        elif not packs.taken(resolved):
+            found.append(
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=written,
+                    message=[
+                        text("A pack's analysis is handed categories, booleans, numbers and "),
+                        text("text, and this column's values are none of them: "),
+                        data(resolved.column),
+                    ],
+                    alternatives=[data(name) for name in packs.TAKEN],
+                )
+            )
+        elif requirement.datatype is not None and resolved.datatype != requirement.datatype:
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=written,
+                    message=[
+                        text("Its role takes columns of datatype "),
+                        data(requirement.datatype),
+                        text(", and this one is not: "),
+                        data(resolved.column),
+                    ],
+                )
+            )
+        elif requirement.on == "unit" and (
+            table != resolved.unit or resolved.kind != "column" or resolved.via
+        ):
+            found.append(
+                Refusal(
+                    code=RefusalCode.INVALID_VALUE,
+                    path=written,
+                    message=[
+                        text("Its role takes a column of the unit table itself, read as it is, "),
+                        text("and this one is not: "),
+                        data(resolved.column),
+                    ],
+                )
+            )
+    if found:
+        return found
+    release = cohort.resolved.release
+    unmet = (
+        [r.role for r in view.analysis.entry.fields.requires if r.predicate is not None]
+        if analyses is None
+        else analyses.unmet(
+            view.analysis,
+            release.descriptors,
+            dataset=release.dataset,
+            manifest=release.manifest,
+        )
+    )
+    if unmet:
+        found.append(
+            Refusal(
+                code=RefusalCode.NOT_SUPPORTED,
+                path=at,
+                message=[
+                    text("The release does not meet this analysis's requirements: "),
+                    *_listed(unmet),
+                ],
+                alternatives=[text("list_analyses gives each analysis's applicability")],
+            )
+        )
+    return found
 
 
 def _distributed(
@@ -693,6 +1043,49 @@ def _counted(form: JsonValue) -> JsonValue:
     return {key: member for key, member in form.items() if key not in ("column", "lookup")}
 
 
+def _identifies(release: Release, column: str) -> bool:
+    """Whether a column identifies rows or people (§5.4, ``resolve.identifying``)."""
+    table, _, name = column.partition(".")
+    descriptor = release.column(table, name)
+    return descriptor is not None and identifying(release, descriptor)
+
+
+def _identifiers_tested(release: Release, variable: ResolvedVariable) -> list[str]:
+    """The identifier columns an aggregate's ``where`` tests, sorted: the value leaves of its
+    rows' conditions, and the scope columns of its ``covered`` leaves (D342). A question takes no
+    ``where``, and the column it asks about is the variable's own."""
+    found: set[str] = set()
+    pending: list[RClause] = [] if variable.rows is None else [variable.rows]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, RValue):
+            if _identifies(release, node.column):
+                found.add(node.column)
+        elif isinstance(node, RCovered):
+            for column, _ in node.scope or ():
+                if _identifies(release, f"{node.table}.{column}"):
+                    found.add(f"{node.table}.{column}")
+        elif isinstance(node, RExists):
+            pending.extend(node.where)
+        elif isinstance(node, RAll | RAny):
+            pending.extend(node.members)
+        elif isinstance(node, RNot | RKnown | RUnknown):
+            pending.append(node.member)
+    return sorted(found)
+
+
+def _setting(settings: Disclosure | None, k: int, published: int | None) -> str:
+    """The disclosure setting that binds at ``k``: the release's own ``min_cell_count``, a
+    draft's latest published release's (``published``, D275), or else the deployment's
+    floor (D332, D344)."""
+    own = None if settings is None else settings.min_cell_count
+    if own == k:
+        return "the dataset's min_cell_count"
+    if published == k:
+        return "the latest published release's min_cell_count"
+    return "the deployment's floor"
+
+
 def _listed_members(
     index: int, cohort: CanonicalCohort, k: int | None, published: int | None
 ) -> Refusal | None:
@@ -718,14 +1111,7 @@ def _listed_members(
             alternatives=alternatives,
         )
     if k is not None:
-        own = None if settings is None else settings.min_cell_count
-        source = (
-            "the dataset's min_cell_count"
-            if own == k
-            else "the latest published release's min_cell_count"
-            if published == k
-            else "the deployment's floor"
-        )
+        source = _setting(settings, k, published)
         return Refusal(
             code=RefusalCode.ROW_IDS_NOT_ALLOWED,
             path=at,
@@ -744,10 +1130,20 @@ def _canonical_params(
     params: DocModel,
     predicates: Sequence[CanonicalCohort],
     variables: Sequence[CanonicalVariable],
+    roles: Sequence[str] = (),
 ) -> JsonValue:
     """A view's canonical parameters: every default written, each predicate as its canonical
     clause tree, and each variable as its canonical form, with a number's ``bins`` (``null``
-    for none) (§7.6, D325)."""
+    for none) (§7.6, D325); a pack analysis's, each role's variables' forms and its options as
+    written (D341)."""
+    if isinstance(params, PackParams):
+        by_role: dict[str, list[JsonValue]] = {}
+        for role, variable in zip(roles, variables, strict=True):
+            by_role.setdefault(role, []).append(variable.form)
+        return {
+            "columns": cast(dict[str, JsonValue], by_role),
+            "options": dict(params.options or {}),
+        }
     if isinstance(params, ExistenceParams):
         return {
             "level": params.level,

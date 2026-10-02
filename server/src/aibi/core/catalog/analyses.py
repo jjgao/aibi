@@ -44,7 +44,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, members
+from aibi.core.analyses import columns, distribution, members, packs
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
 from aibi.core.analyses.views import CheckedView
@@ -63,10 +63,11 @@ from aibi.core.catalog.cohorts import (
 )
 from aibi.core.catalog.service import DEADLINE, Catalog, Deadline, ToolRefused
 from aibi.core.engine.canonical import CanonicalCohort, intersection
+from aibi.core.engine.inputs import Listed, TooManyCells, ordered, shared
 from aibi.core.engine.members import Key
 from aibi.core.engine.queries import ViewsRun, run_cohorts, run_views
 from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
-from aibi.core.engine.sql import pairs
+from aibi.core.engine.sql import TooManyListed, pairs
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
 from aibi.core.schema.analyses import (
@@ -74,11 +75,13 @@ from aibi.core.schema.analyses import (
     DistributionParams,
     ExistenceParams,
     MembersParams,
+    PackParams,
 )
 from aibi.core.schema.cohorts import AnalysisResults, RunAnalysis
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import (
     CATEGORIES,
+    INPUT_CELLS,
     LISTED_MEMBERS,
     MAX_CATEGORIES,
     QUERY_ANSWER_BYTES,
@@ -142,23 +145,63 @@ def _run(
     widest: CheckedView,
     listed: Sequence[ResolvedCohort] = (),
     shared: Sequence[bool] = (),
+    inputs: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedVariable]]] = (),
+    packed: Sequence[CheckedView] = (),
 ) -> ViewsRun:
-    """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed and
-    ``shared`` the materialisations that count the units their cohorts share; an answer over the
-    cap names the view to narrow (``widest``, module docstring)."""
-    return _guarded(
-        lambda ends: run_views(
-            cohorts,
-            crossings,
-            materialisations,
-            sources,
-            workers,
-            members=listed,
-            shared=shared,
-            ends=ends,
-        ),
-        deadline,
-        pointer(["views", widest.index]),
+    """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed,
+    ``shared`` the materialisations that count the units their cohorts share and ``inputs`` the
+    listings of packs' analyses' inputs; an answer over the cap names the view to narrow
+    (``widest``, module docstring), and a listing of inputs over its caps the first view that
+    reads it (``packed``, a view per listing)."""
+    try:
+        return _guarded(
+            lambda ends: run_views(
+                cohorts,
+                crossings,
+                materialisations,
+                sources,
+                workers,
+                members=listed,
+                shared=shared,
+                inputs=inputs,
+                ends=ends,
+            ),
+            deadline,
+            pointer(["views", widest.index]),
+        )
+    except TooManyListed as many:
+        view = packed[many.listing or 0]
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer(["views", view.index]),
+                    message=[
+                        text(f"A cohort has more than {many.most} members, more than the inputs "),
+                        text("of a pack's analysis list (§14, D342): narrow the cohort"),
+                    ],
+                    limit=Limit(name=LISTED_MEMBERS, max=many.most),
+                )
+            ]
+        ) from None
+    except TooManyCells as many:
+        raise _too_many_cells(packed[many.listing or 0], many) from None
+
+
+def _too_many_cells(view: CheckedView, many: TooManyCells) -> ToolRefused:
+    return ToolRefused(
+        [
+            Refusal(
+                code=RefusalCode.LIMIT_EXCEEDED,
+                path=pointer(["views", view.index]),
+                message=[
+                    text(f"The analysis's inputs hold {many.cells} cells or more, members times "),
+                    text(f"columns, and at most {many.most} may be (§14, D342): narrow the "),
+                    text("cohorts or read fewer columns"),
+                ],
+                limit=Limit(name=INPUT_CELLS, max=many.most),
+            )
+        ]
     )
 
 
@@ -187,9 +230,10 @@ def _too_large(view: CheckedView, column: int) -> ToolRefused:
 
 def _widest(views: Sequence[CheckedView]) -> CheckedView:
     """The view an answer over the cap, or a run over its seconds or memory, names: the first that
-    lists keys, a row per member, else the one whose materialisation is widest, whose answer grows
-    with the units, else the one whose crossing is (module docstring)."""
-    listing = [view for view in views if isinstance(view.params, MembersParams)]
+    lists keys or a pack's analysis's inputs, a row per member, else the one whose materialisation
+    is widest, whose answer grows with the units, else the one whose crossing is (module
+    docstring)."""
+    listing = [view for view in views if isinstance(view.params, MembersParams | PackParams)]
     if listing:
         return listing[0]
     materialising = [view for view in views if view.variables]
@@ -315,7 +359,20 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
         shared_asked: list[bool] = []
         listings: dict[str, int] = {}
         listed: list[ResolvedCohort] = []
+        handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
+        inputs: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
         for view in views:
+            if isinstance(view.params, PackParams):
+                key = _inputs_key(view)
+                if key not in handed:
+                    handed[key] = len(inputs)
+                    inputs.append(
+                        (
+                            [cohort.resolved for cohort in view.cohorts],
+                            [variable.resolved for variable in view.variables],
+                        )
+                    )
+                continue
             if isinstance(view.params, MembersParams):
                 [cohort] = view.cohorts
                 if cohort.computation_id not in listings:
@@ -347,12 +404,15 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             _widest(views),
             listed,
             shared_asked,
+            inputs,
+            _first_readers(views, handed),
         )
         by_id = dict(zip(cohorts, ran_views.counted, strict=True))
         written = dict(request.document)
         params = dict(found.loaded.params_used)
         outcomes: list[Outcome] = []
         issues: list[Issue] = []
+        in_order: dict[int, list[Listed]] = {}
         for view in views:
             positions = [
                 CohortAt(cohort, by_id[cohort.computation_id].accounting) for cohort in view.cohorts
@@ -367,6 +427,30 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                 outcomes.append(_listed(view, position, run_listed.keys, deadline))
                 queries.append(
                     {"statements": list(run_listed.sql), "parameters": dict(run_listed.parameters)}
+                )
+                issues.append(_result_issue(view, {"queries": queries}, written, params))
+                continue
+            if isinstance(view.params, PackParams):
+                at = handed[_inputs_key(view)]
+                given = ran_views.inputs[at]
+                if at not in in_order:
+                    in_order[at] = _in_order(given.listed, deadline)
+                outcomes.append(
+                    _packed(
+                        catalog,
+                        view,
+                        positions,
+                        in_order[at],
+                        sources,
+                        workers,
+                        deadline,
+                        erasures,
+                        written,
+                        params,
+                    )
+                )
+                queries.append(
+                    {"statements": list(given.sql), "parameters": dict(given.parameters)}
                 )
                 issues.append(_result_issue(view, {"queries": queries}, written, params))
                 continue
@@ -485,6 +569,90 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
         for view, outcome, issuance in zip(views, outcomes, issued[: len(views)], strict=True)
     ]
     return AnalysisResults(results=results, params=parameters(found.loaded))
+
+
+def _packed(
+    catalog: Catalog,
+    view: CheckedView,
+    positions: Sequence[CohortAt],
+    listed: Sequence[Listed],
+    sources: Mapping[str, Mapping[str, TableSource]],
+    workers: Workers,
+    deadline: Deadline | None,
+    erasures: int,
+    written: dict[str, JsonValue],
+    params: dict[str, JsonValue],
+) -> packs.Outcome:
+    """A view of a pack's analysis run on its inputs (D342, D343), ``listed`` each position's
+    listing in the order of §9.3 (``_in_order``); cohorts that share units refuse a view of an
+    analysis that assumes independent groups without ``overlap: "allow"``, as a
+    materialisation's do (§7.4, D339);
+    inputs over ``MAX_INPUT_CELLS`` refuse the call (``LIMIT_EXCEEDED``), and a pack that fails
+    ``PACK_FAILED`` at the view's ``analysis``."""
+    assert isinstance(view.params, PackParams), "a view of a pack's analysis"
+    pack_params = view.params
+    ends = None if deadline is None else deadline.at - RECORD_SECONDS
+    found = list(listed)
+    fields = view.analysis.entry.fields
+    together = shared(found)
+    if together and fields.assumes_independent_groups and not view.overlap:
+        _overlap(catalog, view, together, sources, workers, deadline, erasures, written, params)
+    analysis, _, returns = catalog.analyses.implementation(view.analysis.id)
+    try:
+        return packs.run_pack(
+            analysis,
+            returns,
+            positions,
+            list(zip(view.roles, view.variables, strict=True)),
+            found,
+            pack_params,
+            reference=view.reference,
+            overlapping=bool(together),
+            computation=view.identity.computation_id,
+            ends=ends,
+        )
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+    except TooManyCells as many:
+        raise _too_many_cells(view, many) from None
+    except packs.PackFailed as failed:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.PACK_FAILED,
+                    path=pointer(["views", view.index, "analysis"]),
+                    message=list(failed.message),
+                    limit=failed.limit,
+                )
+            ]
+        ) from None
+
+
+def _in_order(listed: Sequence[Listed], deadline: Deadline | None) -> list[Listed]:
+    """Each position's listing put in the order of §9.3 once, for every view that reads it,
+    by the call's deadline less the time to record (D342)."""
+    ends = None if deadline is None else deadline.at - RECORD_SECONDS
+    try:
+        return [ordered(one, ends) for one in listed]
+    except CallerDeadline:
+        raise late(cast(Deadline, deadline)) from None
+
+
+def _first_readers(
+    views: Sequence[CheckedView], handed: Mapping[tuple[tuple[str, ...], tuple[str, ...]], int]
+) -> list[CheckedView]:
+    """The first view that reads each listing of inputs, by the listing's index."""
+    firsts: dict[int, CheckedView] = {}
+    for view in views:
+        if isinstance(view.params, PackParams):
+            firsts.setdefault(handed[_inputs_key(view)], view)
+    return [firsts[index] for index in range(len(firsts))]
+
+
+def _inputs_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """A pack view's inputs, by its cohorts' computation ids and its variables' canonical
+    forms in order: views that list the same inputs share their run."""
+    return (tuple(cohort.computation_id for cohort in view.cohorts), tuple(_forms(view)))
 
 
 def _crossing_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:

@@ -9,7 +9,7 @@ rules differ (§6.5).
 - ``shop`` builds the release from rows (``rows`` the default rows, ``customers`` of them).
 - ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates and
   variables, runs each by the reference evaluator (``evaluate``, ``evaluate_variable``,
-  ``members.keys``) and
+  ``members.keys``, ``inputs.listed`` for a pack's analysis, whose registry it is given) and
   makes its result envelope as ``run_analysis`` does, returning each view's ``Analysed``.
   ``shop(extended=True)`` adds an order's amount, a number with a declared range, and declares
   the customers' ages' range, for ``summary.distribution``.
@@ -34,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.analyses import columns, distribution, members, views
+from aibi.core.analyses import columns, distribution, members, packs, views
 from aibi.core.analyses.existence import CohortAt, Outcome, compare
 from aibi.core.analyses.registry import Analyses
 from aibi.core.analyses.results import Outcome as AnyOutcome
@@ -44,6 +44,8 @@ from aibi.core.engine import build
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
+from aibi.core.engine.inputs import listed, shared
+from aibi.core.engine.inputs import ordered as ordered_inputs
 from aibi.core.engine.members import keys, ordered
 from aibi.core.engine.resolve import Label, ResolvedCohort
 from aibi.core.engine.resolved import flipped
@@ -55,6 +57,7 @@ from aibi.core.schema.analyses import (
     DistributionParams,
     ExistenceParams,
     MembersParams,
+    PackParams,
 )
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
@@ -204,7 +207,7 @@ def check_document(
         predicates=[p for view in parsed for p in view.predicates],
         variables=[v for view in parsed for v in view.variables],
     )
-    checked, mixed = views.checked(loaded.document, parsed, canonical)
+    checked, mixed = views.checked(loaded.document, parsed, canonical, registry)
     deferred = views.deferred(loaded.document, loaded.positions)
     return Checked(canonical, checked, [*refused, *deferred, *canonical.refusals, *mixed])
 
@@ -217,15 +220,23 @@ def _lifted(cohort: ResolvedCohort) -> TruthValues | None:
 
 
 def analyse_document(
-    written: Mapping[str, Any], release: Release, *, floor: int | None = None
+    written: Mapping[str, Any],
+    release: Release,
+    *,
+    floor: int | None = None,
+    analyses: Analyses | None = None,
 ) -> list[Analysed]:
     """Each view of a document run by the reference evaluator, as ``run_analysis`` runs it by
-    SQL; the document must check."""
-    checked = check_document(written, release, floor=floor)
+    SQL; the document must check. ``analyses`` holds the packs whose analyses a view names."""
+    checked = check_document(written, release, floor=floor, analyses=analyses)
     assert checked.refusals == [], checked.refusals
     found: list[Analysed] = []
     for view in checked.views:
         positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
+        if isinstance(view.params, PackParams):
+            assert analyses is not None, "a pack's analysis is of an installed pack"
+            found.append(_result(view, _packed_by_evaluator(view, positions, analyses), written))
+            continue
         if isinstance(view.params, DistributionParams):
             found.append(_result(view, _summarised_by_evaluator(view, positions), written))
             continue
@@ -255,6 +266,31 @@ def analyse_document(
         )
         found.append(_result(view, outcome, written))
     return found
+
+
+def _packed_by_evaluator(
+    view: CheckedView, positions: Sequence[CohortAt], analyses: Analyses
+) -> packs.Outcome:
+    """A view of a pack's analysis run on its inputs listed by the reference evaluator, as
+    ``run_analysis`` lists them by SQL (D342)."""
+    assert isinstance(view.params, PackParams)
+    variables = [variable.resolved for variable in view.variables]
+    found = [ordered_inputs(listed(cohort.resolved, variables)) for cohort in view.cohorts]
+    together = shared(found)
+    independent = view.analysis.entry.fields.assumes_independent_groups
+    assert not (together and independent) or view.overlap, "cohorts that share units are refused"
+    analysis, _, returns = analyses.implementation(view.analysis.id)
+    return packs.run_pack(
+        analysis,
+        returns,
+        positions,
+        list(zip(view.roles, view.variables, strict=True)),
+        found,
+        view.params,
+        reference=view.reference,
+        overlapping=bool(together),
+        computation=view.identity.computation_id,
+    )
 
 
 def _result(view: CheckedView, outcome: AnyOutcome, written: Mapping[str, Any]) -> Analysed:

@@ -34,6 +34,7 @@ from aibi.core.engine import build
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
+from aibi.core.engine.inputs import Listed
 from aibi.core.engine.resolve import (
     Resolution,
     ResolvedCohort,
@@ -44,9 +45,11 @@ from aibi.core.engine.resolve import (
 from aibi.core.engine.sql import (
     Accounting,
     CompiledCohort,
+    CompiledInputs,
     Crossing,
     compile_cohort,
     compile_crossing,
+    compile_inputs,
     compile_materialised,
     compile_members,
 )
@@ -566,6 +569,46 @@ def listed(
 ) -> Callable[..., tuple[tuple[Any, ...], ...]]:
     directory = tmp_path_factory.mktemp("members")
     return lambda cohort: run_members(cohort, directory, sessions)
+
+
+def run_inputs(
+    cohorts: Sequence[ResolvedCohort],
+    variables: Sequence[ResolvedVariable],
+    directory: Path,
+    sessions: Sessions,
+    ends: float | None = None,
+) -> tuple[Listed, ...]:
+    """Cohorts' members with each variable's value by the SQL compiler, a pack analysis's inputs
+    (D342), run in a helper's session and read by the server, in the rows' order."""
+    compiled = compile_inputs(cohorts, variables, release_blobs(cohorts[0].release, directory))
+    answers = sessions.run(
+        compiled.paths, [(statement, compiled.parameters) for statement in compiled.statements]
+    )
+    return compiled.read(
+        [
+            packed_values(columns, rows, values)
+            for (columns, rows), values in zip(answers, compiled.values, strict=True)
+        ],
+        ends,
+    )
+
+
+@pytest.fixture(scope="session")
+def inputs_compiled(tmp_path_factory: pytest.TempPathFactory) -> Callable[..., CompiledInputs]:
+    directory = tmp_path_factory.mktemp("compiled")
+    return lambda cohorts, variables: compile_inputs(
+        cohorts, variables, release_blobs(cohorts[0].release, directory)
+    )
+
+
+@pytest.fixture(scope="session")
+def inputs_listed(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[..., tuple[Listed, ...]]:
+    directory = tmp_path_factory.mktemp("inputs")
+    return lambda cohorts, variables, ends=None: run_inputs(
+        cohorts, variables, directory, sessions, ends
+    )
 
 
 def resolve_variables(

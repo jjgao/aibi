@@ -241,6 +241,13 @@ class CanonicalVariable:
     leaves: Mapping[str, tuple[str, ...]]
     """Each leaf of its ``where`` as written, by pointer, and the leaf key of the form it became
     part of (§8.1)."""
+    packs: Mapping[str, PackVersion] = field(default_factory=dict[str, PackVersion])
+    """Each pack whose leaves its ``where`` expanded, with the version installed and its results
+    version, which the view's ids hash (D345)."""
+    summaries: Mapping[str, tuple[Segment, ...]] = field(
+        default_factory=dict[str, tuple[Segment, ...]]
+    )
+    """Each pack leaf of its ``where`` as written, by pointer, and its pack's summary (§7.3)."""
 
 
 @dataclass(frozen=True)
@@ -299,15 +306,23 @@ def canonicalise(
                 refusals.append(made)
             else:
                 found[kind][name] = made
-    read = {key: _variable(key, variable, given) for key, variable in resolution.variables.items()}
+    read = {
+        key: _variable(key, variable, given, registry)
+        for key, variable in resolution.variables.items()
+    }
     return Canonicalisation(
         found["cohorts"], finish_refusals(refusals), found["predicates"], read, dict(own)
     )
 
 
 def _variable(
-    key: str, resolved: ResolvedVariable, positions: Mapping[Position, str]
+    key: str,
+    resolved: ResolvedVariable,
+    positions: Mapping[Position, str],
+    registry: PackRegistry | None,
 ) -> CanonicalVariable:
+    """A variable in canonical form, with the packs its ``where``'s pack leaves name and their
+    summaries (D325, D345)."""
     form = variable_form(resolved)
     clause = form.get("rows", form.get("question"))
     keys = () if clause is None else (leaf_key(clause),)
@@ -315,7 +330,26 @@ def _variable(
         pointer(list(as_written(position, positions)[0])): keys
         for position in sorted(resolved.leaves)
     }
-    return CanonicalVariable(key, resolved, form, dict(sorted(leaves.items())) if keys else {})
+    packs: dict[str, PackVersion] = {}
+    if resolved.packs:
+        if registry is None:
+            raise RuntimeError("resolution expands no pack leaf without the packs installed")
+        for pack in registry.listed(resolved.packs):
+            packs[pack.id] = PackVersion(
+                version=pack.manifest.version, results_version=pack.manifest.results_version
+            )
+    summaries = {
+        pointer(list(as_written(position, positions)[0])): summary
+        for position, summary in resolved.summaries.items()
+    }
+    return CanonicalVariable(
+        key,
+        resolved,
+        form,
+        dict(sorted(leaves.items())) if keys else {},
+        packs,
+        dict(sorted(summaries.items())),
+    )
 
 
 def _cohort(

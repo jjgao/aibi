@@ -67,6 +67,7 @@ doubles with each level of the value and an ordinary value 10 deep spends its bu
 itself takes seconds at 16 deep).
 """
 
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sized
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -95,6 +96,8 @@ _IN_PLACE = ("not", "if", "then", "else")
 STEPS_BASE = 10_000
 STEPS_PER_VALUE = 8
 """Steps per JSON value of the extension object, on top of ``STEPS_BASE`` (D247)."""
+TIMED_STEPS = 4_096
+"""The steps a ``TimedBudget`` spends between looks at its deadline."""
 STEPS_MAX = 120_000
 """The most steps one extension object of a proposal takes, whatever its size (D247)."""
 WRITE_STEPS_MAX = STEPS_BASE + STEPS_PER_VALUE * MAX_VALUES
@@ -605,6 +608,32 @@ class StepBudget(_Budget):
         super().__init__(max(0, steps))
 
 
+class OutOfTime(Exception):  # noqa: N818 - raised like the deadline it names
+    """Raised by a ``TimedBudget`` whose deadline has passed: not a failure of the value, so no
+    ``Checker`` catches it."""
+
+
+class TimedBudget(StepBudget):
+    """Steps that also stop at a deadline, ``time.monotonic()`` looked at every
+    ``TIMED_STEPS`` steps (D343): a check a caller must finish by its deadline raises
+    ``OutOfTime`` once it has passed."""
+
+    __slots__ = ("_ends", "_until")
+
+    def __init__(self, steps: int, ends: float | None) -> None:
+        super().__init__(steps)
+        self._ends = ends
+        self._until = TIMED_STEPS
+
+    def spend(self, steps: int = 1) -> None:
+        super().spend(steps)
+        self._until -= steps
+        if self._until <= 0:
+            self._until = TIMED_STEPS
+            if self._ends is not None and time.monotonic() >= self._ends:
+                raise OutOfTime
+
+
 class Checker:
     """Validates extension objects against one schema that ``problems`` accepted."""
 
@@ -641,11 +670,14 @@ __all__ = [
     "STEPS_MAX",
     "STEPS_PER_VALUE",
     "THROUGH_PER_STEP",
+    "TIMED_STEPS",
     "UNEVALUABLE",
     "WRITE_STEPS_MAX",
     "Checker",
     "Failure",
+    "OutOfTime",
     "StepBudget",
+    "TimedBudget",
     "problems",
     "steps",
 ]
