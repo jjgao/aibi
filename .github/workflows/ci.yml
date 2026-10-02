@@ -21,7 +21,10 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The core tests take about 14 minutes; the job's limit leaves them and every other step room,
+    # and each test step's own limit leaves the annotations' step time to run when one is reached
+    # (D340).
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: server
@@ -47,8 +50,12 @@ jobs:
       - name: Import boundary
         run: uv run lint-imports
       - name: Core tests, which must load no pack (SPEC P8)
+        id: core
+        timeout-minutes: 28
         run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
       - name: Other tests
+        id: other
+        timeout-minutes: 4
         # pytest exits with 5 when it collects no tests, as before the first pack has any.
         run: >-
           uv run pytest --ignore=tests/core --tb=short -o junit_family=xunit1
@@ -57,9 +64,13 @@ jobs:
         # Each failed test's id, place and message becomes a check-run annotation, which the
         # checks API serves where the job's log cannot be read (D334).
         if: failure()
+        env:
+          CORE_OUTCOME: ${{ steps.core.outcome }}
+          OTHER_OUTCOME: ${{ steps.other.outcome }}
         run: |
           python3 - <<'EOF'
           import glob
+          import os
           import xml.etree.ElementTree as ET
 
           def escaped(value, member=False):
@@ -67,6 +78,22 @@ jobs:
               return value.replace(":", "%3A").replace(",", "%2C") if member else value
 
           reports = sorted(glob.glob("reports/*.xml"))
+          # A test step that failed without a failed test ran out of its time limit, or was
+          # stopped, before or after pytest wrote its report (D340).
+          stopped = [
+              name
+              for name, outcome in (
+                  ("Core tests", os.environ.get("CORE_OUTCOME", "")),
+                  ("Other tests", os.environ.get("OTHER_OUTCOME", "")),
+              )
+              if outcome == "failure"
+          ]
+          after = (
+              f" ({' and '.join(stopped)} failed: a step's time limit, D340, or a check of the "
+              "whole session)"
+              if stopped
+              else ""
+          )
           found = []
           for report in reports:
               for case in ET.parse(report).iter("testcase"):
@@ -88,8 +115,8 @@ jobs:
               print(*found, sep="\n")
           if not reports:
               print("::error title=No report::pytest wrote no report: a step before the tests "
-                    "failed, or pytest stopped before writing one")
+                    f"failed, or pytest stopped before writing one{after}")
           elif not found:
               print("::error title=No failed test::No test failed in pytest's reports: a check "
-                    "of the whole session failed, or a step outside the tests did")
+                    f"of the whole session failed, or a step outside the tests did{after}")
           EOF

@@ -20,6 +20,12 @@ histogram bin as the pass left the bins, its count, one row of the facet per coh
 labelled by its interval (``[0, 30)``, ``(-∞, 0)``, ``[60, 100]``), so that bins merged in one
 cohort and not in another are told apart, in order of their edges. A position whose categories or
 histogram are suppressed has no row.
+
+``compare.columns`` has one chart per column, in parameter order (D336): for categories, the
+bars of each cohort's categories as ``summary.distribution`` draws them; for numbers, each
+difference versus the reference, in means and in medians, a point with its interval as a rule,
+one row of the facet per measure, one line per other cohort in view order. A difference not shown
+has no row, so under a disclosure setting a number's chart has none.
 """
 
 import json
@@ -30,9 +36,11 @@ from pydantic import JsonValue
 
 from aibi.core.schema.analyses import (
     CategoryDistribution,
+    ColumnsValues,
     DistributionValues,
     ExistenceValues,
     HistogramBin,
+    NumberComparison,
     NumberDistribution,
 )
 
@@ -110,6 +118,52 @@ def distribution_charts(
     return [_column_chart(values, labels, column) for column in range(columns)]
 
 
+def _category_rows(
+    found: CategoryDistribution, position: int, labels: Sequence[str]
+) -> list[JsonValue]:
+    rows: list[JsonValue] = []
+    for share in found.categories or []:
+        estimate = share.proportion.estimate
+        if estimate is not None:
+            rows.append(
+                {
+                    "position": position,
+                    "cohort": labels[position],
+                    "category": ", ".join(
+                        [
+                            *(json.dumps(value.data, ensure_ascii=False) for value in share.values),
+                            *(["other values"] if share.other_values else []),
+                        ]
+                    ),
+                    "estimate": estimate,
+                }
+            )
+    return rows
+
+
+def _category_chart(rows: list[JsonValue], column: int) -> dict[str, JsonValue]:
+    return {
+        "description": (
+            f"Column {column}: the proportion of each cohort's units in each category, among "
+            "those with a value"
+        ),
+        "data": {"values": rows},
+        "facet": {"row": _cohort_row()},
+        "spec": {
+            "mark": {"type": "bar"},
+            "encoding": {
+                "y": {"field": "category", "type": "nominal", "sort": None, "title": "Category"},
+                "x": {
+                    "field": "estimate",
+                    "type": "quantitative",
+                    "scale": {"domain": [0, 1]},
+                    "title": "Proportion",
+                },
+            },
+        },
+    }
+
+
 def _column_chart(
     values: DistributionValues, labels: Sequence[str], column: int
 ) -> dict[str, JsonValue]:
@@ -119,25 +173,7 @@ def _column_chart(
     for position, at in enumerate(values.positions):
         found = at.columns[column]
         if isinstance(found, CategoryDistribution):
-            for share in found.categories or []:
-                estimate = share.proportion.estimate
-                if estimate is not None:
-                    rows.append(
-                        {
-                            "position": position,
-                            "cohort": labels[position],
-                            "category": ", ".join(
-                                [
-                                    *(
-                                        json.dumps(value.data, ensure_ascii=False)
-                                        for value in share.values
-                                    ),
-                                    *(["other values"] if share.other_values else []),
-                                ]
-                            ),
-                            "estimate": estimate,
-                        }
-                    )
+            rows += _category_rows(found, position, labels)
         elif found.histogram is not None:
             for one in found.histogram.bins:
                 bounds = (
@@ -181,24 +217,71 @@ def _column_chart(
                 },
             },
         }
+    return _category_chart(rows, column)
+
+
+def columns_charts(values: ColumnsValues, labels: Sequence[str]) -> list[dict[str, JsonValue]]:
+    """The charts of ``compare.columns``' values, one per column, its cohorts labelled in view
+    order (module docstring)."""
+    found: list[dict[str, JsonValue]] = []
+    for column, compared in enumerate(values.view.columns):
+        if isinstance(compared, NumberComparison):
+            found.append(_effects_chart(compared, labels, column))
+            continue
+        rows: list[JsonValue] = []
+        for position, at in enumerate(values.positions):
+            one = at.columns[column]
+            assert isinstance(one, CategoryDistribution), "a column is of one kind throughout"
+            rows += _category_rows(one, position, labels)
+        found.append(_category_chart(rows, column))
+    return found
+
+
+def _effects_chart(
+    compared: NumberComparison, labels: Sequence[str], column: int
+) -> dict[str, JsonValue]:
+    rows: list[JsonValue] = []
+    for effect in compared.effects:
+        ci = effect.ci
+        low, high = (None, None) if ci is None else (ci.low, ci.high)
+        if effect.estimate is None or low is None or high is None:
+            continue
+        rows.append(
+            {
+                "measure": effect.measure.value,
+                "position": effect.position,
+                "cohort": labels[effect.position],
+                "estimate": effect.estimate,
+                "low": low,
+                "high": high,
+            }
+        )
+    cohort = _cohort_row()
     return {
         "description": (
-            f"Column {column}: the proportion of each cohort's units in each category, among "
-            "those with a value"
+            f"Column {column}: each cohort's difference in means and in medians versus the "
+            "reference, with its interval"
         ),
         "data": {"values": rows},
-        "facet": {"row": _cohort_row()},
+        "facet": {"row": {"field": "measure", "type": "nominal", "title": "Difference"}},
         "spec": {
-            "mark": {"type": "bar"},
-            "encoding": {
-                "y": {"field": "category", "type": "nominal", "sort": None, "title": "Category"},
-                "x": {
-                    "field": "estimate",
-                    "type": "quantitative",
-                    "scale": {"domain": [0, 1]},
-                    "title": "Proportion",
+            "layer": [
+                {
+                    "mark": {"type": "point"},
+                    "encoding": {
+                        "y": cohort,
+                        "x": {"field": "estimate", "type": "quantitative", "title": "Difference"},
+                    },
                 },
-            },
+                {
+                    "mark": {"type": "rule"},
+                    "encoding": {
+                        "y": cohort,
+                        "x": {"field": "low", "type": "quantitative"},
+                        "x2": {"field": "high"},
+                    },
+                },
+            ]
         },
     }
 
@@ -218,4 +301,4 @@ def _edge(value: float) -> str:
     return json.dumps(value)
 
 
-__all__ = ["distribution_charts", "existence_chart"]
+__all__ = ["columns_charts", "distribution_charts", "existence_chart"]

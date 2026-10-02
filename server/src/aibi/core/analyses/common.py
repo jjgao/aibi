@@ -9,18 +9,26 @@ at their positions, the population disclosed, and the caveats their cohorts rais
   their truth values (``SCOPE_PARTIAL``, ``COVERAGE_PROPOSED``) naming the relationships, and
   ``LIFT_DIFFERS`` where the other lift rule changes some unit's membership (always under *k*,
   whose message quotes no count, as ``lift_differs`` is always suppressed there).
+- ``shown`` and ``analysed_of``: what the pass shows of a variable at a position, its split of
+  the cohort's units and their reasons, and ``analysed`` from it, nothing that combines
+  variables under *k* (D329).
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import cast
 
+from aibi.core.analyses.disclosure import small, split_hidden
 from aibi.core.analyses.existence import CohortAt
 from aibi.core.engine.counts import count_parts
 from aibi.core.engine.suppression import disclosed
 from aibi.core.engine.truth import Mark
+from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode
+from aibi.core.schema.numbers import NotEstimableReason
 from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.results import Population
-from aibi.core.schema.semantics import Flag
+from aibi.core.schema.results import Analysed, AnalysedCounts, AnalysedVariable, Population
+from aibi.core.schema.semantics import ExclusionReason, Flag
 
 FLAGS = {
     Flag.SCOPE_PARTIAL: CaveatCode.SCOPE_PARTIAL,
@@ -134,12 +142,81 @@ def cohort_caveats(
     return found
 
 
+@dataclass(frozen=True)
+class Shown:
+    """What the pass shows of a variable at a position: its split, and its breakdown."""
+
+    split: bool
+    excluded: bool
+
+
+def shown(found: Materialised, size_shown: bool, k: int | None) -> Shown:
+    """What the pass shows of a variable over a position whose cohort's ``n_true`` is shown or
+    not (``size_shown``): its split whole or not at all, its reasons only with it and when none
+    is small (D329)."""
+    if k is None:
+        return Shown(True, True)
+    split = size_shown and not split_hidden(found.n, found.excluded_units, k)
+    excluded = split and not any(small(k, count) for count in found.excluded.values())
+    return Shown(split, excluded)
+
+
+def _counts(
+    model: type[AnalysedCounts],
+    n: int,
+    excluded: Mapping[ExclusionReason, int],
+    units: int,
+    visible: Shown,
+) -> AnalysedCounts:
+    suppressed = NotEstimableReason.SUPPRESSED
+    reasons = {
+        member: suppressed
+        for member, lost in (
+            ("/n", not visible.split),
+            ("/excluded_units", not visible.split),
+            ("/excluded", not visible.excluded),
+        )
+        if lost
+    }
+    return model(
+        n=n if visible.split else None,
+        excluded=dict(excluded) if visible.excluded else None,
+        excluded_units=units if visible.split else None,
+        not_estimable=reasons or None,
+    )
+
+
+def analysed_of(
+    found: Sequence[Materialised], together: Joint | None, split: Sequence[Shown], k: int | None
+) -> Analysed:
+    """A position's ``analysed`` over its variables (§8.1): one variable's split, or with two or
+    more each one's in ``variables`` and, but under *k*, the units some one has a value for."""
+    if len(found) == 1:
+        [one], [visible] = found, split
+        counted = _counts(AnalysedCounts, one.n, one.excluded, one.excluded_units, visible)
+        return Analysed.model_validate(counted.model_dump())
+    assert together is not None, "several variables are counted together"
+    variables = [
+        cast(
+            AnalysedVariable,
+            _counts(AnalysedVariable, one.n, one.excluded, one.excluded_units, visible),
+        )
+        for one, visible in zip(found, split, strict=True)
+    ]
+    whole = Shown(k is None, k is None)
+    counted = _counts(AnalysedCounts, together.known, together.none_by_reason, together.none, whole)
+    return Analysed.model_validate({**counted.model_dump(), "variables": variables})
+
+
 __all__ = [
     "FLAGS",
     "CohortAt",
+    "Shown",
+    "analysed_of",
     "caveat",
     "cohort_caveats",
     "flag_caveats",
     "listed",
     "populations",
+    "shown",
 ]

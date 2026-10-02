@@ -60,7 +60,9 @@ reference evaluator, `sql.compile_materialised` counts them by SQL, and
 core's descriptive analyses share. From M3.2b, `core/engine/members.py` lists a cohort's members'
 unit keys by the reference evaluator and orders them as the canonical form does,
 `sql.compile_members` lists them by SQL, and `core/analyses/members.py` is `summary.members`,
-refused under any disclosure setting.
+refused under any disclosure setting. From M3.2c, `core/analyses/columns.py` is `compare.columns`,
+its tests held to R (`reference/columns.R`) and its bootstrap in `stats.py`, and a materialisation
+counts the units its cohorts share (`sql.compile_materialised(…, shared=True)`).
 
 ## Non-negotiables
 

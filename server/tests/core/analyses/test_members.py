@@ -275,6 +275,7 @@ def test_a_view_is_refused_under_any_disclosure_setting_whatever_its_cohort_s_si
     assert said in "".join(segment.model_dump().get("text", "") for segment in refusal.message)
     assert [segment.model_dump(exclude_none=True) for segment in refusal.alternatives] == [
         {"data": "count_cohort"},
+        {"data": "compare.columns"},
         {"data": "compare.existence"},
         {"data": "summary.distribution"},
     ]

@@ -519,6 +519,37 @@ def materialised(
     )
 
 
+def run_shared(
+    cohorts: Sequence[ResolvedCohort],
+    variables: Sequence[ResolvedVariable],
+    directory: Path,
+    sessions: Sessions,
+) -> tuple[tuple[tuple[tuple[Materialised, ...], Joint | None], ...], tuple[int, ...]]:
+    """Variables materialised over cohorts by the SQL compiler with the units each pair of
+    cohorts shares (D339), run in a helper's session."""
+    compiled = compile_materialised(
+        cohorts, variables, release_blobs(cohorts[0].release, directory), shared=True
+    )
+    answers = sessions.run(
+        compiled.paths, [(statement, compiled.parameters) for statement in compiled.statements]
+    )
+    read = [
+        packed_values(columns, rows, values)
+        for (columns, rows), values in zip(answers, compiled.values, strict=True)
+    ]
+    return compiled.read(read), compiled.read_shared(read)
+
+
+@pytest.fixture(scope="session")
+def shared_materialised(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[
+    ..., tuple[tuple[tuple[tuple[Materialised, ...], Joint | None], ...], tuple[int, ...]]
+]:
+    directory = tmp_path_factory.mktemp("shared")
+    return lambda cohorts, variables: run_shared(cohorts, variables, directory, sessions)
+
+
 def run_members(
     cohort: ResolvedCohort, directory: Path, sessions: Sessions
 ) -> tuple[tuple[Any, ...], ...]:

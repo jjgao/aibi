@@ -627,9 +627,11 @@ class CompiledMaterialised:
     pooled rows by value (``_VALUE_ROWS``: ``r`` the unit's row, ``v`` the value, ``n`` its
     rows), which the server aggregates (§9.3); and, for two variables or more, one joint query
     per cohort, whose rows count its units by whether some variable has a value (``k``) and, for
-    none, the bits of every reason (``b``). Every count is an integer ``COUNT`` and every flag a
-    ``BIT_OR``; values are grouped, and never summed or averaged, by DuckDB, whose ``MAX`` and
-    ``MIN`` only pick one of them (D294, D327)."""
+    none, the bits of every reason (``b``); and, when ``shared`` and for two cohorts or more, one
+    whose row counts the units each pair of cohorts shares, as a crossing's does (D339). Every
+    count is an integer ``COUNT`` and every flag a ``BIT_OR``; values are grouped, and never
+    summed or averaged, by DuckDB, whose ``MAX`` and ``MIN`` only pick one of them (D294,
+    D327)."""
 
     statements: tuple[str, ...]
     parameters: Mapping[str, Parameter]
@@ -637,6 +639,7 @@ class CompiledMaterialised:
     cohorts: int
     shapes: tuple[_Shape, ...]
     blobs: frozenset[str] = frozenset()
+    shared: bool = False
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -657,7 +660,14 @@ class CompiledMaterialised:
             found += [5 + words] * len(self.shapes)
             if self.joint:
                 found.append(3)
+        if self.overlaps:
+            found.append(len(pairs(self.cohorts)))
         return tuple(found)
+
+    @property
+    def overlaps(self) -> bool:
+        """Whether the last statement counts the units each pair of cohorts shares."""
+        return self.shared and self.cohorts > 1
 
     @property
     def values(self) -> tuple[frozenset[int], ...]:
@@ -667,7 +677,21 @@ class CompiledMaterialised:
             found += [frozenset({_MATERIALISED_VALUE})] * len(self.shapes)
             if self.joint:
                 found.append(frozenset())
+        if self.overlaps:
+            found.append(frozenset())
         return tuple(found)
+
+    def read_shared(self, answers: Sequence[Rows]) -> tuple[int, ...]:
+        """The units each pair of cohorts shares (``pairs``' order), ``()`` when not counted.
+        Raises ``QueryError`` for rows the query does not give."""
+        if not self.overlaps:
+            return ()
+        if len(answers) != len(self.columns):
+            raise QueryError("a materialisation gave another number of answers")
+        rows = answers[-1]
+        if len(rows) != 1 or rows.width != len(pairs(self.cohorts)) or min(rows[0]) < 0:
+            raise QueryError("a materialisation's overlaps query gives one row of counts")
+        return tuple(rows[0])
 
     def parameters_json(self) -> dict[str, JsonValue]:
         """The parameters as the derivation log records them (``CompiledCohort``'s)."""
@@ -820,9 +844,12 @@ def compile_materialised(
     cohorts: Sequence[ResolvedCohort],
     variables: Sequence[ResolvedVariable],
     sources: Mapping[str, TableSource],
+    *,
+    shared: bool = False,
 ) -> CompiledMaterialised:
     """The queries that materialise variables over cohorts of one release's unit table, their
-    parts compiled once each over one compiler. Raises ``CompileError``."""
+    parts compiled once each over one compiler, with, when ``shared``, the units each pair of
+    cohorts shares. Raises ``CompileError``."""
     if not cohorts or not variables:
         raise CompileError("a materialisation has cohorts and variables")
     first = cohorts[0]
@@ -835,7 +862,7 @@ def compile_materialised(
     for part in (*cohorts, *variables):
         coverage.update(part.coverage)
     merged = replace(first, coverage=dict(sorted(coverage.items())))
-    return _Compiler(merged, sources).materialised(cohorts, variables)
+    return _Compiler(merged, sources).materialised(cohorts, variables, shared=shared)
 
 
 _KEY_VALUES: tuple[PhysicalType, ...] = ("float64", "string")
@@ -1454,7 +1481,11 @@ class _Compiler:
     # --- Materialised variables (D326, D327) ---------------------------------------------------
 
     def materialised(
-        self, cohorts: Sequence[ResolvedCohort], variables: Sequence[ResolvedVariable]
+        self,
+        cohorts: Sequence[ResolvedCohort],
+        variables: Sequence[ResolvedVariable],
+        *,
+        shared: bool = False,
     ) -> CompiledMaterialised:
         members = [cast(str, self.part(cohort)) for cohort in cohorts]
         units = [self.variable(variable) for variable in variables]
@@ -1466,6 +1497,8 @@ class _Compiler:
             ]
             if len(variables) > 1:
                 selects.append(self.joint(member, [found[0] for found in units]))
+        if shared and len(members) > 1:
+            selects.append(self.shared(members))
         ctes = [self.base_cte(base) for base in self.bases.values()]
         ctes += [
             exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
@@ -1491,6 +1524,7 @@ class _Compiler:
             cohorts=len(members),
             shapes=shapes,
             blobs=frozenset(self.blobs),
+            shared=shared,
         )
 
     def members(self) -> CompiledMembers:

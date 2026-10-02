@@ -448,5 +448,138 @@
     "id": "drv:5da45aa20da262ef6b9e055c724968b9825d3397a14eeb54848d33e07f2dc964",
     "computation_id": "drv:bafbe131acbea8410a589ed53cb8580cb8e1323f2ef85a17fcd00809f584672e",
     "digest": "sha256:6e3108246e22ffdcb063334b2dafd52262a5049e7b9fe04c35696dbddc4783c0"
+  },
+  "ages_compared": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 45
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 45
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.columns",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "reference": "old",
+          "params": {
+            "columns": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "customers.age"
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "count"
+              },
+              {
+                "column": "orders.channel",
+                "aggregate": "some",
+                "values": [
+                  "web"
+                ]
+              }
+            ],
+            "level": 0.9
+          }
+        }
+      ]
+    },
+    "id": "drv:dae224ea46c853ec8e56ef8d961619f57eabfbfc8b8ebf81d99cd9da396921c5",
+    "computation_id": "drv:03ded84481bd3349408a1ee1a39da6a93373f978cf129248ea5e75653c03343e",
+    "digest": "sha256:d1df226b31fed0f02eb8d691ff7513e7e7a85efd22c850c7cdb702149eee7d50"
+  },
+  "ages_compared_under_k": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 45
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 45
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "compare.columns",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "reference": "old",
+          "params": {
+            "columns": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "customers.age"
+              },
+              {
+                "column": "orders.order_id",
+                "aggregate": "count"
+              },
+              {
+                "column": "orders.channel",
+                "aggregate": "some",
+                "values": [
+                  "web"
+                ]
+              }
+            ],
+            "level": 0.9
+          }
+        }
+      ]
+    },
+    "id": "drv:7fdc975d4d668fc17dba1aa8d345abe0fae38716d07278d972752bc04228b79c",
+    "computation_id": "drv:03ded84481bd3349408a1ee1a39da6a93373f978cf129248ea5e75653c03343e",
+    "digest": "sha256:370e0c8b79ad881a0f74dd6efcb339de2785db78f825db0d829a6ef51b453587",
+    "floor": 3
   }
 }

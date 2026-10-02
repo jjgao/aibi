@@ -126,6 +126,8 @@ class MaterialisedRun:
     materialised: tuple[tuple[tuple[Materialised, ...], Joint | None], ...]
     sql: tuple[str, ...]
     parameters: Mapping[str, JsonValue]
+    shared: tuple[int, ...] = ()
+    """The units each pair of cohorts shares, when asked for (``sql.pairs``' order, D339)."""
 
 
 @dataclass(frozen=True)
@@ -155,20 +157,25 @@ def run_views(
     workers: Workers,
     *,
     members: Sequence[ResolvedCohort] = (),
+    shared: Sequence[bool] = (),
     ends: float | None = None,
 ) -> ViewsRun:
     """Each cohort counted, each crossing counted, each materialisation (its cohorts and
-    variables) read and each of ``members``' members' keys listed, in one worker run (D318,
-    D327, D333), the server's reading of a materialisation's rows held to ``ends`` as the worker
-    is. Raises as ``run_cohorts`` does."""
+    variables) read, with the units each pair of its cohorts shares where ``shared`` says so (by
+    materialisation, none by default, D339), and each of ``members``' members' keys listed, in one
+    worker run (D318, D327, D333), the server's reading of a materialisation's rows held to
+    ``ends`` as the worker is. Raises as ``run_cohorts`` does."""
     compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
     crossed = [
         compile_crossing(members, asked, sources[members[0].release.manifest])
         for members, asked in crossings
     ]
+    overlaps = [*shared, *[False] * (len(materialisations) - len(shared))]
     made = [
-        compile_materialised(members, variables, sources[members[0].release.manifest])
-        for members, variables in materialisations
+        compile_materialised(
+            members, variables, sources[members[0].release.manifest], shared=counted
+        )
+        for (members, variables), counted in zip(materialisations, overlaps, strict=True)
     ]
     listing = [compile_members(cohort, sources[cohort.release.manifest]) for cohort in members]
     queries = [Query(c.counts_sql, c.parameters, c.counts_columns) for c in compiled]
@@ -228,6 +235,7 @@ def run_views(
                 materialisation.read(answers, ends),
                 materialisation.statements,
                 MappingProxyType(materialisation.parameters_json()),
+                materialisation.read_shared(answers),
             )
         )
     listed = [

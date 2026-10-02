@@ -17,14 +17,16 @@ with the units, so the answer cap can bound it, and a listing of keys has a row 
 answer over the cap, or a run over the worker's seconds or memory, names the first view that
 lists keys, else the view whose materialisation is widest, else the one whose crossing is. Each
 view is then computed by its analysis (``existence.compare``, ``distribution.summarise``,
-``members.list_members``), disclosed under its effective *k*,
+``members.list_members``, ``columns.compare_columns``), disclosed under its effective *k*,
 and made into its envelope (``results.envelope``); a column with more categories than a result
 lists refuses the call (``LIMIT_EXCEEDED``, D328).
 
 A view of an analysis that assumes independent groups whose cohorts share units, without
 ``overlap: "allow"``, refuses the call (``COHORTS_OVERLAP``, §7.4): the refusal reports each pair
 of cohorts that share units as the count of the cohort of their shared units, counted in a second
-worker run, disclosed and issued as ``count_cohort``'s counts are (§8.6).
+worker run, disclosed and issued as ``count_cohort``'s counts are (§8.6). A crossing counts the
+units its cohorts share, and so does the materialisation of such a view's variables
+(``compare.columns``, D339).
 
 **Issuances** (§12.2): one per view, of its result, naming the call's request (the document as
 written and the parameters used, stored once) and the SQL as run, its cohorts' counts and then its
@@ -42,7 +44,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import distribution, members
+from aibi.core.analyses import columns, distribution, members
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
 from aibi.core.analyses.views import CheckedView
@@ -64,9 +66,15 @@ from aibi.core.engine.canonical import CanonicalCohort, intersection
 from aibi.core.engine.members import Key
 from aibi.core.engine.queries import ViewsRun, run_cohorts, run_views
 from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
+from aibi.core.engine.sql import pairs
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
+from aibi.core.schema.analyses import (
+    ColumnsParams,
+    DistributionParams,
+    ExistenceParams,
+    MembersParams,
+)
 from aibi.core.schema.cohorts import AnalysisResults, RunAnalysis
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import (
@@ -133,12 +141,21 @@ def _run(
     deadline: Deadline | None,
     widest: CheckedView,
     listed: Sequence[ResolvedCohort] = (),
+    shared: Sequence[bool] = (),
 ) -> ViewsRun:
-    """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed; an
-    answer over the cap names the view to narrow (``widest``, module docstring)."""
+    """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed and
+    ``shared`` the materialisations that count the units their cohorts share; an answer over the
+    cap names the view to narrow (``widest``, module docstring)."""
     return _guarded(
         lambda ends: run_views(
-            cohorts, crossings, materialisations, sources, workers, members=listed, ends=ends
+            cohorts,
+            crossings,
+            materialisations,
+            sources,
+            workers,
+            members=listed,
+            shared=shared,
+            ends=ends,
         ),
         deadline,
         pointer(["views", widest.index]),
@@ -146,15 +163,23 @@ def _run(
 
 
 def _too_large(view: CheckedView, column: int) -> ToolRefused:
+    said: list[Segment] = (
+        [
+            text("The column's values, or a statistic or a difference computed from them, lie "),
+            text("beyond ±(2^53 − 1), which an output does not hold (§8.2, D336)"),
+        ]
+        if isinstance(view.params, ColumnsParams)
+        else [
+            text("The column's values, or their standard deviation, lie beyond "),
+            text("±(2^53 − 1), which an output does not hold (§8.2, D328)"),
+        ]
+    )
     return ToolRefused(
         [
             Refusal(
                 code=RefusalCode.NOT_SUPPORTED,
                 path=pointer(["views", view.index, "params", "columns", column]),
-                message=[
-                    text("The column's values, or their standard deviation, lie beyond "),
-                    text("±(2^53 − 1), which an output does not hold (§8.2, D328)"),
-                ],
+                message=said,
             )
         ]
     )
@@ -287,6 +312,7 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
         asked: list[tuple[list[ResolvedCohort], list[ResolvedCohort]]] = []
         materialisations: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
         read: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
+        shared_asked: list[bool] = []
         listings: dict[str, int] = {}
         listed: list[ResolvedCohort] = []
         for view in views:
@@ -302,6 +328,8 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                 if key not in materialisations:
                     materialisations[key] = len(read)
                     read.append((members_of, _distinct(view)))
+                    shared_asked.append(False)
+                shared_asked[materialisations[key]] |= _counts_shared(view)
                 continue
             key = _crossing_key(view)
             if key not in crossings:
@@ -318,6 +346,7 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             deadline,
             _widest(views),
             listed,
+            shared_asked,
         )
         by_id = dict(zip(cohorts, ran_views.counted, strict=True))
         written = dict(request.document)
@@ -351,6 +380,49 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                             _expanded(view, made.materialised),
                             view.params,
                             k=view.disclosure,
+                            ends=None if deadline is None else deadline.at - RECORD_SECONDS,
+                        )
+                    )
+                except CallerDeadline:
+                    raise late(cast(Deadline, deadline)) from None
+                except distribution.TooManyCategories as many:
+                    raise _too_many(view, many.column) from None
+                except distribution.TooLarge as large:
+                    raise _too_large(view, large.column) from None
+                own = made.sql[:-1] if made.shared else made.sql
+                queries.append({"statements": list(own), "parameters": dict(made.parameters)})
+                issues.append(_result_issue(view, {"queries": queries}, written, params))
+                continue
+            if isinstance(view.params, ColumnsParams):
+                made = ran_views.materialised[materialisations[_materialisation_key(view)]]
+                together = [
+                    pair
+                    for pair, count in zip(pairs(len(view.cohorts)), made.shared, strict=True)
+                    if count
+                ]
+                if together and not view.overlap:
+                    _overlap(
+                        catalog,
+                        view,
+                        together,
+                        sources,
+                        workers,
+                        deadline,
+                        erasures,
+                        written,
+                        params,
+                    )
+                try:
+                    outcomes.append(
+                        columns.compare_columns(
+                            positions,
+                            view.variables,
+                            _expanded(view, made.materialised),
+                            view.params,
+                            reference=view.reference,
+                            overlap=bool(together),
+                            k=view.disclosure,
+                            computation=view.identity.computation_id,
                             ends=None if deadline is None else deadline.at - RECORD_SECONDS,
                         )
                     )
@@ -431,11 +503,20 @@ def _forms(view: CheckedView) -> list[str]:
 def _materialisation_key(view: CheckedView) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """A view's materialisation, by its cohorts' computation ids and its distinct variables'
     canonical forms: views that read the same one share its run, and a variable a view reads
-    twice is read once (D327)."""
+    twice is read once (D327). It counts the units its cohorts share when one of its views asks
+    (``_counts_shared``), and a view that does not records its statements without that one
+    (D339)."""
     return (
         tuple(cohort.computation_id for cohort in view.cohorts),
         tuple(dict.fromkeys(_forms(view))),
     )
+
+
+def _counts_shared(view: CheckedView) -> bool:
+    """Whether a view's materialisation counts the units its cohorts share: a view of an
+    analysis that assumes independent groups over two cohorts or more (D339)."""
+    independent = view.analysis.entry.fields.assumes_independent_groups
+    return bool(independent) and len(view.cohorts) > 1
 
 
 def _distinct(view: CheckedView) -> list[ResolvedVariable]:

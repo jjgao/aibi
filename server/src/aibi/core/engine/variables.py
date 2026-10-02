@@ -52,6 +52,7 @@ compiler counts the same (``sql.compile_materialised``), and the differential te
 two together (§13.3).
 """
 
+import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -69,6 +70,8 @@ Value = int | float | str | bool
 """A unit's value of a variable, in the stored type of its column (module docstring)."""
 
 _DOUBLES = ("number", "time_offset")
+_BITS = 53
+_MANTISSA = float(2**_BITS)
 _STATE_REASON = {
     ObservationState.NOT_APPLICABLE: ExclusionReason.NOT_APPLICABLE,
     ObservationState.NOT_ASSESSED: ExclusionReason.NOT_ASSESSED,
@@ -166,22 +169,39 @@ def aggregated(function: Function, values: Iterable[tuple[Value, int]], rows: in
     return exact_mean(given)
 
 
+def exact_sum(values: Iterable[tuple[Value, int]]) -> tuple[int, int, int]:
+    """The exact sum of numbers each with how many times it is counted, as ``(total, power,
+    count)``: the sum is ``total``·2^``power`` (``power`` at most 0) over ``count`` values. A
+    double is an integer mantissa of 53 bits times a power of two (``math.frexp``, exact),
+    summed per power, and an integer is itself, which keeps each addition to integers of 53 bits
+    or so (D326)."""
+    whole = 0
+    powers: dict[int, int] = {}
+    count = 0
+    for value, times in values:
+        count += times
+        if isinstance(value, int):
+            whole += value * times
+        else:
+            mantissa, power = math.frexp(cast(float, value))
+            powers[power] = powers.get(power, 0) + int(mantissa * _MANTISSA) * times
+    least = min([power - _BITS for power in powers] + [0])
+    total = (whole << -least) + sum(
+        scaled << (power - _BITS - least) for power, scaled in powers.items()
+    )
+    return total, least, count
+
+
 def exact_mean(values: Iterable[tuple[Value, int]]) -> float:
     """The exact mean, correctly rounded, of numbers each with how many times it is counted
-    (at least one in all): each is ``numerator / 2**shift`` (``as_integer_ratio``, exact for a
-    double or an integer), their exact sum is an integer over the largest shift, and one
-    division of integers, which Python rounds correctly, gives the double nearest the mean
-    (ties to even) with no overflow or intermediate rounding (D326)."""
-    ratios = [(cast(int | float, value).as_integer_ratio(), times) for value, times in values]
-    shift = max(denominator.bit_length() - 1 for (_, denominator), _ in ratios)
-    total = sum(
-        numerator * times << (shift - denominator.bit_length() + 1)
-        for (numerator, denominator), times in ratios
-    )
-    count = sum(times for _, times in ratios)
+    (at least one in all): their exact sum (``exact_sum``), an integer over a power of two,
+    divided once by the count by Python's correctly rounded division of integers, which gives
+    the double nearest the mean (ties to even) with no overflow or intermediate rounding
+    (D326); a million values take a third of a second."""
+    total, least, count = exact_sum(values)
     if count <= 0:
         raise ValueError("a mean is of at least one value")
-    return total / (count << shift)
+    return total / (count << -least)
 
 
 def materialise(values: Sequence[UnitValue], members: Iterable[int]) -> Materialised:
@@ -320,6 +340,7 @@ __all__ = [
     "aggregated",
     "evaluate_variable",
     "exact_mean",
+    "exact_sum",
     "excluded_reason",
     "joint",
     "materialise",

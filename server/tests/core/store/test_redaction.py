@@ -624,6 +624,48 @@ def test_a_variable_s_values_and_empty_are_erased_as_constants_on_its_column() -
     assert mean["empty"] == "exclude"
 
 
+def test_a_comparison_s_variables_are_erased_as_constants_and_its_level_kept() -> None:
+    """``compare.columns``' columns are variables (D325, D336): their ``values`` and ``empty``
+    are constants on their columns; its ``level`` is a setting, never a unit's key."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "members",
+        "cohorts": {"a": {"all": []}, "b": {"all": []}},
+        "views": [
+            {
+                "analysis": "compare.columns",
+                "cohorts": ["a", "b"],
+                "params": {
+                    "columns": [
+                        {"column": "loans.loan_id", "aggregate": "some", "values": [2, 17]},
+                        {"column": "loans.days", "aggregate": "max", "empty": 3},
+                    ],
+                    "level": 0.9,
+                },
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    params = found["views"][0]["params"]
+    some, most = params["columns"]
+    assert some["values"] == [MARK, 17]
+    assert most["empty"] == MARK
+    assert params["level"] == 0.9
+    canonical: JsonValue = {
+        "columns": [
+            {"aggregate": "max", "column": "loans.days", "empty": 3, "rows": {}},
+            {"column": "loans.days"},
+        ],
+        "level": 0.9,
+    }
+    assert redaction._params_hold(canonical, terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._params_hold(  # pyright: ignore[reportPrivateUsage]
+        {"columns": [{"column": "loans.days"}], "level": 0.9}, terms
+    )
+
+
 def _distribution(columns: list[JsonValue]) -> JsonValue:
     return {
         "aibi": "1",
