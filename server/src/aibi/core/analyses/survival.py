@@ -1,5 +1,5 @@
 """``survival.km``: Kaplan–Meier curves compared across cohorts (SPEC §5.8, §8.4, §9.1, §9.3,
-§9.5; D347–D351).
+§9.5; D347–D351, D355–D357).
 
 For the view's endpoint (§5.8, ``params.endpoint``, D347) and each cohort in view order, what
 happened to its units, and between the cohorts how they differ from the reference:
@@ -13,7 +13,11 @@ happened to its units, and between the cohorts how they differ from the referenc
   position versus the reference, the difference in medians with a bootstrap percentile interval
   (each cohort resampled within itself, ``timetoevent.REPLICATES`` times, seeded from the view's
   computation id, the position and nothing else, so that the same view gives the same replicates
-  on every run, D350). The hazard ratio of a Cox fit is ``survival.cox``'s (M3.3b, D346).
+  on every run, D350), and the hazard ratio of an unadjusted Cox fit (Efron's ties, its Wald
+  interval, ``coxfit``), whose proportional hazards the Grambsch–Therneau global test checks
+  (D355). The fit is R's ``coxph`` of ``Surv(time, status)``, or of ``Surv(entry, time, status)``
+  where the endpoint has an entry column: every unit's entry is ``timetoevent.ORIGIN`` where it
+  has none and a number where it has one, so the first unit's says which.
 
 **Endpoint rows** (§5.8, D347). Each member's time, status and entry are its endpoint's columns,
 listed as a pack analysis's inputs are (``engine.inputs``, by SQL or the reference evaluator,
@@ -27,23 +31,36 @@ units with valid endpoint data (§8.1), and the excluded by reason.
 shared, no between-cohort value (``overlapping_cohorts``); a cohort with no units analysed has no
 curve value, median, landmark or last follow-up and no contrast (``no_units``), and the log-rank
 test uses the others (``no_units`` with fewer than two); a cohort with no events has no difference
-in medians (``no_events``), its units kept in its curve and the log-rank test; a log-rank test
-whose variance is 0 is ``zero_variance``; a median, or a bound of it, whose curve does not reach
-½ is ``not_reached``, and so is a difference that uses one, and a bootstrap bound whose order
-statistic is infinite; a curve at 0 has no pointwise bounds from then on (``zero_denominator``);
-and a landmark or grid time after the cohort's last follow-up has no value (``beyond_follow_up``).
+in medians and no hazard ratio (``no_events``), its units left out of the Cox fit (D179) but kept in
+its curve and the log-rank test, and a reference with none leaves every value of the fit
+``no_events``; a log-rank test whose variance is 0 is ``zero_variance``; of the cohorts with events,
+one whose coefficient the likelihood drives to ±∞ against the reference has no hazard ratio
+(``separation``), one it cannot identify against the reference has none (``zero_variance``), both
+decided exactly from the risk table (``coxfit.standing``, D356), and the others' are the fit of the
+reference and them alone, ``not_converged`` where it reaches no maximum (D356), and
+``zero_variance`` where a variance is not positive; the test of proportional hazards is
+``separation`` where any cohort's hazard ratio is, else ``zero_variance`` where any is,
+``not_converged`` with the fit, and ``zero_variance`` where its information is singular; a hazard
+ratio or Wald bound beyond 2^53 − 1, or that rounds to 0, is ``separation`` alone, the rest shown
+(D355); a median, or a bound of it, whose curve does not reach ½ is ``not_reached``, and so is a
+difference that uses one, and a bootstrap bound whose order statistic is infinite; a curve at 0 has
+no pointwise bounds from then on (``zero_denominator``); and a landmark or grid time after the
+cohort's last follow-up has no value (``beyond_follow_up``).
 
 **Caveats**: the cohorts' (§8.3), ``UNKNOWN_EXCLUDED`` where a member's endpoint cell is missing
 for a reason other than ``NOT_APPLICABLE``, ``INVALID_EXCLUDED`` where one is invalid (§5.8), the
 flags of the values read, ``COHORTS_OVERLAP``, ``SMALL_N`` where a cohort with units has fewer than
-``MIN_GROUP_N`` units or ``MIN_EVENTS`` events, and the view's static caveats, among them
+``MIN_GROUP_N`` units or ``MIN_EVENTS`` events, or the Cox fit fewer than ``EVENTS_PER_TERM``
+events per term, ``PH_VIOLATED`` where the test of proportional hazards gives p < ``PH_LEVEL``,
+and the view's static caveats, among them
 ``UNCONFIRMED_SEMANTICS`` for an undeclared entry (§5.8).
 
 **Range** (§8.2, D348, D349). A unit's time or entry beyond ±(2^53 − 1) refuses the view
 (``TooLarge``): every time a result shows, a median included, is one of them or lies between
 them, and a difference of medians is a difference of two. Every other number is found with C's
 arithmetic (``ieee``), and one that is not finite or lies beyond that range is no value, with a
-reason: a test ``zero_variance``, a pointwise bound ``zero_denominator``.
+reason: a hazard ratio or bound ``separation``, a test ``zero_variance``, a pointwise bound
+``zero_denominator``.
 
 **Disclosure** (§8.4, D351, D353). Survival is a refused analysis: under any disclosure setting a
 view of it is refused (``WITHHELD_UNDER_K``, ``views.checked``), and applicability calls it
@@ -58,7 +75,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 
-from aibi.core.analyses import ieee, timetoevent
+from aibi.core.analyses import coxfit, ieee, timetoevent
 from aibi.core.analyses.common import (
     CohortAt,
     caveat,
@@ -66,6 +83,7 @@ from aibi.core.analyses.common import (
     flag_caveats,
     populations,
 )
+from aibi.core.analyses.stats import z
 from aibi.core.engine.inputs import Listed
 from aibi.core.engine.resolve import ResolvedEndpoint
 from aibi.core.engine.truth import Mark
@@ -97,10 +115,14 @@ from aibi.core.schema.results import Analysed, Population
 from aibi.core.schema.semantics import ExclusionReason
 
 ANALYSIS_ID = "survival.km"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 """Bumped whenever its outputs for the same inputs change (§7.6)."""
 MIN_GROUP_N = 10
 MIN_EVENTS = 5
+EVENTS_PER_TERM = 10
+"""Below this many events per term of the Cox fit, its hazard ratios carry ``SMALL_N`` (§8.3)."""
+PH_LEVEL = 0.05
+"""Below this p-value of the test of proportional hazards, the result carries ``PH_VIOLATED``."""
 METHODS: Mapping[str, str] = {
     "kaplan_meier": "The Kaplan-Meier estimate over left-truncated risk sets (entry < t <= "
     "time), as R's survfit(Surv(entry, time, status)), implemented directly",
@@ -113,6 +135,12 @@ METHODS: Mapping[str, str] = {
     "bootstrap_percentile": "The percentile interval of the difference in medians over 2000 "
     "bootstrap replicates, each cohort resampled within itself, a median not reached counting "
     "as +Inf, seeded from the computation id",
+    "wald": 'The hazard ratio of an unadjusted Cox fit, coxph(ties = "efron"), of the reference '
+    "and the cohorts that the risk sets tie to it both ways, with its Wald interval; a cohort "
+    "with a path of risk sets to the reference one way only is separated, with none it is not "
+    "identified, implemented directly",
+    "grambsch_therneau": "The global test of proportional hazards of that fit, as R's "
+    'cox.zph(transform = "km"), implemented directly',
 }
 CAVEATS = (
     CaveatCode.UNKNOWN_EXCLUDED,
@@ -122,6 +150,7 @@ CAVEATS = (
     CaveatCode.UNCONFIRMED_SEMANTICS,
     CaveatCode.COHORTS_OVERLAP,
     CaveatCode.SMALL_N,
+    CaveatCode.PH_VIOLATED,
     CaveatCode.DRAFT_RELEASE,
     CaveatCode.NOT_ESTIMABLE,
     CaveatCode.LIFT_DIFFERS,
@@ -136,7 +165,8 @@ ENTRY = AnalysisDescriptor.model_validate(
             "Kaplan–Meier estimate per cohort over left-truncated risk sets, with log-log "
             "pointwise intervals; median with its Brookmeyer–Crowley interval and landmark "
             "survival with intervals; the log-rank test; difference in medians (bootstrap "
-            "interval, 2000 replicates) versus the reference cohort."
+            "interval, 2000 replicates) and unadjusted hazard ratio (Cox, Efron ties, Wald "
+            "interval, tested for proportional hazards) versus the reference cohort."
         ),
         "fields": {
             "requires": [
@@ -522,6 +552,160 @@ def _log_rank(
     )
 
 
+@dataclass(frozen=True)
+class _Fit:
+    """The Cox fit of the view (module docstring): the positions with events, in view order,
+    each one's ``coxfit.Standing``, the positions fitted, and the fit with each fitted position's
+    term, or none where the reference is the only one fitted."""
+
+    positions: list[int]
+    standing: dict[int, coxfit.Standing]
+    fitted: list[int]
+    fit: coxfit.CoxFit | None
+    terms: dict[int, int]
+    table: list[timetoevent.EventTime]
+    counting: bool
+
+
+def _cox(rows: Sequence[Rows], reference: int, ends: float | None) -> _Fit | NotEstimableReason:
+    """The Cox fit, or why it has no value at all: a reference with no units or no events, or
+    no other cohort with events."""
+    if not rows[reference].subjects:
+        return _NO_UNITS
+    if not rows[reference].events:
+        return _NO_EVENTS
+    used = [position for position, one in enumerate(rows) if one.events]
+    if len(used) < 2:
+        return _NO_EVENTS
+    found = timetoevent.risk_table([rows[position].subjects for position in used], ends=ends)
+    table = found[0] if found else []
+    watch = timetoevent.Watch(ends)
+    standing = coxfit.standing(table, len(used), used.index(reference), watch)
+    fitted = [group for group in range(len(used)) if standing[group] is coxfit.Standing.ESTIMATED]
+    first, _, _ = rows[used[fitted[0]]].subjects[0]
+    counting = first != timetoevent.ORIGIN
+    fit = None
+    if len(fitted) > 1:
+        fit = coxfit.fit(table, fitted, used.index(reference), watch, counting=counting)
+    others = [used[group] for group in fitted if used[group] != reference]
+    return _Fit(
+        positions=used,
+        standing={used[group]: one for group, one in enumerate(standing)},
+        fitted=[used[group] for group in fitted],
+        fit=fit,
+        terms={position: index for index, position in enumerate(others)},
+        table=table,
+        counting=counting,
+    )
+
+
+_UNFITTED: Mapping[coxfit.Standing, NotEstimableReason] = {
+    coxfit.Standing.LOWER: NotEstimableReason.SEPARATION,
+    coxfit.Standing.HIGHER: NotEstimableReason.SEPARATION,
+    coxfit.Standing.APART: _ZERO_VARIANCE,
+}
+"""Why a cohort with events that is not fitted has no hazard ratio (D356)."""
+
+
+def _hazard_ratio(
+    rows: Sequence[Rows],
+    fitted: _Fit | NotEstimableReason,
+    position: int,
+    reference: int,
+    level: float,
+    overlap: bool,
+) -> EffectSize:
+    interval = Interval(method="wald", level=level, low=None, high=None)
+
+    def missing(reason: NotEstimableReason) -> EffectSize:
+        return EffectSize(
+            measure=EffectMeasure.HAZARD_RATIO,
+            position=position,
+            versus=reference,
+            estimate=None,
+            ci=interval,
+            not_estimable=_nothing(reason, *_BOUNDS),
+        )
+
+    if overlap:
+        return missing(_OVERLAP)
+    if not rows[position].subjects:
+        return missing(_NO_UNITS)
+    if isinstance(fitted, NotEstimableReason):
+        return missing(fitted)
+    if not rows[position].events:
+        return missing(_NO_EVENTS)
+    unfitted = _UNFITTED.get(fitted.standing[position])
+    if unfitted is not None:
+        return missing(unfitted)
+    fit = fitted.fit
+    assert fit is not None
+    if not fit.converged:
+        return missing(NotEstimableReason.NOT_CONVERGED)
+    term = fitted.terms[position]
+    coefficient = fit.coefficients[term]
+    variance = fit.variance[term][term]
+    if not variance > 0:
+        return missing(_ZERO_VARIANCE)
+    spread = z(level) * ieee.sqrt(variance)
+    found = [ieee.exp(value) for value in (coefficient, coefficient - spread, coefficient + spread)]
+    shown = [value if 0 < value <= MAX_SAFE_INTEGER else None for value in found]
+    ratio, low, high = shown
+    reasons = {
+        member: NotEstimableReason.SEPARATION
+        for member, value in zip(_BOUNDS, shown, strict=True)
+        if value is None
+    }
+    return EffectSize(
+        measure=EffectMeasure.HAZARD_RATIO,
+        position=position,
+        versus=reference,
+        estimate=ratio,
+        ci=Interval(method="wald", level=level, low=low, high=high),
+        not_estimable=reasons or None,
+    )
+
+
+def _proportional_hazards(
+    rows: Sequence[Rows],
+    fitted: _Fit | NotEstimableReason,
+    reference: int,
+    overlap: bool,
+    ends: float | None,
+) -> HypothesisTest:
+    method = "grambsch_therneau"
+    if overlap:
+        return _not_computed(method, [], _OVERLAP)
+    if isinstance(fitted, NotEstimableReason):
+        return _not_computed(method, [], fitted)
+    unfitted = {_UNFITTED[one] for one in fitted.standing.values() if one in _UNFITTED}
+    for reason in (NotEstimableReason.SEPARATION, _ZERO_VARIANCE):
+        if reason in unfitted:
+            return _not_computed(method, fitted.positions, reason)
+    fit = fitted.fit
+    assert fit is not None
+    if not fit.converged:
+        return _not_computed(method, fitted.positions, NotEstimableReason.NOT_CONVERGED)
+    groups = list(range(len(fitted.positions)))
+    found = coxfit.proportional_hazards(
+        fitted.table,
+        groups,
+        [len(rows[position].subjects) for position in fitted.positions],
+        fitted.positions.index(reference),
+        fit,
+        timetoevent.Watch(ends),
+    )
+    if found is None or not _writable(found.statistic, found.p):
+        return _not_computed(method, fitted.positions, _ZERO_VARIANCE)
+    return HypothesisTest(
+        method=method,
+        positions=fitted.positions,
+        statistic=found.statistic,
+        df=found.df,
+        p=found.p,
+    )
+
+
 def _median_difference(
     rows: Sequence[Rows],
     medians: Sequence[SurvivalMedian],
@@ -630,8 +814,12 @@ def survive(
         curves.append(steps)
         at_positions.append(_position(one, steps, params, ends))
     view = SurvivalView(effects=[])
+    small_terms = False
+    violated = False
     if len(rows) > 1:
         test, _ = _log_rank(rows, overlap, ends)
+        _deadline(ends)
+        fitted = _NO_UNITS if overlap else _cox(rows, reference, ends)
         replicates = _Replicates(rows, computation, ends)
         medians = [position.median for position in at_positions]
         effects: list[EffectSize] = []
@@ -643,11 +831,17 @@ def survive(
                     rows, medians, position, reference, params.level, overlap, replicates
                 )
             )
+            effects.append(_hazard_ratio(rows, fitted, position, reference, params.level, overlap))
         _deadline(ends)
-        view = SurvivalView(test=test, effects=effects)
+        hazards = _proportional_hazards(rows, fitted, reference, overlap, ends)
+        view = SurvivalView(test=test, effects=effects, proportional_hazards=hazards)
+        violated = hazards.p is not None and hazards.p < PH_LEVEL
+        if isinstance(fitted, _Fit) and fitted.terms:
+            events = sum(rows[position].events for position in fitted.fitted)
+            small_terms = events < EVENTS_PER_TERM * len(fitted.terms)
     values = SurvivalValues(positions=at_positions, view=view)
     analysed = [one.analysed() for one in rows]
-    caveats = _caveats(positions, population, rows, overlap)
+    caveats = _caveats(positions, population, rows, overlap, small_terms, violated)
     return Outcome(population, analysed, values, caveats)
 
 
@@ -656,6 +850,8 @@ def _caveats(
     population: Sequence[Population],
     rows: Sequence[Rows],
     overlap: bool,
+    small_terms: bool,
+    violated: bool,
 ) -> list[Caveat]:
     """The caveats that the view's data raise (module docstring); the static ones are the
     view's."""
@@ -706,6 +902,25 @@ def _caveats(
                 ),
             )
         )
+    if small_terms:
+        found.append(
+            caveat(
+                CaveatCode.SMALL_N,
+                ["/values/view/effects"],
+                text(f"The Cox fit has fewer than {EVENTS_PER_TERM} events per term"),
+            )
+        )
+    if violated:
+        found.append(
+            caveat(
+                CaveatCode.PH_VIOLATED,
+                ["/values/view/effects", "/values/view/proportional_hazards"],
+                text(
+                    f"The test of proportional hazards gives p < {number_text(PH_LEVEL)}: each "
+                    "hazard ratio is an average over time"
+                ),
+            )
+        )
     return found
 
 
@@ -749,8 +964,9 @@ def view_readback(
         found += [
             text(f"; across the {cohorts} cohorts in view order, the reference being the cohort "),
             text(f"at position {reference}: the log-rank test, and the difference in medians "),
-            text(f"(bootstrap percentile interval of {timetoevent.REPLICATES} replicates) of "),
-            text("each other cohort versus the reference"),
+            text(f"(bootstrap percentile interval of {timetoevent.REPLICATES} replicates) and "),
+            text("the hazard ratio (Cox fit, Efron ties, Wald interval, tested for "),
+            text("proportional hazards) of each other cohort versus the reference"),
         ]
     found += [text("; intervals at "), level, text(".")]
     found.append(
@@ -785,9 +1001,11 @@ __all__ = [
     "ANALYSIS_ID",
     "CAVEATS",
     "ENTRY",
+    "EVENTS_PER_TERM",
     "METHODS",
     "MIN_EVENTS",
     "MIN_GROUP_N",
+    "PH_LEVEL",
     "VERSION",
     "Cells",
     "Outcome",

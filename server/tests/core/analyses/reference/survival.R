@@ -9,7 +9,7 @@
 # survdiff's, and over delayed entry the score test of coxph(ties = "exact"), its equal (§9.5),
 # its degrees of freedom the rank of its covariance and no test where that is 0 (§7.5, D349).
 # Times are distinct beyond the tolerance of survival's timefix, or equal, so that it changes
-# nothing. The Cox fits and the test of proportional hazards are survival.cox's (M3.3b, D346).
+# nothing. The Cox fit and the test of proportional hazards are cox.R's (D355–D357).
 
 suppressPackageStartupMessages(library(survival))
 

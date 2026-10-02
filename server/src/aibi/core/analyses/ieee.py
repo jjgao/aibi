@@ -1,14 +1,13 @@
 """Floating-point arithmetic as IEEE 754 and C give it (SPEC §9.5; D349).
 
-Python raises where C's arithmetic gives an infinity or a NaN: a division by zero, ``exp`` past
-its range, ``log`` or ``sqrt`` outside their domains, ``math.fsum`` over a sum that overflows or
-meets both infinities, and ``float`` of an integer beyond a double. R's ``survival`` is C, which
-carries on with those values; the ports of its methods (``timetoevent``, ``survival``) do their
-arithmetic through these functions, so that no input can raise where C would go on, and the
-values that no output can hold are found by the checks that follow them. A test holds those
-modules to it by their syntax (``test_ieee``: no ``/`` but by a non-zero literal, no attribute of
-``math`` but its predicates and constants, however reached, and no ``int`` or ``float`` but where
-it names why).
+Python raises where C's arithmetic gives an infinity or a NaN: a division by zero, ``exp`` past its
+range, ``log`` or ``sqrt`` outside their domains, ``math.fsum`` over a sum that overflows or meets
+both infinities, and ``float`` of an integer beyond a double. R's ``survival`` is C, which carries
+on with those values; the ports of its methods (``timetoevent``, ``survival``, ``coxfit``) do their
+arithmetic through these functions, so that no input can raise where C would go on, and the values
+that no output can hold are found by the checks that follow them. A test holds those modules to it
+by their syntax (``test_ieee``: no ``/`` but by a non-zero literal, no attribute of ``math`` but its
+predicates and constants, however reached, and no ``int`` or ``float`` but where it names why).
 """
 
 import math

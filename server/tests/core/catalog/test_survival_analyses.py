@@ -178,7 +178,10 @@ def test_survival_run_by_sql_gives_the_reference_evaluator_s_result(
     assert result.analysed == expected.analysed
     view: Any = result.values.view
     assert view["test"]["p"] is not None
-    assert [effect["measure"] for effect in view["effects"]] == ["median_difference"]
+    assert [effect["measure"] for effect in view["effects"]] == [
+        "median_difference",
+        "hazard_ratio",
+    ]
     assert result.charts
 
 

@@ -13,13 +13,14 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from aibi.core.analyses import survival, timetoevent
+from aibi.core.analyses import coxfit, survival, timetoevent
 from aibi.core.analyses.charts import survival_chart
 from aibi.core.analyses.existence import CohortAt
 from aibi.core.analyses.registry import Analyses
+from aibi.core.analyses.stats import z
 from aibi.core.engine import build
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.inputs import Listed
@@ -164,7 +165,8 @@ def test_the_log_rank_test_and_the_difference_in_medians_are_those_of_the_member
     view = found.outcome.values.view
     assert view.test is not None
     assert (view.test.statistic, view.test.p, view.test.df) == (tested.statistic, tested.p, 1)
-    [difference] = view.effects
+    difference, ratio = view.effects
+    assert (difference.measure, ratio.measure) == ("median_difference", "hazard_ratio")
     assert difference.estimate == (
         timetoevent.median(timetoevent.kaplan_meier(groups[1], 0.95))[0]
         - timetoevent.median(timetoevent.kaplan_meier(groups[0], 0.95))[0]  # type: ignore[operator]
@@ -262,16 +264,22 @@ def test_a_cohort_with_no_events_has_no_contrast_but_stays_in_the_log_rank_test(
         )
 
 
-def test_a_reference_with_no_events_leaves_no_difference_in_medians(survive: Survive) -> None:
+def test_a_reference_with_no_events_leaves_no_difference_in_medians_and_no_fit(
+    survive: Survive,
+) -> None:
     quiet = given_rows(spread(12, lambda _: False))
     busy = given_rows(spread(12, lambda _: True))
     found = survive([quiet, busy])
     view = found.values.view
     assert view.test.p is not None
-    [difference] = view.effects
-    assert difference.not_estimable == dict.fromkeys(
-        ("/estimate", "/ci/low", "/ci/high"), NR.NO_EVENTS
-    )
+    for effect in view.effects:
+        assert effect.not_estimable == dict.fromkeys(
+            ("/estimate", "/ci/low", "/ci/high"), NR.NO_EVENTS
+        )
+    assert view.proportional_hazards.not_estimable == {
+        "/statistic": NR.NO_EVENTS,
+        "/p": NR.NO_EVENTS,
+    }
 
 
 def test_cohorts_that_share_units_under_overlap_allow_have_no_between_cohort_value(
@@ -286,6 +294,7 @@ def test_cohorts_that_share_units_under_overlap_allow_have_no_between_cohort_val
         assert effect.not_estimable == dict.fromkeys(
             ("/estimate", "/ci/low", "/ci/high"), overlapping
         )
+    assert view.proportional_hazards.not_estimable == {"/statistic": overlapping, "/p": overlapping}
     assert CaveatCode.COHORTS_OVERLAP in codes(found)
     assert found.values.positions[0].median.estimate is not None
 
@@ -705,6 +714,7 @@ def test_the_readback_names_the_endpoint_its_columns_and_how_units_enter(
         "at the times 6, 12",
         "the reference being the cohort at position 0",
         "2000 replicates",
+        "the hazard ratio (Cox fit, Efron ties, Wald interval, tested for proportional hazards)",
         "intervals at 0.95",
     ):
         assert part in shown
@@ -754,6 +764,250 @@ def test_the_readback_of_one_cohort_names_no_contrast(check: Check, shop: Shop) 
     shown = said(view.readback())
     assert "log-rank" not in shown
     assert "hazard ratio" not in shown
+
+
+# --- The hazard ratio and the test of proportional hazards (D355–D357) ------------------------
+
+
+def hazard_ratios(view: Any) -> list[Any]:
+    return [effect for effect in view.effects if effect.measure == "hazard_ratio"]
+
+
+def test_the_hazard_ratio_is_the_fit_s_with_its_wald_interval_and_its_test_cox_zph_s(
+    survive: Survive,
+) -> None:
+    rng = random.Random(5)
+    groups = [
+        [(ORIGIN, float(rng.randint(1, 30)), rng.random() < 0.7) for _ in range(25)]
+        for _ in range(3)
+    ]
+    view = survive([given_rows(group) for group in groups]).values.view
+    assert [effect.measure for effect in view.effects] == ["median_difference", "hazard_ratio"] * 2
+    [table] = timetoevent.risk_table(groups)
+    fit = coxfit.fit(table, [0, 1, 2], 0, timetoevent.Watch(None), counting=False)
+    for term, ratio in enumerate(hazard_ratios(view)):
+        beta = fit.coefficients[term]
+        spread = z(0.95) * math.sqrt(fit.variance[term][term])
+        assert (ratio.position, ratio.versus, ratio.not_estimable) == (term + 1, 0, None)
+        assert ratio.estimate == math.exp(beta)
+        assert (ratio.ci.method, ratio.ci.level) == ("wald", 0.95)
+        assert (ratio.ci.low, ratio.ci.high) == (math.exp(beta - spread), math.exp(beta + spread))
+    test = coxfit.proportional_hazards(table, [0, 1, 2], [25] * 3, 0, fit, timetoevent.Watch(None))
+    assert test is not None
+    shown = view.proportional_hazards
+    assert (shown.method, shown.positions, shown.df) == ("grambsch_therneau", [0, 1, 2], 2)
+    assert (shown.statistic, shown.p) == (test.statistic, test.p)
+
+
+def test_a_cohort_the_risk_sets_separate_or_leave_apart_has_no_hazard_ratio_and_says_why(
+    survive: Survive,
+) -> None:
+    reference = [(0.0, 3.0, True), (0.0, 4.0, True), (0.0, 5.5, True), (0.0, 6.0, False)]
+    tied = [(0.0, 3.0, True), (0.0, 5.0, True), (0.0, 5.2, False)]
+    ahead = [(0.0, 1.0, True), (0.0, 2.0, True)]
+    behind = [(0.0, 7.0, True), (0.0, 8.0, False)]
+    apart = [(10.0, 11.0, True), (10.0, 12.0, True)]
+    quiet = [(0.0, 9.0, False)]
+    cohorts = [reference, tied, ahead, behind, apart, quiet]
+    view = survive([given_rows(cohort) for cohort in cohorts]).values.view
+    ratios = hazard_ratios(view)
+    reasons = [None, NR.SEPARATION, NR.SEPARATION, NR.ZERO_VARIANCE, NR.NO_EVENTS]
+    for ratio, reason in zip(ratios, reasons, strict=True):
+        if reason is None:
+            assert ratio.not_estimable is None
+        else:
+            assert ratio.not_estimable == dict.fromkeys(
+                ("/estimate", "/ci/low", "/ci/high"), reason
+            )
+            assert (ratio.estimate, ratio.ci.low, ratio.ci.high) == (None, None, None)
+    [table] = timetoevent.risk_table([reference, tied])
+    alone = coxfit.fit(table, [0, 1], 0, timetoevent.Watch(None), counting=True)
+    assert ratios[0].estimate == math.exp(alone.coefficients[0])
+    assert view.proportional_hazards.positions == [0, 1, 2, 3, 4]
+    assert view.proportional_hazards.not_estimable == {
+        "/statistic": NR.SEPARATION,
+        "/p": NR.SEPARATION,
+    }
+    only_apart = survive([given_rows(cohort) for cohort in (reference, tied, apart)]).values.view
+    assert only_apart.proportional_hazards.not_estimable == {
+        "/statistic": NR.ZERO_VARIANCE,
+        "/p": NR.ZERO_VARIANCE,
+    }
+
+
+HALVING = [
+    [
+        (0.0, float(t), bool(e))
+        for t, e in zip(
+            (6, 13, 17, 15, 15, 19, 23, 11, 16, 9, 14),
+            (1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1),
+            strict=True,
+        )
+    ],
+    [(0.0, float(t), bool(e)) for t, e in zip((1, 3, 6, 5, 2), (0, 1, 1, 1, 0), strict=True)],
+]
+"""``cox.R``'s fit that halves its step twice, with entries."""
+
+
+def test_a_fit_that_reaches_no_maximum_is_not_converged(
+    survive: Survive, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = survive([given_rows(group) for group in HALVING]).values.view
+    [ratio] = hazard_ratios(view)
+    assert ratio.estimate is not None
+    monkeypatch.setattr(coxfit, "ITERATIONS", 2)
+    [ratio] = hazard_ratios(survive([given_rows(group) for group in HALVING]).values.view)
+    assert ratio.estimate is not None
+    monkeypatch.setattr(coxfit, "ASCENT", 0)
+    view = survive([given_rows(group) for group in HALVING]).values.view
+    [ratio] = hazard_ratios(view)
+    unconverged = NR.NOT_CONVERGED
+    assert ratio.not_estimable == dict.fromkeys(("/estimate", "/ci/low", "/ci/high"), unconverged)
+    assert view.proportional_hazards.not_estimable == {"/statistic": unconverged, "/p": unconverged}
+
+
+FLAT = [
+    [(ORIGIN, float(t), True) for t in range(1, 21)],
+    *(
+        [(ORIGIN, float(21 + i % 40), True) for i in range(200)] + [(ORIGIN, 1.0, True)]
+        for _ in range(2)
+    ),
+]
+"""``cox.R``'s first step into a flat region: R's iteration from 0 stops where a pivot vanishes."""
+
+
+@pytest.mark.parametrize("entered", [False, True])
+def test_a_fit_whose_newton_step_lands_where_the_information_vanishes_still_reaches_the_maximum(
+    survive: Survive, entered: bool
+) -> None:
+    cohorts = [[(0.0 if entered else e, t, s) for e, t, s in group] for group in FLAT]
+    ratios = hazard_ratios(survive([given_rows(group) for group in cohorts]).values.view)
+    for ratio in ratios:
+        assert ratio.not_estimable is None
+        assert ratio.estimate == pytest.approx(math.exp(-6.384931), rel=1e-6)
+        assert ratio.ci.low < ratio.estimate < ratio.ci.high
+
+
+@settings(
+    max_examples=150, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(
+    st.lists(
+        st.lists(st.tuples(st.integers(1, 12), st.booleans()), min_size=1, max_size=15),
+        min_size=2,
+        max_size=2,
+    )
+)
+def test_swapping_the_reference_inverts_the_hazard_ratio(
+    survive: Survive, groups: list[list[tuple[int, bool]]]
+) -> None:
+    rows = [given_rows([(ORIGIN, float(t), e) for t, e in group]) for group in groups]
+    [ratio] = hazard_ratios(survive(rows).values.view)
+    [swapped] = hazard_ratios(survive(rows, reference=1).values.view)
+    assert ratio.not_estimable == swapped.not_estimable
+    if ratio.estimate is not None:
+        assert swapped.estimate is not None
+        assert ratio.estimate * swapped.estimate == pytest.approx(1.0, rel=1e-8)
+    for low, high in ((ratio.ci.low, swapped.ci.high), (ratio.ci.high, swapped.ci.low)):
+        assert (low is None) == (high is None)
+        if low is not None and high is not None:
+            assert low * high == pytest.approx(1.0, rel=1e-8)
+
+
+@pytest.mark.parametrize(
+    ("coefficient", "error", "missing"),
+    [
+        (40.0, 0.1, ("/estimate", "/ci/low", "/ci/high")),
+        (-800.0, 0.1, ("/estimate", "/ci/low", "/ci/high")),
+        (36.0, 0.5, ("/ci/high",)),
+        (-744.0, 1.0, ("/ci/low",)),
+        (0.5, 1e200, ("/ci/low", "/ci/high")),
+    ],
+)
+def test_a_hazard_ratio_or_bound_no_output_holds_is_separation_alone(
+    survive: Survive,
+    monkeypatch: pytest.MonkeyPatch,
+    coefficient: float,
+    error: float,
+    missing: tuple[str, ...],
+) -> None:
+    fitted = coxfit.CoxFit((coefficient,), ((error * error,),), True, (-1.0, -1.0), 1)
+    monkeypatch.setattr(coxfit, "fit", lambda *_, **__: fitted)
+    [ratio] = hazard_ratios(survive([given_rows(group) for group in HALVING]).values.view)
+    assert ratio.not_estimable == dict.fromkeys(missing, NR.SEPARATION)
+    shown = {"/estimate": ratio.estimate, "/ci/low": ratio.ci.low, "/ci/high": ratio.ci.high}
+    for member, value in shown.items():
+        assert (value is None) == (member in missing)
+        assert value is None or 0 < value <= MAX_SAFE_INTEGER
+
+
+@pytest.mark.parametrize("variance", [0.0, -1e-300, math.nan])
+def test_a_hazard_ratio_whose_variance_is_not_positive_has_no_interval_of_width_zero(
+    survive: Survive, monkeypatch: pytest.MonkeyPatch, variance: float
+) -> None:
+    fitted = coxfit.CoxFit((0.5,), ((variance,),), True, (-1.0, -1.0), 1)
+    monkeypatch.setattr(coxfit, "fit", lambda *_, **__: fitted)
+    [ratio] = hazard_ratios(survive([given_rows(group) for group in HALVING]).values.view)
+    assert ratio.not_estimable == dict.fromkeys(
+        ("/estimate", "/ci/low", "/ci/high"), NR.ZERO_VARIANCE
+    )
+
+
+@pytest.mark.parametrize("statistic", [1e16, math.inf, math.nan])
+def test_a_test_of_proportional_hazards_no_output_holds_is_zero_variance(
+    survive: Survive, monkeypatch: pytest.MonkeyPatch, statistic: float
+) -> None:
+    tested = coxfit.Test(statistic, 1, timetoevent.chi_squared_p(statistic, 1))
+    monkeypatch.setattr(coxfit, "proportional_hazards", lambda *_, **__: tested)
+    view = survive([given_rows(group) for group in HALVING]).values.view
+    assert view.proportional_hazards.not_estimable == {
+        "/statistic": NR.ZERO_VARIANCE,
+        "/p": NR.ZERO_VARIANCE,
+    }
+
+
+def test_a_test_of_proportional_hazards_over_a_singular_information_is_zero_variance(
+    survive: Survive,
+) -> None:
+    together = [(ORIGIN, 1.0, True), (ORIGIN, 1.0, True), (ORIGIN, 2.0, False)]
+    view = survive([given_rows(together), given_rows(together[1:])]).values.view
+    [ratio] = hazard_ratios(view)
+    assert ratio.estimate is not None
+    assert view.proportional_hazards.not_estimable == {
+        "/statistic": NR.ZERO_VARIANCE,
+        "/p": NR.ZERO_VARIANCE,
+    }
+
+
+def test_a_reference_with_no_units_leaves_no_hazard_ratio_and_no_test(survive: Survive) -> None:
+    busy = given_rows(spread(12, lambda _: True))
+    view = survive([given_rows([]), busy]).values.view
+    [ratio] = hazard_ratios(view)
+    assert ratio.not_estimable == dict.fromkeys(("/estimate", "/ci/low", "/ci/high"), NR.NO_UNITS)
+    assert view.proportional_hazards.not_estimable == {"/statistic": NR.NO_UNITS, "/p": NR.NO_UNITS}
+
+
+def test_a_fit_with_few_events_per_term_and_a_failed_test_carry_small_n_and_ph_violated(
+    survive: Survive,
+) -> None:
+    early = [(ORIGIN, float(t), t <= 20) for t in range(1, 41)]
+    late = [(ORIGIN, float(t) + 0.5, t > 20) for t in range(1, 41)]
+    found = survive([given_rows(early), given_rows(late)])
+    test = found.values.view.proportional_hazards
+    assert test.p is not None
+    assert test.p < survival.PH_LEVEL
+    [violated] = [c for c in found.caveats if c.code == CaveatCode.PH_VIOLATED]
+    assert violated.affects == ["/values/view/effects", "/values/view/proportional_hazards"]
+    assert all(
+        c.affects != ["/values/view/effects"] for c in found.caveats if c.code == CaveatCode.SMALL_N
+    )
+    few = [given_rows(spread(12, lambda i: i < 4, shift)) for shift in (0.0, 0.5)]
+    found = survive(few)
+    small = [c.affects for c in found.caveats if c.code == CaveatCode.SMALL_N]
+    assert ["/values/view/effects"] in small
+    enough = [given_rows(spread(12, lambda i: i < 5, shift)) for shift in (0.0, 0.5)]
+    small = [c.affects for c in survive(enough).caveats if c.code == CaveatCode.SMALL_N]
+    assert ["/values/view/effects"] not in small
 
 
 # --- Arithmetic and range edges (D348) --------------------------------------------------------
@@ -918,11 +1172,15 @@ def test_endpoint_rows_stop_at_the_call_s_deadline(
 
 
 def _census(
-    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch, passing: int | None
+    check: Check,
+    shop: Shop,
+    monkeypatch: pytest.MonkeyPatch,
+    passing: int | None,
+    delayed: bool = True,
 ) -> tuple[Counter[str], int]:
     """Each function's sites that look at the deadline in one view with every part (delayed
-    entry, a grid, landmarks, three cohorts, every contrast), each loop looking every time,
-    and how many looks it made; with ``passing``, the deadline passes at that look."""
+    entry or none, a grid, landmarks, three cohorts, every contrast), each loop looking every
+    time, and how many looks it made; with ``passing``, the deadline passes at that look."""
     sites: set[tuple[str, int]] = set()
     looks: list[int] = []
 
@@ -942,7 +1200,12 @@ def _census(
     monkeypatch.setattr(timetoevent, "REPLICATES", 2)
     rng = random.Random(3)
     rows = [
-        given_rows([(float(i % 3) - 1, i + 1.5 + shift, rng.random() < 0.7) for i in range(12)])
+        given_rows(
+            [
+                (float(i % 3) - 1 if delayed else ORIGIN, i + 1.5 + shift, rng.random() < 0.7)
+                for i in range(12)
+            ]
+        )
         for shift in (0.0, 0.25, 0.5)
     ]
     try:
@@ -962,12 +1225,13 @@ def _census(
     return Counter(name for name, _ in sites), len(looks)
 
 
+@pytest.mark.parametrize("delayed", [True, False])
 def test_every_pass_of_the_analysis_looks_at_the_deadline(
-    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch
+    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch, delayed: bool
 ) -> None:
-    found, _ = _census(check, shop, monkeypatch, None)
+    found, _ = _census(check, shop, monkeypatch, None, delayed)
     assert found == {
-        "_census > survive": 3,
+        "_census > survive": 4,
         "survive > _within": 1,
         "survive > kaplan_meier": 3,
         "kaplan_meier > _counts": 1,
@@ -980,16 +1244,23 @@ def test_every_pass_of_the_analysis_looks_at_the_deadline(
         "_log_rank > risk_table": 6,
         "risk_table > _counts": 1,
         "_log_rank > log_rank": 2,
+        "_cox > risk_table": 6,
+        "_cox > standing": 2,
+        f"{'_counting' if delayed else '_right'} > _Model.__call__": 1,
+        "_Model.__call__ > _evaluate": 2,
+        "_proportional_hazards > proportional_hazards": 2,
+        "proportional_hazards > _evaluate": 2,
         "_Replicates.__call__ > bootstrap_medians": 1,
-        "bootstrap_medians > _Resampled.__init__": 4,
+        "bootstrap_medians > _Resampled.__init__": 4 if delayed else 3,
     }
 
 
+@pytest.mark.parametrize("delayed", [True, False])
 def test_the_deadline_passed_at_any_look_stops_the_analysis_there(
-    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch
+    check: Check, shop: Shop, monkeypatch: pytest.MonkeyPatch, delayed: bool
 ) -> None:
-    _, total = _census(check, shop, monkeypatch, None)
+    _, total = _census(check, shop, monkeypatch, None, delayed)
     for passing in range(0, total, max(1, total // 97)):
         with monkeypatch.context() as patch:
-            _, looked = _census(check, shop, patch, passing)
+            _, looked = _census(check, shop, patch, passing, delayed)
         assert looked == passing + 1

@@ -632,9 +632,9 @@
     "shop": {
       "survived": "delayed"
     },
-    "id": "drv:35f44410421be298ee383af94b6aff05c95f0b4c210876f7a9d02124965c4bda",
-    "computation_id": "drv:c3ecbc09c0436f29cc36c7f6ab9d964c73432d0a50f53a12e2b6ed8a621aeecb",
-    "digest": "sha256:9915ee2bcc82a4479424649d775acc125565d17bfe76a6fb913643b8988e1b25"
+    "id": "drv:c7b6ec6840f25722f5ef299decca603e59ca02396fbbb9758896232b41b4b5b7",
+    "computation_id": "drv:1f03cf1be4256a22fd137e36935bee1c3f2ef8e90d4c798ecd40a9ff46861f69",
+    "digest": "sha256:878e0f657c6ad5d7dcf8ee3b5b9aed4d1992a9164a50603643e79b8fc867a12d"
   },
   "survival_grid_three_tiers": {
     "document": {
@@ -700,8 +700,8 @@
     "shop": {
       "survived": "origin"
     },
-    "id": "drv:a836f1cc3728a582f3a7c1323a8efe97b29df2afa224ad65d6b7a753b0c502c6",
-    "computation_id": "drv:e1713d6ea7b6eb8a4a9c98b49c7ee3971f3cd349d7f3a662b1c2a80ede4dd9c0",
-    "digest": "sha256:d495a20d1ed592cdf9039106ae99c786a704f66a8e762e5b1661b8580dc6e7c4"
+    "id": "drv:0a6f5116b8b9e736d7ac8115295fa48ed1242e7c42c334bbe027941a71288ca7",
+    "computation_id": "drv:5cf293e097b4407e46d9ac835ee0d1748397e1dcc9955e70ca69a9d821b3fb53",
+    "digest": "sha256:7b76208445f143a602c7d68dcc710f79f8a82a12a2a74aa448ee5606c30378d1"
   }
 }
