@@ -380,7 +380,9 @@ class _Seated:
 
     schema: Mapping[str, Any] = {"type": "object"}
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         members = leaf.model_extra or {}
         written = {
             "aibi": "1",
@@ -402,7 +404,7 @@ class _Seated:
         assert loaded.document is not None
         return list(loaded.document.cohorts["c"].all)
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         return [text("seated rows, at least "), data(str((leaf.model_extra or {})["seats"]))]
 
 

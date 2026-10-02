@@ -1,7 +1,7 @@
 """The pack API (SPEC §10.1), exercised with a test-only lending-library pack."""
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
@@ -10,6 +10,7 @@ import pytest
 from pydantic import JsonValue, ValidationError
 
 from aibi.core.schema.caveats import CaveatCode, Severity
+from aibi.core.schema.copiers import Expansion, expansion, is_true
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
     ConceptDescriptor,
@@ -77,7 +78,9 @@ class Overdue:
     def schema(self) -> Mapping[str, JsonValue]:
         return {"type": "object", "properties": {"days": {"type": "integer"}}}
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         days = (leaf.model_extra or {}).get("days", 14)
         return [
             ValueLeaf.model_validate(
@@ -85,14 +88,14 @@ class Overdue:
             )
         ]
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         return [text("loans returned late")]
 
 
 class Marc:
     def translate(
         self, document: JsonValue
-    ) -> tuple[Mapping[str, JsonValue], Sequence[TranslationNote]]:
+    ) -> tuple[Mapping[str, JsonValue], list[TranslationNote] | tuple[TranslationNote, ...]]:
         return {"aibi": "1"}, []
 
 
@@ -105,11 +108,11 @@ class LoanRates:
         return {}
 
 
-def _facet(release: ReleaseView) -> Mapping[str, Sequence[str]]:
+def _facet(release: ReleaseView) -> dict[str, list[str] | tuple[str, ...]]:
     return {"collection": ["books"]}
 
 
-def _rule(release: ReleaseView, document: Mapping[str, JsonValue]) -> Sequence[str]:
+def _rule(release: ReleaseView, document: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
     return ["library.RENEWALS_ESTIMATED"]
 
 
@@ -141,8 +144,10 @@ def test_the_registry_answers_for_the_packs_listed() -> None:
     snapshot = packs.pack("library")
     assert snapshot.manifest == LIBRARY.manifest
     assert dict(snapshot.extension_schemas) == dict(LIBRARY.extension_schemas)
-    assert [a.entry for a in snapshot.analyses] == [a.entry for a in LIBRARY.analyses]
+    assert snapshot.analyses == tuple(a.entry.id for a in LIBRARY.analyses)
     assert snapshot.concepts == LIBRARY.concepts
+    assert snapshot.translators == ("library.marc",)
+    assert snapshot.leaf_kinds == ("library.overdue",)
     assert [pack.id for pack in packs.listed(["library", "archive", "library"])] == [
         "archive",
         "library",
@@ -152,8 +157,11 @@ def test_the_registry_answers_for_the_packs_listed() -> None:
     assert packs.extension_schemas("dataset", ["library"]) == {"library": {"type": "object"}}
     assert packs.extension_schemas("dataset", ["archive"]) == {}
     assert packs.facets(["archive"]) == []
-    assert packs.facets(["library"]) == [_facet]
-    assert packs.caveat_rules(["library"]) == [_rule]
+    assert [(h.pack, h.stage) for h in packs.facets(["library"])] == [("library", "facet")]
+    assert [(h.pack, h.stage) for h in packs.caveat_rules(["library"])] == [
+        ("library", "caveat rule")
+    ]
+    assert packs.facets(["library"])[0] is packs.facets(["library"])[0]
     assert packs.wordings(CaveatCode.SMALL_N, ["archive", "library"]) == [("library", "Few loans")]
     assert packs.validators(["library"]) == []
     assert packs.proposers(["library"]) == []
@@ -164,13 +172,20 @@ def test_extension_points_are_found_by_their_names() -> None:
     assert [c.id for c in packs.concepts()] == ["library:loan_status"]
     validator = packs.ontology_validator("LIBRARY-CODES")
     assert validator is not None
-    assert validator("L1")
+    assert validator.call(lambda h: is_true(h, "L1"))
     assert packs.ontology_validator("OTHER") is None
-    assert isinstance(packs.leaf_kind("library.overdue"), Overdue)
+    leaf = packs.leaf_kind("library.overdue")
+    assert leaf is not None
+    assert (leaf.pack, leaf.stage) == ("library", "leaf compiler")
+    summary = packs.leaf_summary("library.overdue")
+    assert summary is not None
+    assert (summary.pack, summary.stage) == ("library", "summary")
     assert packs.leaf_kind("library.missing") is None
     with pytest.raises(UnknownPack):
         packs.leaf_kind("shelving.overdue")
-    assert isinstance(packs.translator("library.marc"), Marc)
+    translator = packs.translator("library.marc")
+    assert translator is not None
+    assert translator.stage == "translator"
     analysis = packs.analysis("library.loan_rates")
     assert analysis is not None
     assert analysis.entry.id == "library.loan_rates"
@@ -235,7 +250,9 @@ def test_a_leaf_kind_compiles_to_core_clauses() -> None:
     kind = registry().leaf_kind("library.overdue")
     assert kind is not None
     view: Any = object()
-    [clause] = kind.compile(leaf, view, "1.2.0")
+    found = kind.call(lambda h: expansion(h.compile, leaf, view, "1.2.0", pack="library"))
+    assert isinstance(found, Expansion)
+    [clause] = found.clauses
     assert isinstance(clause, ValueLeaf)
     assert clause.range is not None
     assert clause.range.gt == 30
@@ -602,10 +619,12 @@ class _Shaped:
     def schema(self) -> Any:
         return self.given
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         return []
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         return []
 
 

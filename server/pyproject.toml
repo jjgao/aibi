@@ -173,6 +173,26 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "The schema layer, which holds the hooks' guard and copiers, imports no other layer (D388)"
+type = "forbidden"
+source_modules = ["aibi.core.schema"]
+forbidden_modules = [
+    "aibi.core.engine",
+    "aibi.core.store",
+    "aibi.core.importers",
+    "aibi.core.analyses",
+    "aibi.core.catalog",
+    "aibi.core.mcp",
+    "aibi.core.api",
+    "aibi.core.operator",
+]
+# Annotations under TYPE_CHECKING, as for the operator CLI above.
+ignore_imports = [
+    "aibi.core.schema.pack_api -> aibi.core.store.build",
+    "aibi.core.schema.pack_api -> aibi.core.store.sources",
+]
+
+[[tool.importlinter.contracts]]
 name = "The HTTP application imports the operator surface, never the reverse (SPEC §12.5)"
 type = "forbidden"
 source_modules = ["aibi.core.operator"]

@@ -831,3 +831,37 @@ def test_the_cli_prunes_the_log_and_says_what_an_unknown_issuance_is(
     unknown = run("issuance", "iss:" + "0" * 26)
     assert unknown.code == 1
     assert "NOT_FOUND" in unknown.out + unknown.err
+
+
+def test_a_skipped_proposal_s_unshown_name_is_the_core_s_words_and_a_pack_s_is_escaped() -> None:
+    from aibi.core.operator import router
+    from aibi.core.schema.copiers import UNSHOWN
+    from aibi.core.store.proposals import ProposersRun, Skipped
+
+    words = UNSHOWN.text
+    run = ProposersRun(
+        (),
+        (
+            Skipped("birds", UNSHOWN, "/label", ("INVALID_VALUE",)),
+            Skipped("birds", words, "\x1b[2J", ("INVALID_VALUE",)),
+            Skipped("birds", None, None, ("PACK_FAILED",)),
+        ),
+        4,
+    )
+    ran = router._ran(run)  # pyright: ignore[reportPrivateUsage]
+    assert ran is not None
+    dumped = ran.model_dump(mode="json")
+    assert [(s.get("descriptor"), s.get("pointer")) for s in dumped["skipped"]] == [
+        ({"text": words}, "/label"),
+        (words, "\x1b[2J"),
+        (None, None),
+    ]
+    assert dumped["truncated"] == 4
+    lines = cli._proposers_lines(ran)  # pyright: ignore[reportPrivateUsage]
+    assert lines[0] == f"  skipped from birds: {words} /label (INVALID_VALUE)"
+    assert "\x1b" not in lines[1]
+    assert lines[2] == "  skipped from birds: (the proposer)  (PACK_FAILED)"
+    assert lines[3] == "  … and 4 more skipped"
+    empty = router._ran(ProposersRun((), ()))  # pyright: ignore[reportPrivateUsage]
+    assert empty is not None
+    assert "truncated" not in empty.model_dump(mode="json")

@@ -16,7 +16,12 @@ are checked (``check_writes``) against the registered packs, beyond what their m
   is refused;
 - each ontology code of a system some registered pack validates (a dataset's ``data_use``, a
   column's ``concepts`` and its permissible values' ``concepts``) is one the validator accepts
-  (``INVALID_VALUE``); a system no pack registered is not checked.
+  (``INVALID_VALUE``), the validator called through its handle's guard and failing closed
+  (``PACK_FAILED`` at the code, D388); a system no pack registered is not checked.
+
+A pack's validators run on their packs' views of a release in one operation (``validated``), each
+through its handle's guard: what a validator raises refuses the release (``PACK_FAILED``), so that
+no release passes a validator that did not run (D388).
 
 Paths point into the descriptors given, by position, as ``check_release``'s do; ``by_id`` rewrites
 them by descriptor id, as a draft change reports them (D246). An import, a re-import and a session's
@@ -35,13 +40,13 @@ tombstone's version plus one. Versions are counted per release, not per edit, so
 back to its base gives back the base's bytes.
 """
 
-from collections.abc import Container, Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from types import MappingProxyType
+from collections.abc import Container, Iterable, Sequence
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from aibi.core.engine.resolve import LabelledView, Operation
+from aibi.core.schema.copiers import is_true, pack_refusals
 from aibi.core.schema.descriptors import (
     RELEASE_KINDS,
     By,
@@ -49,6 +54,7 @@ from aibi.core.schema.descriptors import (
     DatasetDescriptor,
     Descriptor,
 )
+from aibi.core.schema.guards import Hook, PackFailed
 from aibi.core.schema.jsonio import canonical, escape_token, pointer
 from aibi.core.schema.jsonschemas import (
     OUT_OF_STEPS,
@@ -62,7 +68,7 @@ from aibi.core.schema.jsonschemas import (
 )
 from aibi.core.schema.limits import EXTENSION_STEPS
 from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.pack_api import JsonSchema, PackRegistry, Validator
+from aibi.core.schema.pack_api import JsonSchema, OntologyValidator, PackRegistry, Validator
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.store.tombstones import Tombstone
 
@@ -79,18 +85,6 @@ def attributed(by: str, kinds: Iterable[str]) -> bool:
     return by.partition(":")[0] in set(kinds)
 
 
-@dataclass(frozen=True)
-class View:
-    """A ``ReleaseView``: what a pack may read of a release, its descriptors but never its data
-    (§10.1). A draft's label is ``"draft"``, and an import's the label it would be published as."""
-
-    dataset: str
-    manifest: str
-    label: int | Literal["draft"]
-    packs: Sequence[str]
-    descriptors: Mapping[str, Descriptor]
-
-
 def packs_of(descriptors: Iterable[Descriptor]) -> list[str]:
     """The packs the dataset descriptor lists."""
     for descriptor in descriptors:
@@ -99,19 +93,57 @@ def packs_of(descriptors: Iterable[Descriptor]) -> list[str]:
     return []
 
 
-def view(
-    dataset: str, manifest: str, label: int | Literal["draft"], descriptors: Sequence[Descriptor]
-) -> View:
-    by_id = {descriptor.id: descriptor for descriptor in descriptors}
-    return View(dataset, manifest, label, tuple(packs_of(descriptors)), MappingProxyType(by_id))
-
-
-def validators(registry: PackRegistry | None, packs: Iterable[str]) -> list[Validator]:
-    """The validators of the registered packs among ``packs``; ``check_writes`` refuses the
-    others."""
+def validators(registry: PackRegistry | None, packs: Iterable[str]) -> list[Hook[Validator]]:
+    """The handles on the validators of the registered packs among ``packs``; ``check_writes``
+    refuses the others."""
     if registry is None:
         return []
     return registry.validators([pack for pack in packs if pack in registry.ids])
+
+
+def failed(pack: str, what: str, path: Sequence[str | int] | None = None) -> Refusal:
+    """The refusal of a pack's hook that failed (D388): ``PACK_FAILED``, in the core's words."""
+    return Refusal(
+        code=RefusalCode.PACK_FAILED,
+        path=None if path is None else pointer(path),
+        message=[text(f"The {what} of the pack "), data(pack), text(" failed")],
+    )
+
+
+def validated(
+    validators: Sequence[Hook[Validator]],
+    operation: Operation,
+    dataset: str,
+    manifest: str,
+    label: int | Literal["draft"],
+    descriptors: Sequence[Descriptor],
+) -> list[Refusal]:
+    """The refusals of each validator's ``validate_descriptors`` of a release, each given its
+    pack's view of it in ``operation``; a validator that fails refuses the release
+    (``PACK_FAILED``), so that a release never passes a validator that did not run (D388)."""
+    found: list[Refusal] = []
+    for validator in validators:
+        view = operation.labelled(validator.pack, dataset, manifest, label, descriptors)
+        found.extend(_validated(validator, view))
+    return found
+
+
+def _validated(validator: Hook[Validator], view: LabelledView) -> list[Refusal]:
+    pack = validator.pack
+    try:
+        return list(
+            validator.call(lambda h: pack_refusals(h.validate_descriptors, view, pack=pack))
+        )
+    except PackFailed:
+        return [failed(pack, "validator")]
+
+
+def _in_system(validate: Hook[OntologyValidator], code: str) -> bool | None:
+    """Whether an ontology system's validator takes ``code``; ``None`` when it fails."""
+    try:
+        return validate.call(lambda h: is_true(h, code))
+    except PackFailed:
+        return None
 
 
 def _refusal(
@@ -173,7 +205,9 @@ def check_writes(
     """The refusals of the pack checks on a descriptor write (D247), as ``finish_refusals``
     returns them: of the descriptors whose ids are in ``only``, or of every one, each extension
     object evaluated within ``steps(value, ceiling)`` steps; the extensions of the others are
-    checked against the dataset's ``packs`` alone."""
+    checked against the dataset's ``packs`` alone. An ontology system whose validator failed is
+    not called again in this check: its later codes are refused ``PACK_FAILED`` without a call,
+    so that one failure is logged once (D388)."""
     registered: set[str] = set(registry.ids) if registry is not None else set()
     found: list[Refusal] = []
     listed = packs_of(descriptors)
@@ -192,6 +226,7 @@ def check_writes(
                         )
                     )
     checkers: dict[tuple[str, str], Checker | None] = {}
+    failed_systems: set[str] = set()
     for at, descriptor in enumerate(descriptors):
         checked = only is None or descriptor.id in only
         for pack, members in sorted(descriptor.extensions.items()):
@@ -242,7 +277,13 @@ def check_writes(
             continue
         for path, system, code in _references(descriptor):
             validate = registry.ontology_validator(system)
-            if validate is not None and not validate(code):
+            if validate is None:
+                continue
+            holds = None if system in failed_systems else _in_system(validate, code)
+            if holds is None:
+                failed_systems.add(system)
+                found.append(failed(validate.pack, "ontology validator", (at, *path, "code")))
+            elif not holds:
                 found.append(
                     _refusal(
                         RefusalCode.INVALID_VALUE,
@@ -319,14 +360,14 @@ def rooted(refusals: Iterable[Refusal], root: str) -> list[Refusal]:
 
 
 __all__ = [
-    "View",
     "attributed",
     "by_id",
     "changed",
     "check_writes",
+    "failed",
     "packs_of",
     "rooted",
+    "validated",
     "validators",
     "versions",
-    "view",
 ]
