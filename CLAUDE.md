@@ -34,8 +34,12 @@ descriptor resources. `core/mcp/` serves them over the official MCP SDK at `/mcp
 canonicalisation (pack leaves expanded, collections sorted, caveat rules run) and gives cohort ids,
 leaf keys and a view's ids from its parts; `core/engine/ids.py` hashes, rounds and digests;
 `core/engine/counts.py` makes the digested part of a cohort count; and `core/store/derivations.py`
-is the derivation log, which `Store.explain` reads. The SQL compiler, readbacks and the query
-tools come next (M2), and database snapshots and the read-only catalogue page (M1).
+is the derivation log, which `Store.explain` reads. `core/engine/sql.py` compiles canonical cohorts
+to SQLGlot trees over the release's table blobs, three-valued with reasons and flags;
+`core/engine/worker.py` runs a document's queries in a child process that can be killed, the only
+process that loads DuckDB (`core/engine/duck.py`); `core/engine/queries.py` joins them for a caller, and
+`Store.outline` and `Store.sources` give what they read. Readbacks and the query tools come next
+(M2), and database snapshots and the read-only catalogue page (M1).
 
 ## Non-negotiables
 

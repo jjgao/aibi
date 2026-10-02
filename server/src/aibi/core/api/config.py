@@ -33,6 +33,8 @@ closed, so an unknown key is refused, and every problem is reported at once with
   request's body, may send nothing before it is refused; and ``upload_min_bytes_per_second``, the
   slowest one, or a tool call's body, may average, which with its length sets its deadline (D266,
   D278).
+- ``[queries]``: the limits of the workers that run queries (D293): ``query_seconds``,
+  ``query_memory``, ``query_workers`` and ``query_threads``.
 - ``[disclosure] min_cell_count_floor``: the deployment's floor for *k* (§8.4), 2 or more.
 - ``[databases.<identifier>]``: named connections, by shape only until database snapshots use
   them (#13): a SQLite or DuckDB file inside an import directory, or for Postgres and MySQL the
@@ -70,9 +72,10 @@ from pydantic_core import ErrorDetails, PydanticCustomError
 from aibi.core.api.origins import LOOPBACK_HOSTS, hostname, is_loopback, origin
 from aibi.core.schema.descriptors import ModelCardDescriptor
 from aibi.core.schema.ids import Identifier
-from aibi.core.schema.limits import MAX_BODY_BYTES, ImportLimits
+from aibi.core.schema.limits import MAX_BODY_BYTES, MIN_QUERY_MEMORY, ImportLimits, QueryLimits
 
 _DEFAULT_LIMITS = ImportLimits()
+_DEFAULT_QUERIES = QueryLimits()
 WORKER_THREADS = 40
 """The worker threads that the reads, the operations and the parsing of bodies share: anyio's
 default limiter, which the server leaves as it is."""
@@ -241,6 +244,18 @@ HTTP_SETTINGS = ("concurrent", "upload_idle_seconds", "upload_min_bytes_per_seco
 """The settings of ``[imports]`` that are not limits of an import (D266)."""
 
 
+class Queries(_Config):
+    """Every limit of ``QueryLimits`` (D293), with its defaults."""
+
+    query_seconds: PositiveInt = _DEFAULT_QUERIES.query_seconds
+    query_memory: Annotated[StrictInt, Field(ge=MIN_QUERY_MEMORY)] = _DEFAULT_QUERIES.query_memory
+    query_workers: PositiveInt = _DEFAULT_QUERIES.query_workers
+    query_threads: PositiveInt = _DEFAULT_QUERIES.query_threads
+
+    def limits(self) -> QueryLimits:
+        return QueryLimits(**self.model_dump())
+
+
 class Disclosure(_Config):
     min_cell_count_floor: Annotated[StrictInt, Field(ge=2)] | None = None
 
@@ -274,6 +289,7 @@ class ServerConfig(_Config):
     curator: Curator
     storage: Storage
     imports: Imports = Imports()
+    queries: Queries = Queries()
     disclosure: Disclosure = Disclosure()
     databases: dict[Identifier, DatabaseConnection] = Field(
         default_factory=dict[str, DatabaseConnection]

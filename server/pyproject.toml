@@ -5,6 +5,7 @@ description = "AI-native cohort exploration over related tables"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+    "duckdb>=1.5.5,<1.6",  # a new DuckDB can change a digest: bump the versions it changes (§7.6)
     "fastapi>=0.141",
     "httpx>=0.28",
     "jsonschema>=4.23",
@@ -13,6 +14,7 @@ dependencies = [
     "pyarrow>=20",
     "pydantic>=2.11",
     "python-calamine>=0.8.2",
+    "sqlglot>=30.19,<31",
     "uvicorn>=0.53,<0.54",  # api.connections reads its h11 protocol's internals: a test pins them
 ]
 
@@ -106,6 +108,13 @@ forbidden_modules = [
     "httpx",
     "anyio",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Only a query worker's child loads DuckDB (SPEC §14, D293)"
+type = "forbidden"
+source_modules = ["aibi.core", "aibi.packs"]
+forbidden_modules = ["duckdb"]
+ignore_imports = ["aibi.core.engine.duck -> duckdb"]
 
 [[tool.importlinter.contracts]]
 name = "Operator operations are never tools (SPEC §11.2, A4, D278)"

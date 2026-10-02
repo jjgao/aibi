@@ -14,6 +14,7 @@ import hashlib
 import os
 import re
 import secrets
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
@@ -73,6 +74,9 @@ class BlobStore:
         self._tmp = root / TMP
         self._blobs.mkdir(parents=True, exist_ok=True)
         self._tmp.mkdir(parents=True, exist_ok=True)
+        self._verified: dict[str, tuple[int, int, int, int, int]] = {}
+        """Each blob ``verified`` found whole, by digest: its file's device, inode, size,
+        modification time and change time then."""
 
     def path(self, digest: str) -> Path:
         """Where the blob is, whether or not it exists."""
@@ -139,6 +143,25 @@ class BlobStore:
         if hasher.hexdigest() != digest:
             raise CorruptBlobError(digest)
 
+    def verified(self, digest: str) -> Path:
+        """The blob's path, once its file is known to hold its bytes (D221): verified the first
+        time, and again whenever the file is another (device, inode, size, modification time or
+        change time, which a write changes even when the modification time is set back).
+        Raises ``MissingBlobError`` or ``CorruptBlobError`` (a link or another kind of
+        file in its place included)."""
+        path = self.path(digest)
+        try:
+            info = os.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            raise MissingBlobError(digest) from None
+        if not stat.S_ISREG(info.st_mode):
+            raise CorruptBlobError(digest)
+        mark = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if self._verified.get(digest) != mark:
+            self.verify(digest)
+            self._verified[digest] = mark
+        return path
+
     def _whole(self, digest: str) -> bool:
         """Whether the blob is stored and holds its bytes; a damaged one, or a link in its place,
         is written again."""
@@ -150,6 +173,7 @@ class BlobStore:
 
     def delete(self, digest: str) -> bool:
         """Delete the blob; whether it existed."""
+        self._verified.pop(digest, None)
         try:
             self.path(digest).unlink()
         except FileNotFoundError:

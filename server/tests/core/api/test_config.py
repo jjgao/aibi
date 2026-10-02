@@ -23,7 +23,7 @@ from aibi.core.api.config import (
     Imports,
     load_config,
 )
-from aibi.core.schema.limits import ImportLimits
+from aibi.core.schema.limits import MIN_QUERY_MEMORY, ImportLimits, QueryLimits
 
 EXAMPLE = Path(__file__).resolve().parents[3] / "aibi.example.toml"
 HASH = "sha256:" + "a" * 64
@@ -442,3 +442,14 @@ def test_a_file_that_is_no_toml_is_refused(write_config: Write, tmp_path: Path) 
     assert "not TOML" in found
     with pytest.raises(ConfigError, match="cannot be read"):
         load_config(tmp_path / "missing.toml")
+
+
+def test_the_query_workers_limits_are_configured(write_config: Write) -> None:
+    given = "query_seconds = 5\nquery_memory = 1073741824\nquery_workers = 3\nquery_threads = 2"
+    config = load_config(write_config(minimal(queries=given)))
+    assert config.queries.limits() == QueryLimits(
+        query_seconds=5, query_memory=1 << 30, query_workers=3, query_threads=2
+    )
+    assert load_config(write_config(minimal())).queries.limits() == QueryLimits()
+    [found] = problems(write_config, minimal(queries=f"query_memory = {MIN_QUERY_MEMORY - 1}"))
+    assert found.startswith("queries.query_memory: ")

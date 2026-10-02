@@ -9,26 +9,40 @@ Complaints are recorded only when made by phone or on the web (a record filter).
 up their type's tier. Staff have undeclared coverage.
 
 Test modules can't import one another (``--import-mode=importlib``), so the helpers are given as
-fixtures: ``city`` builds a release from rows, ``run`` resolves and evaluates a document, and
-``canon`` canonicalises one.
+fixtures: ``city`` builds a release from rows, ``run`` resolves and evaluates a document,
+``canon`` canonicalises one, and ``sql`` runs a resolved cohort's SQL over its tables written as
+the store writes them, in a DuckDB session of a helper process: DuckDB never runs in the test
+process, as it never runs in the server's, whose memory its allocator would keep (and whose child
+processes, which report their parent's resident memory as their own, would look larger).
 """
 
+import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+import pickle
+import subprocess
+import sys
+from array import array
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis.control import currently_in_test_context
 
 from aibi.core.engine import build
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
-from aibi.core.engine.resolve import Resolution, resolve
-from aibi.core.schema.descriptors import Descriptor
+from aibi.core.engine.resolve import Resolution, ResolvedCohort, resolve
+from aibi.core.engine.sql import Accounting, CompiledCohort, compile_cohort
+from aibi.core.engine.truth import TruthValue
+from aibi.core.engine.worker import Rows
+from aibi.core.schema.descriptors import Descriptor, TableDescriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.schema.refusals import Refusal
+from aibi.core.store import parquet, tables
 
 INSPECTED = "rel:inspections.establishment"
 VIOLATIONS = "rel:violations.inspection"
@@ -272,6 +286,133 @@ def canonicalise_document(
     )
 
 
+def release_blobs(release: Release, directory: Path) -> dict[str, tables.TableSource]:
+    """Each table of a release in memory written as the store writes its blob (§12.2), under its
+    digest, and read back as a query reads it."""
+    found: dict[str, tables.TableSource] = {}
+    for descriptor in release.descriptors:
+        if not isinstance(descriptor, TableDescriptor):
+            continue
+        columns = release.columns(descriptor.id)
+        fields = {}
+        for column in columns:
+            found_column = release.column(descriptor.id, column)
+            assert found_column is not None
+            fields[column] = found_column.fields
+        rows = release.rows(descriptor.id)
+        cells = {
+            column: tuple(rows.cell(row, column) for row in range(len(rows))) for column in columns
+        }
+        typed = tables.TypedTable(descriptor.id, columns, cells, len(rows), {})
+        data = tables.encode(typed, fields)
+        path = directory / hashlib.sha256(data).hexdigest()
+        if not path.exists():
+            path.write_bytes(data)
+        found[descriptor.id] = tables.TableSource(str(path), frozenset(parquet.names(path)))
+    return found
+
+
+@dataclass
+class SqlRun:
+    compiled: CompiledCohort
+    accounting: Accounting
+    values: tuple[TruthValue, ...]
+
+
+_HELPER = """
+import pickle, sys
+from aibi.core.engine import duck
+given, answers = sys.stdin.buffer, sys.stdout.buffer
+while len(header := given.read(8)) == 8:
+    paths, memory, statements = pickle.loads(given.read(int.from_bytes(header, "big")))
+    session = duck.Session(tuple(paths), memory)
+    try:
+        found = duck.run(session, [duck.Statement(*one) for one in statements])
+        answer = ("value", [(result.columns, result.rows) for result in found])
+    except Exception as error:
+        answer = ("error", repr(error))
+    data = pickle.dumps(answer)
+    answers.write(len(data).to_bytes(8, "big") + data)
+    answers.flush()
+"""
+
+
+class Sessions:
+    """DuckDB sessions in a helper process, one per request, as ``duck.run`` gives them."""
+
+    def __init__(self) -> None:
+        self._process: subprocess.Popen[bytes] | None = None
+
+    def run(
+        self, paths: Sequence[str], statements: Sequence[tuple[str, Mapping[str, object]]]
+    ) -> list[tuple[int, list[tuple[int, ...]]]]:
+        """Each statement's number of columns and rows."""
+        if self._process is None:
+            self._process = subprocess.Popen(
+                [sys.executable, "-c", _HELPER], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+            )
+        given, answers = self._process.stdin, self._process.stdout
+        assert given is not None
+        assert answers is not None
+        request = pickle.dumps((list(paths), 1 << 30, [(q, dict(p)) for q, p in statements]))
+        given.write(len(request).to_bytes(8, "big") + request)
+        given.flush()
+        size = int.from_bytes(answers.read(8), "big")
+        kind, value = pickle.loads(answers.read(size))
+        assert kind == "value", value
+        return value
+
+    def close(self) -> None:
+        if self._process is not None:
+            assert self._process.stdin is not None
+            self._process.stdin.close()
+            self._process.wait(timeout=30)
+            if self._process.stdout is not None:
+                self._process.stdout.close()
+
+
+def packed(columns: int, rows: Sequence[Sequence[int]]) -> Rows:
+    """Rows as a worker's answer packs them, each column an array of 64-bit integers."""
+    found = [memoryview(array("q", [row[at] for row in rows])) for at in range(columns)]
+    return Rows(found, len(rows))
+
+
+def run_sql(cohort: ResolvedCohort, directory: Path, sessions: Sessions) -> SqlRun:
+    """A resolved cohort's counts and values queries, run in a helper's session."""
+    compiled = compile_cohort(cohort, release_blobs(cohort.release, directory))
+    (_, counts), values = sessions.run(
+        compiled.paths,
+        [
+            (compiled.counts_sql, compiled.parameters),
+            (compiled.values_sql, compiled.parameters),
+        ],
+    )
+    return SqlRun(
+        compiled, compiled.accounting(counts[0]), tuple(compiled.truth_values(packed(*values)))
+    )
+
+
+@pytest.fixture(scope="session")
+def sessions() -> Iterator[Sessions]:
+    found = Sessions()
+    yield found
+    found.close()
+
+
+@pytest.fixture(scope="session")
+def blobs(tmp_path_factory: pytest.TempPathFactory) -> Callable[[Release], dict[str, Any]]:
+    directory = tmp_path_factory.mktemp("blobs")
+    return lambda release: release_blobs(release, directory)
+
+
+@pytest.fixture(scope="session")
+def sql(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[[ResolvedCohort], SqlRun]:
+    directory = tmp_path_factory.mktemp("blobs")
+    return lambda cohort: run_sql(cohort, directory, sessions)
+
+
 @pytest.fixture(scope="session")
 def canon() -> Callable[..., Canonicalisation]:
     return canonicalise_document
@@ -287,6 +428,39 @@ def doc() -> Callable[..., dict[str, Any]]:
     return document
 
 
+def checked(run: Run, directory: Path, sessions: Sessions) -> Run:
+    """The run, once the SQL compiler has given every cohort the reference evaluator's truth
+    value, reasons and flags for every unit, and its accounting (§13.3)."""
+    for name, cohort in run.resolution.cohorts.items():
+        found, expected = run_sql(cohort, directory, sessions), run.results[name]
+        assert found.values == expected.values, name
+        assert found.accounting == Accounting(
+            expected.n_true,
+            expected.n_false,
+            expected.n_unknown,
+            dict(expected.unknown_by_reason),
+            expected.unknown_by_clause,
+            expected.lift_differs,
+            expected.marks,
+        ), name
+    return run
+
+
 @pytest.fixture(scope="session")
-def run() -> Callable[..., Run]:
+def unchecked() -> Callable[..., Run]:
+    """``run_document`` alone, for a release the SQL compiler refuses."""
     return run_document
+
+
+@pytest.fixture(scope="session")
+def run(tmp_path_factory: pytest.TempPathFactory, sessions: Sessions) -> Callable[..., Run]:
+    """``run_document``, whose every cohort the SQL compiler must answer as the evaluator does;
+    within a property test the check is left to the differential tests (``test_sql``), which
+    draw their own examples."""
+    directory = tmp_path_factory.mktemp("checked")
+
+    def resolved(written: Mapping[str, Any], releases: Release | Mapping[str, Release]) -> Run:
+        found = run_document(written, releases)
+        return found if currently_in_test_context() else checked(found, directory, sessions)
+
+    return resolved

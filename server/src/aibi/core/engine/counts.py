@@ -17,12 +17,14 @@ The disclosure pass (§8.4) applies to these before the count is returned and it
 messages are rendered text, outside the digest, and follow the pass too.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 from aibi.core.engine.canonical import CanonicalCohort
-from aibi.core.engine.evaluate import CohortResult
 from aibi.core.engine.ids import count_digest
 from aibi.core.engine.resolve import FieldRead
+from aibi.core.engine.truth import Mark
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_caveats
 from aibi.core.schema.numbers import DenominatorDefinition, NotEstimableReason, Proportion
 from aibi.core.schema.output import Segment, data, text
@@ -40,6 +42,26 @@ _FLAG_TEXT = {
 }
 
 
+class Tally(Protocol):
+    """A cohort's accounting (§6.6): the reference evaluator's ``CohortResult``, or the SQL
+    compiler's ``Accounting``, which the differential tests hold equal."""
+
+    @property
+    def n_true(self) -> int: ...
+    @property
+    def n_false(self) -> int: ...
+    @property
+    def n_unknown(self) -> int: ...
+    @property
+    def unknown_by_reason(self) -> Mapping[Reason, int]: ...
+    @property
+    def unknown_by_clause(self) -> tuple[int, ...]: ...
+    @property
+    def lift_differs(self) -> int: ...
+    @property
+    def marks(self) -> frozenset[Mark]: ...
+
+
 @dataclass(frozen=True)
 class CountParts:
     """A cohort count's digested members, before the disclosure pass."""
@@ -53,7 +75,7 @@ class CountParts:
         return count_digest(self.population, self.size, self.caveats)
 
 
-def count_parts(cohort: CanonicalCohort, result: CohortResult) -> CountParts:
+def count_parts(cohort: CanonicalCohort, result: Tally) -> CountParts:
     """A canonical cohort's population, size and caveats from its evaluation (D288)."""
     units = result.n_true + result.n_false + result.n_unknown
     population = Population(
@@ -82,7 +104,7 @@ def _caveat(code: CaveatCode, *message: Segment) -> Caveat:
     )
 
 
-def _caveats(cohort: CanonicalCohort, result: CohortResult) -> list[Caveat]:
+def _caveats(cohort: CanonicalCohort, result: Tally) -> list[Caveat]:
     found: list[Caveat] = []
     if result.n_unknown:
         found.append(
@@ -143,4 +165,4 @@ def _fields(fields: tuple[FieldRead, ...]) -> list[Segment]:
     return segments
 
 
-__all__ = ["CountParts", "count_parts"]
+__all__ = ["CountParts", "Tally", "count_parts"]

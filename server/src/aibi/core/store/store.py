@@ -74,7 +74,7 @@ from aibi.core.schema.ids import SHA256_RE
 from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
-from aibi.core.store import build, redaction, tables, tombstones
+from aibi.core.store import build, parquet, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
@@ -87,6 +87,7 @@ from aibi.core.store.derivations import (
 from aibi.core.store.gate import Mode
 from aibi.core.store.manifest import Manifest, hex_of
 from aibi.core.store.sources import RawSource
+from aibi.core.store.tables import TableSource
 from aibi.core.store.tombstones import Tombstone
 
 APP_DB = "app.db"
@@ -265,6 +266,24 @@ class Store:
             entry.id: tables.decode(entry.id, self.blobs.read(entry.hash)) for entry in found.tables
         }
         return Release(found.dataset, manifest, self.descriptors(manifest), loaded)
+
+    def outline(self, manifest: str) -> Release:
+        """The release's descriptors without its rows: what resolution and the SQL compiler
+        read, while the rows stay in their blobs for a query to read (§12.2)."""
+        found = self.manifest(manifest)
+        return Release(found.dataset, manifest, self.descriptors(manifest), {})
+
+    def sources(self, manifest: str) -> dict[str, TableSource]:
+        """Each table's blob, by table id, as a query reads it in place (D293): its path, and
+        the columns it stores. Each blob is verified as ``load`` verifies it (D221), once per
+        file (``BlobStore.verified``), so a damaged blob raises ``CorruptBlobError`` and a
+        missing one ``MissingBlobError`` rather than counting what it holds. A caller pins the
+        release first, for as long as its query runs (``pin``)."""
+        found: dict[str, TableSource] = {}
+        for entry in self.manifest(manifest).tables:
+            path = self.blobs.verified(entry.hash)
+            found[entry.id] = TableSource(str(path), frozenset(parquet.names(path)))
+        return found
 
     def pin(self) -> Pin:
         return Pin(self)
