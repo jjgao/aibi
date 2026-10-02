@@ -133,6 +133,7 @@ NOTE_TEXT: Mapping[NoteKind, str] = {
     "unparsed": "Cells whose value does not parse as the column's datatype, which are UNKNOWN",
     "gap": "Rows that the coverage or the endpoint's coding does not account for",
     "reimported": "Changed by a re-import",
+    "reshaped": "Source cells a pack's importer reshaped away",
 }
 """The message of an import report's note in the public queue under a disclosure setting, by its
 kind: the report's own words may quote counts (D277)."""

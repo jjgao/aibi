@@ -48,6 +48,8 @@ from aibi.core.importers.checks import for_validator, run_importer
 from aibi.core.importers.databases import DatabaseImporter, Resolved
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
 from aibi.core.importers.files import FileImporter
+from aibi.core.importers.reshaped import declared, owned, undeclared
+from aibi.core.importers.reshaped import notes as reshaped_notes
 from aibi.core.schema.descriptors import Descriptor, TableDescriptor
 from aibi.core.schema.ids import assignment_order
 from aibi.core.schema.jsonschemas import WRITE_STEPS_MAX
@@ -197,7 +199,12 @@ def _read(
         elif pack is None:
             read = FileImporter().import_source(source, options)
         else:
-            read = run_importer(_importer(registry, pack), pack, source, options)
+            importer = _importer(registry, pack)
+            read = run_importer(importer, pack, source, options)
+            if read.reshaped:
+                assert registry is not None
+                version = registry.pack(pack).manifest.version
+                read = declared(read, f"importer:{pack}@{version}", options.at)
     except MemoryError:
         raise out_of_memory(IMPORT_BYTES, options.limits.import_bytes) from None
     result = replace(read, descriptors=tuple(with_inferences(read.descriptors)))
@@ -256,7 +263,8 @@ def build_import(
             result.descriptors,
             result.sources,
             result.layouts,
-            notes=result.notes,
+            notes=[*result.notes, *reshaped_notes(result.reshaped)],
+            reshaped=result.reshaped,
         )
     except BuildRefused as error:
         raise ImportRefused(error.refusals) from None
@@ -320,9 +328,22 @@ def import_dataset(
 
 
 def _unchanged(new: Manifest, latest: Manifest) -> bool:
-    """Whether two manifests are the same but for their reports and statistics (D241)."""
-    ignored = {"report": None, "statistics": None}
-    return new.model_copy(update=ignored).hash == latest.model_copy(update=ignored).hash
+    """Whether two manifests are the same but for their reports, statistics and the digests of
+    what a reshaped table's coverage check last read (D241, D386): a re-import always checks the
+    coverage again, and a digest that differs only by the check's version changes no content."""
+    return _compared(new).hash == _compared(latest).hash
+
+
+def _compared(manifest: Manifest) -> Manifest:
+    tables = tuple(
+        table
+        if table.reshaped is None
+        else table.model_copy(
+            update={"reshaped": table.reshaped.model_copy(update={"checked": None})}
+        )
+        for table in manifest.tables
+    )
+    return manifest.model_copy(update={"report": None, "statistics": None, "tables": tables})
 
 
 def reimport_dataset(
@@ -349,8 +370,17 @@ def reimport_dataset(
         tombstones = store.tombstones(latest.manifest)
         given = replace(options, previous=previous_names(before, base))
         result, validators = _read(source, given, registry, pack, packs_of(before))
+        if pack is not None and (tables := undeclared(before, result)):
+            raise refused(
+                RefusalCode.PACK_FAILED,
+                "The importer of the pack ",
+                data(pack),
+                " re-imported a table it unpivoted without declaring what it dropped (D386): ",
+                data(tables[0]),
+            )
         try:
-            carried = carry_forward(before, tombstones, result.descriptors)
+            mine = owned(before, tombstones, result.descriptors, result.reshaped)
+            carried = carry_forward(mine.descriptors, mine.tombstones, result.descriptors)
         except CarryRefused as error:
             raise ImportRefused(error.refusals) from None
         refusals = check_writes(carried.descriptors, registry, ceiling=WRITE_STEPS_MAX)
@@ -367,7 +397,13 @@ def reimport_dataset(
                 carried.descriptors,
                 result.sources,
                 result.layouts,
-                notes=[*result.notes, *reimported_notes(carried.changes)],
+                notes=[
+                    *result.notes,
+                    *reshaped_notes(result.reshaped),
+                    *mine.notes,
+                    *reimported_notes(carried.changes),
+                ],
+                reshaped=result.reshaped,
                 tombstones=carried.tombstones,
                 revise=revise,
             )

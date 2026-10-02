@@ -39,6 +39,7 @@ from aibi.core.schema.descriptors import (
     GroupedCoverage,
     RelationshipDescriptor,
     TableDescriptor,
+    ValueMap,
     derived_inputs,
 )
 from aibi.core.schema.document import ClauseModel, CoveredLeaf, ExistsLeaf, ValueLeaf, walk
@@ -59,6 +60,7 @@ def check_release(descriptors: Sequence[Descriptor]) -> list[Refusal]:
     checker.coverage_tables()
     checker.cycles()
     checker.packs()
+    checker.absent()
     return finish_refusals(checker.refusals)
 
 
@@ -474,6 +476,266 @@ class _Checker:
                         "Extensions of a pack the dataset does not list in packs: ",
                         pack,
                     )
+
+    def absent(self) -> None:
+        """A column with ``absent`` values (D386) is the value column of a table a pack
+        unpivoted, ``T``, whose dropped cells the rules below keep from reading as anything but
+        what they are; an undeclared input fails a rule, unlike the rules above:
+
+        - (a) ``T`` is not a coverage table (an undeclared role is not one), its ``source.kind``
+          is ``pack``, and it has one column with absent values;
+        - (b) the column is a ``category`` with ``permissible_values``, none of them absent, and
+          no missing code is absent;
+        - (c) no derived column whose input chain reaches it maps an absent value, and no record
+          filter on it lists a value it does not permit;
+        - (d) ``T``'s key is declared and does not hold it;
+        - (e) every relationship into ``T`` whose coverage declares ``parents`` has them scoped,
+          neither ``all`` nor covering every value, their parent columns standing for the
+          relationship's, and the relationship's child columns with the scope columns making
+          ``T``'s key, each a ``string`` or ``category`` column of the same datatype in ``T`` and
+          in the coverage table that stands for it.
+        """
+        by_table: dict[str, list[tuple[int, ColumnDescriptor]]] = defaultdict(list)
+        for index, descriptor in enumerate(self.descriptors):
+            if isinstance(descriptor, ColumnDescriptor) and descriptor.fields.absent is not None:
+                by_table[descriptor.id.split(".", 1)[0]].append((index, descriptor))
+        for table, columns in sorted(by_table.items()):
+            for index, column in columns:
+                self._absent(table, index, column, len(columns))
+
+    def _absent(self, table: str, index: int, column: ColumnDescriptor, count: int) -> None:
+        here: Path = [index, "fields"]
+        name = column.id.split(".", 1)[1]
+        absent = set(column.fields.absent or ())
+        fields = column.fields
+        rule = "A column with absent values (D386) "
+        found = self.tables.get(table)
+        if found is None:
+            return
+        at = self.descriptors.index(found)
+        if found.fields.role == "coverage":
+            self.refuse(
+                RefusalCode.INVALID_VALUE, [*here, "absent"], rule + "is no coverage's: ", column.id
+            )
+        if found.fields.source is None or found.fields.source.kind != "pack":
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                [at, "fields", "source"],
+                rule + "is in a table a pack's importer reshaped, of source kind pack: ",
+                table,
+            )
+        if count > 1:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                [*here, "absent"],
+                rule + "is its table's only one: ",
+                table,
+            )
+        if fields.datatype != "category":
+            self.refuse(
+                RefusalCode.INVALID_VALUE, [*here, "datatype"], rule + "is a category: ", column.id
+            )
+        permitted = (
+            None
+            if fields.permissible_values is None
+            else {entry.value for entry in fields.permissible_values.values}
+        )
+        if permitted is None or permitted & absent:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                [*here, "permissible_values"],
+                rule + "declares permissible values, none of them absent: ",
+                column.id,
+            )
+        if absent & set(fields.missing_codes or {}):
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                [*here, "missing_codes"],
+                rule + "has no absent value as a missing code; set the codes without them in a "
+                "session on the latest release, then re-import: ",
+                column.id,
+            )
+        self._absent_derived(table, name, absent)
+        key = found.fields.primary_key
+        if not key or name in key:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                [at, "fields", "primary_key"],
+                rule + "is in a table whose key is declared and does not hold it: ",
+                table,
+            )
+            return
+        for coverage_at, coverage in self._coverages_into(table):
+            self._absent_coverage(coverage_at, coverage, table, name, key, permitted)
+
+    def _absent_derived(self, table: str, name: str, absent: set[str]) -> None:
+        reaches = {name}
+        changed = True
+        derived: dict[str, tuple[int, ColumnDescriptor]] = {}
+        for column, index in self.columns[table].items():
+            descriptor = self.descriptors[index]
+            if isinstance(descriptor, ColumnDescriptor) and descriptor.fields.derived is not None:
+                derived[column] = (index, descriptor)
+        while changed:
+            changed = False
+            for column, (_, descriptor) in derived.items():
+                assert descriptor.fields.derived is not None
+                inputs = {input_ for _, input_ in derived_inputs(descriptor.fields.derived)}
+                if column not in reaches and inputs & reaches:
+                    reaches.add(column)
+                    changed = True
+        for _, (index, descriptor) in sorted(derived.items()):
+            mapping = descriptor.fields.derived
+            if (
+                isinstance(mapping, ValueMap)
+                and mapping.input in reaches
+                and set(mapping.map) & absent
+            ):
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    [index, "fields", "derived", "map"],
+                    "A derived column maps a value its input's importer dropped as absent (D386): ",
+                    descriptor.id,
+                )
+
+    def _coverages_into(self, table: str) -> list[tuple[int, CoverageDescriptor]]:
+        into = {
+            id_
+            for id_, relationship in self.relationships.items()
+            if relationship.fields.child_table == table
+        }
+        return [
+            (index, descriptor)
+            for index, descriptor in enumerate(self.descriptors)
+            if isinstance(descriptor, CoverageDescriptor) and descriptor.fields.relationship in into
+        ]
+
+    def _absent_coverage(
+        self,
+        at: int,
+        coverage: CoverageDescriptor,
+        table: str,
+        name: str,
+        key: Sequence[str],
+        permitted: set[str] | None,
+    ) -> None:
+        rule = "The coverage of a table with absent values (D386) "
+        fields = coverage.fields
+        for column, values in (fields.record_filter or {}).items():
+            if column == name and (permitted is None or not set(values) <= permitted):
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    [at, "fields", "record_filter", column],
+                    rule + "filters the column by values it permits: ",
+                    f"{table}.{name}",
+                )
+        parents = fields.parents
+        if parents is None:
+            return
+        path: Path = [at, "fields", "parents"]
+        relationship = self.relationships[fields.relationship]
+        if isinstance(parents, DirectCoverage):
+            stand, scopes, source = (
+                parents.parent_columns,
+                parents.scope_columns or {},
+                parents.table,
+            )
+            scope_source = parents.table
+        elif isinstance(parents, GroupedCoverage):
+            stand, scopes = parents.assignment.parent_columns, parents.groups.scope_columns or {}
+            source, scope_source = parents.assignment.table, parents.groups.table
+            if parents.groups.covers_all_column is not None:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    path,
+                    rule + "has no group covering every value: ",
+                    coverage.id,
+                )
+        else:
+            self.refuse(
+                RefusalCode.INVALID_VALUE, path, rule + "lists its cells, not all: ", coverage.id
+            )
+            return
+        if not scopes:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                path,
+                rule + "is scoped by the table's other key columns: ",
+                coverage.id,
+            )
+            return
+        parent_columns = relationship.fields.parent_columns
+        if set(stand.values()) != set(parent_columns):
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                path,
+                rule + "stands for the relationship's parent columns: ",
+                coverage.id,
+            )
+            return
+        by_parent = {parent: own for own, parent in stand.items()}
+        pairs = [
+            (child, source, by_parent[parent])
+            for parent, child in zip(parent_columns, relationship.fields.child_columns, strict=True)
+        ]
+        pairs += [(child, scope_source, own) for own, child in scopes.items()]
+        if sorted(child for child, _, _ in pairs) != sorted(key):
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                path,
+                rule + "names exactly the table's key, by its relationship and scope: ",
+                coverage.id,
+            )
+            return
+        for child, other, own in pairs:
+            mine = self._datatype(table, child)
+            theirs = self._datatype(other, own)
+            if mine not in ("string", "category") or mine != theirs:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    path,
+                    rule + "keys its cells by string or category columns of one datatype on both "
+                    "sides: ",
+                    f"{table}.{child}",
+                )
+        named = [(table, child) for child, _, _ in pairs] + [(o, own) for _, o, own in pairs]
+        if isinstance(parents, GroupedCoverage):
+            groups = [
+                (source, parents.assignment.group_column),
+                (scope_source, parents.groups.group_column),
+            ]
+            kinds = {self._datatype(owner, column) for owner, column in groups}
+            if len(kinds) != 1 or not kinds <= {"string", "category"}:
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    path,
+                    rule + "groups its cells by string or category columns of one datatype on "
+                    "both sides: ",
+                    coverage.id,
+                )
+            named += groups
+        for owner, column in named:
+            if self._derived(owner, column):
+                self.refuse(
+                    RefusalCode.INVALID_VALUE,
+                    path,
+                    rule + "keys and lists its cells by stored columns, not derived ones: ",
+                    f"{owner}.{column}",
+                )
+
+    def _derived(self, table: str, column: str) -> bool:
+        index = self.columns.get(table, {}).get(column)
+        if index is None:
+            return False
+        descriptor = self.descriptors[index]
+        return isinstance(descriptor, ColumnDescriptor) and descriptor.fields.derived is not None
+
+    def _datatype(self, table: str, column: str) -> str | None:
+        index = self.columns[table].get(column)
+        if index is None:
+            return None
+        descriptor = self.descriptors[index]
+        return descriptor.fields.datatype if isinstance(descriptor, ColumnDescriptor) else None
 
     def _datasets(self) -> list[int]:
         return [i for i, d in enumerate(self.descriptors) if isinstance(d, DatasetDescriptor)]

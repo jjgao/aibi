@@ -24,8 +24,8 @@ importer's notes, what the gate dropped, its gaps, and the cells of each column 
 parse, as counts and row references without values. A change carries its base's report, and
 runs the gate too, in change mode, where every failure refuses (§12.3, D246): on the tables it
 rebuilt, and on the columns the gate reads of each table it reused, read from its blob. A table a
-pack importer reshaped (``source.kind`` ``pack``) is not rebuilt in a change until packs can
-rebuild (M4, #19): a change that would rebuild it is refused (``NOT_SUPPORTED``).
+pack importer reshaped is rebuilt from its reshaped rows like any typed source; what the importer
+owns (D386) is changed by no change (``COLUMNS_CHANGED``, ``importers_own``).
 
 Every build writes the release's catalogue statistics (``statistics``, D270): counted on each
 table it built, carried from the base for a table a change reused while what they are computed
@@ -47,18 +47,19 @@ from aibi.core.schema.descriptors import (
     ColumnFields,
     Descriptor,
     ParseSettings,
+    RelationshipDescriptor,
     TableDescriptor,
 )
 from aibi.core.schema.jsonio import canonical, is_text, pointer
 from aibi.core.schema.limits import MAX_STRING, STRING_CHARACTERS
 from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.pack_api import ImportNote
+from aibi.core.schema.pack_api import ImportNote, Reshaped
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
 from aibi.core.store import gate, statistics, tables
 from aibi.core.store.blobs import BlobStore, Holder
 from aibi.core.store.gate import GateResult, Mode
-from aibi.core.store.manifest import Manifest, SourceColumn, SourceEntry, TableEntry
+from aibi.core.store.manifest import Declared, Manifest, SourceColumn, SourceEntry, TableEntry
 from aibi.core.store.sources import RawSource, SourceError, decode, encode, parse
 from aibi.core.store.tables import ColumnReport, TableError, TypedTable
 
@@ -106,11 +107,13 @@ def import_release(
     tombstones: str | None = None,
     notes: Sequence[ImportNote] = (),
     revise: Callable[[tuple[Descriptor, ...]], Sequence[Descriptor]] | None = None,
+    reshaped: Mapping[str, Reshaped] | None = None,
 ) -> Built:
     """A release built from new raw snapshots, through the validation gate, with its import
-    report, which holds ``notes``. ``revise`` is given the descriptors the gate left and returns
-    those written, changed in nothing the gate or the build reads (a re-import's versions,
-    D243). Raises ``BuildRefused``."""
+    report, which holds ``notes``. ``reshaped`` holds what a pack's importer declared it dropped
+    from each table it unpivoted, which the gate checks the coverage against (D386). ``revise``
+    is given the descriptors the gate left and returns those written, changed in nothing the
+    gate or the build reads (a re-import's versions, D243). Raises ``BuildRefused``."""
     index = _Index(descriptors)
     _refuse_if(check_release(descriptors))
     refusals: list[Refusal] = []
@@ -143,10 +146,15 @@ def import_release(
             ) from None
         entries.append(SourceEntry(name=name, kind=source.kind, hash=blobs.put(data, holder)))
     builder = _Builder(blobs, index, holder, gate.needed(descriptors))
+    builder.declared = {
+        table: Declared(column=found.column, dropped=found.dropped, digest=found.digest)
+        for table, found in (reshaped or {}).items()
+    }
     for table, layout in sorted(layouts.items()):
         builder.table(table, sources[layout.source], layout.source, layout.columns)
-    result = gate.check(descriptors, builder.typed, mode="import")
+    result = gate.check(descriptors, builder.typed, mode="import", declared=builder.declared)
     _refuse_if(result.refusals)
+    builder.checked(result.descriptors)
     kept = result.descriptors if revise is None else tuple(revise(result.descriptors))
     builder.index = _Index(kept)
     found = sorted_notes([*notes, *_gate_notes(result), *_unparsed_notes(builder.reports)])
@@ -182,22 +190,17 @@ def change_release(
         if entry.id not in index.tables:
             message = f"Removing the table {entry.id} is a re-import"
             refusals.append(_refusal(changed, None, message))
+    refusals.extend(importers_own(base_descriptors, descriptors))
     _refuse_if(refusals)
     needed = gate.needed(descriptors) if gate_mode is not None else None
     builder = _Builder(blobs, index, holder, needed)
+    builder.declared = {entry.id: entry.reshaped for entry in base.tables if entry.reshaped}
     reused: list[TableEntry] = []
     for entry in base.tables:
         if index.fingerprint(entry.id) == before.fingerprint(entry.id):
             builder.reuse(entry)
             reused.append(entry)
             continue
-        source_kind = index.table_fields(entry.id).fields.source
-        if source_kind is not None and source_kind.kind == "pack":
-            message = (
-                "A pack importer reshaped this table, and rebuilding it comes with packs' "
-                "rebuild (M4); a re-import changes its parsing until then"
-            )
-            raise BuildRefused([index.refusal(RefusalCode.NOT_SUPPORTED, entry.id, (), message)])
         source = base.source(entry.source)
         assert source is not None
         raw = decode(source.kind, blobs.read(source.hash))
@@ -210,8 +213,11 @@ def change_release(
             if needed.get(entry.id):
                 data = blobs.read(entry.hash)
                 typed[entry.id] = tables.decode_cells(entry.id, data, needed[entry.id])
-        result = gate.check(descriptors, typed, mode=gate_mode)
+        unchanged = builder.unchanged(descriptors)
+        declared = {t: d for t, d in builder.declared.items() if t not in unchanged}
+        result = gate.check(descriptors, typed, mode=gate_mode, declared=declared)
         _refuse_if(result.refusals)
+        builder.checked(result.descriptors)
         builder.index = _Index(result.descriptors)
     if base.statistics is not None:
         carried = statistics.decode(blobs.read(base.statistics))
@@ -223,6 +229,61 @@ def change_release(
                 builder.carried[entry.id] = (read, carried[entry.id])
     kept = base.tombstones if keep_tombstones and tombstones is None else tombstones
     return builder.finish(base.dataset, base.sources, kept, base.report, result)
+
+
+_OWNED = "is the importer's: changing it is a re-import (D386)"
+
+
+def importers_own(before: Sequence[Descriptor], after: Sequence[Descriptor]) -> list[Refusal]:
+    """Refusals for a change to what an importer that reshaped a table owns (D386), against
+    the base: any column's ``absent``; and, for each table with a column with ``absent`` in the
+    base (a reshaped table), its ``source`` and ``primary_key``, the relationships whose child it
+    is (their existence, tables and columns), and their coverages' ``parents``, which may only
+    be removed, leaving the relationship open."""
+    old = {descriptor.id: descriptor for descriptor in before}
+    positions = {descriptor.id: at for at, descriptor in enumerate(after)}
+    new = {descriptor.id: descriptor for descriptor in after}
+    found: list[Refusal] = []
+
+    def refuse(descriptor: str, where: tuple[str | int, ...], what: str) -> None:
+        path = None if descriptor not in positions else [positions[descriptor], *where]
+        found.append(_refusal(RefusalCode.COLUMNS_CHANGED, path, f"{what} {_OWNED}"))
+
+    def dumped(descriptor: Descriptor | None, field: str) -> JsonValue:
+        if descriptor is None:
+            return None
+        fields = cast(dict[str, JsonValue], descriptor.model_dump(mode="json")["fields"])
+        return fields.get(field)
+
+    reshaped: set[str] = set()
+    for id_ in sorted({*old, *new}):
+        was, now = old.get(id_), new.get(id_)
+        if isinstance(was, ColumnDescriptor) or isinstance(now, ColumnDescriptor):
+            if dumped(was, "absent") != dumped(now, "absent"):
+                refuse(id_, ("fields", "absent"), "A column's absent values")
+            if isinstance(was, ColumnDescriptor) and was.fields.absent is not None:
+                reshaped.add(id_.split(".", 1)[0])
+    for table in sorted(reshaped):
+        for field in ("source", "primary_key"):
+            if dumped(old.get(table), field) != dumped(new.get(table), field):
+                refuse(table, ("fields", field), f"A reshaped table's {field}")
+    into = {
+        id_
+        for side in (old, new)
+        for id_, descriptor in side.items()
+        if isinstance(descriptor, RelationshipDescriptor)
+        and descriptor.fields.child_table in reshaped
+    }
+    for relationship in sorted(into):
+        was, now = old.get(relationship), new.get(relationship)
+        parts = ("child_table", "child_columns", "parent_table", "parent_columns")
+        if was is None or now is None or any(dumped(was, p) != dumped(now, p) for p in parts):
+            refuse(relationship, (), "A relationship into a reshaped table")
+        coverage = "cov:" + relationship.removeprefix("rel:")
+        held, given = dumped(old.get(coverage), "parents"), dumped(new.get(coverage), "parents")
+        if given is not None and given != held:
+            refuse(coverage, ("fields", "parents"), "The coverage of a reshaped table")
+    return found
 
 
 def descriptors_bytes(descriptors: Sequence[Descriptor]) -> bytes:
@@ -423,9 +484,37 @@ class _Builder:
         distributions, which the descriptors written decide (D270)."""
         self.carried: dict[str, tuple[bytes, statistics.TableStatistics]] = {}
         """A reused table's statistics in the base, by what they were computed from."""
+        self.declared: dict[str, Declared] = {}
+        """What a pack's importer declared it dropped from each table it unpivoted (D386): the
+        import's, or the base's, which a change keeps."""
 
     def reuse(self, entry: TableEntry) -> None:
         self.entries.append(entry)
+
+    def _inputs(self, descriptors: Sequence[Descriptor]) -> dict[str, str]:
+        hashes = {entry.id: entry.hash for entry in self.entries}
+        return {
+            table: gate.declaration_inputs(table, declaration, descriptors, hashes)
+            for table, declaration in self.declared.items()
+        }
+
+    def unchanged(self, descriptors: Sequence[Descriptor]) -> set[str]:
+        """The tables whose declaration the base's check passed on the same inputs, which the
+        gate need not check again: the check is a function of those inputs alone (D386)."""
+        inputs = self._inputs(descriptors)
+        return {
+            table
+            for table, declaration in self.declared.items()
+            if declaration.checked is not None and declaration.checked == inputs[table]
+        }
+
+    def checked(self, descriptors: Sequence[Descriptor]) -> None:
+        """Keep, with each declaration, the digest of the inputs its passing check read."""
+        inputs = self._inputs(descriptors)
+        self.declared = {
+            table: declaration.model_copy(update={"checked": inputs[table]})
+            for table, declaration in self.declared.items()
+        }
 
     def table(
         self, table: str, raw: RawSource, source: str, columns: tuple[tuple[str, str], ...]
@@ -457,7 +546,15 @@ class _Builder:
             ) from None
         digest = self.blobs.put(tables.encode(typed, fields), self.holder)
         laid_out = tuple(SourceColumn(id=column, name=name) for column, name in columns)
-        self.entries.append(TableEntry(id=table, hash=digest, source=source, columns=laid_out))
+        self.entries.append(
+            TableEntry(
+                id=table,
+                hash=digest,
+                source=source,
+                columns=laid_out,
+                reshaped=self.declared.get(table),
+            )
+        )
         self.reports[table] = typed.report
         self.rebuilt.add(table)
         self.counted[table] = statistics.table_statistics(typed.rows, typed.cells, fields, ())
@@ -501,11 +598,17 @@ class _Builder:
         notes: Sequence[ImportNote] = (),
     ) -> Built:
         described = self.blobs.put(descriptors_bytes(self.index.descriptors), self.holder)
+        entries: list[TableEntry] = [
+            TableEntry.model_validate({**entry.model_dump(), "reshaped": self.declared[entry.id]})
+            if entry.id in self.declared
+            else entry
+            for entry in self.entries
+        ]
         manifest = Manifest(
             dataset=dataset,
             descriptors=described,
             sources=sources,
-            tables=tuple(sorted(self.entries, key=lambda entry: entry.id)),
+            tables=tuple(sorted(entries, key=lambda entry: entry.id)),
             statistics=self._statistics(),
             tombstones=tombstones,
             report=report,
@@ -529,6 +632,7 @@ __all__ = [
     "change_release",
     "descriptors_bytes",
     "import_release",
+    "importers_own",
     "read_descriptors",
     "read_report",
     "report_bytes",

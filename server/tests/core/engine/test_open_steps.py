@@ -74,6 +74,10 @@ SITES = {
     ("record_filter", "RefusalCode.NOT_APPLICABLE_IN_FILTER"): 1,
     ("record_filter", "fail"): 2,
     ("_drop", "RefusalCode.UNKNOWN_DESCRIPTOR"): 1,
+    ("absent_rows", "RefusalCode.INVALID_VALUE"): 2,
+    ("absent_rows", "fail"): 2,
+    ("declarations", "RefusalCode.INVALID_VALUE"): 4,
+    ("declarations", "fail"): 4,
 }
 """Every site in the gate that names a refusal code or refuses (``_Checks.fail``), by the
 function it is in, as classified in ``GATE_CHECKS`` when this was written (round 3 of #74's
