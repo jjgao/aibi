@@ -98,6 +98,7 @@ from aibi.core.engine.variables import Joint, Materialised, Value
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.analyses import PackParams
 from aibi.core.schema.caveats import Caveat, CaveatCode
+from aibi.core.schema.guards import PASSED
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.jsonschemas import (
     OUT_OF_STEPS,
@@ -116,13 +117,13 @@ from aibi.core.schema.limits import (
 )
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import (
-    Analysis,
     AnalysisInputs,
     EndpointRow,
     InputColumn,
     InputEndpoint,
     InputPosition,
     JsonTooLarge,
+    RegisteredAnalysis,
     plain_json,
 )
 from aibi.core.schema.refusals import Limit
@@ -275,7 +276,7 @@ def _row(subject: tuple[float, float, bool] | None) -> EndpointRow | None:
 
 
 def run_pack(
-    analysis: Analysis,
+    analysis: RegisteredAnalysis,
     returns: Checker,
     positions: Sequence[CohortAt],
     variables: Sequence[tuple[str, CanonicalVariable]],
@@ -310,7 +311,9 @@ def run_pack(
         ends=ends,
     )
     _look(ends)
-    given = _guarded(entry.id, "analysis", lambda: cast(object, analysis.run(handed)))
+    given = _guarded(
+        entry.id, "analysis", lambda: cast(object, analysis.implementation.run(handed))
+    )
     _look(ends)
     values = _checked(entry.id, given, returns, len(positions), ends)
     _look(ends)
@@ -355,11 +358,10 @@ def _inputs_of(
     return found
 
 
-_PASSED = (MemoryError, KeyboardInterrupt, SystemExit)
-"""What a pack's code raises that is no failure of the pack's: the process out of memory, or
-asked to stop. Only these types themselves pass, compared by identity, never a subclass or a
-type that says it equals one, and each as a new instance raised outside the handler, without the
-pack's message, traceback or context."""
+_PASSED = PASSED
+"""What a pack's code raises that is no failure of the pack's (``schema.guards.PASSED``): the
+process out of memory, or asked to stop, each passed as a new instance raised outside the
+handler."""
 
 
 def _guarded[T](entry: str, stage: str, run: Callable[[], T]) -> T:

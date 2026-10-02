@@ -102,7 +102,7 @@ from aibi.core.schema.document import DocModel
 from aibi.core.schema.ids import CORE_ANALYSIS_FAMILIES
 from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.output import Output
-from aibi.core.schema.pack_api import Analysis, PackRegistry, UnknownPack
+from aibi.core.schema.pack_api import PackRegistry, RegisteredAnalysis, UnknownPack
 from aibi.core.schema.results import PackVersion
 
 
@@ -350,14 +350,14 @@ class Analyses:
             return None
         return self._pack_analysis(found)
 
-    def _pack_analysis(self, found: Analysis) -> Registered:
+    def _pack_analysis(self, found: RegisteredAnalysis) -> Registered:
         assert self.packs is not None, "a pack's analysis is of an installed pack"
         entry = found.entry
         manifest = self.packs.pack(entry.id.partition(".")[0]).manifest
         version = PackVersion(version=manifest.version, results_version=manifest.results_version)
         return Registered(entry, manifest.id, None, version)
 
-    def implementation(self, analysis_id: str) -> tuple[Analysis, Checker, Checker]:
+    def implementation(self, analysis_id: str) -> tuple[RegisteredAnalysis, Checker, Checker]:
         """A registered pack analysis's implementation and the checkers of its entry's
         ``params`` and ``returns`` schemas, as registered (D341, D343)."""
         assert self.packs is not None, "a pack's analysis is of an installed pack"
