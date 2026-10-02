@@ -11,16 +11,26 @@ unknown ones included. It checks, in this order, and refuses at the first check 
    and is one of the server's own origins or a public origin, or on the API and mounts a CORS
    origin; ``Sec-Fetch-Site: same-site`` or ``cross-site`` needs an allowed ``Origin``
    (``ORIGIN_NOT_ALLOWED``, 403). A request without either passes: clients that are not browsers
-   send neither, and the curator token is what admits them to the operator router.
-3. **CORS preflights** (D258): each takes a token from the client's ``api`` bucket (429 when it
-   is empty), then is answered for a CORS origin on the API and mounts, for ``GET`` and ``POST``
-   and the ``Content-Type`` header, without credentials; any other preflight is refused. With
+   send neither, and the curator token is what admits them to the operator router. With the
+   catalogue page served (``pages``), a top-level navigation to a page from another site that the
+   person started passes too (D314): ``GET`` of ``/`` or ``/datasets/<id>``
+   (``chrome.navigable``) with ``Sec-Fetch-Site`` ``same-site`` or ``cross-site``,
+   ``Sec-Fetch-Mode: navigate``, ``Sec-Fetch-Dest: document`` and ``Sec-Fetch-User: ?1``, each
+   given once; an ``Origin``, if given, is checked as above. It is still counted, against the
+   client's ``page`` rate; any other request from another site, a page's subresource or a
+   navigation a script started without the person included, is refused here, before any rate
+   counts it.
+3. **CORS preflights** (D258): each takes a token from the client's ``api`` bucket, or at a page
+   path its ``page`` bucket (D314) (429 when it is empty), then is answered for a CORS origin on
+   the API and mounts, for ``GET`` and ``POST`` and the ``Content-Type`` header, without
+   credentials; any other preflight is refused. With
    CORS configured, responses there carry ``Vary: Origin``, and a CORS origin's requests
    ``Access-Control-Allow-Origin``.
 4. **Off the operator router, the client's rate** (D259): one token from the client's bucket of
-   the path's class (``LIMIT_EXCEEDED`` naming the rate, 429, with ``Retry-After``). Only
-   requests that passed the Host and Origin checks count, so a web page cannot drain the bucket
-   local clients share.
+   the path's class (``LIMIT_EXCEEDED`` naming the rate, 429, with ``Retry-After``): with
+   ``pages``, ``page`` at the page paths (``page_requests``, D314), so that page views never
+   spend the ``api`` bucket agents use, and ``api`` elsewhere. Only requests that passed the Host
+   and Origin checks count, so a web page cannot drain the bucket local clients share.
 5. **At /operator and below** (D259, D261–D263): ``Authorization: Bearer <curator token>``, the
    only place a token is taken, and none in the URL or a cookie, as written or percent-decoded,
    is verified first. A request that fails takes a token from the client's ``token_failures``
@@ -48,7 +58,8 @@ application leaves unanswered is answered here with ``INTERNAL_ERROR`` and logge
 its path with any segment of a token's or a handle's shape blanked (``blank_path``); a client
 that left before its body arrived gets no answer. WebSocket connections get the Host, Origin and
 rate checks, and none reaches the operator router; lifespan events pass through. Refusals have
-the one error shape (D265), and quote nothing of the request.
+the one error shape (D265), and quote nothing of the request; with ``pages``, a refusal at a page
+path (``chrome.page_path``) is a page with the pages' headers instead (D311, D313).
 """
 
 import logging
@@ -63,6 +74,8 @@ from typing import Literal, cast
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from aibi.core.api.chrome import PAGE_HEADERS, navigable, page_path, refusal_document, root_link
+from aibi.core.api.chrome import route_path as _route_path
 from aibi.core.api.config import ServerConfig
 from aibi.core.api.errors import status_of
 from aibi.core.api.logs import WithoutSecrets
@@ -87,6 +100,7 @@ from aibi.core.operator.auth import (
 from aibi.core.schema.limits import (
     API_REQUESTS,
     OPERATOR_REQUESTS,
+    PAGE_REQUESTS,
     REQUEST_BYTES,
     TOKEN_FAILURES,
 )
@@ -94,7 +108,7 @@ from aibi.core.schema.operator import Refusals
 from aibi.core.schema.output import text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, blank_secrets
 
-RateClass = Literal["operator", "api", "token_failures"]
+RateClass = Literal["operator", "api", "token_failures", "page"]
 UPLOAD_PATH = re.compile(r"^/operator/datasets/[^/]+/uploads$")
 CSRF_PATH = f"{OPERATOR_PREFIX}/csrf"
 CORS_PREFIXES = ("/api", "/mcp")
@@ -112,6 +126,7 @@ STRICT_TRANSPORT_SECURITY = b"max-age=31536000"
 _LIMIT_NAMES: Mapping[RateClass, str] = {
     "operator": OPERATOR_REQUESTS,
     "api": API_REQUESTS,
+    "page": PAGE_REQUESTS,
     "token_failures": TOKEN_FAILURES,
 }
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -155,6 +170,7 @@ class Policy:
             rates={
                 "operator": Rate(rates.operator.per_minute, rates.operator.burst),
                 "api": Rate(rates.api.per_minute, rates.api.burst),
+                "page": Rate(rates.page.per_minute, rates.page.burst),
                 "token_failures": Rate(rates.token_failures.per_minute, rates.token_failures.burst),
             },
             classes=((OPERATOR_PREFIX, "operator"),),
@@ -200,17 +216,6 @@ def _refused(
     return _Refused(found, headers)
 
 
-def _route_path(scope: Scope) -> str:
-    """The path the routes match, as Starlette finds it: without the server's root path."""
-    path = cast(str, scope.get("path", ""))
-    root = cast(str, scope.get("root_path", ""))
-    if not root or not path.startswith(root):
-        return path
-    if path == root:
-        return ""
-    return path[len(root) :] if path[len(root)] == "/" else path
-
-
 def _under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
@@ -227,6 +232,8 @@ class _Seen:
     headers: Mapping[bytes, tuple[bytes, ...]]
     client: str
     """The client's rate-limit key (``client_key``)."""
+    root_path: str
+    """The server's root path, which the pages' links start from (``chrome.root_link``)."""
 
     @classmethod
     def of(cls, scope: Scope) -> "_Seen":
@@ -244,6 +251,7 @@ class _Seen:
             target=bytes(raw) + b"?" + bytes(query),
             headers={name: tuple(values) for name, values in headers.items()},
             client="" if client is None else client_key(str(client[0])),
+            root_path=cast(str, scope.get("root_path", "")),
         )
 
     def one(self, name: bytes) -> str | None:
@@ -271,6 +279,23 @@ class _Seen:
         )
 
     @property
+    def navigation(self) -> bool:
+        """Whether it is a top-level navigation to a page from another site with the person's
+        activation (D314): each fetch-metadata header given once, exactly as a browser writes
+        it, and ``Sec-Fetch-User: ?1``, which a browser sends for a navigation the person
+        started, or that a script started within a moment of the person's click or key (its
+        transient activation); what bounds the second is the ``page`` rate."""
+        return (
+            self.method == "GET"
+            and not self.websocket
+            and navigable(self.path)
+            and self.one(b"sec-fetch-site") in ("same-site", "cross-site")
+            and self.one(b"sec-fetch-mode") == "navigate"
+            and self.one(b"sec-fetch-dest") == "document"
+            and self.one(b"sec-fetch-user") == "?1"
+        )
+
+    @property
     def preflight(self) -> bool:
         return (
             self.method == "OPTIONS"
@@ -293,9 +318,11 @@ class RequestProtection:
         *,
         policy: Policy,
         clock: Callable[[], float] = time.monotonic,
+        pages: bool = False,
     ) -> None:
         self.app = app
         self.policy = policy
+        self.pages = pages
         self._buckets = {name: Buckets(rate, clock=clock) for name, rate in policy.rates.items()}
         self._csrf = csrf_token(policy.csrf_key, policy.token_digest)
 
@@ -309,7 +336,7 @@ class RequestProtection:
         seen = _Seen.of(scope)
         found = self._host(seen) or self._origin(seen)
         if found is None and seen.preflight and not seen.websocket:
-            found = self._rate(seen, "api")
+            found = self._rate(seen, "page" if self._page(seen) else "api")
             if found is None:
                 await self._preflight(seen, send)
                 return
@@ -359,6 +386,8 @@ class RequestProtection:
         if given and (len(given) != 1 or seen.origin not in allowed):
             return _refused(RefusalCode.ORIGIN_NOT_ALLOWED, "Requests from this origin are refused")
         site = seen.headers.get(b"sec-fetch-site", ())
+        if self.pages and seen.navigation:
+            return None
         if not given and any(value.strip().lower() in _CROSS_SITE for value in site):
             return _refused(
                 RefusalCode.ORIGIN_NOT_ALLOWED,
@@ -398,7 +427,13 @@ class RequestProtection:
             headers=((b"retry-after", str(max(1, math.ceil(wait))).encode("ascii")),),
         )
 
+    def _page(self, seen: _Seen) -> bool:
+        """Whether the request is at a page path of an application that serves the page."""
+        return self.pages and page_path(seen.path)
+
     def _class(self, seen: _Seen) -> RateClass:
+        if self._page(seen):
+            return "page"
         for prefix, name in self.policy.classes:
             if _under(seen.path, prefix):
                 return name
@@ -458,6 +493,15 @@ class RequestProtection:
                 ), None
         return None, by
 
+    def _root(self, seen: _Seen) -> str:
+        """The root path a refusal page's links start from; none, logged, when the server's is
+        unusable (``chrome.root_link``), so that the refusal is still a page."""
+        try:
+            return root_link(seen.root_path)
+        except ValueError:
+            _logger.error("The server's root path is not a path of plain segments")
+            return ""
+
     def _limit(self, seen: _Seen) -> int:
         return self.policy.upload_bytes if seen.upload else self.policy.max_body_bytes
 
@@ -516,10 +560,18 @@ class RequestProtection:
 
     async def _refuse(self, seen: _Seen, send: Send, found: _Refused) -> None:
         refusal = blank_secrets(found.refusal)
-        body = Refusals(refusals=[refusal]).model_dump_json().encode("utf-8")
+        page: list[tuple[bytes, bytes]] = []
+        if self._page(seen):
+            body = refusal_document(self._root(seen), [refusal])
+            kind = b"text/html; charset=utf-8"
+            page = [(name.lower().encode(), value.encode()) for name, value in PAGE_HEADERS.items()]
+        else:
+            body = Refusals(refusals=[refusal]).model_dump_json().encode("utf-8")
+            kind = b"application/json"
         headers = [
-            (b"content-type", b"application/json"),
+            (b"content-type", kind),
             (b"content-length", str(len(body)).encode("ascii")),
+            *page,
             *found.headers,
         ]
         wrapped = self._headers(seen, send, _Started())

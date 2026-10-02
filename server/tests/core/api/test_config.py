@@ -502,3 +502,12 @@ def test_the_derivation_log_s_period_and_size_are_configured(write_config: Write
     assert kept.log.limits().keep_count_issuances_days == MAX_KEEP_DAYS
     with pytest.raises(ValueError, match="keep_count_issuances_days"):
         LogLimits(keep_count_issuances_days=MAX_KEEP_DAYS + 1)
+
+
+def test_page_views_have_a_rate_of_their_own_apart_from_the_agents(write_config: Write) -> None:
+    rates = load_config(write_config(minimal())).server.rates
+    assert (rates.page.per_minute, rates.page.burst) == (120, 30)
+    assert (rates.api.per_minute, rates.api.burst) == (3000, 200)
+    given = minimal(**{"server.rates": "page = { per_minute = 6, burst = 2 }"})
+    configured = load_config(write_config(given)).server.rates
+    assert (configured.page.per_minute, configured.page.burst) == (6, 2)

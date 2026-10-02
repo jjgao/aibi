@@ -1,7 +1,8 @@
 """Refusals over HTTP (SPEC §8.6, D265).
 
-Every error response on every router is ``{"refusals": [Refusal, …]}``: at least one refusal, and
-all of a change's failing stage (D246) or of an import. Its status is the first refusal's
+Every error response on every router is ``{"refusals": [Refusal, …]}``, but at the catalogue
+page's paths, where it is a page (D311): at least one refusal, and all of a change's failing stage
+(D246) or of an import. Its status is the first refusal's
 (``status_of``):
 
 - 400 ``HOST_NOT_ALLOWED`` and ``OPERATOR_REQUIRED``; 401 ``TOKEN_REQUIRED``; 403
@@ -19,18 +20,23 @@ all of a change's failing stage (D246) or of an import. Its status is the first 
 
 ``install`` registers the handlers that turn the core's refusals, FastAPI's validation errors
 (of path and query parameters: bodies are read by ``load_request``), Starlette's own 404 and 405
-and any other exception into refusals. No response quotes the request: a parameter is named, not
-echoed, and ``refused``, which every handler answers through, writes each refusal with anything
-of a token's or a handle's shape blanked (``blank_secrets``), whichever service raised it.
+and any other exception into refusals. With the catalogue page served (``pages``), a refusal at a
+page path (``chrome.page_path``) is a page instead, ``refused_page``: the same refusals and
+status, as HTML, with the pages' policy and ``Cache-Control: no-store`` (D311, D313). No response
+quotes the request: a parameter is named, not echoed, and ``refused`` and ``refused_page``, which
+every handler answers through, write each refusal with anything of a token's or a handle's shape
+blanked (``blank_secrets``), whichever service raised it.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
+from aibi.core.api.chrome import PAGE_HEADERS, page_path, refusal_document, root_of, route_path
 from aibi.core.importers.errors import ImportRefused
 from aibi.core.operator.auth import AUTHORIZATION
 from aibi.core.schema.limits import (
@@ -38,6 +44,7 @@ from aibi.core.schema.limits import (
     CLIENT_TOOL_CALLS,
     CONCURRENT_IMPORTS,
     OPERATOR_REQUESTS,
+    PAGE_REQUESTS,
     PROPOSAL_REQUESTS,
     REQUEST_BYTES,
     TOKEN_FAILURES,
@@ -85,6 +92,7 @@ _LIMITS: Mapping[str, int] = {
     REQUEST_BYTES: 413,
     OPERATOR_REQUESTS: 429,
     API_REQUESTS: 429,
+    PAGE_REQUESTS: 429,
     TOKEN_FAILURES: 429,
     PROPOSAL_REQUESTS: 429,
     CONCURRENT_IMPORTS: 503,
@@ -122,6 +130,24 @@ def refused(
     return Response(body, status_code=answer, media_type="application/json", headers=extra)
 
 
+def refused_page(
+    root: str,
+    refusals: Sequence[Refusal],
+    *,
+    status: int | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> Response:
+    """``refused``'s refusals as a catalogue page (D311): its status and ``Retry-After`` alike,
+    every token or handle shape blanked, with the pages' headers (D313)."""
+    listed = [blank_secrets(found) for found in refusals]
+    answer = status if status is not None else status_of(listed[0])
+    extra = {**(headers or {}), **PAGE_HEADERS}
+    if answer == 503:
+        extra.setdefault("Retry-After", str(RETRY_IMPORT))
+    body = refusal_document(root, listed)
+    return Response(body, status_code=answer, media_type="text/html", headers=extra)
+
+
 def refusal(code: RefusalCode, message: str, *, alternatives: Sequence[str] = ()) -> Refusal:
     """A refusal without a path, in the server's own words."""
     return Refusal(
@@ -132,65 +158,83 @@ def refusal(code: RefusalCode, message: str, *, alternatives: Sequence[str] = ()
     )
 
 
-async def _store(request: Request, error: Exception) -> Response:
-    assert isinstance(error, StoreRefused)
-    return refused([error.refusal])
+@dataclass(frozen=True)
+class _Handlers:
+    """The handlers of one application; ``pages`` when it serves the catalogue page."""
+
+    pages: bool
+
+    def answer(
+        self,
+        request: Request,
+        refusals: Sequence[Refusal],
+        *,
+        status: int | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response:
+        if self.pages and page_path(route_path(request.scope)):
+            return refused_page(root_of(request.scope), refusals, status=status, headers=headers)
+        return refused(refusals, status=status, headers=headers)
+
+    async def store(self, request: Request, error: Exception) -> Response:
+        assert isinstance(error, StoreRefused)
+        return self.answer(request, [error.refusal])
+
+    async def refusals(self, request: Request, error: Exception) -> Response:
+        assert isinstance(error, ImportRefused | EditRefused | BuildRefused | CarryRefused)
+        return self.answer(request, error.refusals)
+
+    async def parameters(self, request: Request, error: Exception) -> Response:
+        assert isinstance(error, RequestValidationError)
+        found: list[Refusal] = []
+        for details in error.errors():
+            where, *rest = (str(element) for element in details.get("loc", ()))
+            name = rest[0] if rest else where
+            problem = "is missing" if details.get("type") == "missing" else "is not valid"
+            message = f"The {where} parameter {name} {problem}: {details.get('msg', '')}"
+            found.append(refusal(RefusalCode.INVALID_VALUE, message))
+        invalid = refusal(RefusalCode.INVALID_VALUE, "A parameter is not valid")
+        return self.answer(request, found or [invalid])
+
+    async def http(self, request: Request, error: Exception) -> Response:
+        assert isinstance(error, StarletteHTTPException)
+        if error.status_code == 404:
+            return self.answer(request, [refusal(RefusalCode.NOT_FOUND, "Nothing is at this path")])
+        if error.status_code == 405:
+            allowed = (error.headers or {}).get("Allow", "")
+            methods = [method.strip() for method in allowed.split(",") if method.strip()]
+            found = refusal(
+                RefusalCode.METHOD_NOT_ALLOWED,
+                "This path does not take this method",
+                alternatives=methods,
+            )
+            return self.answer(request, [found], headers={"Allow": allowed} if allowed else None)
+        if error.status_code == 401:
+            found = refusal(
+                RefusalCode.TOKEN_REQUIRED,
+                "Operator requests carry the curator token: Authorization: Bearer <token>",
+            )
+            return self.answer(request, [found], headers={"WWW-Authenticate": AUTHORIZATION})
+        if 400 <= error.status_code < 500:
+            found = refusal(RefusalCode.INVALID_VALUE, "The request is not one this path takes")
+            return self.answer(request, [found], status=error.status_code)
+        failed = refusal(RefusalCode.INTERNAL_ERROR, "The server failed")
+        return self.answer(request, [failed], status=500)
+
+    async def unexpected(self, request: Request, error: Exception) -> Response:
+        return self.answer(request, [refusal(RefusalCode.INTERNAL_ERROR, "The server failed")])
 
 
-async def _refusals(request: Request, error: Exception) -> Response:
-    assert isinstance(error, ImportRefused | EditRefused | BuildRefused | CarryRefused)
-    return refused(error.refusals)
-
-
-async def _parameters(request: Request, error: Exception) -> Response:
-    assert isinstance(error, RequestValidationError)
-    found: list[Refusal] = []
-    for details in error.errors():
-        where, *rest = (str(element) for element in details.get("loc", ()))
-        name = rest[0] if rest else where
-        problem = "is missing" if details.get("type") == "missing" else "is not valid"
-        message = f"The {where} parameter {name} {problem}: {details.get('msg', '')}"
-        found.append(refusal(RefusalCode.INVALID_VALUE, message))
-    return refused(found or [refusal(RefusalCode.INVALID_VALUE, "A parameter is not valid")])
-
-
-async def _http(request: Request, error: Exception) -> Response:
-    assert isinstance(error, StarletteHTTPException)
-    if error.status_code == 404:
-        return refused([refusal(RefusalCode.NOT_FOUND, "Nothing is at this path")])
-    if error.status_code == 405:
-        allowed = (error.headers or {}).get("Allow", "")
-        methods = [method.strip() for method in allowed.split(",") if method.strip()]
-        found = refusal(
-            RefusalCode.METHOD_NOT_ALLOWED,
-            "This path does not take this method",
-            alternatives=methods,
-        )
-        return refused([found], headers={"Allow": allowed} if allowed else None)
-    if error.status_code == 401:
-        found = refusal(
-            RefusalCode.TOKEN_REQUIRED,
-            "Operator requests carry the curator token: Authorization: Bearer <token>",
-        )
-        return refused([found], headers={"WWW-Authenticate": AUTHORIZATION})
-    if 400 <= error.status_code < 500:
-        found = refusal(RefusalCode.INVALID_VALUE, "The request is not one this path takes")
-        return refused([found], status=error.status_code)
-    return refused([refusal(RefusalCode.INTERNAL_ERROR, "The server failed")], status=500)
-
-
-async def _unexpected(request: Request, error: Exception) -> Response:
-    return refused([refusal(RefusalCode.INTERNAL_ERROR, "The server failed")])
-
-
-def install(app: FastAPI) -> None:
-    """Register the handlers that answer every error with refusals."""
-    app.add_exception_handler(StoreRefused, _store)
+def install(app: FastAPI, *, pages: bool = False) -> None:
+    """Register the handlers that answer every error with refusals, as pages at the page paths
+    when the application serves the catalogue page."""
+    handlers = _Handlers(pages)
+    app.add_exception_handler(StoreRefused, handlers.store)
     for kind in (ImportRefused, EditRefused, BuildRefused, CarryRefused):
-        app.add_exception_handler(kind, _refusals)
-    app.add_exception_handler(RequestValidationError, _parameters)
-    app.add_exception_handler(StarletteHTTPException, _http)
-    app.add_exception_handler(Exception, _unexpected)
+        app.add_exception_handler(kind, handlers.refusals)
+    app.add_exception_handler(RequestValidationError, handlers.parameters)
+    app.add_exception_handler(StarletteHTTPException, handlers.http)
+    app.add_exception_handler(Exception, handlers.unexpected)
 
 
-__all__ = ["RETRY_IMPORT", "install", "refusal", "refused", "status_of"]
+__all__ = ["RETRY_IMPORT", "install", "refusal", "refused", "refused_page", "status_of"]

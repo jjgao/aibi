@@ -223,6 +223,7 @@ def check(config: ServerConfig) -> list[str]:
         ("api", server.rates.api),
         ("token failures", server.rates.token_failures),
         ("proposals", server.rates.proposals),
+        ("page", server.rates.page),
     ):
         lines.append(f"rate, {name}: {rate.per_minute} a minute, bursts of {rate.burst}")
     log = config.log.limits()
