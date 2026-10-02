@@ -5,6 +5,7 @@ description = "AI-native cohort exploration over related tables"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+    "jsonschema>=4.23",
     "packaging>=24",
     "pyarrow>=20",
     "pydantic>=2.11",
@@ -15,7 +16,6 @@ dependencies = [
 dev = [
     "hypothesis>=6.116",  # its built-in "ci" profile loads when CI is set
     "import-linter>=2.1",
-    "jsonschema>=4.23",
     "pyarrow-stubs>=20",
     "pyright>=1.1.390",
     "pytest>=8.3",

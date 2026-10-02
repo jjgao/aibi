@@ -112,3 +112,70 @@ def test_a_transaction_that_fails_changes_nothing(db: AppDB) -> None:
     with pytest.raises(sqlite3.IntegrityError), db.transaction() as connection:
         twice(connection)
     assert [label.label for label in db.labels("lib")] == [1]
+
+
+@pytest.fixture
+def curated(db: AppDB) -> AppDB:
+    """The database with an ended session, an open one, their draft states and a decided and an
+    open proposal."""
+    with db.transaction() as connection:
+        ended = db.open_session(connection, "lib", "h1", M1, AT, "operator:ada")
+        db.record_draft(connection, ended, M2, AT)
+        db.end_session(connection, ended, "discarded", AT)
+        db.open_session(connection, "lib", "h2", M1, AT, "operator:ada")
+        for value in ("a", "b"):
+            db.add_proposal(
+                connection,
+                dataset="lib",
+                release=M1,
+                descriptor="t",
+                pointer="/label",
+                value=value,
+                proposer="agent:x",
+                evidence=None,
+                at=AT,
+            )
+        db.decide_in_session(connection, ended, 1)
+        db.decide(connection, 1, "rejected", AT, "operator:ada")
+    return db
+
+
+@pytest.mark.parametrize(
+    ("statement", "message"),
+    [
+        ("DELETE FROM sessions", "a session is never removed"),
+        ("UPDATE sessions SET draft = '" + M1 + "' WHERE id = 1", "an ended session never changes"),
+        ("UPDATE sessions SET handle_hash = 'h3' WHERE id = 1", "an ended session never changes"),
+        ("UPDATE sessions SET base = '" + M2 + "' WHERE id = 2", "keeps its base"),
+        ("DELETE FROM drafts", "a draft state is never removed"),
+        ("UPDATE drafts SET recorded_at = 'later'", "a draft state is never changed"),
+        ("DELETE FROM session_decisions", "a session decision is never removed"),
+        ("DELETE FROM proposals", "a proposal is never removed"),
+        ("UPDATE proposals SET descriptor = 'u'", "keeps what it proposes"),
+        ("UPDATE proposals SET status = 'open' WHERE id = 1", "decided once"),
+        ("UPDATE proposals SET status = 'accepted' WHERE id = 1", "decided once"),
+        ("UPDATE proposals SET status = 'accepted' WHERE id = 2", "decided once"),
+    ],
+)
+def test_the_schema_keeps_sessions_drafts_and_decisions(
+    curated: AppDB, statement: str, message: str
+) -> None:
+    with pytest.raises(sqlite3.DatabaseError, match=message), curated.transaction() as connection:
+        connection.execute(statement)
+
+
+def test_an_open_session_changes_its_draft_and_handle_and_a_proposal_is_redacted(
+    curated: AppDB,
+) -> None:
+    with curated.transaction() as connection:
+        curated.set_draft(connection, 2, M2)
+        curated.set_handle(connection, 2, "h3")
+        connection.execute("UPDATE proposals SET value = '\"[erased]\"', evidence = NULL")
+        assert curated.decide(connection, 2, "accepted", AT, "operator:ada")
+        assert not curated.decide(connection, 2, "rejected", AT, "operator:ada")
+    session = curated.open_session_of("lib")
+    assert session is not None
+    assert (session.draft, session.handle_hash) == (M2, "h3")
+    assert curated.is_draft_state("lib", M2)
+    assert not curated.is_draft_state("other", M2)
+    assert [p.status for p in curated.proposals("lib", status=None)] == ["rejected", "accepted"]

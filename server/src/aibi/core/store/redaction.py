@@ -17,8 +17,9 @@ and those rows' values in identifier columns. Redaction writes ``[erased]`` in p
 Two object keys that both become ``[erased]`` are both kept, the second as ``[erased] (2)``.
 
 JSON Pointers are never redacted: they name places in descriptors, not people. Neither are the
-labels and manifest hashes the store writes into its own publish and withdraw entries, nor an
-erasure's own entry, which holds its table, its mode and counts only.
+labels, manifest hashes, descriptor ids, pointers and proposal ids the store writes into its own
+lifecycle entries (imports, publishes, sessions, withdrawals, rejections, D252), nor an erasure's
+own entry, which holds its table, its mode and counts only.
 
 Each redactor redacts one table of the app DB, for one dataset. M1 has the audit trail and the
 proposal queue; later milestones register theirs (saved documents, cached results, issuances
@@ -43,13 +44,28 @@ MARK = "[erased]"
 ERASE_ACTION = "erase"
 """The audit action of an erasure, whose entry names no one (``erasure.erase``)."""
 
-RELEASE_ACTIONS = frozenset({"publish", "withdraw"})
-"""The audit actions of the entries the store writes to name releases (``Store.publish``,
-``Store.withdraw``)."""
+RELEASE_ACTIONS = frozenset(
+    {
+        "import",
+        "reimport",
+        "publish",
+        "withdraw",
+        "open",
+        "change",
+        "take_over",
+        "discard",
+        "reject_proposal",
+    }
+)
+"""The audit actions of the entries the store writes about releases, sessions and proposals
+(D252): their details name releases and places in descriptors, never values."""
 
-RELEASE_REFERENCES = frozenset({"label", "labels", "manifest"})
-"""Members of those entries' details that name releases: labels and manifest hashes, which hold
-no person's data and are left as they are."""
+RELEASE_REFERENCES = frozenset(
+    {"label", "labels", "manifest", "base", "draft", "previous", "edits", "proposal", "proposals"}
+)
+"""Members of those entries' details that name releases, descriptor fields and proposals: labels,
+manifest hashes, (descriptor id, pointer) pairs and proposal ids, which hold no person's data and
+are left as they are."""
 
 _NUMERIC = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 

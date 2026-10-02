@@ -19,14 +19,18 @@ An import runs the validation gate (``gate``, §13.2) on the tables it built, be
 reads them as a release: a structural error refuses the import, and a proposal that fails is
 dropped from the descriptors written, with its evidence. The import report (D231) holds the
 importer's notes, what the gate dropped, its gaps, and the cells of each column that did not
-parse, as counts and row references without values. A change carries its base's report.
+parse, as counts and row references without values. A change carries its base's report, and
+runs the gate too, in change mode, where every failure refuses (§12.3, D246): on the tables it
+rebuilt, and on the columns the gate reads of each table it reused, read from its blob. A table a
+pack importer reshaped (``source.kind`` ``pack``) is not rebuilt in a change until packs can
+rebuild (M4, #19): a change that would rebuild it is refused (``NOT_SUPPORTED``).
 
 Each blob is pinned through ``holder`` before it is written, so that a sweep leaves it alone
 until the operation commits or fails (§12.2, Deletion).
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -47,7 +51,7 @@ from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusa
 from aibi.core.schema.release import check_release
 from aibi.core.store import gate, tables
 from aibi.core.store.blobs import BlobStore, Holder
-from aibi.core.store.gate import GateResult
+from aibi.core.store.gate import GateResult, Mode
 from aibi.core.store.manifest import Manifest, SourceColumn, SourceEntry, TableEntry
 from aibi.core.store.sources import RawSource, SourceError, decode, encode, parse
 from aibi.core.store.tables import ColumnReport, TableError, TypedTable
@@ -96,9 +100,12 @@ def import_release(
     statistics: str | None = None,
     tombstones: str | None = None,
     notes: Sequence[ImportNote] = (),
+    revise: Callable[[tuple[Descriptor, ...]], Sequence[Descriptor]] | None = None,
 ) -> Built:
     """A release built from new raw snapshots, through the validation gate, with its import
-    report, which holds ``notes``. Raises ``BuildRefused``."""
+    report, which holds ``notes``. ``revise`` is given the descriptors the gate left and returns
+    those written, changed in nothing the gate or the build reads (a re-import's versions,
+    D243). Raises ``BuildRefused``."""
     index = _Index(descriptors)
     _refuse_if(check_release(descriptors))
     refusals: list[Refusal] = []
@@ -132,7 +139,8 @@ def import_release(
         builder.table(table, sources[layout.source], layout.source, layout.columns)
     result = gate.check(descriptors, builder.typed, mode="import")
     _refuse_if(result.refusals)
-    builder.index = _Index(result.descriptors)
+    kept = result.descriptors if revise is None else tuple(revise(result.descriptors))
+    builder.index = _Index(kept)
     found = sorted_notes([*notes, *_gate_notes(result), *_unparsed_notes(builder.reports)])
     report = blobs.put(report_bytes(found), holder)
     return builder.finish(dataset, tuple(entries), statistics, tombstones, report, result, found)
@@ -148,8 +156,10 @@ def change_release(
     statistics: str | None = None,
     tombstones: str | None = None,
     keep_tombstones: bool = True,
+    gate_mode: Mode | None = "change",
 ) -> Built:
-    """A release made from ``base`` with new descriptors. Raises ``BuildRefused``.
+    """A release made from ``base`` with new descriptors, through the gate in ``gate_mode``
+    unless it is ``None``. Raises ``BuildRefused``.
 
     ``tombstones`` are the base's unless given (or dropped with ``keep_tombstones=False``).
     """
@@ -166,18 +176,38 @@ def change_release(
             message = f"Removing the table {entry.id} is a re-import"
             refusals.append(_refusal(changed, None, message))
     _refuse_if(refusals)
-    builder = _Builder(blobs, index, holder)
+    needed = gate.needed(descriptors) if gate_mode is not None else None
+    builder = _Builder(blobs, index, holder, needed)
+    reused: list[TableEntry] = []
     for entry in base.tables:
         if index.fingerprint(entry.id) == before.fingerprint(entry.id):
             builder.reuse(entry)
+            reused.append(entry)
             continue
+        source_kind = index.table_fields(entry.id).fields.source
+        if source_kind is not None and source_kind.kind == "pack":
+            message = (
+                "A pack importer reshaped this table, and rebuilding it comes with packs' "
+                "rebuild (M4); a re-import changes its parsing until then"
+            )
+            raise BuildRefused([index.refusal(RefusalCode.NOT_SUPPORTED, entry.id, (), message)])
         source = base.source(entry.source)
         assert source is not None
         raw = decode(source.kind, blobs.read(source.hash))
         columns = tuple((column.id, column.name) for column in entry.columns)
         builder.table(entry.id, raw, entry.source, columns)
+    result: GateResult | None = None
+    if gate_mode is not None and needed is not None:
+        typed: dict[str, gate.Cells] = dict(builder.typed)
+        for entry in reused:
+            if needed.get(entry.id):
+                data = blobs.read(entry.hash)
+                typed[entry.id] = tables.decode_cells(entry.id, data, needed[entry.id])
+        result = gate.check(descriptors, typed, mode=gate_mode)
+        _refuse_if(result.refusals)
+        builder.index = _Index(result.descriptors)
     kept = base.tombstones if keep_tombstones and tombstones is None else tombstones
-    return builder.finish(base.dataset, base.sources, statistics, kept, base.report)
+    return builder.finish(base.dataset, base.sources, statistics, kept, base.report, result)
 
 
 def descriptors_bytes(descriptors: Sequence[Descriptor]) -> bytes:

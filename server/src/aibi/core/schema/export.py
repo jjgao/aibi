@@ -18,6 +18,7 @@ from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
+from aibi.core.schema.curation import ChangeRequest, CurationQueue, ProposalInput
 from aibi.core.schema.descriptors import DESCRIPTOR_JSON_MARK, DescModel, Descriptor
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
 from aibi.core.schema.ids import MAX_SAFE_INTEGER, NAME
@@ -274,6 +275,28 @@ def pack_manifest_schema() -> JsonObject:
     return _output_schema(PackManifest, "pack-manifest.schema.json")
 
 
+def _request_schema(request: object, schema_id: str) -> JsonObject:
+    """The schema of an operator or tool request (§11.1, §11.2): an optional member is omitted
+    rather than ``null``, and JSON values are descriptors' (``null`` allowed)."""
+    schema = cast(JsonValue, TypeAdapter(request).json_schema())
+    closed = cast(JsonObject, _closed(_optional_without_null(schema)))
+    if '"#/$defs/DescriptorJson"' in json.dumps(closed):
+        cast(JsonObject, closed.setdefault("$defs", {}))["DescriptorJson"] = DESCRIPTOR_JSON
+    return {"$schema": SCHEMA_DIALECT, "$id": schema_id, **closed}
+
+
+def change_request_schema() -> JsonObject:
+    return _request_schema(ChangeRequest, "change-request.schema.json")
+
+
+def proposal_schema() -> JsonObject:
+    return _request_schema(ProposalInput, "proposal.schema.json")
+
+
+def curation_queue_schema() -> JsonObject:
+    return _output_schema(CurationQueue, "curation-queue.schema.json")
+
+
 SCHEMAS = {
     "document.schema.json": document_schema,
     "document.as-written.schema.json": document_as_written_schema,
@@ -282,12 +305,16 @@ SCHEMAS = {
     "cohort-count.schema.json": cohort_count_schema,
     "refusal.schema.json": refusal_schema,
     "pack-manifest.schema.json": pack_manifest_schema,
+    "change-request.schema.json": change_request_schema,
+    "proposal.schema.json": proposal_schema,
+    "curation-queue.schema.json": curation_queue_schema,
 }
 OUTPUT_SCHEMAS = (
     "result.schema.json",
     "cohort-count.schema.json",
     "refusal.schema.json",
     "pack-manifest.schema.json",
+    "curation-queue.schema.json",
 )
 
 

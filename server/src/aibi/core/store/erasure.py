@@ -24,10 +24,10 @@ that row names the person too.
 1. Under the store's lock, so that no session opens and no release is withdrawn between its
    checks and its withdrawals, it checks that no curation session is open on the dataset, since
    its draft may hold the person, and that the latest published release does not hold the person
-   (refused with ``ERASURE_BLOCKED`` otherwise). Keeping an import of the dataset from running
-   alongside is the per-dataset operation lock's (§12.3, #10). A key that is not of the key
-   columns' datatypes, or that no published release holds, is refused (``INVALID_KEY``), unless
-   ``redact_only`` is given (below).
+   (refused with ``ERASURE_BLOCKED`` otherwise). The whole erasure holds the dataset's operation
+   slot, so no import, re-import, withdrawal or session operation runs alongside (D236). A key
+   that is not of the key columns' datatypes, or that no published release holds, is refused
+   (``INVALID_KEY``), unless ``redact_only`` is given (below).
 2. From every other published release that holds the person it collects the terms: the keys of
    the person's rows, and their values in identifier columns (§5.4), as canonical strings, but
    not their foreign keys to rows not theirs (a book they borrowed). The person's own row gives
@@ -114,6 +114,20 @@ def erase(
     key's order, typed by its columns' datatypes). With ``redact_only``, a key that no live
     release holds is redacted from the app DB alone, rather than refused, if the dataset has a
     withdrawn release. Raises ``StoreRefused``."""
+    with store.exclusive(dataset, "erase"):
+        return _erase(store, dataset, table, key, by, uploads=uploads, redact_only=redact_only)
+
+
+def _erase(
+    store: Store,
+    dataset: str,
+    table: str,
+    key: Sequence[SourceValue],
+    by: str,
+    *,
+    uploads: Callable[[str], None] | None,
+    redact_only: bool,
+) -> Erased:
     person = _Person(table, _live(store, dataset), key)
     with store.lock:
         if any(session.open for session in store.db.sessions(dataset)):

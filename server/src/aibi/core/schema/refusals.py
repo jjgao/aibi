@@ -109,6 +109,22 @@ class RefusalCode(StrEnum):
     """A file or column type no importer reads; the alternatives list those it reads."""
     EMPTY_SOURCE = "EMPTY_SOURCE"
     """A source in which no table was found."""
+    # The release lifecycle, curation sessions and the proposal queue (§12.3, D236–D252):
+    DATASET_BUSY = "DATASET_BUSY"
+    """Another operation runs on the dataset, or a curation session is open on it (D236)."""
+    DATASET_EXISTS = "DATASET_EXISTS"
+    """An import of a dataset that has a published release: that is a re-import (D237)."""
+    CONFLICT = "CONFLICT"
+    """A session handle that is not the current one, a draft that is not at the state expected,
+    or a base that is no longer the latest published release (§12.3, D244)."""
+    NO_SESSION = "NO_SESSION"
+    """No curation session is open on the dataset."""
+    NO_CHANGE = "NO_CHANGE"
+    """A publish or re-import whose manifest equals the latest published release's (§12.3)."""
+    UNKNOWN_PROPOSAL = "UNKNOWN_PROPOSAL"
+    """No open proposal of the dataset has that id."""
+    INVALID_EXTENSION = "INVALID_EXTENSION"
+    """An extension object its pack's JSON Schema refuses, or has none for (§10.1, D247)."""
 
 
 class Limit(Output):

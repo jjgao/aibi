@@ -8,17 +8,20 @@ the same PR or don't make the change.
 
 ## Status
 
-Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
+Milestone M1 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
 package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
 analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
-`core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases
-held in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs,
-raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure and the validation
-gate. `core/importers/` holds the file importers (M1): confinement, archives and the upload
-area, CSV/TSV, workbooks and Parquet (read in a worker process that can be killed), the
-importer's proposals, and `import_dataset`, which builds an unpublished release through the gate
-for the core's importer or a pack's. Publishing imports, curation sessions, database snapshots
-and tool calls come next (M1, M2).
+`core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases held
+in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs, raw
+snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure and the validation gate.
+`core/importers/` holds the file importers (M1): confinement, archives and the upload area, CSV/TSV,
+workbooks and Parquet (read in a worker process that can be killed), the importer's proposals,
+`import_dataset`, which publishes a dataset's first release through the gate for the core's importer
+or a pack's, and `reimport_dataset`, which carries curation forward with tombstones. The release
+lifecycle is the store's (M1): per-dataset operation slots, curation sessions with handles, edits
+checked by the gate and the pack checks on every change, the proposal queue, curation proposers and
+the curation queue. The operator router and CLI, tool calls and database snapshots come next (M1,
+M2).
 
 ## Non-negotiables
 

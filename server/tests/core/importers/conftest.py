@@ -5,12 +5,17 @@
   is an error cell in one.
 - ``make_zip`` writes a zip archive of ``entry`` values, which can be symbolic links or
   encrypted; ``declare_size`` makes one lie about its size.
-- ``roots`` gives an import directory and a directory outside it; ``importing`` imports a path
-  from them into a fresh store.
+- ``roots`` gives an import directory and a directory outside it; ``importing`` builds a release
+  of a path from them in a fresh store and publishes it with the store's own step, and
+  ``lifecycle`` imports and re-imports through the operator's functions, which publish (§12.3).
+- ``library_variant`` copies the lending library of ``fixtures/library`` (or its next export,
+  ``fixtures/library_next``) into the import directory, changed as a test needs.
 - ``birds`` is a pack of bird surveys (SPEC §10.1: extension points are tested with a
   non-biomedical pack): a survey file gives sites, checklists and the counts of species on each
   checklist, with a grouped coverage (a checklist follows a protocol, which lists the species it
-  counts, or counts them all).
+  counts, or counts them all). Its dataset extension names the survey's protocol, from a fixed
+  list; its validator refuses a release without one; its proposer proposes a definition for each
+  table that has none.
 
 Test modules can't import one another (``--import-mode=importlib``), so the helpers are given as
 fixtures, as in the engine and store tests.
@@ -19,6 +24,7 @@ fixtures, as in the engine and store tests.
 import io
 import itertools
 import json
+import shutil
 import stat
 import struct
 import zipfile
@@ -34,8 +40,14 @@ from pydantic import JsonValue, TypeAdapter
 
 import aibi
 from aibi.core.importers.confine import Confinement
-from aibi.core.importers.run import Imported, import_dataset
-from aibi.core.schema.descriptors import Descriptor
+from aibi.core.importers.run import (
+    Imported,
+    Published,
+    build_import,
+    import_dataset,
+    reimport_dataset,
+)
+from aibi.core.schema.descriptors import Descriptor, TableDescriptor
 from aibi.core.schema.limits import ImportLimits
 from aibi.core.schema.output import Segment, text
 from aibi.core.schema.pack_api import (
@@ -45,6 +57,7 @@ from aibi.core.schema.pack_api import (
     Pack,
     PackManifest,
     PackRegistry,
+    Proposal,
     ReleaseView,
 )
 from aibi.core.schema.refusals import Refusal
@@ -401,7 +414,7 @@ def importing(roots: Roots, store: Store) -> Importing:
         **options: Any,
     ) -> Imported:
         with store.pin() as pin:
-            imported = import_dataset(
+            imported = build_import(
                 store,
                 pin,
                 roots.confinement.confine(path),
@@ -416,6 +429,92 @@ def importing(roots: Roots, store: Store) -> Importing:
     return run
 
 
+@dataclass
+class Lifecycle:
+    roots: Roots
+    store: Store
+
+    def run(
+        self,
+        operation: Callable[..., Published],
+        path: Path,
+        dataset: str,
+        by: str,
+        registry: PackRegistry | None,
+        pack: str | None,
+        options: dict[str, Any],
+    ) -> Published:
+        return operation(
+            self.store,
+            self.roots.confinement.confine(path),
+            self.roots.options(dataset, **options),
+            by,
+            registry=registry,
+            pack=pack,
+        )
+
+    def import_(
+        self,
+        path: Path,
+        *,
+        dataset: str = "d",
+        by: str = "operator:ada",
+        registry: PackRegistry | None = None,
+        pack: str | None = None,
+        **options: Any,
+    ) -> Published:
+        return self.run(import_dataset, path, dataset, by, registry, pack, options)
+
+    def reimport(
+        self,
+        path: Path,
+        *,
+        dataset: str = "d",
+        by: str = "operator:ada",
+        registry: PackRegistry | None = None,
+        pack: str | None = None,
+        **options: Any,
+    ) -> Published:
+        return self.run(reimport_dataset, path, dataset, by, registry, pack, options)
+
+
+@pytest.fixture
+def lifecycle(roots: Roots, store: Store) -> Lifecycle:
+    return Lifecycle(roots, store)
+
+
+# --- The lending library -------------------------------------------------------------------------
+
+
+def copy_library(
+    roots: Roots,
+    name: str,
+    *,
+    source: str = "library",
+    without: Sequence[str] = (),
+    files: Mapping[str, bytes] | None = None,
+) -> Path:
+    """The library of ``fixtures/<source>`` in the import directory as ``name``, without the
+    files ``without`` and with ``files`` written over its own; ``formats/`` left out."""
+    target = roots.inside / name
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(FIXTURES / source, target, ignore=shutil.ignore_patterns("formats", "*.md"))
+    for gone in without:
+        (target / gone).unlink()
+    for file, content in (files or {}).items():
+        (target / file).write_bytes(content)
+    return target
+
+
+@pytest.fixture
+def library_variant(roots: Roots) -> Callable[..., Path]:
+    def make(name: str = "library", **given: Any) -> Path:
+        return copy_library(roots, name, **given)
+
+    return make
+
+
 # --- The birds pack ----------------------------------------------------------------------------
 
 _DESCRIPTORS: TypeAdapter[Descriptor] = TypeAdapter(Descriptor)
@@ -423,11 +522,19 @@ BY = "importer:birds@1.0.0"
 
 
 def _declared(
-    kind: str, id: str, fields: Mapping[str, JsonValue], extensions: Mapping[str, Any] | None = None
+    kind: str,
+    id: str,
+    fields: Mapping[str, JsonValue],
+    extensions: Mapping[str, Any] | None = None,
+    *,
+    proposed: Sequence[str] = (),
 ) -> Descriptor:
+    """A descriptor whose fields the importer declares as ``imported``, but for those named in
+    ``proposed``."""
     entry: dict[str, JsonValue] = {"status": "imported", "by": BY, "at": AT}
+    guess: dict[str, JsonValue] = {"status": "proposed", "by": BY, "at": AT}
     curation: dict[str, JsonValue] = {"/label": entry}
-    curation.update({f"/fields/{name}": entry for name in fields})
+    curation.update({f"/fields/{name}": guess if name in proposed else entry for name in fields})
     for pack, members in (extensions or {}).items():
         curation.update({f"/extensions/{pack}/{member}": entry for member in members})
     written: dict[str, Any] = {
@@ -484,7 +591,8 @@ def _survey_rows(survey: Mapping[str, Any]) -> dict[str, list[tuple[SourceValue,
 
 @dataclass
 class BirdImporter:
-    """Reads a survey file, only through ``options.reader`` (SPEC §14)."""
+    """Reads a survey file, only through ``options.reader`` (SPEC §14). Its keys are declared,
+    or proposed when the survey says ``keys_proposed``."""
 
     reads: list[str] = field(default_factory=list[str])
 
@@ -507,7 +615,8 @@ class BirdImporter:
             fields: dict[str, JsonValue] = {"role": role}
             if key is not None:
                 fields["primary_key"] = list(key)
-            descriptors.append(_declared("table", table, fields))
+            proposed = ["primary_key"] if survey.get("keys_proposed") else []
+            descriptors.append(_declared("table", table, fields, proposed=proposed))
             for column in columns:
                 datatype = datatypes.get(column, "string")
                 descriptors.append(_declared("column", f"{table}.{column}", {"datatype": datatype}))
@@ -570,7 +679,21 @@ class BirdValidator:
         if "birds" in dataset.extensions:
             return []
         message: list[Segment] = [text(f"Release @{release.label} has no survey protocol")]
-        return [Refusal(code="birds.NO_PROTOCOL", path="/extensions", message=message)]
+        return [Refusal(code="birds.NO_PROTOCOL", path="/dataset/extensions", message=message)]
+
+
+def propose_definitions(release: ReleaseView) -> Sequence[Proposal]:
+    """A definition for each table that has none."""
+    return [
+        Proposal(
+            descriptor.id,
+            "/definition",
+            f"The survey's {descriptor.id.replace('_', ' ')}",
+            evidence="The birds pack defines every table it knows",
+        )
+        for descriptor in release.descriptors.values()
+        if isinstance(descriptor, TableDescriptor) and descriptor.definition is None
+    ]
 
 
 @dataclass
@@ -578,6 +701,7 @@ class Birds:
     importer: BirdImporter
     registry: PackRegistry
     survey: Callable[..., dict[str, Any]]
+    pack: Pack
 
 
 def survey(**changes: Any) -> dict[str, Any]:
@@ -611,9 +735,14 @@ def birds() -> Birds:
             id="birds", version="1.0.0", results_version=1, requires_core=">=0.0.1"
         ),
         extension_schemas={
-            "dataset": {"type": "object", "properties": {"protocol": {"type": "string"}}}
+            "dataset": {
+                "type": "object",
+                "properties": {"protocol": {"enum": ["stationary", "travelling"]}},
+                "additionalProperties": False,
+            }
         },
         importer=importer,
         validator=BirdValidator(),
+        proposer=propose_definitions,
     )
-    return Birds(importer, PackRegistry([pack], core_version=aibi.__version__), survey)
+    return Birds(importer, PackRegistry([pack], core_version=aibi.__version__), survey, pack)

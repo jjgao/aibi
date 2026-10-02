@@ -6,8 +6,8 @@ objects, which consults only the packs a dataset or document lists. The core nev
 pack; the server hands the registry the packs it loads.
 
 The extension points are typed here. The core calls each from the milestone that delivers its
-feature (M1–M3), so the types some of them exchange (proposals, analysis inputs) are
-placeholders until then. Raw snapshots and typed tables are the store's
+feature (M1–M3), so the types some of them exchange (analysis inputs) are placeholders until
+then. Raw snapshots and typed tables are the store's
 (``aibi.core.store.sources``) and the evaluator's (``aibi.core.engine.data``).
 """
 
@@ -39,6 +39,7 @@ from aibi.core.schema.ids import (
     is_pack_code,
 )
 from aibi.core.schema.jsonio import is_text
+from aibi.core.schema.jsonschemas import problems as schema_problems
 from aibi.core.schema.limits import MAX_DEPTH, ImportLimits
 from aibi.core.schema.output import Output, Segment
 from aibi.core.schema.refusals import Refusal
@@ -154,6 +155,20 @@ class SourceReader(Protocol):
 
 
 @dataclass(frozen=True)
+class Previous:
+    """The names of the release a re-import starts from, so that the *k*-th occurrence of a name
+    keeps its id (SPEC §5.1, §12.3, D238). Every importer, the core's or a pack's, passes them to
+    ``normalise_names``."""
+
+    tables: tuple[tuple[str, str], ...]
+    """(original name, table id) for each table whose ``/label`` has an inference, the name
+    being that inference; ordered by name and, within one name, in the order its ids were
+    assigned: the id without a collision suffix first, then by suffix ``_<n>`` as a number."""
+    columns: Mapping[str, tuple[tuple[str, str], ...]]
+    """(source name, column id) of each table's source columns, by table id, in source order."""
+
+
+@dataclass(frozen=True)
 class ImportOptions:
     """What an operator gives an import (SPEC §11.2, §13.1)."""
 
@@ -167,9 +182,13 @@ class ImportOptions:
     """The dataset's name; the source's file name without its extension when not given."""
     original_name: str | None = None
     """An upload's file name, which its stored path does not keep (D234)."""
+    previous: Previous | None = None
+    """On a re-import, the previous release's names (D238); ``None`` on a first import."""
 
 
-NoteKind = Literal["skipped_source", "renamed", "not_proposed", "dropped", "unparsed", "gap"]
+NoteKind = Literal[
+    "skipped_source", "renamed", "not_proposed", "dropped", "unparsed", "gap", "reimported"
+]
 
 
 @dataclass(frozen=True)
@@ -203,9 +222,22 @@ Tables = Mapping[str, "Table"]
 """Typed tables, by table id, rebuilt from raw snapshots (SPEC §12.2)."""
 
 
-class Proposal(Protocol):
-    """A proposed descriptor change with its rationale (SPEC §12.3). Defined with the curation
-    queue (M1, #10); an importer's proposals are ``proposed`` fields of its descriptors."""
+@dataclass(frozen=True)
+class Proposal:
+    """A proposed descriptor change with its rationale, as a curation proposer returns it (SPEC
+    §10.1, §12.3, D249); an importer's own proposals are ``proposed`` fields of its descriptors.
+
+    ``pointer`` names a whole curated field (``/label``, ``/definition``, ``/fields/<name>``,
+    ``/extensions/<pack>/<name>``), or is ``""`` for a whole descriptor, whose ``value`` is then
+    the descriptor without ``version`` and ``curation``. ``remove`` proposes removing the field or
+    the descriptor instead, and then ``value`` is ``None``. It enters the queue by
+    ``importer:<pack id>@<pack version>``."""
+
+    descriptor: str
+    pointer: str
+    value: JsonValue = None
+    remove: bool = False
+    evidence: str | None = None
 
 
 class AnalysisInputs(Protocol):
@@ -246,6 +278,10 @@ class Rebuilder(Protocol):
 
 
 class Validator(Protocol):
+    """A pack's validator (SPEC §10.1). The paths of ``validate_descriptors``'s refusals point
+    into the release's descriptors by id, ``/<descriptor id><field pointer>``, and the core
+    points them at ``/descriptors/…`` on an import and ``/draft/…`` on a draft change (D246)."""
+
     def validate_source(self, source: ConfinedPath, result: ImportResult) -> Sequence[Refusal]: ...
 
     def validate_descriptors(self, release: ReleaseView) -> Sequence[Refusal]: ...
@@ -524,6 +560,11 @@ def _snapshot(pack: Pack) -> tuple[Pack, list[str]]:
             problems.append(
                 f"{name}: the extension schema for {kind} is not a JSON value: it holds {error}"
             )
+            continue
+        problems.extend(
+            f"{name}: the extension schema for {kind} is refused: {found}"
+            for found in schema_problems(schemas[kind])
+        )
     wording: dict[CaveatCode, str] = {}
     for code, template in pack.wording.items():
         if code not in CaveatCode:
@@ -746,6 +787,7 @@ __all__ = [
     "PackError",
     "PackManifest",
     "PackRegistry",
+    "Previous",
     "Proposal",
     "Proposer",
     "RawSnapshot",

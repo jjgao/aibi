@@ -14,7 +14,7 @@ undeclared datatype is a number unless it maps values. Rows keep the source's or
 """
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -198,22 +198,41 @@ def decode(table: str, source: Path | bytes) -> Table:
     rows = len(stored[names[0]].values) if names else 0
     built: list[dict[str, Cell]] = [{} for _ in range(rows)]
     for name in names:
-        values = stored[name].values
-        states = stored.get(name + STATE)
-        items = stored.get(name + ITEM_STATE)
-        for row in range(rows):
-            state = ObservationState(states.values[row]) if states is not None else PRESENT
-            value = values[row]
-            if state is not PRESENT:
-                if value is not None:
-                    raise CorruptTableError(f"{table}.{name}[{row}] has a value but is {state}")
-                built[row][name] = Cell(state)
-                continue
-            if value is None:
-                raise CorruptTableError(f"{table}.{name}[{row}] is PRESENT without a value")
-            built[row][name] = _cell(value, None if items is None else items.values[row])
+        for row, cell in enumerate(_cells(table, name, stored, rows)):
+            built[row][name] = cell
     rows_built: tuple[Row, ...] = tuple(built)
     return Table(table, rows_built)
+
+
+def decode_cells(table: str, data: bytes, columns: Collection[str]) -> TypedTable:
+    """The cells of some columns of a table blob, by name, as the validation gate reads them
+    (§13.2): only those columns and their companions are read. A name the table does not have
+    is left out."""
+    wanted = {name for column in columns for name in (column, column + STATE, column + ITEM_STATE)}
+    rows, found = parquet.read_columns(data, wanted)
+    stored = {column.name: column for column in found}
+    names = tuple(name for name in stored if "__" not in name)
+    cells = {name: tuple(_cells(table, name, stored, rows)) for name in names}
+    return TypedTable(table, names, cells, rows, {})
+
+
+def _cells(
+    table: str, name: str, stored: Mapping[str, parquet.Column], rows: int
+) -> Iterator[Cell]:
+    values = stored[name].values
+    states = stored.get(name + STATE)
+    items = stored.get(name + ITEM_STATE)
+    for row in range(rows):
+        state = ObservationState(states.values[row]) if states is not None else PRESENT
+        value = values[row]
+        if state is not PRESENT:
+            if value is not None:
+                raise CorruptTableError(f"{table}.{name}[{row}] has a value but is {state}")
+            yield Cell(state)
+            continue
+        if value is None:
+            raise CorruptTableError(f"{table}.{name}[{row}] is PRESENT without a value")
+        yield _cell(value, None if items is None else items.values[row])
 
 
 def _cell(value: object, item_states: object) -> Cell:
@@ -242,6 +261,7 @@ __all__ = [
     "TypedTable",
     "build_table",
     "decode",
+    "decode_cells",
     "encode",
     "physical",
 ]

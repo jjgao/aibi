@@ -10,8 +10,16 @@ in free pages (§12.2, Erasure); after a redaction the WAL is checkpointed and t
 
 Rules the schema holds itself, by triggers: a label is never removed or changed; a manifest is
 never removed, and is only ever withdrawn, once; the audit trail is never removed from, and only
-its details change, by redaction. A label's status is its manifest's: *withdrawn* once the
-manifest is. At most one session per dataset is open.
+its details change, by redaction. A label's status is its manifest's: *withdrawn* once the manifest
+is. At most one session per dataset is open. A session is never removed, and changes only while it
+is open, and then only its draft and its handle's hash; once ended it never changes. Every state a
+session's draft took is recorded (``drafts``, D251), and so is every proposal an ``accept`` edit
+applied to a draft (``session_decisions``), whether or not the draft still holds it (D248); neither
+is ever removed. A proposal is never removed, only its value and evidence change (by redaction),
+and its release while it is open (when the same proposal is made again against a later release),
+and it is decided once: from *open* to *accepted* or *rejected*, never back (D248).
+``proposals.value`` is the value's RFC 8785 text, ``NULL`` for a removal, and a ``pointer`` of
+``""`` names a whole descriptor.
 """
 
 import json
@@ -19,8 +27,9 @@ import sqlite3
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from pydantic import JsonValue
 
@@ -108,6 +117,48 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE TRIGGER audit_redacted_only BEFORE UPDATE OF id, at, dataset, actor, action, session
         ON audit BEGIN SELECT RAISE(ABORT, 'only redaction changes the audit trail'); END;
     """,
+    # 2: M1 (#10)
+    """
+    CREATE TABLE drafts (
+        manifest TEXT NOT NULL CHECK (manifest GLOB 'sha256:*' AND length(manifest) = 71),
+        session INTEGER NOT NULL REFERENCES sessions (id),
+        recorded_at TEXT NOT NULL,
+        PRIMARY KEY (manifest, session)
+    ) STRICT;
+    CREATE TABLE session_decisions (
+        session INTEGER NOT NULL REFERENCES sessions (id),
+        proposal INTEGER NOT NULL REFERENCES proposals (id),
+        PRIMARY KEY (session, proposal)
+    ) STRICT;
+    CREATE INDEX proposals_open ON proposals (dataset, status);
+    CREATE TRIGGER sessions_kept BEFORE DELETE ON sessions
+        BEGIN SELECT RAISE(ABORT, 'a session is never removed'); END;
+    CREATE TRIGGER sessions_ended_fixed BEFORE UPDATE ON sessions WHEN OLD.ended_at IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'an ended session never changes'); END;
+    CREATE TRIGGER sessions_fixed BEFORE UPDATE OF id, dataset, base, opened_at, opened_by
+        ON sessions BEGIN SELECT RAISE(ABORT, 'a session keeps its base and opening'); END;
+    CREATE TRIGGER drafts_kept BEFORE DELETE ON drafts
+        BEGIN SELECT RAISE(ABORT, 'a draft state is never removed'); END;
+    CREATE TRIGGER drafts_fixed BEFORE UPDATE ON drafts
+        BEGIN SELECT RAISE(ABORT, 'a draft state is never changed'); END;
+    CREATE TRIGGER session_decisions_kept BEFORE DELETE ON session_decisions
+        BEGIN SELECT RAISE(ABORT, 'a session decision is never removed'); END;
+    CREATE TRIGGER session_decisions_fixed BEFORE UPDATE ON session_decisions
+        BEGIN SELECT RAISE(ABORT, 'a session decision is never changed'); END;
+    CREATE TRIGGER proposals_kept BEFORE DELETE ON proposals
+        BEGIN SELECT RAISE(ABORT, 'a proposal is never removed'); END;
+    CREATE TRIGGER proposals_fixed BEFORE UPDATE OF id, dataset, descriptor, pointer, proposer,
+        at ON proposals
+        BEGIN SELECT RAISE(ABORT, 'a proposal keeps what it proposes'); END;
+    CREATE TRIGGER proposals_release_while_open BEFORE UPDATE OF release ON proposals
+        WHEN OLD.status != 'open'
+        BEGIN SELECT RAISE(ABORT, 'a decided proposal keeps its release'); END;
+    CREATE TRIGGER proposals_decided_once BEFORE UPDATE OF status, decided_at, decided_by
+        ON proposals
+        WHEN OLD.status != 'open' OR NEW.status NOT IN ('accepted', 'rejected')
+            OR NEW.decided_at IS NULL OR NEW.decided_by IS NULL
+        BEGIN SELECT RAISE(ABORT, 'a proposal is decided once'); END;
+    """,
 )
 
 
@@ -126,6 +177,26 @@ class Session:
     base: str
     draft: str
     open: bool
+    handle_hash: str = field(default="", repr=False)
+    opened_by: str = ""
+
+
+@dataclass(frozen=True)
+class StoredProposal:
+    """A proposal in the queue (D248); ``value`` is ``None`` for a removal, as ``remove`` says.
+    Its value and evidence, which erasure may redact, are kept out of its ``repr``."""
+
+    id: int
+    dataset: str
+    release: str
+    descriptor: str
+    pointer: str
+    value: JsonValue = field(repr=False)
+    remove: bool
+    proposer: str
+    evidence: str | None = field(repr=False)
+    at: str
+    status: str
 
 
 class AppDB:
@@ -282,11 +353,56 @@ class AppDB:
     def sessions(self, dataset: str) -> list[Session]:
         with self.lock:
             rows = self.connection.execute(
-                "SELECT id, dataset, base, draft, ended_at IS NULL FROM sessions"
-                " WHERE dataset = ? ORDER BY id",
+                "SELECT id, dataset, base, draft, ended_at IS NULL, handle_hash, opened_by"
+                " FROM sessions WHERE dataset = ? ORDER BY id",
                 (dataset,),
             ).fetchall()
-        return [Session(int(r[0]), r[1], r[2], r[3], bool(r[4])) for r in rows]
+        return [Session(int(r[0]), r[1], r[2], r[3], bool(r[4]), r[5], r[6]) for r in rows]
+
+    def open_session_of(self, dataset: str) -> Session | None:
+        """The dataset's open session, if any."""
+        return next((session for session in self.sessions(dataset) if session.open), None)
+
+    def set_handle(self, db: sqlite3.Connection, session: int, handle_hash: str) -> None:
+        db.execute(
+            "UPDATE sessions SET handle_hash = ? WHERE id = ? AND ended_at IS NULL",
+            (handle_hash, session),
+        )
+
+    def record_draft(self, db: sqlite3.Connection, session: int, manifest: str, at: str) -> None:
+        """Record a state of the session's draft (D251); a state it took before is kept."""
+        db.execute(
+            "INSERT INTO drafts (manifest, session, recorded_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
+            (manifest, session, at),
+        )
+
+    def is_draft_state(self, dataset: str, manifest: str) -> bool:
+        """Whether ``manifest`` was a state of a draft of one of the dataset's sessions."""
+        with self.lock:
+            found = self.connection.execute(
+                "SELECT 1 FROM drafts d JOIN sessions s ON s.id = d.session"
+                " WHERE s.dataset = ? AND d.manifest = ?",
+                (dataset, manifest),
+            ).fetchone()
+        return found is not None
+
+    def decide_in_session(self, db: sqlite3.Connection, session: int, proposal: int) -> None:
+        db.execute(
+            "INSERT INTO session_decisions (session, proposal) VALUES (?, ?)"
+            " ON CONFLICT DO NOTHING",
+            (session, proposal),
+        )
+
+    def session_decisions(self, session: int) -> list[int]:
+        """The proposals an ``accept`` edit of the session applied, by id; which of them the
+        draft still holds is ``proposals.holding``'s (D248)."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT proposal FROM session_decisions WHERE session = ? ORDER BY proposal",
+                (session,),
+            ).fetchall()
+        return [int(row[0]) for row in rows]
 
     # --- Erasure (§12.2) --------------------------------------------------------------------------
 
@@ -337,6 +453,7 @@ class AppDB:
         proposer: str,
         evidence: str | None,
         at: str,
+        remove: bool = False,
     ) -> int:
         cursor = db.execute(
             "INSERT INTO proposals"
@@ -347,7 +464,7 @@ class AppDB:
                 release,
                 descriptor,
                 pointer,
-                canonical(value).decode(),
+                None if remove else canonical(value).decode(),
                 proposer,
                 evidence,
                 at,
@@ -355,6 +472,112 @@ class AppDB:
         )
         assert cursor.lastrowid is not None
         return cursor.lastrowid
+
+    def proposal_like(
+        self,
+        db: sqlite3.Connection,
+        *,
+        dataset: str,
+        descriptor: str,
+        pointer: str,
+        value: JsonValue,
+        remove: bool,
+        proposer: str,
+        evidence: str | None,
+        status: Literal["open", "rejected"] = "open",
+    ) -> tuple[int, str] | None:
+        """The first proposal of ``status`` with the same descriptor, pointer, value, proposer and
+        evidence: its id and release."""
+        found = db.execute(
+            "SELECT id, release FROM proposals WHERE dataset = ? AND status = ? AND descriptor = ?"
+            " AND pointer = ? AND value IS ? AND proposer = ? AND evidence IS ? ORDER BY id",
+            (
+                dataset,
+                status,
+                descriptor,
+                pointer,
+                None if remove else canonical(value).decode(),
+                proposer,
+                evidence,
+            ),
+        ).fetchone()
+        return None if found is None else (int(found[0]), str(found[1]))
+
+    def restate(self, db: sqlite3.Connection, proposal: int, release: str) -> None:
+        """Record that an open proposal was made again, and checked, against ``release``."""
+        db.execute(
+            "UPDATE proposals SET release = ? WHERE id = ? AND status = 'open'", (release, proposal)
+        )
+
+    def open_proposals(self, db: sqlite3.Connection, dataset: str, *, after: int = 0) -> int:
+        """How many open proposals the dataset has whose id is above ``after``."""
+        found = db.execute(
+            "SELECT count(*) FROM proposals WHERE dataset = ? AND status = 'open' AND id > ?",
+            (dataset, after),
+        ).fetchone()
+        return int(found[0])
+
+    def proposals(
+        self,
+        dataset: str,
+        *,
+        status: str | None = "open",
+        ids: list[int] | None = None,
+        after: int = 0,
+        limit: int | None = None,
+    ) -> list[StoredProposal]:
+        """The dataset's proposals, by id: those of ``status`` (every one when ``None``), or,
+        given ``ids``, those among them; only those whose id is above ``after``, and at most
+        ``limit`` of them."""
+        query = (
+            "SELECT id, dataset, release, descriptor, pointer, value, proposer, evidence, at,"
+            " status FROM proposals WHERE dataset = ? AND id > ?"
+        )
+        parameters: list[object] = [dataset, after]
+        if status is not None:
+            query += " AND status = ?"
+            parameters.append(status)
+        if ids is not None:
+            query += " AND id IN (SELECT value FROM json_each(?))"
+            parameters.append(json.dumps(sorted(ids)))
+        query += " ORDER BY id"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        with self.lock:
+            rows = self.connection.execute(query, parameters).fetchall()
+        return [
+            StoredProposal(
+                int(row[0]),
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                None if row[5] is None else loads(row[5]),
+                row[5] is None,
+                row[6],
+                row[7],
+                row[8],
+                row[9],
+            )
+            for row in rows
+        ]
+
+    def decide(
+        self,
+        db: sqlite3.Connection,
+        proposal: int,
+        status: Literal["accepted", "rejected"],
+        at: str,
+        by: str,
+    ) -> bool:
+        """Decide an open proposal; whether it was open."""
+        cursor = db.execute(
+            "UPDATE proposals SET status = ?, decided_at = ?, decided_by = ?"
+            " WHERE id = ? AND status = 'open'",
+            (status, at, by, proposal),
+        )
+        return cursor.rowcount == 1
 
 
 def _statements(script: str) -> list[str]:
@@ -383,5 +606,6 @@ __all__ = [
     "AppDB",
     "Label",
     "Session",
+    "StoredProposal",
     "loads",
 ]

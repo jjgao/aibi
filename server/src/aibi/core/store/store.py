@@ -4,12 +4,26 @@
 **Labels.** Publishing a manifest gives it the next label of its dataset, the highest ever issued
 plus one. Withdrawal applies to a manifest and so to every label that refers to it; a withdrawn
 manifest is never published again. The latest published release is the highest label whose
-manifest is not withdrawn.
+manifest is not withdrawn. Every publish, whether an import's, a re-import's or a session's,
+labels its manifest through ``commit_label``, in the transaction that records what else it did.
+
+**Operation slots** (§12.3, D236). Each dataset has one slot, held by this process for the whole
+of an import, a re-import, a withdrawal, an erasure or a session operation (``exclusive``). A
+second operation on the dataset is refused at once (``DATASET_BUSY``), never queued, and while a
+curation session is open, imports, re-imports and withdrawals are refused too; an erasure refuses
+an open session itself (``ERASURE_BLOCKED``, D223). A slot is taken under the store's lock, only
+long enough to check and mark it, and released however the operation ends; it is not persisted,
+since a crash ends every running operation (open sessions persist in the app DB). The order is
+always the slot, then the store's lock.
+
+**Resolution** (D251). A manifest hash resolves to its highest label's status, to ``draft`` for
+the open session's current draft, and to ``discarded`` for a state a draft took that is not live
+and was never labelled; ``resolve(dataset)`` and a label never give a draft.
 
 **Deletion.** A manifest is live while a published label or an open session's draft refers to
 it. ``sweep`` deletes every blob that no live manifest references, except the manifests of
 withdrawn releases, which are kept alone so that their ids still resolve. It runs after every
-publish and withdrawal here, and after draft changes and session ends (#10). A blob pinned by a
+publish and withdrawal, and after draft changes and session ends. A blob pinned by a
 running operation or query (``pin``) is skipped, and deleted once its pins are released if
 nothing live references it then.
 
@@ -40,7 +54,8 @@ import os
 import sqlite3
 import threading
 from collections import Counter
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,20 +70,24 @@ from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
 from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import ImportNote
-from aibi.core.schema.refusals import Refusal, RefusalCode
-from aibi.core.store import build, redaction, tables
+from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
+from aibi.core.store import build, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
+from aibi.core.store.gate import Mode
 from aibi.core.store.manifest import Manifest, hex_of
 from aibi.core.store.sources import RawSource
+from aibi.core.store.tombstones import Tombstone
 
 APP_DB = "app.db"
 LOCK = "lock"
 CHECKPOINT_RETRY = 1.0
 """Seconds between retries of a checkpoint that a reader kept from finishing."""
 
-Status = Literal["published", "withdrawn", "draft"]
+Status = Literal["published", "withdrawn", "draft", "discarded"]
+OperationKind = Literal["import", "reimport", "withdraw", "erase", "session"]
+_REFUSED_WHILE_OPEN: frozenset[OperationKind] = frozenset({"import", "reimport", "withdraw"})
 
 
 class StoreLockedError(RuntimeError):
@@ -76,9 +95,9 @@ class StoreLockedError(RuntimeError):
 
 
 class StoreRefused(Exception):  # noqa: N818 - the spec's word
-    def __init__(self, code: RefusalCode, message: str) -> None:
+    def __init__(self, code: RefusalCode, message: str, *, limit: Limit | None = None) -> None:
         super().__init__(f"{code}: {message}")
-        self.refusal = Refusal(code=code, path=None, message=[text(message)])
+        self.refusal = Refusal(code=code, path=None, message=[text(message)], limit=limit)
 
 
 @dataclass(frozen=True)
@@ -89,6 +108,7 @@ class Resolution:
     manifest: str
     label: int | Literal["draft"] | None
     status: Status
+    """``discarded`` for a draft state no session holds and no label names (D251)."""
 
 
 class Pin:
@@ -169,6 +189,7 @@ class Store:
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}
             self._withdraw_hooks: list[Callable[[str], None]] = []
+            self._running: dict[str, OperationKind] = {}
             self._checkpoint_due = True
             self._checkpoint_tried: float | None = None
             # This process holds no pin yet: what a crash left pinned is swept now.
@@ -228,11 +249,22 @@ class Store:
         layouts: Mapping[str, Layout],
         *,
         notes: Sequence[ImportNote] = (),
+        tombstones: Iterable[Tombstone] = (),
+        revise: Callable[[tuple[Descriptor, ...]], Sequence[Descriptor]] | None = None,
     ) -> Built:
         """Build a release from new raw snapshots, through the validation gate, with the
-        importer's ``notes`` in its import report; its blobs stay pinned by ``pin``."""
+        importer's ``notes`` in its import report and ``tombstones``; its blobs stay pinned by
+        ``pin``. ``revise`` is ``build.import_release``'s."""
         return build.import_release(
-            self.blobs, dataset, descriptors, sources, layouts, holder=pin, notes=notes
+            self.blobs,
+            dataset,
+            descriptors,
+            sources,
+            layouts,
+            holder=pin,
+            tombstones=self._tombstones_blob(pin, tombstones),
+            notes=notes,
+            revise=revise,
         )
 
     def change_release(
@@ -242,9 +274,12 @@ class Store:
         descriptors: Sequence[Descriptor],
         *,
         statistics: str | None = None,
+        tombstones: Iterable[Tombstone] | None = None,
+        gate_mode: Mode | None = "change",
     ) -> Built:
-        """Build a release from ``base`` with new descriptors; its blobs stay pinned, and so
-        do the base's."""
+        """Build a release from ``base`` with new descriptors, through the gate in change mode;
+        its blobs stay pinned, and so do the base's. The base's tombstones are kept unless
+        ``tombstones`` are given."""
         manifest = pin.manifest(base)
         return build.change_release(
             self.blobs,
@@ -253,39 +288,94 @@ class Store:
             descriptors,
             holder=pin,
             statistics=statistics,
+            tombstones=None if tombstones is None else self._tombstones_blob(pin, tombstones),
+            keep_tombstones=tombstones is None,
+            gate_mode=gate_mode,
         )
+
+    def _tombstones_blob(self, pin: Pin, found: Iterable[Tombstone]) -> str | None:
+        data = tombstones.encode(found)
+        return None if data is None else self.blobs.put(data, pin)
+
+    def tombstones(self, manifest: str) -> tuple[Tombstone, ...]:
+        """The release's tombstones (§12.3, D240)."""
+        digest = self.manifest(manifest).tombstones
+        return () if digest is None else tombstones.decode(self.blobs.read(digest))
+
+    # --- Operation slots (§12.3, D236) --------------------------------------------------------
+
+    @contextmanager
+    def exclusive(self, dataset: str, kind: OperationKind) -> Generator[None]:
+        """Hold the dataset's operation slot for an operation of ``kind``. Refused
+        (``DATASET_BUSY``) at once if another operation of the dataset runs, or, for an import,
+        a re-import or a withdrawal, while a session is open on it (D236)."""
+        with self.lock:
+            running = self._running.get(dataset)
+            if running is not None:
+                raise StoreRefused(
+                    RefusalCode.DATASET_BUSY,
+                    f"Another operation ({running}) is running on the dataset; try again once it "
+                    "ends",
+                )
+            if kind in _REFUSED_WHILE_OPEN:
+                session = self.db.open_session_of(dataset)
+                if session is not None:
+                    raise StoreRefused(
+                        RefusalCode.DATASET_BUSY,
+                        f"Curation session {session.id} is open on the dataset; publish or "
+                        "discard it first",
+                    )
+            self._running[dataset] = kind
+        try:
+            yield
+        finally:
+            with self.lock:
+                del self._running[dataset]
 
     # --- Labels (§12.3) ------------------------------------------------------------------------
 
     def publish(self, dataset: str, manifest: str, by: str, *, action: str = "publish") -> int:
         """Give ``manifest`` the dataset's next label, recorded in the audit trail as ``action``,
-        one of ``redaction.RELEASE_ACTIONS``. Refused for a withdrawn manifest, whose blobs a
-        sweep may have deleted, before anything else; the store's lock is held from the check
-        that every blob is stored to the label, so no sweep runs between them."""
-        if action not in redaction.RELEASE_ACTIONS:
-            raise ValueError(f"{action} is not an action that names releases")
-        with self.lock:
-            if self.db.is_withdrawn(manifest):
-                raise StoreRefused(
-                    RefusalCode.RELEASE_WITHDRAWN,
-                    "The release was withdrawn, and is never published again",
-                )
-            found = self._whole(manifest)
-            if found.dataset != dataset:
-                raise StoreRefused(
-                    RefusalCode.INVALID_VALUE, f"The release is of dataset {found.dataset}"
-                )
-            label = self._label(dataset, manifest, by, action)
+        one of ``redaction.RELEASE_ACTIONS``, then sweep. This is the store's own step, which
+        takes no operation slot: imports and sessions publish through ``commit_label``."""
+        with self.db.transaction() as db:
+            label = self.commit_label(db, dataset, manifest, by, action)
         self.sweep()
         return label
 
-    def _label(self, dataset: str, manifest: str, by: str, action: str) -> int:
+    def commit_label(
+        self,
+        db: sqlite3.Connection,
+        dataset: str,
+        manifest: str,
+        by: str,
+        action: str,
+        detail: Mapping[str, JsonValue] | None = None,
+        session: int | None = None,
+    ) -> int:
+        """In the transaction ``db``, give ``manifest`` the dataset's next label, with an audit
+        entry of ``action`` (one of ``redaction.RELEASE_ACTIONS``) whose detail is the label, the
+        manifest and ``detail``. Refused for a withdrawn manifest, whose blobs a sweep may have
+        deleted, before anything else; the transaction holds the store's lock from the check that
+        every blob is stored to the label, so no sweep runs between them."""
+        if action not in redaction.RELEASE_ACTIONS:
+            raise ValueError(f"{action} is not an action that names releases")
+        if self.db.is_withdrawn(manifest):
+            raise StoreRefused(
+                RefusalCode.RELEASE_WITHDRAWN,
+                "The release was withdrawn, and is never published again",
+            )
+        found = self._whole(manifest)
+        if found.dataset != dataset:
+            raise StoreRefused(
+                RefusalCode.INVALID_VALUE, f"The release is of dataset {found.dataset}"
+            )
         at = self.now()
-        with self.db.transaction() as db:
-            self.db.record_manifest(db, manifest, dataset, at)
-            label = self.db.next_label(db, dataset)
-            self.db.add_label(db, dataset, label, manifest, at, by)
-            self.db.audit(db, at, dataset, by, action, {"label": label, "manifest": manifest})
+        self.db.record_manifest(db, manifest, dataset, at)
+        label = self.db.next_label(db, dataset)
+        self.db.add_label(db, dataset, label, manifest, at, by)
+        written: dict[str, JsonValue] = {**(detail or {}), "label": label, "manifest": manifest}
+        self.db.audit(db, at, dataset, by, action, written, session)
         return label
 
     def _whole(self, manifest: str) -> Manifest:
@@ -339,15 +429,18 @@ class Store:
             return Resolution(dataset, pin, named[-1].label, status)
         if pin in drafts:
             return Resolution(dataset, pin, "draft", "draft")
+        if self.db.is_draft_state(dataset, pin):
+            return Resolution(dataset, pin, None, "discarded")
         raise StoreRefused(RefusalCode.UNKNOWN_RELEASE, "No release of the dataset has that hash")
 
     def withdraw(self, dataset: str, release: int | str, by: str) -> list[int]:
-        """Withdraw a release, by label or manifest hash: every label of its manifest (§12.3).
-        Returns those labels."""
-        manifest = self.resolve(dataset, release).manifest
-        with self.db.transaction() as db:
-            withdrawn = self.record_withdrawal(db, dataset, manifest, by)
-        self.withdrawn([manifest])
+        """Withdraw a release, by label or manifest hash: every label of its manifest (§12.3),
+        in the dataset's operation slot. Returns those labels."""
+        with self.exclusive(dataset, "withdraw"):
+            manifest = self.resolve(dataset, release).manifest
+            with self.db.transaction() as db:
+                withdrawn = self.record_withdrawal(db, dataset, manifest, by)
+            self.withdrawn([manifest])
         return withdrawn
 
     def record_withdrawal(
@@ -512,6 +605,7 @@ __all__ = [
     "APP_DB",
     "CHECKPOINT_RETRY",
     "LOCK",
+    "OperationKind",
     "Pin",
     "Resolution",
     "Status",

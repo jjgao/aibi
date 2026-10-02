@@ -22,7 +22,7 @@ string in every row, say), so an import calls it in its worker process (D225).
 
 import io
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -89,6 +89,22 @@ def read(source: Path | bytes) -> list[Column]:
         values = cast(list[object], table.column(field.name).to_pylist())
         found.append(Column(field.name, kind, values))
     return found
+
+
+def read_columns(source: bytes, names: Collection[str]) -> tuple[int, list[Column]]:
+    """The file's row count, and those of ``names`` it has, in the file's order; only they are
+    read and decompressed."""
+    file = pq.ParquetFile(pa.BufferReader(source))
+    wanted = [field.name for field in file.schema_arrow if field.name in names]
+    rows = file.metadata.num_rows
+    if not wanted:
+        return rows, []
+    table = file.read(columns=wanted, use_threads=False)
+    found: list[Column] = []
+    for field in table.schema:
+        values = cast(list[object], table.column(field.name).to_pylist())
+        found.append(Column(field.name, _physical(field.type), values))
+    return rows, found
 
 
 def _physical(given: pa.DataType) -> PhysicalType:
@@ -264,6 +280,7 @@ __all__ = [
     "UnreadableParquetError",
     "UnsupportedTypeError",
     "read",
+    "read_columns",
     "read_source",
     "write",
 ]

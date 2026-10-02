@@ -335,6 +335,31 @@ def _cut(value: str, length: int) -> str:
     return value[:length].rstrip("_")
 
 
+def _base(name: str, kind: Literal["table", "column"], position: int | None) -> str:
+    """A name's id before collisions; an empty result is ``t_<position>`` or ``c_<position>``,
+    or empty when ``position`` is ``None``."""
+    prefix = "t_" if kind == "table" else "c_"
+    base = normalise(name)
+    if not base:
+        return "" if position is None else f"{prefix}{position}"
+    if base[0].isdigit():
+        return _cut(prefix + base, MAX_IDENTIFIER)
+    return base
+
+
+_SUFFIXED = re.compile(r"^(.*)_([0-9]+)$")
+
+
+def assignment_order(name: str, identifier: str, kind: Literal["table", "column"]) -> int:
+    """Where ``identifier`` comes among the ids ``normalise_names`` assigns to the occurrences of
+    the source name ``name`` (D238): the id without a collision suffix first, then the others by
+    their suffix ``_<n>`` as a number, the order in which suffixes are assigned."""
+    if identifier == _base(name, kind, None):
+        return 0
+    found = _SUFFIXED.fullmatch(identifier)
+    return int(found[2]) if found else 0
+
+
 def normalise_names(
     names: Iterable[str],
     kind: Literal["table", "column"],
@@ -364,7 +389,6 @@ def normalise_names(
         ids_of_name = earlier.get(name, [])
         kept.append(ids_of_name[index] if index < len(ids_of_name) else None)
 
-    prefix = "t_" if kind == "table" else "c_"
     taken: set[str] = {DATASET_DESCRIPTOR_ID} if kind == "table" else set()
     taken.update(assigned for assigned in kept if assigned is not None)
     ids: list[str] = []
@@ -372,11 +396,7 @@ def normalise_names(
         if assigned is not None:
             ids.append(assigned)
             continue
-        base = normalise(name)
-        if not base:
-            base = f"{prefix}{position}"
-        elif base[0].isdigit():
-            base = _cut(prefix + base, MAX_IDENTIFIER)
+        base = _base(name, kind, position)
         candidate = base
         n = 2
         while candidate in taken:

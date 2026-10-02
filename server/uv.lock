@@ -7,6 +7,7 @@ name = "aibi"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "packaging" },
     { name = "pyarrow" },
     { name = "pydantic" },
@@ -17,7 +18,6 @@ dependencies = [
 dev = [
     { name = "hypothesis" },
     { name = "import-linter" },
-    { name = "jsonschema" },
     { name = "pyarrow-stubs" },
     { name = "pyright" },
     { name = "pytest" },
@@ -26,6 +26,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "packaging", specifier = ">=24" },
     { name = "pyarrow", specifier = ">=20" },
     { name = "pydantic", specifier = ">=2.11" },
@@ -36,7 +37,6 @@ requires-dist = [
 dev = [
     { name = "hypothesis", specifier = ">=6.116" },
     { name = "import-linter", specifier = ">=2.1" },
-    { name = "jsonschema", specifier = ">=4.23" },
     { name = "pyarrow-stubs", specifier = ">=20" },
     { name = "pyright", specifier = ">=1.1.390" },
     { name = "pytest", specifier = ">=8.3" },

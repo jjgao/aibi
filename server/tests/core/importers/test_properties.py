@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.errors import ImportRefused
-from aibi.core.importers.run import Imported, import_dataset
+from aibi.core.importers.run import Imported, build_import
 from aibi.core.schema.limits import ImportLimits
 from aibi.core.schema.pack_api import ImportOptions
 from aibi.core.store.store import Pin, Store
@@ -75,6 +75,6 @@ def _import(
 ) -> Imported | set[str]:
     """The import, or the codes of its refusals."""
     try:
-        return import_dataset(store, pin, confinement.confine(path), options)
+        return build_import(store, pin, confinement.confine(path), options)
     except ImportRefused as refused:
         return {str(r.code) for r in refused.refusals}
