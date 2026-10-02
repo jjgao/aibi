@@ -10,7 +10,8 @@ from typing import Annotated
 from pydantic import Field, JsonValue
 
 from aibi.core.schema.ids import JsonPointer, PackCode
-from aibi.core.schema.output import Output, Segment
+from aibi.core.schema.limits import MAX_REFUSALS, REFUSALS
+from aibi.core.schema.output import Output, Segment, text
 
 
 class RefusalCode(StrEnum):
@@ -40,6 +41,8 @@ class RefusalCode(StrEnum):
     CROSS_DATASET_ONLY = "CROSS_DATASET_ONLY"
     UNKNOWN_DATASET = "UNKNOWN_DATASET"
     LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    UNKNOWN_DESCRIPTOR = "UNKNOWN_DESCRIPTOR"
+    """A descriptor refers to one the release does not hold (§13.2)."""
 
 
 class Limit(Output):
@@ -67,3 +70,23 @@ class Refusal(Output):
 def sort_refusals(refusals: list[Refusal]) -> list[Refusal]:
     """Refusals in the order ``validate_document`` returns them: by path, then code (§8.6)."""
     return sorted(refusals, key=lambda refusal: (refusal.path or "", refusal.code))
+
+
+def finish_refusals(refusals: list[Refusal]) -> list[Refusal]:
+    """Refusals as they are returned (§8.6): the first of each (path, code), sorted, and at most
+    ``MAX_REFUSALS``, then one that says how many more were found."""
+    kept: dict[tuple[str | None, str], Refusal] = {}
+    for refusal in refusals:
+        kept.setdefault((refusal.path, str(refusal.code)), refusal)
+    ordered = sort_refusals(list(kept.values()))
+    if len(ordered) <= MAX_REFUSALS:
+        return ordered
+    return [
+        *ordered[:MAX_REFUSALS],
+        Refusal(
+            code=RefusalCode.LIMIT_EXCEEDED,
+            path=None,
+            message=[text(f"{len(ordered) - MAX_REFUSALS} more refusals were left out")],
+            limit=Limit(name=REFUSALS, max=MAX_REFUSALS),
+        ),
+    ]

@@ -5,15 +5,13 @@ import gc
 import json
 import math
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Annotated, Any, get_args, get_origin
+from typing import Any
 
 import jsonschema
 import pytest
-from annotated_types import MaxLen
-from pydantic import BaseModel, StringConstraints, TypeAdapter, ValidationError
-from pydantic.fields import FieldInfo
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from aibi.core.schema import document as document_module
 from aibi.core.schema.document import (
@@ -40,7 +38,6 @@ from aibi.core.schema.limits import (
     MAX_POINTERS,
     MAX_REFUSALS,
     MAX_VALUES,
-    LimitName,
 )
 from aibi.core.schema.loading import (
     DocumentResult,
@@ -558,44 +555,10 @@ def test_other_leaf_limits_are_named() -> None:
         assert refusal.limit.name == name
 
 
-def _annotations(root: type[BaseModel]) -> Iterator[tuple[str, list[object]]]:
-    """Every annotation reachable from a model, with its Annotated metadata."""
-    seen: set[int] = set()
-    pending: list[tuple[str, object, list[object]]] = [(root.__name__, root, [])]
-    while pending:
-        where, annotation, metadata = pending.pop()
-        if id(annotation) in seen and not metadata:
-            continue
-        seen.add(id(annotation))
-        origin = get_origin(annotation)
-        if origin is Annotated:
-            inner, *extra = get_args(annotation)
-            pending.append((where, inner, [*metadata, *extra]))
-            continue
-        yield where, metadata
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            for name, info in annotation.model_fields.items():
-                pending.append((f"{annotation.__name__}.{name}", info.annotation, info.metadata))
-        else:
-            pending.extend((where, arg, []) for arg in get_args(annotation))
-
-
-def _caps_length(extra: object) -> bool:
-    if isinstance(extra, MaxLen):
-        return True
-    if isinstance(extra, StringConstraints):
-        return extra.max_length is not None
-    if isinstance(extra, FieldInfo):
-        return any(_caps_length(inner) for inner in extra.metadata)
-    return False
-
-
-def test_every_length_cap_names_its_limit() -> None:
-    capped = [
-        (where, any(isinstance(extra, LimitName) for extra in metadata))
-        for where, metadata in _annotations(Document)
-        if any(_caps_length(extra) for extra in metadata)
-    ]
+def test_every_length_cap_names_its_limit(
+    length_caps: Callable[[object], list[tuple[str, bool]]],
+) -> None:
+    capped = length_caps(Document)
     assert len(capped) > 25
     assert sorted(where for where, named in capped if not named) == []
 

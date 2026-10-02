@@ -269,7 +269,7 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
 {
   "kind": "dataset | table | column | relationship | coverage | endpoint | concept | analysis | model",
   "id": "a descriptor id (above)",
-  "version": 3,                      // integer, +1 whenever fields change; analyses and model cards use a semantic-version string
+  "version": 3,                      // integer, +1 whenever fields change; analyses and model cards use "X.Y.Z"
   "label": "Human-readable name",
   "definition": "One-paragraph definition in plain text",
   "provenance": { "source": "...", "pipeline": {"name": "...", "version": "..."}, "citation": ["doi:…"] },
@@ -280,13 +280,27 @@ agents and the UI alike. It is rendered as plain text, carried in outputs as mar
 ```
 
 **Curation status.** Every field that has a value has an entry in `curation`; a field without a
-value is `undeclared`. No other place in a descriptor records a status.
+value is `undeclared`. No other place in a descriptor records a status. The curated fields are
+`label`, `definition`, each member of `fields` and each member of a pack's extension object.
+Descriptors in a release (dataset, table, column, relationship, coverage, endpoint) carry exactly
+one entry per field with a value, never with status `undeclared`, which only reports a field
+without one; concepts, analyses and model cards are defined by code or configuration and carry
+none. An absent member is undeclared, and `null` appears only where it is a declared value: a
+table's `primary_key` (no key), a dataset's `min_cell_count` (off), a mapping's `transform` (none),
+an analysis's `cross_dataset` (not across datasets) and a curation entry's `inferred`. Values the
+core leaves to JSON (`inferred`, a pack's extension members, an analysis's parameter and return
+schemas) may hold `null` inside, but an extension member is never `null` itself. Text is never
+empty: a field with empty text has no value, so it is omitted. A descriptor holds only what JSON
+text carries unchanged: Unicode text, and finite numbers within ±(2^53 − 1), an integral number
+being an integer (§7.1). `label` is required. `version` is `X.Y.Z` for analyses and model cards,
+each part at most 16 digits, without pre-release or build parts. Extension members are
+identifiers, at most 64 per pack.
 
 ```jsonc
 CurationStatus = {
   "status": "asserted | proposed | imported | imported_default | undeclared",
   "by": "operator:<self-declared name> | model:<identifier> | agent:<client-declared name> | importer:<name>@<version>",
-  "at": "RFC 3339 timestamp",
+  "at": "RFC 3339 timestamp with an explicit offset, T and Z in upper case, seconds 00–59",
   "evidence": "optional plain text or reference",
   "inferred": "optional: the importer's own inference for this field (§12.3)"
 }
@@ -295,9 +309,13 @@ CurationStatus = {
 - `asserted`: confirmed by an operator. `imported`: taken from the source (a header row, a
   database comment, a declared constraint). `imported_default`: filled in by convention (e.g.
   mapping `NA` to UNKNOWN). `proposed`: suggested by a model, an agent or a tool. `undeclared`:
-  nobody has said.
+  nobody has said. So only `operator:` asserts, only `importer:` imports (`imported`,
+  `imported_default`), and proposals come from `model:`, `agent:` or `importer:`.
 - `by` is always set by the server (§11.1), never taken from a request. `model:` names the in-app
   assistant's registered model card; `agent:` records the name an external client declares.
+  Operator and agent names have 1 to 200 characters, without control characters (C0, DEL and C1)
+  or line breaks (U+2028, U+2029); an importer's name (`[A-Za-z0-9_.-]`) and version (`[A-Za-z0-9_.+-]`) have 1
+  to 200 characters each. Leap seconds are not accepted in `at`.
 - The engine treats undeclared semantics conservatively: an undeclared missing code is
   UNKNOWN, and undeclared coverage never makes a row closed (§6.5).
 - `UNCONFIRMED_SEMANTICS` (§8.3) is raised for every field that canonicalisation or evaluation
@@ -316,9 +334,10 @@ strings), `source` (`{kind: "files" | "database" | "pack", location, commit?}`; 
 credentials, §14), `license`, `data_use` (a list of `OntologyRef`, e.g. GA4GH DUO codes),
 `disclosure` (`{min_cell_count: integer ≥ 2 | null, allow_row_ids: boolean}`, §8.4) and `packs`
 (every pack whose importer created the dataset or whose extensions appear in its descriptors;
-the gate checks this, §13.2). Computed statistics (`n_rows` per table, value distributions,
-observation-state counts, a table-graph summary) are produced when the release is built and
-stored separately from the definitional descriptors (§12.2), never written by hand.
+the gate checks this when `packs` is declared, §13.2). Computed statistics (`n_rows` per table,
+value distributions, observation-state counts, a table-graph summary) are produced when the
+release is built and stored separately from the definitional descriptors (§12.2), never written
+by hand.
 
 ### 5.3 Table descriptor
 
@@ -327,10 +346,10 @@ stored separately from the definitional descriptors (§12.2), never written by h
 | `grain` | Plain-text statement of what one row is (e.g. *one adverse event report*) |
 | `role` | `entity` (rows are things: patients, samples, visits), `link` (a many-to-many linking table: enrolments), `measurement` (observations about a parent: mutation calls, lab results), `event` (time-stamped occurrences: treatments, adverse events) or `coverage` (a coverage, assignment or group table, §5.6). The importer proposes a role; packs declare roles for the tables they create. Coverage proposals follow it (§5.6) |
 | `primary_key` | A list of columns, or `null` for no key; a table without a key can be filtered and aggregated but cannot be a unit |
-| `maps_to` | Optional table concept the rows are instances of (e.g. `core:person`); required for a table referenced across datasets (§7.5) |
+| `maps_to` | Optional table concept the rows are instances of (e.g. `core:person`), without a transform; required for a table referenced across datasets (§7.5) |
 | `time_origin` | For tables with time columns: a time-origin concept (§5.7) |
 | `observation_window` | Reserved for timeline queries (M7); MUST be absent in v1 |
-| `source` | `{kind: "file" | "sheet" | "database" | "pack", name, original_name, parse?}`. For text files, `parse` holds `{format: "csv" | "tsv", delimiter, quote, header_row, skip_rows, encoding}` |
+| `source` | `{kind: "file" | "sheet" | "database" | "pack", name, original_name, parse?}`. For text files (`kind: "file"`) only, `parse` holds every one of `{format: "csv" | "tsv", delimiter, quote, header_row, skip_rows, encoding}`: `delimiter` and `quote` are single characters, a `tsv` file's delimiter is a tab, and `header_row` counts from 0 after the `skip_rows` skipped |
 
 ### 5.4 Column descriptor
 
@@ -338,16 +357,16 @@ stored separately from the definitional descriptors (§12.2), never written by h
 |---|---|
 | `datatype` | `number`, `integer`, `string`, `boolean`, `category`, `list<category>` (the only list type), `date`, `datetime` (stored and compared in UTC), `time_offset` |
 | `units` | UCUM code for numbers and offsets (`a`, `mo`, `d`, `mg/dL`, `[USD]`); required for any number used in a cross-dataset comparison |
-| `range` | Optional declared range `{min, max}`, used for histogram edges under disclosure (§8.4) |
-| `permissible_values` | For categories: `{values: [{value, label, concepts: [OntologyRef]}], ordered: boolean}`; `ordered` means the listed order is meaningful (needed for `range` predicates and for `max` and `min`) |
+| `range` | Optional declared range `{min, max}` in the column's type, with `min` ≤ `max`: numbers (integers for `integer` columns), `YYYY-MM-DD` dates, or RFC 3339 datetimes with an offset, compared in UTC; for number, integer, date, datetime and time-offset columns; used for histogram edges under disclosure (§8.4) |
+| `permissible_values` | For categories: `{values: [{value, label, concepts: [OntologyRef]}], ordered: boolean}`. Values are strings, as category constants are (§6.4), distinct, and never also missing codes; `ordered` (false when absent) means the listed order is meaningful (needed for `range` predicates and for `max` and `min`) |
 | `missing_codes` | Map from a raw token (matched against the cell's canonical string form, §12.2) to `UNKNOWN`, `NOT_APPLICABLE` or `NOT_ASSESSED`, e.g. `{"": "UNKNOWN", "NA": "UNKNOWN", "N/A": "NOT_APPLICABLE", "Not done": "NOT_ASSESSED"}` |
 | `identifier` | `true` for columns whose values identify rows or people (patient numbers, record ids, UUIDs). Primary-key and foreign-key columns are identifiers implicitly. Identifier columns never have value distributions (§8.4) |
 | `concepts` | `[OntologyRef]` describing what the column measures |
 | `maps_to` | Optional concept mapping (§5.7) |
 | `derived` | Optional derivation from other columns of the same table (§5.7) |
-| `list_syntax` | Required for `list<category>`: `{format: "json" | "python" | "delimited", delimiter?}` |
+| `list_syntax` | Required for `list<category>`, and only for it: `{format: "json" | "python" | "delimited", delimiter?}`, with a delimiter of 1 to 8 characters exactly when the format is `delimited` |
 | `completeness` | Declared `complete`, `partial` or `unknown` |
-| `source` | Original column name and any header metadata imported with it |
+| `source` | `{original_name, metadata?}`: the original column name and any header metadata imported with it |
 
 `OntologyRef = {system, code, label, relation: "exact" | "broader" | "narrower" | "related"}`.
 The core accepts any `system` string; packs register the systems they validate (e.g. NCIt,
@@ -368,7 +387,7 @@ table is complete, and over what scope:
 ```jsonc
 {
   "relationship": "rel:mutations.sample_id",
-  "parents": "all" | "undeclared"
+  "parents": "all"                                       // absent: undeclared
     | { "table": "<coverage table>",                      // direct form
         "parent_columns": { "<coverage column>": "<parent key column>" },
         "scope_columns":  { "<coverage column>": "<child scope column>" } }   // optional
@@ -387,14 +406,16 @@ table is complete, and over what scope:
   parents or, with scope columns, the assessed (parent, scope value) tuples. The **grouped
   form** assigns each assessed parent to a group and lists each group's scope values, or marks a
   group as covering every scope value; this is how gene panels (sample → panel → genes) and
-  whole-exome samples are expressed without a row per (sample, gene). `undeclared`: nobody has
-  said. A relationship with no coverage descriptor is `undeclared`.
+  whole-exome samples are expressed without a row per (sample, gene). Without `parents`,
+  coverage is undeclared: nobody has said; so is a relationship with no coverage descriptor.
+  In the column maps, no two columns stand for the same column, and `covers_all_column` is given
+  only with `scope_columns`.
 - Scope columns are matched by equality in v1 (a gene, a visit window). Range-based scope such
   as genomic intervals is out of scope for v1.
 - `record_filter` states what kinds of rows the table holds, as a conjunction of allowed-value
-  lists on categorical columns. A PRESENT value outside the filter, or a NOT_APPLICABLE cell in
-  a filtered column, is a structural error (§13.2); queries are evaluated against it as in §6.5,
-  step 1.
+  lists (distinct strings) on `category` columns, at most 64 columns. A PRESENT value outside the
+  filter, or a NOT_APPLICABLE cell in a filtered column, is a structural error (§13.2); queries
+  are evaluated against it as in §6.5, step 1.
 - `parent_scope` names which parents the table is about (e.g. tumour samples, not blood
   normals). It is evaluated as in §6.5, step 2.
 - Coverage, assignment and group tables have role `coverage`, MUST NOT contain nulls in the
@@ -410,11 +431,11 @@ table is complete, and over what scope:
 
 ### 5.7 Concepts, mappings and derived columns
 
-A **concept** is a dataset-independent descriptor (`kind: concept`) of one of four sorts:
-value concepts, with units or permissible values; table concepts, naming what rows are;
-endpoint concepts, naming time-to-event outcomes; and time-origin concepts, naming what time
-zero means. Concepts are namespaced by who defines them and versioned; canonical forms record
-the versions they use (§7.6).
+A **concept** is a dataset-independent descriptor (`kind: concept`) of one of four sorts, its
+`sort` field: value concepts, with `units` or `permissible_values` but not both; table
+concepts, naming what rows are; endpoint concepts, naming time-to-event outcomes; and
+time-origin concepts, naming what time zero means. Concepts are namespaced by who defines them
+and versioned; canonical forms record the versions they use (§7.6).
 
 The core defines only domain-neutral concepts: `core:person` (table); `core:age_years` (value,
 units `a`); `core:sex` (value; `female`, `male`); and the time origins `core:origin.birth`,
@@ -453,10 +474,13 @@ ConceptMapping = {
 ### 5.8 Endpoint descriptor
 
 `table` (a keyed table), `time_column` (a `time_offset` column; its units are the endpoint's
-units), `status_column`, `event_coding` (`{event: [values], censored: [values]}`), `time_origin`
-(a time-origin concept; defaults to the table's), `entry` (delayed entry: `"at_origin"`,
-`{"column": "<time_offset column on the same clock>"}` or `"undeclared"`, the default), and
-optionally `maps_to` an endpoint concept.
+units), `status_column`, `event_coding` (`{event: [values], censored: [values]}`: at least one
+event value, the values distinct and none both an event and censored), `time_origin` (a
+time-origin concept; defaults to the table's), `entry` (delayed entry: `"at_origin"` or
+`{"column": "<time_offset column on the same clock>"}`; undeclared when absent, the default),
+and optionally `maps_to` an endpoint concept. Like any field, these may be undeclared; an
+endpoint whose table, time, status or event coding is undeclared cannot be used by an analysis
+(M3 refuses it).
 
 - An undeclared `entry` raises `UNCONFIRMED_SEMANTICS` on every survival result that uses the
   endpoint, because survival from an origin that precedes entry into the data is biased
@@ -474,7 +498,7 @@ optionally `maps_to` an endpoint concept.
 A model card (`kind: model`, id `model:<identifier>`) describes a model that proposes
 descriptors or drafts documents: `provider`, `model`, `model_version`, `purpose` (a list),
 `limitations` (plain text) and `configuration_digest` (the hash of the instructions and settings
-in use). Model cards are registered only in server configuration (§11.2).
+in use), all required. Model cards are registered only in server configuration (§11.2).
 
 ---
 
@@ -1222,6 +1246,9 @@ pointer is that of the `"$name"` string, and the message names the parameter; wh
 be written in a pointer because it is not Unicode text, the pointer is that of its object);
 `alternatives` lists what *is* available (A3); `limit` names the limit hit (§14); `counts`
 carries cohort counts with their ids where a refusal reports numbers (e.g. the overlap of §7.4).
+Refusals of a descriptor, such as one `propose_descriptor` receives, point into that descriptor
+in the same way, and rules that span the descriptors of a release point into the list of them
+(`UNKNOWN_DESCRIPTOR` where a descriptor names one the release does not hold).
 `validate_document` returns every refusal, sorted by (`path`, `code`), with these bounds:
 refusals with the same `path` and `code` are merged; a `null` and a refused parameter
 reference are reported wherever they are, except inside a `params` refused as a whole; no
@@ -1274,8 +1301,11 @@ Each analysis is a descriptor (`kind: analysis`, §5.1) plus an implementation:
 
 - Analyses are registered only by the core and by packs, through code review. Users cannot
   upload analyses in v1.
-- `requires` entries are `{role, kind?, on?, datatype?, min?, max?, predicate?}`; `predicate`
-  cites a pack's requirement predicate as `"<pack id>.<name>"` (§10.1).
+- `requires` entries are `{role, kind?, on?, datatype?, min?, max?, predicate?}`, with `kind` one
+  of `endpoint`, `column` or `table`, distinct roles and `min` ≤ `max`; `predicate` cites a pack's
+  requirement predicate as `"<pack id>.<name>"` (§10.1).
+- `library`, `randomness`, `min_group_n` and `min_events` are optional; every other member of
+  `fields` is required, `cross_dataset` included (§7.5).
 - `"on": "unit"` means the endpoint must be on the unit table itself, not reached by a lookup:
   with samples as the unit and a patient-level endpoint, a patient with several samples would be
   counted several times.
@@ -1717,7 +1747,7 @@ stop the import or refuse the change:
 - PRESENT values outside a relationship's `record_filter`, and NOT_APPLICABLE cells in its
   filtered columns;
 - colliding identifiers;
-- a dataset whose descriptors carry extensions of a pack missing from its `packs`.
+- a dataset whose declared `packs` omits a pack whose extensions its descriptors carry.
 
 For proposed rather than declared keys, the proposal is dropped with its evidence instead.
 Semantic gaps do not stop the import; they become `undeclared` or `imported_default` fields in
@@ -1844,16 +1874,20 @@ flags and counts.
   constant, 10,000 per note and 64 per identifier or name (also inside a compound reference,
   which has at most 256 characters, or 1,108 for a relationship or coverage id with 16 key
   columns); 16,384 characters per JSON Pointer to a value, and 67,108,864 (64 Mi) for the
-  pointers to all of a document's values together, both also after substitution; 16 steps per
-  path; 16 columns per unit key or scope; 256 clauses per list; 256 parameters; 64 datasets per
-  cohort; 16 packs; and 1,000 refusals returned. A structured unit key costs several JSON values,
-  so long `ids` lists can reach the value limit before the list limit. Imports have size and
-  decompression-ratio limits.
-  Every tool call has a wall-clock limit that covers the analysis stage, enforced by running
-  queries and analyses in worker processes that can be killed; each worker has a DuckDB memory
-  limit. Categorical levels per analysis (at most 150) and resampling replicates are capped.
-  Clients of every router are rate-limited, and the number of open proposals is capped.
-  Every refusal names the limit it hit (§8.6).
+  pointers to all of a document's values together, both also after substitution; 16 steps per path;
+  16 columns per unit key or scope; 256 clauses per list; 256 parameters; 64 datasets per cohort; 16
+  packs; and 1,000 refusals returned. A structured unit key costs several JSON values, so long `ids`
+  lists can reach the value limit before the list limit. A descriptor has the same limits on its
+  size (in bytes and JSON values), nesting and paths, and 200 characters per name, 4,096 per label,
+  key or other string, 10,000 per text, 16 columns per key or relationship, 10,000 members per list,
+  value map, missing-code map or curation map, and 64 per other list or map (extension members per
+  pack, metadata, event codes, record filter columns, requirements, methods, caveats). A
+  descriptor's `parent_scope` is a clause, so its constants have a document's limits. Imports have
+  size and decompression-ratio limits. Every tool call has a wall-clock limit that covers the
+  analysis stage, enforced by running queries and analyses in worker processes that can be killed;
+  each worker has a DuckDB memory limit. Categorical levels per analysis (at most 150) and
+  resampling replicates are capped. Clients of every router are rate-limited, and the number of open
+  proposals is capped. Every refusal names the limit it hit (§8.6).
 - **Disclosure.** §8.4, including its limits.
 
 ---
@@ -2089,14 +2123,24 @@ that revise or refine earlier ones say so.
 | D190 | Bounded validation (M0) | Documents are capped in nesting depth, JSON values and the length of the paths to them, one by one and together, as written and after substitution; refusals are merged by (path, code); schema problems are not reported inside refused values or where they only follow from one, while nulls and refused references are reported where they are, except inside a refused `params`; and refusals are capped at 1,000 | A small document could otherwise make validation take minutes and gigabytes: a parameter used many times, or values that are wrong everywhere |
 | D191 | Ids across re-imports by occurrence (refines D186) | The *k*-th occurrence of a name keeps its *k*-th previous id; ids have at most 64 characters | Spreadsheets repeat and omit headers, and one id per name moved ids between columns |
 | D192 | Cross-dataset rules checked on load (M0) | The unit, concept references and `via` by dataset are checked without a release | They depend only on the document, so waiting for resolution would only delay the refusal |
+| D193 | Descriptor refusals and release rules (M0) | Descriptors are loaded like documents, with refusals that point into them; rules that span a release's descriptors (unique ids, one dataset descriptor, roles) are checked on the list | Agents propose descriptors (§11.1), so their errors must be as precise as a document's |
+| D194 | Values compared as JSON values (M0) | Event codes and constants compare as JSON values: numbers by value, strings and booleans apart; permissible values and record-filter values are strings | Values reach the core from JSON, where 1 and 1.0 are one number, and category constants are strings (§6.4) |
+| D195 | Undeclared by absence (M0) | `parents` and `entry` are undeclared when absent; neither has an `"undeclared"` value | A value would need a curation status, and `undeclared` only reports a field without a value |
+| D196 | Typed declared ranges (M0) | A declared range has its column's type; datetimes are compared in UTC | Text order is not time order across offsets, and a range of another type cannot bound the column |
+| D197 | Who sets a status (M0) | Only an operator asserts, only an importer imports, and proposals come from models, agents and importers | A cheap check that a status claims no more than its source (A5) |
+| D198 | JSON-safe descriptors (M0) | Descriptors built in code hold only values JSON text carries unchanged: Unicode text, finite numbers within ±(2^53 − 1), integral numbers as integers. The limits on size (in bytes and JSON values), nesting and paths apply to a descriptor's JSON text and are checked when it is loaded | Every descriptor round-trips through its JSON text, and manifests hash that text |
+| D199 | Whole releases (M0) | A release holds every descriptor its descriptors name, a coverage's `parent_scope` included (with the scope columns of its `covered` leaves), and every `core:` concept they name is a core concept of the right sort; relationships and coverage parent columns lead to the parent's declared key; coverage tables have role `coverage` and are in no relationship; record filters are on `category` columns; an endpoint's table has a key and its time and entry columns are time offsets; derived columns form no cycle; packs with extensions are listed in `packs`. A rule whose inputs are undeclared (a key, a role, `packs`) is not checked, and each rule is checked as far as the release allows | These need no data, so they are checked when a release is assembled, before the gate's data checks (§13.2) |
 
 ---
 
 ## Appendix B. Change log
 
-- **v0.8.1** — Encodings settled by the M0 document schemas (D188–D192): parsing rules for text,
-  numbers and nesting; verbatim notes and parameter values; bounds on substitution and on the
-  refusals returned; id lengths and re-import by occurrence; the static cross-dataset checks.
+- **v0.8.1** — Encodings settled by the M0 document and descriptor schemas (D188–D199): parsing
+  rules for text, numbers and nesting; verbatim notes and parameter values; bounds on
+  substitution and on the refusals returned; id lengths and re-import by occurrence; the static
+  cross-dataset checks; descriptor refusals, release rules and limits; values compared as JSON
+  values; undeclared coverage and entry by absence; typed declared ranges; who sets a status;
+  JSON-safe descriptors; whole releases.
 - **v0.8** — Fourth review round, verifying v0.7 (D176–D187): canonicalisation to a fixpoint;
   conditions that must be TRUE for an intermediate FALSE; flags of dropped children; event-free
   units left out of Cox fits; totals, pooling order, small-count gates and empty bins under

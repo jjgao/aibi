@@ -1,4 +1,4 @@
-"""Default size limits for documents (SPEC §7.1, §14).
+"""Default size limits for documents and descriptors (SPEC §7.1, §14).
 
 Every refusal names the limit it hit, by one of the names below; clients may depend on them.
 """
@@ -12,10 +12,11 @@ from pydantic_core import PydanticCustomError
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 """Bytes in a document as written, and in the document after ``params`` substitution."""
 MAX_DEPTH = 64
-"""Nesting of arrays and objects in a document as written."""
+"""Nesting of arrays and objects in a document as written, and in a descriptor."""
 MAX_VALUES = 200_000
 """JSON values (strings, numbers, booleans, arrays and objects) in a document, as written and
-after substitution; it bounds the work of validating a document that is wrong everywhere."""
+after substitution, and in a descriptor; it bounds the work of validating one that is wrong
+everywhere."""
 MAX_LIST = 10_000
 """Members of a ``values``, ``ids`` or scope value list (SPEC §14)."""
 MAX_STRING = 4_096
@@ -29,7 +30,9 @@ MAX_IDENTIFIER = 64
 MAX_PATH_STEPS = 16
 """Steps in a path, and entries in a quantifier list."""
 MAX_COLUMNS = 16
-"""Columns in a unit key, and scope columns in a ``covered`` leaf."""
+"""Columns in a unit key, a scope, a table key or a relationship."""
+MAX_ENTRIES = 64
+"""Members of the other short lists and maps in descriptors (metadata, event codes, caveats)."""
 MAX_CLAUSES = 256
 """Clauses in one ``all``, ``any`` or ``where`` list, before the canonical caps of M2."""
 MAX_COHORTS = 6
@@ -43,18 +46,23 @@ MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
 
 MAX_POINTER = 16_384
-"""Characters in the JSON Pointer to any value."""
+"""Characters in the JSON Pointer to any value of a document or descriptor."""
 MAX_POINTERS = 64 * 2**20
-"""Characters in the JSON Pointers to all of a document's values, together: long keys above
-many values would otherwise make validation errors, which each carry their path, large."""
+"""Characters in the JSON Pointers to all of a document's or descriptor's values, together: long
+keys above many values would otherwise make validation errors, which each carry their path,
+large."""
 
 DOCUMENT_BYTES = "document_bytes"
+DESCRIPTOR_BYTES = "descriptor_bytes"
 SUBSTITUTED_BYTES = "substituted_document_bytes"
 NESTING_DEPTH = "nesting_depth"
 JSON_VALUES = "json_values"
 LIST_MEMBERS = "list_members"
 CONSTANT_CHARACTERS = "constant_characters"
 NOTE_CHARACTERS = "note_characters"
+STRING_CHARACTERS = "string_characters"
+TEXT_CHARACTERS = "text_characters"
+ENTRIES = "entries"
 NAME_CHARACTERS = "name_characters"
 IDENTIFIER_CHARACTERS = "identifier_characters"
 REFERENCE_CHARACTERS = "reference_characters"
@@ -110,7 +118,9 @@ __all__ = [
     "COHORTS",
     "CONSTANT_CHARACTERS",
     "DATASETS",
+    "DESCRIPTOR_BYTES",
     "DOCUMENT_BYTES",
+    "ENTRIES",
     "IDENTIFIER_CHARACTERS",
     "JSON_VALUES",
     "KEY_COLUMNS",
@@ -121,6 +131,7 @@ __all__ = [
     "MAX_DATASETS",
     "MAX_DEPTH",
     "MAX_DOCUMENT_BYTES",
+    "MAX_ENTRIES",
     "MAX_IDENTIFIER",
     "MAX_LIST",
     "MAX_NAME",
@@ -144,7 +155,9 @@ __all__ = [
     "REFERENCE_CHARACTERS",
     "REFUSALS",
     "SCOPE_COLUMNS",
+    "STRING_CHARACTERS",
     "SUBSTITUTED_BYTES",
+    "TEXT_CHARACTERS",
     "VIEWS",
     "LimitName",
     "map_cap",

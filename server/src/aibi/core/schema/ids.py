@@ -57,6 +57,7 @@ ISSUANCE_ID_RE = re.compile(r"^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 """``iss:`` and a ULID in Crockford's base 32; never hashed."""
 DECIMAL_INTEGER_RE = re.compile(r"^(?:0|-?[1-9][0-9]*)$")
 PACK_CODE_RE = re.compile(rf"^{IDENT}\.{CODE}$")
+ANY_CODE_RE = re.compile(rf"^(?:{IDENT}\.)?{CODE}$")
 
 MAX_SAFE_INTEGER = 2**53 - 1
 """Integers beyond ±(2^53 - 1) are carried as decimal strings (SPEC §5.1)."""
@@ -120,6 +121,11 @@ def pack_namespace(value: str) -> str:
     if _namespace(value, ".") in RESERVED_PACK_IDS:
         raise PydanticCustomError("reserved_namespace", "The namespace is a pack id")
     return value
+
+
+def code_namespace(value: str) -> str:
+    """A code with a namespace is a pack's: the namespace is a pack id."""
+    return pack_namespace(value) if "." in value else value
 
 
 def _refused(*patterns: str) -> Any:
@@ -259,6 +265,26 @@ PackCode = Annotated[
     _refused(_prefixes(RESERVED_PACK_IDS, ".")),
 ]
 """A pack's refusal or caveat code: ``<pack id>.<CODE>``."""
+AnyCode = Annotated[
+    str,
+    _form(ANY_CODE_RE, _COMPOUND),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
+    NO_DOUBLE_UNDERSCORE,
+    AfterValidator(code_namespace),
+    _refused(_prefixes(RESERVED_PACK_IDS, ".")),
+]
+"""A core code, unprefixed, or a pack's."""
+PackName = Annotated[
+    str,
+    _form(PACK_LEAF_KIND_RE, _COMPOUND),
+    _REFERENCE_LIMIT,
+    IDENTIFIER_PARTS,
+    NO_DOUBLE_UNDERSCORE,
+    AfterValidator(pack_namespace),
+    _refused(_prefixes(RESERVED_PACK_IDS, ".")),
+]
+"""Something a pack names, ``<pack id>.<name>``: a leaf kind or a requirement predicate."""
 Name = Annotated[str, _form(NAME_RE, MAX_IDENTIFIER), _LIMIT]
 """A cohort or parameter name."""
 JsonPointer = Annotated[str, StringConstraints(pattern=JSON_POINTER_RE.pattern)]

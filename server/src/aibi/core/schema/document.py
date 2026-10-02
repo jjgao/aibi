@@ -746,7 +746,9 @@ _PACK_KIND = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 that a long one hits."""
 
 
-def _clause_tag(value: object) -> str:
+def clause_tag(value: object) -> str:
+    """The form a value is read as: ``leaf:<core kind>``, ``leaf:pack``, ``clause:<combinator>``,
+    or ``bad:kind`` and ``bad:shape`` for the members that refuse it."""
     if isinstance(value, dict):
         value = cast(dict[str, object], value)
         if "kind" in value:
@@ -781,7 +783,7 @@ _ClauseUnion = Annotated[
     | Annotated[UnknownClause, Tag("clause:unknown")]
     | Annotated[SkipJsonSchema[object], PlainValidator(_refuse_unknown_kind), Tag("bad:kind")]
     | Annotated[SkipJsonSchema[object], PlainValidator(_refuse_shape), Tag("bad:shape")],
-    Discriminator(_clause_tag),
+    Discriminator(clause_tag),
 ]
 """The runtime union. Invalid inputs are routed to the two ``bad:`` members, which only raise."""
 
