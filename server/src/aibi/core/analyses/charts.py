@@ -19,7 +19,8 @@ another's (a category named ``a, b`` or ``other values`` is quoted whole); for n
 histogram bin as the pass left the bins, its count, one row of the facet per cohort, each bin
 labelled by its interval (``[0, 30)``, ``(-∞, 0)``, ``[60, 100]``), so that bins merged in one
 cohort and not in another are told apart, in order of their edges. A position whose categories or
-histogram are suppressed has no row.
+histogram are suppressed has no row. A column that counts rows (D378) is drawn alike, its bars
+the rows' proportions or the rows per bin, and says rows where the others say units.
 
 ``compare.columns`` has one chart per column, in parameter order (D336): for categories, the
 bars of each cohort's categories as ``summary.distribution`` draws them; for numbers, each
@@ -47,6 +48,7 @@ from pydantic import JsonValue
 
 from aibi.core.schema.analyses import (
     CategoryDistribution,
+    CategoryRows,
     ColumnsValues,
     CoxTerm,
     CoxValues,
@@ -55,6 +57,7 @@ from aibi.core.schema.analyses import (
     HistogramBin,
     NumberComparison,
     NumberDistribution,
+    NumberRows,
     SurvivalValues,
 )
 
@@ -133,7 +136,7 @@ def distribution_charts(
 
 
 def _category_rows(
-    found: CategoryDistribution, position: int, labels: Sequence[str]
+    found: CategoryDistribution | CategoryRows, position: int, labels: Sequence[str]
 ) -> list[JsonValue]:
     rows: list[JsonValue] = []
     for share in found.categories or []:
@@ -155,10 +158,12 @@ def _category_rows(
     return rows
 
 
-def _category_chart(rows: list[JsonValue], column: int) -> dict[str, JsonValue]:
+def _category_chart(
+    rows: list[JsonValue], column: int, counted: str = "units"
+) -> dict[str, JsonValue]:
     return {
         "description": (
-            f"Column {column}: the proportion of each cohort's units in each category, among "
+            f"Column {column}: the proportion of each cohort's {counted} in each category, among "
             "those with a value"
         ),
         "data": {"values": rows},
@@ -183,10 +188,12 @@ def _column_chart(
 ) -> dict[str, JsonValue]:
     rows: list[JsonValue] = []
     intervals: dict[tuple[float, float], str] = {}
-    numbers = isinstance(values.positions[0].columns[column], NumberDistribution)
+    first = values.positions[0].columns[column]
+    numbers = isinstance(first, NumberDistribution | NumberRows)
+    counted = "rows" if isinstance(first, CategoryRows | NumberRows) else "units"
     for position, at in enumerate(values.positions):
         found = at.columns[column]
-        if isinstance(found, CategoryDistribution):
+        if isinstance(found, CategoryDistribution | CategoryRows):
             rows += _category_rows(found, position, labels)
         elif found.histogram is not None:
             for one in found.histogram.bins:
@@ -208,7 +215,7 @@ def _column_chart(
     if numbers:
         return {
             "description": (
-                f"Column {column}: each cohort's units per histogram bin, the bins by their "
+                f"Column {column}: each cohort's {counted} per histogram bin, the bins by their "
                 "intervals from the lowest"
             ),
             "data": {"values": rows},
@@ -222,16 +229,16 @@ def _column_chart(
                         "sort": [intervals[bounds] for bounds in sorted(intervals)],
                         "title": "Bin",
                     },
-                    "y": {"field": "count", "type": "quantitative", "title": "Units"},
+                    "y": {"field": "count", "type": "quantitative", "title": counted.title()},
                     "tooltip": [
                         {"field": "low", "type": "quantitative", "title": "From"},
                         {"field": "high", "type": "quantitative", "title": "To"},
-                        {"field": "count", "type": "quantitative", "title": "Units"},
+                        {"field": "count", "type": "quantitative", "title": counted.title()},
                     ],
                 },
             },
         }
-    return _category_chart(rows, column)
+    return _category_chart(rows, column, counted)
 
 
 def columns_charts(values: ColumnsValues, labels: Sequence[str]) -> list[dict[str, JsonValue]]:

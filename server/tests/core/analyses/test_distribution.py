@@ -7,7 +7,7 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,7 +15,7 @@ from aibi.core.analyses import stats
 from aibi.core.analyses.charts import distribution_charts
 from aibi.core.analyses.distribution import TooLarge, TooManyCategories
 from aibi.core.engine import build
-from aibi.core.engine.variables import Joint, Materialised
+from aibi.core.engine.variables import Joint, Materialised, RowCounts
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.caveats import CaveatCode
 from aibi.core.schema.refusals import Limit, RefusalCode
@@ -33,6 +33,16 @@ AGE = {"column": "customers.age"}
 AMOUNT = {"column": "orders.amount", "aggregate": "mean"}
 ORDERS = {"column": "orders.order_id", "aggregate": "count", "bins": [0, 1, 2, 3]}
 WEB = {"column": "orders.channel", "aggregate": "some", "values": ["web"]}
+CHANNELS = {"column": "orders.channel", "count": "rows"}
+AMOUNTS = {"column": "orders.amount", "count": "rows"}
+ORDERED_TIERS = {
+    "column": "customers.tier",
+    "via": [
+        {"rel": "rel:orders.customer", "dir": "down"},
+        {"rel": "rel:orders.customer", "dir": "up"},
+    ],
+    "count": "rows",
+}
 YOUNG = {"kind": "value", "column": "customers.age", "range": {"lt": 45}}
 OLD = {"kind": "value", "column": "customers.age", "range": {"gte": 45}}
 
@@ -52,6 +62,21 @@ def made(
         MappingProxyType(by_reason),
         frozenset(),
     )
+
+
+def counted(
+    units: Mapping[int, int],
+    values: Mapping[Any, int],
+    excluded_rows: Mapping[str, int] | None = None,
+    excluded: Mapping[str, int] | None = None,
+) -> Materialised:
+    """A count of rows materialised over a cohort: its pooled units by the rows each reached,
+    their rows' values and their rows excluded by reason, and its units excluded by reason."""
+    found = made(units, excluded)
+    by_reason = dict.fromkeys(ExclusionReason, 0)
+    by_reason.update({ExclusionReason(reason): n for reason, n in (excluded_rows or {}).items()})
+    rows = RowCounts(MappingProxyType(dict(values)), MappingProxyType(by_reason))
+    return Materialised(found.values, found.excluded_units, found.excluded, found.marks, rows)
 
 
 def column(outcome: Any, position: int, index: int) -> dict[str, Any]:
@@ -706,16 +731,6 @@ def test_a_category_column_read_twice_once_with_bins_is_told_bins_divide_numbers
     assert _refusals(found) == [("INVALID_VALUE", "/views/0/params/columns/1/bins")]
 
 
-def test_counting_rows_is_not_supported_until_its_part(check: Check, shop: Shop) -> None:
-    found = check(shop_document({"column": "orders.channel", "count": "rows"}), shop(extended=True))
-    [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (
-        RefusalCode.NOT_SUPPORTED,
-        "/views/0/params/columns/0/count",
-    )
-    assert "M3.2e (#52)" in json.dumps([s.model_dump() for s in refusal.message])
-
-
 def test_under_k_whether_a_column_has_too_many_categories_depends_on_its_declaration_alone(
     distributed: Distributed, summarised: Summarised
 ) -> None:
@@ -756,3 +771,612 @@ def test_a_histogram_takes_at_most_65_edges_under_the_limit_bin_edges(
     assert refusal.limit == Limit(name="bin_edges", max=65)
     [short] = check(shop_document({**AGE, "bins": [1]}), shop(extended=True)).refusals
     assert short.code == RefusalCode.INVALID_VALUE
+
+
+# --- Rows (D378, D379) -------------------------------------------------------------------------
+
+
+def test_a_count_of_rows_gives_each_category_its_rows_over_the_rows_with_a_value(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([CHANNELS])
+    given = counted({2: 3, 0: 1}, {"web": 3, "shop": 2, "tram": 1}, {"NOT_ASSESSED": 1})
+    found = column(summarised(view, [4], [([given], None)]), 0, 0)
+    assert found["kind"] == "category_rows"
+    shares = [(c["values"][0]["data"], c["proportion"]["numerator"]) for c in found["categories"]]
+    assert shares == [("shop", 2), ("web", 3), ("phone", 0), ("tram", 1)]
+    assert {c["proportion"]["denominator"] for c in found["categories"]} == {6}
+    assert found["categories"][0]["proportion"]["denominator_definition"] == {
+        "position": 0,
+        "predicate": None,
+        "counts": "rows",
+    }
+    assert found["excluded_rows"]["NOT_ASSESSED"] == 1
+    assert set(found["excluded_rows"]) == {reason.value for reason in ExclusionReason}
+
+
+def test_undeclared_categories_follow_the_declared_in_utf16_order_for_units_and_rows_alike(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """Without a disclosure setting (D329, D378): a value above the basic plane sorts before one
+    of U+FF5E in UTF-16, and after it by code point."""
+    undeclared = {"\uff5e": 1, "tram": 1, "\U0001f68b": 1, "bus": 1}
+    others = ["bus", "tram", "\U0001f68b", "\uff5e"]
+    for variable, one, declared in (
+        (CHANNELS, counted({5: 1}, {**undeclared, "web": 1}), ["shop", "web", "phone"]),
+        (TIER, made({**undeclared, "gold": 1}), ["gold", "silver", "bronze"]),
+    ):
+        found = column(summarised(distributed([variable]), [5], [([one], None)]), 0, 0)
+        assert [c["values"][0]["data"] for c in found["categories"]] == [*declared, *others]
+
+
+def test_a_count_of_rows_of_numbers_summarises_the_rows_values(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([AMOUNTS])
+    rows = {10.5: 2, 20.5: 1, 190.0: 1}
+    given = counted({2: 2}, rows, {"NO_INFORMATION": 1, "NOT_APPLICABLE": 2})
+    found = column(summarised(view, [2], [([given], None)]), 0, 0)
+    weighted = sorted(rows.items())
+    assert found["kind"] == "number_rows"
+    assert found["n"] == 4
+    assert found["mean"] == stats.mean(weighted)
+    assert found["median"] == stats.quantile(weighted, 0.5)
+    assert (found["min"], found["max"]) == (10.5, 190.0)
+    assert found["histogram"]["edges_from"] == "range"
+    assert sum(one["count"] for one in found["histogram"]["bins"]) == 4
+    assert (found["excluded_rows"]["NO_INFORMATION"], found["excluded_rows"]["NOT_APPLICABLE"]) == (
+        1,
+        2,
+    )
+
+
+def test_a_count_of_rows_of_a_value_beyond_the_magnitude_bound_is_not_summarised(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    """§8.2: an output holds no number beyond ±(2^53 − 1), a row's as a unit's."""
+    largest = 2**53 - 1
+    view = distributed([AMOUNTS])
+    for beyond in (largest + 1, -(largest + 1), 2.0**60):
+        with pytest.raises(TooLarge):
+            summarised(view, [1], [([counted({2: 1}, {beyond: 1, 0: 1})], None)])
+    edge = column(
+        summarised(view, [1], [([counted({2: 1}, {largest: 1, largest - 1: 1})], None)]), 0, 0
+    )
+    assert (edge["min"], edge["max"]) == (largest - 1, largest)
+
+
+def test_with_no_row_a_count_of_rows_estimates_nothing_but_the_histogram_of_a_range(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([AMOUNTS, CHANNELS])
+    none = counted({0: 3}, {})
+    found = summarised(view, [3], [([none, none], Joint(3, 0, none.excluded))])
+    amounts = column(found, 0, 0)
+    assert amounts["n"] == 0
+    assert set(amounts["not_estimable"]) == {f"/{name}" for name in STATISTICS}
+    assert sum(one["count"] for one in amounts["histogram"]["bins"]) == 0
+    channels = column(found, 0, 1)
+    assert [c["proportion"]["estimate"] for c in channels["categories"]] == [None] * 3
+
+
+def test_analysed_counts_the_units_a_count_of_rows_pools_those_with_no_rows_included(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([CHANNELS])
+    given = counted({0: 2, 3: 1}, {"web": 3}, excluded={"NOT_COVERED": 2})
+    found = summarised(view, [5], [([given], None)])
+    [analysed] = found.analysed
+    assert (analysed.n, analysed.excluded_units) == (3, 2)
+    assert analysed.excluded is not None
+    assert analysed.excluded["NOT_COVERED"] == 2
+    assert column(found, 0, 0)["categories"][1]["proportion"]["denominator"] == 3
+
+
+def test_rows_left_out_for_what_is_unknown_raise_unknown_excluded_and_not_applicable_ones_do_not(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([CHANNELS])
+    applicable = summarised(view, [1], [([counted({1: 1}, {}, {"NOT_APPLICABLE": 1})], None)])
+    assert CaveatCode.UNKNOWN_EXCLUDED not in codes(applicable)
+    unknown = summarised(view, [1], [([counted({1: 1}, {}, {"NO_INFORMATION": 1})], None)])
+    [caveat] = [c for c in unknown.caveats if c.code == CaveatCode.UNKNOWN_EXCLUDED]
+    assert caveat.affects == ["/values"]
+    assert "excluded_rows" in "".join(part.model_dump().get("text", "") for part in caveat.message)
+
+
+def test_a_count_of_rows_is_never_summarised_under_k(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([CHANNELS])
+    with pytest.raises(ValueError, match="D379"):
+        summarised(view, [1], [([counted({1: 1}, {"web": 1})], None)], k=3)
+
+
+def test_the_shop_s_rows_are_counted_by_the_reference_evaluator_as_its_orders_are(
+    analyse: Analyse, shop: Shop, rows: Callable[..., Any]
+) -> None:
+    [analysed] = analyse(shop_document(CHANNELS, AMOUNTS), shop(extended=True))
+    given = rows(extended=True)
+    ages = {c["customer_id"]: c["age"] for c in given["customers"]}
+    for position, young in enumerate((True, False)):
+        orders = [o for o in given["orders"] if (ages[o["customer_id"]] < 45) == young]
+        channels = column(analysed.outcome, position, 0)
+        by_channel = {
+            c["values"][0]["data"]: c["proportion"]["numerator"] for c in channels["categories"]
+        }
+        assert by_channel == {
+            channel: sum(o["channel"] == channel for o in orders)
+            for channel in ("shop", "web", "phone")
+        }
+        amounts = column(analysed.outcome, position, 1)
+        given_amounts = sorted(float(o["amount"]) for o in orders if o["amount"] is not None)
+        assert amounts["n"] == len(given_amounts)
+        assert amounts["excluded_rows"]["NO_INFORMATION"] == len(orders) - len(given_amounts)
+        assert (amounts["min"], amounts["max"]) == (given_amounts[0], given_amounts[-1])
+        customers = sum((age < 45) == young for age in ages.values())
+        assert analysed.outcome.analysed[position].n == customers
+    result = analysed.result
+    assert [chart["description"] for chart in result.charts] == [
+        "Column 0: the proportion of each cohort's rows in each category, among those with a value",
+        "Column 1: each cohort's rows per histogram bin, the bins by their intervals from the "
+        "lowest",
+    ]
+    encoding = cast(dict[str, Any], result.charts[1])["spec"]["encoding"]
+    assert encoding["y"]["title"] == "Rows"
+    assert [one["title"] for one in encoding["tooltip"]] == ["From", "To", "Rows"]
+    assert CaveatCode.UNKNOWN_EXCLUDED in {caveat.code for caveat in result.caveats}
+
+
+def test_a_row_is_counted_once_for_each_path_and_each_unit_that_reaches_it(
+    analyse: Analyse, shop: Shop, rows: Callable[..., Any]
+) -> None:
+    given = rows()
+    tiers = {c["customer_id"]: c["tier"] for c in given["customers"]}
+    ages = {c["customer_id"]: c["age"] for c in given["customers"]}
+    [by_order] = analyse(shop_document(ORDERED_TIERS), shop())
+    young = [o for o in given["orders"] if ages[o["customer_id"]] < 45]
+    categories = column(by_order.outcome, 0, 0)["categories"]
+    assert {c["values"][0]["data"]: c["proportion"]["numerator"] for c in categories} == {
+        tier: sum(tiers[o["customer_id"]] == tier for o in young)
+        for tier in ("gold", "silver", "bronze")
+    }
+    assert column(by_order.outcome, 0, 0)["excluded_rows"]["NOT_ASSESSED"] == sum(
+        tiers[o["customer_id"]] == "?" for o in young
+    )
+    siblings = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "orders",
+        "cohorts": {"all": {"all": []}},
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "params": {
+                    "columns": [
+                        {
+                            "column": "orders.channel",
+                            "via": [
+                                {"rel": "rel:orders.customer", "dir": "up"},
+                                {"rel": "rel:orders.customer", "dir": "down"},
+                            ],
+                            "count": "rows",
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    [reached] = analyse(siblings, shop())
+    placed: dict[str, int] = {}
+    for order in given["orders"]:
+        placed[order["customer_id"]] = placed.get(order["customer_id"], 0) + 1
+    expected = {
+        channel: sum(placed[o["customer_id"]] for o in given["orders"] if o["channel"] == channel)
+        for channel in ("shop", "web", "phone")
+    }
+    categories = column(reached.outcome, 0, 0)["categories"]
+    assert {c["values"][0]["data"]: c["proportion"]["numerator"] for c in categories} == expected
+
+
+def test_a_count_of_rows_takes_a_where_and_a_lift(analyse: Analyse, shop: Shop) -> None:
+    web = [{"kind": "value", "column": "orders.channel", "values": ["web"]}]
+    [analysed] = analyse(
+        shop_document({**CHANNELS, "where": web, "lift": "assessed"}), shop(extended=True)
+    )
+    in_shop, on_web, by_phone = [
+        c["proportion"] for c in column(analysed.outcome, 0, 0)["categories"]
+    ]
+    assert (in_shop["numerator"], by_phone["numerator"]) == (0, 0)
+    assert on_web["numerator"] == on_web["denominator"] > 0
+
+
+def test_a_count_of_rows_has_a_canonical_form_of_its_own(check: Check, shop: Shop) -> None:
+    release = shop(extended=True)
+    found = check(
+        shop_document(CHANNELS, AMOUNTS, {**AMOUNTS, "bins": [0, 100, 200]}, ORDERED_TIERS),
+        release,
+    )
+    assert found.refusals == []
+    [view] = found.views
+    channels, amounts, binned, tiers = view.identity.params["columns"]
+    assert sorted(channels) == ["column", "count", "rows"]
+    assert (channels["count"], channels["column"]) == ("rows", "orders.channel")
+    assert channels["rows"]["via"] == [{"rel": "rel:orders.customer", "dir": "down"}]
+    assert (amounts["bins"], binned["bins"]) == (None, [0, 100, 200])
+    assert sorted(tiers) == ["column", "count", "lookup", "rows"]
+    assert tiers["lookup"] == [{"rel": "rel:orders.customer", "dir": "up"}]
+    assert tiers["rows"]["via"] == [{"rel": "rel:orders.customer", "dir": "down"}]
+    counted_orders = check(
+        shop_document({"column": "orders.amount", "aggregate": "count"}), release
+    )
+    rows = check(shop_document(AMOUNTS), release)
+    assert counted_orders.views[0].identity.id != rows.views[0].identity.id
+    spelled = check(
+        shop_document({**AMOUNTS, "via": [{"rel": "rel:orders.customer", "dir": "down"}]}), release
+    )
+    assert spelled.views[0].identity.id == rows.views[0].identity.id
+
+
+def test_the_readback_states_the_rows_a_count_of_rows_reaches(check: Check, shop: Shop) -> None:
+    found = check(shop_document(TIER, CHANNELS, ORDERED_TIERS), shop(extended=True))
+    [view] = found.views
+    text = "".join(
+        segment.model_dump().get("text", "") or segment.model_dump().get("data", "")
+        for segment in view.readback()
+    )
+    assert "Column 1: the rows reached, by the orders.channel of each of the orders rows" in text
+    assert (
+        "Column 2: the rows reached, by the customers.tier of the customers row reached through "
+        "rel:orders.customer of each of the orders rows"
+    ) in text
+    assert "a row counted once for each unit and each path that reaches it" in text
+    assert "A column that counts rows gives the same over the rows its units reach" in text
+    plain = check(shop_document(TIER), shop(extended=True)).views[0]
+    said = "".join(segment.model_dump().get("text", "") or "" for segment in plain.readback())
+    assert "counts rows" not in said
+
+
+SETTINGS = {
+    "the dataset's": ({"min_cell_count": 3}, None, None, "the dataset's min_cell_count, 3"),
+    "the floor": (None, 4, None, "the deployment's floor, 4"),
+    "a draft's published": (None, None, 5, "the latest published release's min_cell_count, 5"),
+}
+
+
+@pytest.mark.parametrize("setting", list(SETTINGS))
+def test_under_any_disclosure_setting_a_count_of_rows_is_withheld_where_it_is_written(
+    check: Check, shop: Shop, setting: str
+) -> None:
+    disclosure, floor, published, source = SETTINGS[setting]
+    release = shop(extended=True, disclosure=disclosure)
+    found = check(
+        shop_document(TIER, {**AMOUNTS, "bins": [0, 100, 200]}),
+        release,
+        floor=floor,
+        published=published,
+    )
+    [refusal] = found.refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/1/count",
+    )
+    assert found.views == []
+    said = "".join(part.model_dump().get("text", "") for part in refusal.message)
+    assert f"({source})" in said
+    assert "D379" in said
+    assert [
+        part.model_dump().get("data") for part in refusal.message if "data" in part.model_dump()
+    ] == ["summary.distribution"]
+    assert [part.model_dump()["text"] for part in refusal.alternatives] == [
+        'aggregate: "count"',
+        'aggregate: "max"',
+        'aggregate: "min"',
+        'aggregate: "mean"',
+    ]
+    assert check(shop_document(TIER, AMOUNTS), shop(extended=True)).refusals == []
+
+
+def test_a_withheld_count_of_rows_is_refused_before_the_bins_it_would_need(
+    check: Check, shop: Shop
+) -> None:
+    ages = {**ORDERED_TIERS, "column": "customers.age"}
+    found = check(shop_document(ages), shop(), floor=3)
+    assert _refusals(found) == [("WITHHELD_UNDER_K", "/views/0/params/columns/0/count")]
+    without = {key: value for key, value in ages.items() if key != "count"}
+    aggregate = {**without, "aggregate": "max"}
+    assert _refusals(check(shop_document(aggregate), shop(), floor=3)) == [
+        ("MISSING_MEMBER", "/views/0/params/columns/0/bins")
+    ]
+
+
+def test_a_withheld_count_of_rows_records_no_edges_that_a_later_view_would_conflict_with(
+    check: Check, shop: Shop
+) -> None:
+    document = shop_document({**AMOUNTS, "bins": [0, 100, 200]})
+    greatest = {"column": "orders.amount", "aggregate": "max", "bins": [0, 50, 200]}
+    document["views"].append({**document["views"][0], "params": {"columns": [greatest]}})
+    found = check(document, shop(extended=True), floor=3)
+    assert _refusals(found) == [("WITHHELD_UNDER_K", "/views/0/params/columns/0/count")]
+    assert [view.index for view in found.views] == [1]
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        {**CHANNELS, "aggregate": "count"},
+        {**CHANNELS, "values": ["web"]},
+        {**AMOUNTS, "empty": 0},
+    ],
+    ids=["an aggregate", "values", "empty"],
+)
+def test_a_count_of_rows_takes_no_aggregate_values_or_empty(
+    check: Check, shop: Shop, given: dict[str, Any]
+) -> None:
+    found = check(shop_document(given), shop(extended=True))
+    assert _refusals(found) == [("CONFLICTING_MEMBERS", "/views/0/params/columns/0")]
+
+
+def test_a_count_of_rows_of_a_column_with_one_value_per_unit_is_invalid(
+    check: Check, shop: Shop
+) -> None:
+    found = check(shop_document({**TIER, "count": "rows"}), shop(extended=True))
+    assert _refusals(found) == [("INVALID_VALUE", "/views/0/params/columns/0/count")]
+
+
+def test_a_count_of_rows_of_a_list_waits_for_memberships(check: Check, shop: Shop) -> None:
+    labels = build.column("customers.labels", "list<category>")
+    found = check(
+        shop_document({"column": "customers.labels", "count": "rows"}), shop(extras=[labels])
+    )
+    [refusal] = found.refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.NOT_SUPPORTED,
+        "/views/0/params/columns/0/count",
+    )
+    assert "M3.2e-2a (#52)" in json.dumps([s.model_dump() for s in refusal.message])
+    several = check(shop_document({"column": "orders.channel"}), shop())
+    assert "M3.2e-2a (#52)" in json.dumps([s.model_dump() for s in several.refusals[0].message])
+
+
+KINDS: dict[str, tuple[str, str, list[str], bool]] = {
+    "an unordered category": ("orders.channel", "NOT_SUPPORTED", ["count", "some", "every"], True),
+    "an ordered category": (
+        "orders.grade",
+        "NOT_SUPPORTED",
+        ["count", "max", "min", "some", "every"],
+        True,
+    ),
+    "a boolean": ("orders.paid", "NOT_SUPPORTED", ["count", "some", "every"], True),
+    "a number": (
+        "orders.amount",
+        "AGGREGATE_REQUIRED",
+        ["count", "max", "min", "mean", "some", "every"],
+        True,
+    ),
+    "an integer": (
+        "orders.items",
+        "AGGREGATE_REQUIRED",
+        ["count", "max", "min", "mean", "some", "every"],
+        True,
+    ),
+    "a list": ("customers.labels", "NOT_SUPPORTED", ["some", "every"], False),
+    "a string": ("orders.order_id", "AGGREGATE_REQUIRED", ["count", "some", "every"], False),
+}
+"""A column of each datatype below the unit, or a list on it, and what a view of it without an
+aggregate is refused: the code, the aggregates it offers, and whether it offers ``count:
+"rows"`` without a disclosure setting."""
+
+VALUES: dict[str, list[Any]] = {
+    "orders.channel": ["web"],
+    "orders.grade": ["b"],
+    "orders.paid": [True],
+    "orders.amount": [10.5],
+    "orders.items": [2],
+    "customers.labels": ["new"],
+    "orders.order_id": ["o1"],
+}
+
+
+def _kinds(shop: Shop, disclosure: Mapping[str, Any] | None = None) -> Any:
+    extras = [
+        build.column("customers.labels", "list<category>"),
+        build.column("orders.paid", "boolean"),
+        build.column("orders.items", "integer"),
+        build.column(
+            "orders.grade",
+            "category",
+            permissible_values={"values": [{"value": v} for v in "abc"], "ordered": True},
+        ),
+    ]
+    return shop(extended=True, extras=extras, disclosure=disclosure)
+
+
+def _followed(variable: Mapping[str, Any], refusal: Any) -> dict[str, Any] | None:
+    """The variable the member a refusal names to give leads to, if it names one."""
+    if refusal.code == RefusalCode.MISSING_MEMBER and refusal.path.endswith("/bins"):
+        return {**variable, "bins": [0, 10, 100]}
+    return None
+
+
+def _alternative(variable: Mapping[str, Any], alternative: str) -> dict[str, Any]:
+    """The variable a refusal's alternative leads to: an aggregate, with the ``values`` or
+    ``bins`` it says, keeping the variable's ``where`` and ``bins`` unless it says without them,
+    or a count of rows."""
+    column = variable["column"]
+    kept = {name: variable[name] for name in ("where", "bins") if name in variable}
+    if alternative == 'count: "rows"':
+        return {"column": column, "count": "rows", **kept}
+    name = alternative.removeprefix('aggregate: "').split('"', 1)[0]
+    found: dict[str, Any] = {"column": column, "aggregate": name, **kept}
+    if name in ("some", "every"):
+        found["values"] = VALUES[column]
+    if alternative.endswith(" with bins"):
+        found["bins"] = [0, 10, 100]
+    if alternative.endswith(" without bins"):
+        del found["bins"]
+    return found
+
+
+@pytest.mark.parametrize("kind", list(KINDS))
+def test_a_column_of_several_values_per_unit_offers_the_aggregates_it_takes_and_a_count_of_its_rows(
+    check: Check, shop: Shop, kind: str
+) -> None:
+    """D377, D378: the refusal of a column of several values per unit without an aggregate
+    lists the aggregates its column takes (``max`` and ``min`` of numbers and ordered categories,
+    ``mean`` of numbers, of a list's items ``some`` and ``every`` alone), each of which a view
+    then runs, and ``count: "rows"`` for numbers, categories and booleans below the unit."""
+    column, code, aggregates, offered = KINDS[kind]
+    release = _kinds(shop)
+    rows = 'count: "rows"'
+    found = check(shop_document({"column": column}), release)
+    [refusal] = found.refusals
+    assert (refusal.code, refusal.path) == (code, "/views/0/params/columns/0/column")
+    assert [one.text for one in refusal.alternatives or []] == [
+        *aggregates,
+        *([rows] if offered else []),
+    ]
+    said = "".join(part.model_dump().get("text") or "" for part in refusal.message)
+    assert (rows in said) is offered
+    if kind == "a list":
+        assert "give an aggregate (some or every)" in said
+    elif code == "NOT_SUPPORTED":
+        assert "give an aggregate (count, some, every, or max or min of an ordered category)" in (
+            said
+        )
+    for alternative in aggregates:
+        given = _alternative({"column": column}, alternative)
+        assert check(shop_document(given), release).refusals == [], given
+
+
+@pytest.mark.parametrize("kind", [kind for kind in KINDS if "mean" not in KINDS[kind][2]])
+def test_an_aggregate_a_column_does_not_take_offers_those_it_takes(
+    check: Check, shop: Shop, kind: str
+) -> None:
+    column, _, aggregates, _ = KINDS[kind]
+    release = _kinds(shop)
+    for name in [name for name in ("count", "max", "min", "mean") if name not in aggregates]:
+        [refusal] = check(shop_document({"column": column, "aggregate": name}), release).refusals
+        assert (refusal.code, refusal.path) == (
+            "AGGREGATE_NOT_ALLOWED",
+            "/views/0/params/columns/0/aggregate",
+        )
+        offered = [one.text for one in refusal.alternatives or []]
+        assert offered == [one for one in aggregates if one != name], name
+        for alternative in offered:
+            given = _alternative({"column": column}, alternative)
+            assert check(shop_document(given), release).refusals == [], given
+
+
+STARTS = {
+    "an aggregate left out": {},
+    "a count of rows": {"count": "rows"},
+    "a count of rows with where": {"count": "rows", "where": True},
+    "a count of rows with bins": {"count": "rows", "bins": [0, 50, 200]},
+}
+
+
+def _starts() -> list[tuple[str, str]]:
+    """Each kind with each start its column takes: ``where`` and ``bins`` beside a count of
+    rows where the column counts rows, ``bins`` of numbers alone."""
+    return [
+        (kind, start)
+        for kind, (_, _, aggregates, rows) in KINDS.items()
+        for start in STARTS
+        if not ("where" in STARTS[start] and not rows)
+        and not ("bins" in STARTS[start] and "mean" not in aggregates)
+    ]
+
+
+@pytest.mark.parametrize("setting", list(SETTINGS))
+@pytest.mark.parametrize(("kind", "start"), _starts())
+def test_under_a_disclosure_setting_what_a_refusal_offers_is_never_refused_for_the_same_reason(
+    check: Check, shop: Shop, kind: str, start: str, setting: str
+) -> None:
+    """D379: under each source of *k*, following every alternative a refusal offers, and giving
+    the member one names (``bins``), ends in a view that runs and never meets a refusal met on
+    the way, whatever ``where`` and ``bins`` the variable gives: no ``count: "rows"`` is
+    offered, and a withheld one offers the aggregates that run in its place, with the ``bins``
+    and ``values`` they need, keeping its ``where`` and ``bins``."""
+    column = KINDS[kind][0]
+    disclosure, floor, published, _ = SETTINGS[setting]
+    release = _kinds(shop, disclosure)
+    given = STARTS[start]
+    where = [{"kind": "value", "column": column, "values": VALUES[column]}]
+    start_: dict[str, Any] = {
+        "column": column,
+        **{name: where if name == "where" else value for name, value in given.items()},
+    }
+    ends = 0
+    walks: list[tuple[dict[str, Any], tuple[tuple[str, str | None], ...]]] = [(start_, ())]
+    while walks:
+        variable, met = walks.pop()
+        refusals = check(
+            shop_document(variable), release, floor=floor, published=published
+        ).refusals
+        if not refusals:
+            ends += 1
+            continue
+        [refusal] = refusals
+        reason = (refusal.code, refusal.path)
+        assert reason not in met, (variable, met)
+        assert len(met) < 3, (variable, met)
+        texts = [one.text for one in refusal.alternatives or []]
+        assert 'count: "rows"' not in texts, variable
+        led = [_alternative(variable, one) for one in texts]
+        named = _followed(variable, refusal)
+        assert led or named is not None, (variable, refusal)
+        walks += [(given, (*met, reason)) for given in [*led, *([named] if named else [])]]
+    assert ends
+    if "count" not in given:
+        return
+    withheld = check(shop_document(start_), release, floor=floor, published=published).refusals
+    if withheld[0].code == RefusalCode.WITHHELD_UNDER_K:
+        for alternative in withheld[0].alternatives or []:
+            led = _alternative(start_, alternative.text)
+            found = check(shop_document(led), release, floor=floor, published=published)
+            assert found.refusals == [], led
+
+
+def test_a_count_of_rows_of_what_is_neither_categories_nor_numbers_is_not_supported(
+    check: Check, shop: Shop
+) -> None:
+    found = check(shop_document({"column": "orders.order_id", "count": "rows"}), shop())
+    assert _refusals(found) == [("NOT_SUPPORTED", "/views/0/params/columns/0/column")]
+
+
+def test_a_count_of_rows_of_categories_takes_no_bins(check: Check, shop: Shop) -> None:
+    found = check(shop_document({**CHANNELS, "bins": [0, 1]}), shop())
+    assert _refusals(found) == [("INVALID_VALUE", "/views/0/params/columns/0/bins")]
+
+
+def test_150_categories_of_rows_are_listed_and_151_refuse_the_call(
+    distributed: Distributed, summarised: Summarised
+) -> None:
+    view = distributed([CHANNELS])
+    listed = {f"v{n:03d}": 1 for n in range(147)}
+    found = column(summarised(view, [1], [([counted({147: 1}, listed)], None)]), 0, 0)
+    assert len(found["categories"]) == 150
+    with pytest.raises(TooManyCategories):
+        summarised(view, [1], [([counted({148: 1}, {**listed, "v999": 1})], None)])
+
+
+def test_an_aggregate_a_column_does_not_take_offers_only_those_its_other_members_allow(
+    check: Check, shop: Shop
+) -> None:
+    """Beside a ``where`` no ``some`` or ``every``, beside an ``empty`` only ``max``, ``min``
+    and ``mean``: each alternative then runs as written (§9.2)."""
+    release = _kinds(shop)
+    where = [{"kind": "value", "column": "orders.channel", "values": ["web"]}]
+    cases = [
+        ({"column": "orders.channel", "aggregate": "mean", "where": where}, ["count"]),
+        ({"column": "orders.channel", "aggregate": "max", "empty": "web"}, []),
+        ({"column": "orders.grade", "aggregate": "mean", "empty": "b"}, ["max", "min"]),
+    ]
+    for variable, offered in cases:
+        [refusal] = check(shop_document(variable), release).refusals
+        assert refusal.code == "AGGREGATE_NOT_ALLOWED", variable
+        assert [one.text for one in refusal.alternatives or []] == offered, variable
+        for name in offered:
+            led = {**variable, "aggregate": name}
+            assert check(shop_document(led), release).refusals == [], led

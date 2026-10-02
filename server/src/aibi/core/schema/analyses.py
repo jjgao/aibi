@@ -22,14 +22,19 @@ A **variable** (``Variable``, D325) is a column a view reads one value per unit 
 unit table or of a row it looks up, or an aggregate of the rows below it (§9.2): ``count``,
 ``max``, ``min`` or ``mean`` of the rows reached at the last down step of its path (``where``
 their conditions, ``lift`` the rule of every earlier step, ``empty`` the value of a unit with no
-row to aggregate), or ``some`` or ``every`` with a ``values`` set, an existence question.
+row to aggregate), or ``some`` or ``every`` with a ``values`` set, an existence question; or,
+with ``count: "rows"``, the rows themselves that a numeric aggregate pools, each row's value
+counted, for ``summary.distribution`` (D378).
 
 ``summary.distribution`` (D328) takes ``columns``, one to ``MAX_VARIABLES`` variables. Its
 values, per position and column in parameter order: for categories, the cohort's units per
 category over those for which the value is known, categories merged under a disclosure setting
 and a category column's undeclared values one ``other_values`` row there (D329); for numbers, n,
 mean, standard deviation, median, quartiles, minimum, maximum and a histogram, and under a
-disclosure setting only the histogram's merged bins and the quartiles' bins.
+disclosure setting only the histogram's merged bins and the quartiles' bins. A variable that
+counts rows (``count: "rows"``) gives the same over the rows it pools, with the rows excluded by
+reason (``CategoryRows``, ``NumberRows``), and is withheld under any disclosure setting (D378,
+D379).
 
 ``compare.columns`` (D336) takes ``columns``, one to ``MAX_VARIABLES`` variables, and ``level``.
 Its values, per position and column: for categories, the cohort's units per category over those
@@ -110,6 +115,7 @@ from aibi.core.schema.numbers import (
     ComputedCount,
     EffectSize,
     Estimable,
+    ExclusionCounts,
     HypothesisTest,
     Interval,
     Level,
@@ -228,9 +234,9 @@ class Variable(DocModel):
     values: ValueList | None = None
     """With ``some`` and ``every``, and only with them."""
     where: ClauseList | None = None
-    """With ``count``, ``max``, ``min`` and ``mean``: the conditions a row reached at the last
-    down step must meet to be aggregated, on the column's table as an ``exists`` leaf's
-    ``where`` is (§6.5)."""
+    """With ``count``, ``max``, ``min`` and ``mean``, and with ``count: "rows"``: the conditions
+    a row reached at the last down step must meet to be aggregated or counted, on the column's
+    table as an ``exists`` leaf's ``where`` is (§6.5)."""
     lift: Lift | None = None
     """The rule of every intermediate step, ``strict`` by default (§6.5, §9.2)."""
     empty: Scalar | None = None
@@ -240,11 +246,21 @@ class Variable(DocModel):
     """For numbers: a histogram's edges; without them, the column's declared ``range`` in
     ``BINS`` equal bins, or, without a disclosure setting, the data's."""
     count: Literal["rows"] | None = None
-    """``"rows"`` counts rows rather than units (§9.2): refused until M3.2e (D324, D335)."""
+    """``"rows"`` counts the rows a numeric aggregate would pool, each once for every path and
+    unit that reaches it, rather than units (§9.2, D378): without an ``aggregate``, ``values`` or
+    ``empty``, in a descriptive analysis alone, and withheld under any disclosure setting
+    (D379)."""
 
     @model_validator(mode="after")
     def _check_members(self) -> Self:
         aggregate = self.aggregate
+        rows = self.count is not None
+        if rows and (aggregate is not None or self.values is not None or self.empty is not None):
+            raise PydanticCustomError(
+                "conflicting_members",
+                'count "rows" counts the rows themselves, so it takes no aggregate, values or '
+                "empty",
+            )
         if self.values is not None and aggregate not in EXISTENCE_AGGREGATES:
             raise PydanticCustomError(
                 "conflicting_members", 'values goes with aggregate "some" or "every"'
@@ -253,11 +269,11 @@ class Variable(DocModel):
             raise PydanticCustomError(
                 "conflicting_members", 'aggregate "some" or "every" asks about values: give them'
             )
-        if self.where is not None and aggregate not in NUMERIC_AGGREGATES:
+        if self.where is not None and aggregate not in NUMERIC_AGGREGATES and not rows:
             raise PydanticCustomError(
                 "conflicting_members",
-                'where goes with aggregate "count", "max", "min" or "mean"; for "some" and '
-                '"every", ask the question as a compare.existence predicate',
+                'where goes with aggregate "count", "max", "min" or "mean", or with count "rows"; '
+                'for "some" and "every", ask the question as a compare.existence predicate',
             )
         if self.empty is not None and aggregate not in ("max", "min", "mean"):
             raise PydanticCustomError(
@@ -355,22 +371,72 @@ class NumberDistribution(Estimable):
     (``suppressed``) where the two values the quantile lies between are in two bins (D329)."""
 
 
-def _distribution_kind(value: object) -> str | None:
-    kind: object = (
+class CategoryRows(Output):
+    """A categorical variable that counts rows (``count: "rows"``) at one position (D378): the
+    rows it pools in each category over the rows with a value (``counts: "rows"``), listed as
+    ``CategoryDistribution`` lists categories without a disclosure setting, and the pooled rows
+    whose value is not PRESENT by reason (``excluded_rows``, every reason, zeros included). It is
+    never under a disclosure setting (D379), so nothing is merged or suppressed."""
+
+    kind: Literal["category_rows"]
+    categories: Annotated[list[CategoryShare], Field(max_length=MAX_CATEGORIES)]
+    excluded_rows: ExclusionCounts
+
+
+class NumberRows(Estimable):
+    """A numeric variable that counts rows (``count: "rows"``) at one position (D378): ``n``
+    the rows it pools with a value, their mean, standard deviation, median, quartiles, minimum,
+    maximum and histogram as ``NumberDistribution`` gives a unit's without a disclosure setting,
+    and the pooled rows whose value is not PRESENT by reason (``excluded_rows``). It is never
+    under a disclosure setting (D379)."""
+
+    kind: Literal["number_rows"]
+    n: Count
+    excluded_rows: ExclusionCounts
+    mean: Number
+    sd: Number
+    median: Number
+    q1: Number
+    q3: Number
+    min: Number
+    max: Number
+    histogram: Annotated[Histogram | None, COMPUTED]
+
+
+_KINDS = ("categories", "numbers")
+_POSITION_KINDS = (*_KINDS, "category_rows", "number_rows")
+
+
+def _kind(value: object) -> object:
+    return (
         cast(dict[str, object], value).get("kind")
         if isinstance(value, dict)
         else getattr(value, "kind", None)
     )
-    return kind if isinstance(kind, str) and kind in ("categories", "numbers") else None
+
+
+def _distribution_kind(value: object) -> str | None:
+    kind = _kind(value)
+    return kind if isinstance(kind, str) and kind in _KINDS else None
+
+
+def _position_kind(value: object) -> str | None:
+    kind = _kind(value)
+    return kind if isinstance(kind, str) and kind in _POSITION_KINDS else None
 
 
 ColumnDistribution = Annotated[
     Annotated[CategoryDistribution, Tag("categories")]
-    | Annotated[NumberDistribution, Tag("numbers")],
+    | Annotated[NumberDistribution, Tag("numbers")]
+    | Annotated[CategoryRows, Tag("category_rows")]
+    | Annotated[NumberRows, Tag("number_rows")],
     Discriminator(
-        _distribution_kind,
+        _position_kind,
         custom_error_type="wrong_type",
-        custom_error_message='A column\'s distribution is of kind "categories" or "numbers"',
+        custom_error_message=(
+            'A column\'s distribution is of kind "categories", "numbers", "category_rows" or '
+            '"number_rows"'
+        ),
     ),
 ]
 
@@ -867,6 +933,7 @@ __all__ = [
     "CategoryComparison",
     "CategoryContrast",
     "CategoryDistribution",
+    "CategoryRows",
     "CategoryShare",
     "ColumnComparison",
     "ColumnDistribution",
@@ -907,6 +974,7 @@ __all__ = [
     "NoViewValues",
     "NumberComparison",
     "NumberDistribution",
+    "NumberRows",
     "NumberSummary",
     "PackParams",
     "PredicateContrast",

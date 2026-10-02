@@ -2,12 +2,12 @@
 or a digest from DuckDB's queries (``count_cohort``, ``run_analysis``) gives the same answer, bar
 its issuance, whatever DuckDB's ``query_threads``, over an orchard of a million trees.
 
-Each call drives the SQL paths its analysis reads (D372): cohort counts with a lift; the crossing
-of predicates, the other lift rule's included; materialisations (joint values, a ``mean``'s value
-rows, extremes, empty rows) and the units cohorts share; a member listing; input listings with an
-endpoint's rows, aggregates and a predicate. The cheap calls run at one thread, at four twice and
-at three (an uneven split), the others at one and four. ``validate_document`` and ``explain`` run
-no query and are not compared.
+Each call drives the SQL paths its analysis reads (D372): cohort counts with a lift; the crossing of
+predicates, the other lift rule's included; materialisations (joint values, a ``mean``'s value rows,
+extremes, empty rows, counts of rows two down steps deep) and the units cohorts share; a member
+listing; input listings with an endpoint's rows, aggregates and a predicate. The cheap calls run at
+one thread, at four twice and at three (an uneven split), the others at one and four.
+``validate_document`` and ``explain`` run no query and are not compared.
 
 They run only with ``-m million`` (``addopts`` deselects them), as
 ``uv run pytest tests/core/determinism -m million``; CI runs them in a job of their own."""
@@ -126,6 +126,17 @@ VIEWS: list[dict[str, Any]] = [
         },
     },
     {
+        "analysis": "summary.distribution",
+        "cohorts": ["apple", "pear"],
+        "params": {
+            "columns": [
+                {**KG, "count": "rows"},
+                {"column": "harvests.grade", "count": "rows"},
+                {"column": "weighings.grams", "count": "rows", "lift": "assessed"},
+            ]
+        },
+    },
+    {
         "analysis": "compare.columns",
         "cohorts": ["apple", "pear"],
         "params": {
@@ -157,7 +168,8 @@ VIEWS: list[dict[str, Any]] = [
         },
     },
 ]
-"""A view of each core analysis but ``compare.existence``, whose crossing has a test of its own."""
+"""A view of each core analysis but ``compare.existence``, whose crossing has a test of its own, and
+a second of ``summary.distribution``, of counts of rows (D378)."""
 ECHO: dict[str, Any] = {
     "analysis": "echoes.echo",
     "cohorts": ["wide_clay_apple"],

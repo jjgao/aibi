@@ -84,7 +84,14 @@ from aibi.core.engine.resolved import (
 )
 from aibi.core.engine.truth import Mark, Truth, TruthValue
 from aibi.core.engine.units import scale
-from aibi.core.engine.variables import Joint, Materialised, Value, aggregated, normalised
+from aibi.core.engine.variables import (
+    Joint,
+    Materialised,
+    RowCounts,
+    Value,
+    aggregated,
+    normalised,
+)
 from aibi.core.engine.worker import CallerDeadline, QueryError, Rows
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.jsonio import canonical
@@ -597,6 +604,7 @@ def compile_crossing(
 # --- Materialised variables (D326, D327) ----------------------------------------------------------
 
 _VALUE_ROWS, _EXCLUDED_ROWS, _UNIT_ROWS, _EMPTY_ROWS, _EXTREME_ROWS = 0, 1, 2, 3, 4
+_REACHED_ROWS, _ROW_VALUE_ROWS, _ROW_EXCLUDED_ROWS = 5, 6, 7
 """The kinds of a materialised variable's rows (``CompiledMaterialised``)."""
 _DEADLINE_ROWS = 1 << 16
 """How many rows the server reads of a materialisation between looks at the call's deadline."""
@@ -638,8 +646,12 @@ class CompiledMaterialised:
     greatest or least value (``_EXTREME_ROWS``: ``v`` and ``n`` units; an ordered category's by
     listed position), which pick a value and so are exact in SQL, and for ``mean`` each unit's
     pooled rows by value (``_VALUE_ROWS``: ``r`` the unit's row, ``v`` the value, ``n`` its
-    rows), which the server aggregates (§9.3); and, for two variables or more, one joint query
-    per cohort, whose rows count its units by whether some variable has a value (``k``) and, for
+    rows), which the server aggregates (§9.3); for a count of rows (D378), the units pooled by
+    the number of rows each reached (``_REACHED_ROWS``: ``r`` that number, ``n`` units), their
+    rows by value (``_ROW_VALUE_ROWS``: ``v`` and ``n`` rows) and their rows excluded for each
+    reason (``_ROW_EXCLUDED_ROWS``: ``x`` its bit, ``n`` rows), the number in ``r`` so that
+    ``v`` holds the column's values alone; and, for two variables or more, one joint query per
+    cohort, whose rows count its units by whether some variable has a value (``k``) and, for
     none, the bits of every reason (``b``); and, when ``shared`` and for two cohorts or more, one
     whose row counts the units each pair of cohorts shares, as a crossing's does (D339). Every
     count is an integer ``COUNT`` and every flag a ``BIT_OR``; values are grouped, and never
@@ -752,6 +764,9 @@ class CompiledMaterialised:
         excluded_units = 0
         flags = [0] * len(words)
         by_unit: dict[int, list[tuple[Value, int]]] = {}
+        counting = shape.kind == "rows"
+        row_values: Counter[Value] = Counter()
+        row_excluded = dict.fromkeys(ExclusionReason, 0)
         for index in range(len(rows)):
             if ends is not None and not index % _DEADLINE_ROWS and time.monotonic() >= ends:
                 raise CallerDeadline
@@ -769,7 +784,7 @@ class CompiledMaterialised:
                 for reason, flag in EXCLUSION_BIT.items():
                     if bit & flag:
                         excluded[reason] += count
-            elif tag == _UNIT_ROWS and not bit:
+            elif tag == _UNIT_ROWS and not bit and not counting:
                 values[_read_value(raw[index], shape)] += count
             elif tag == _EMPTY_ROWS and not bit and shape.empty is not None:
                 values[shape.empty] += count
@@ -777,6 +792,12 @@ class CompiledMaterialised:
                 values[_read_extreme(raw[index], shape)] += count
             elif tag == _VALUE_ROWS and not bit and shape.function == "mean":
                 by_unit.setdefault(rids[index], []).append((_read_value(raw[index], shape), count))
+            elif tag == _REACHED_ROWS and not bit and counting and rids[index] >= 0:
+                values[rids[index]] += count
+            elif tag == _ROW_VALUE_ROWS and not bit and counting:
+                row_values[_read_value(raw[index], shape)] += count
+            elif tag == _ROW_EXCLUDED_ROWS and bit in _ROW_BITS and counting:
+                row_excluded[_ROW_BITS[bit]] += count
             else:
                 raise QueryError("a materialisation's query gave a row it cannot give")
         if not _words_fit(flags, self.marks):
@@ -790,6 +811,9 @@ class CompiledMaterialised:
             excluded_units,
             MappingProxyType(excluded),
             _marks(self.marks, flags) if flags else frozenset(),
+            RowCounts(MappingProxyType(dict(row_values)), MappingProxyType(row_excluded))
+            if counting
+            else None,
         )
 
     @staticmethod
@@ -807,6 +831,19 @@ class CompiledMaterialised:
                 if b & flag:
                     by_reason[reason] += n
         return Joint(known, none, MappingProxyType(by_reason))
+
+
+_ROW_BITS = {
+    EXCLUSION_BIT[reason]: reason
+    for reason in (
+        ExclusionReason.NOT_APPLICABLE,
+        ExclusionReason.NOT_ASSESSED,
+        ExclusionReason.NO_INFORMATION,
+        ExclusionReason.NO_PARENT,
+    )
+}
+"""The reasons a count of rows excludes a row for, by bit: its cell's state, or a lookup that
+reaches no row (D378); a row has one."""
 
 
 def _read_value(raw: object, shape: _Shape) -> Value:
@@ -1855,9 +1892,10 @@ class _Compiler:
         """A variable's relation over the unit table, one row per unit: ``rid``, ``x`` the bits of
         the reasons it is excluded (0 for a unit with a value), ``e`` 1 for a unit of an
         aggregate with no value to aggregate that takes ``empty``, ``val`` its value (a
-        ``count``'s rows; nothing for ``max``, ``min`` and ``mean``), and the flag words; and,
-        for ``max``, ``min`` and ``mean``, the relation of each unit's pooled rows by value
-        (``rid``, ``val``, ``n``)."""
+        ``count``'s rows, and a count of rows' too; nothing for ``max``, ``min`` and ``mean``),
+        and the flag words; and, for ``max``, ``min`` and ``mean``, the relation of each unit's
+        pooled rows by value (``rid``, ``val``, ``n``), and for a count of rows that of each of
+        its pooled rows (``rows_variable``)."""
         key = ("variable", canonical(variable_form(variable)))
         found = self.memo.get(key)
         if found is not None:
@@ -1877,6 +1915,8 @@ class _Compiler:
                 *(_as(word, f"m{at}") for at, word in enumerate(self.words_of("q"))),
             )
             found = self.cte(select.from_(_table(question, "q"), copy=False))
+        elif variable.kind == "rows":
+            found, groups = self.rows_variable(variable)
         else:
             found, groups = self.aggregate_variable(variable)
         self.memo[key] = found
@@ -2021,13 +2061,52 @@ class _Compiler:
         )
         return self.cte(unit), groups
 
-    def row_values(self, variable: ResolvedVariable, table: str) -> str:
+    def rows_variable(self, variable: ResolvedVariable) -> tuple[str, str]:
+        """A count of rows (D378): each unit's pooling, as an aggregate's (``x`` its reasons,
+        ``val`` the rows it reached, ``e`` 0), and the relation of each row it pooled, once for
+        every path that reached it (``rid`` the unit, ``val`` the row's value, ``vr`` the bit of
+        the reason it is excluded for, 0 where PRESENT; ``row_values`` without skipping)."""
+        assert variable.rows is not None
+        questions = levels(variable.rows, variable.depth)
+        status, pooled = self.pooled(questions, 0, variable.unit)
+        values = self.row_values(variable, questions[-1].table, skipping=False)
+        tallied = self.cte(
+            _select(_as(_col("p", "rid"), "rid"), _as(exp.Count(this=exp.Star()), "cnt"))
+            .from_(_table(pooled, "p"), copy=False)
+            .group_by(_col("p", "rid"), copy=False)
+        )
+        unknown = _eq(_col("s", "v"), _num(UNKNOWN_CODE))
+        unit = _select(
+            _as(_col("s", "rid"), "rid"),
+            _as(_case([(unknown, _col("s", "r"))], _num(0)), "x"),
+            _as(_num(0), "e"),
+            _as(_zero(_col("a", "cnt")), "val"),
+            *(_as(word, f"m{at}") for at, word in enumerate(self.words_of("s"))),
+        ).from_(_table(status, "s"), copy=False)
+        unit = unit.join(
+            _table(tallied, "a"),
+            on=_eq(_col("a", "rid"), _col("s", "rid")),
+            join_type="left",
+            copy=False,
+        )
+        leaves = _select(
+            _as(_col("p", "rid"), "rid"), _as(_col("w", "val"), "val"), _as(_col("w", "vr"), "vr")
+        ).from_(_table(pooled, "p"), copy=False)
+        leaves = leaves.join(
+            _table(values, "w"), on=_eq(_col("w", "rid"), _col("p", "leaf")), copy=False
+        )
+        return self.cte(unit), self.cte(leaves)
+
+    def row_values(self, variable: ResolvedVariable, table: str, *, skipping: bool = True) -> str:
         """Each row of the last step's table: its value read through the lookups after the last
         down step (``val``), whether it is skipped, NOT_APPLICABLE (``sk``), and the bits of the
         reasons it makes its unit unknown (``vr``): a cell not assessed or empty, a lookup that
         reaches no row, or an ordered category outside its listed values (§6.4); a skipped row
         has none, whatever its value, since §9.2 skips it (an ordered category's NOT_APPLICABLE
-        cell is outside its list, but is skipped, not NO_INFORMATION)."""
+        cell is outside its list, but is skipped, not NO_INFORMATION). Without ``skipping``, for
+        a count of rows, no row is skipped and ``vr`` is the bit of the one reason a row is
+        excluded for: its cell's state, NOT_APPLICABLE included, or a lookup that reaches no row
+        (D378)."""
         owner, column = variable.column.split(".", 1)
         base = self.base(table).name
         select = _select().from_(_table(base, "r"), copy=False)
@@ -2047,8 +2126,10 @@ class _Compiler:
         )
         cell = self.cell_exclusion(owner, column, "o")
         applicable = EXCLUSION_BIT[ExclusionReason.NOT_APPLICABLE]
-        skipped: Expression = _eq(cell, _num(applicable))
-        reasons: Expression = _case([(skipped.copy(), _num(0))], cell.copy())
+        skipped: Expression = _eq(cell, _num(applicable)) if skipping else exp.false()
+        reasons: Expression = (
+            _case([(skipped.copy(), _num(0))], cell.copy()) if skipping else cell.copy()
+        )
         value = self.stored_value("o", owner, column)
         if variable.order is not None:
             position = exp.Sub(
@@ -2256,6 +2337,8 @@ class _Compiler:
 
         analysed = among(_eq(_col("u", "x"), _num(0)))
         default = self.default_of(variable)
+        if variable.kind == "rows" and (per_unit or groups is None):
+            raise CompileError("a count of rows is counted over a cohort, never listed per member")
         excluded = of(
             _as(_num(_EXCLUDED_ROWS), "t"),
             _as(unit.copy(), "r"),
@@ -2269,7 +2352,42 @@ class _Compiler:
             _col("u", "x"),
         )
         parts: list[exp.Select] = [excluded]
-        if groups is None:
+        if variable.kind == "rows":
+            assert groups is not None
+            reached = of(
+                _as(_num(_REACHED_ROWS), "t"),
+                _as(_col("u", "val"), "r"),
+                _as(default.copy(), "v"),
+                _as(_num(0), "x"),
+                _as(count.copy(), "n"),
+                *ored(),
+            )
+            parts.append(grouped(reached.where(analysed.copy(), copy=False), _col("u", "val")))
+            usable = _eq(_col("g", "vr"), _num(0))
+            for tag, value, bits, condition, by in (
+                (_ROW_VALUE_ROWS, _col("g", "val"), _num(0), usable, _col("g", "val")),
+                (
+                    _ROW_EXCLUDED_ROWS,
+                    default,
+                    _col("g", "vr"),
+                    exp.Not(this=usable),
+                    _col("g", "vr"),
+                ),
+            ):
+                read = of(
+                    _as(_num(tag), "t"),
+                    _as(unit.copy(), "r"),
+                    _as(value.copy(), "v"),
+                    _as(bits, "x"),
+                    _as(count.copy(), "n"),
+                    *ored(),
+                )
+                read = read.join(
+                    _table(groups, "g"), on=_eq(_col("g", "rid"), _col("u", "rid")), copy=False
+                )
+                read = read.where(_and(analysed.copy(), condition.copy()), copy=False)
+                parts.append(grouped(read, by))
+        elif groups is None:
             by_value = of(
                 _as(_num(_UNIT_ROWS), "t"),
                 _as(unit.copy(), "r"),

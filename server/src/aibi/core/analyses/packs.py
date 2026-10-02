@@ -76,7 +76,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -209,11 +209,13 @@ def inputs(
     in the order ``listed`` gives their values, each listing in the order of §9.3, and after them
     the columns of ``endpoints``, each endpoint with its role (D352); the call's deadline
     ``ends`` looked at within each endpoint's rows."""
+    if any(variable.resolved.kind == "rows" for _, variable in variables):
+        raise ValueError("a pack's analysis is handed one value per unit, never rows (D335)")
     columns = tuple(
         InputColumn(
             role=role,
             column=variable.resolved.column,
-            kind=variable.resolved.kind,
+            kind=cast(Literal["column", "aggregate", "question"], variable.resolved.kind),
             function=variable.resolved.function or variable.resolved.aggregate,
             datatype=value_datatype(variable.resolved),
             form=cast(JsonValue, json.loads(canonical(variable.form))),

@@ -290,8 +290,16 @@ def canonicalise(
     installed packs, ``floor`` is the deployment's ``min_cell_count`` floor, ``floors`` a floor
     of a release's own by manifest hash (a draft's: its latest published release's setting, so
     that a session cannot lower it before it publishes, D275, D300), and ``positions`` are the
-    loader's, so that pointers lead into the document as written."""
+    loader's, so that pointers lead into the document as written. Resolution is told which
+    releases are under a disclosure setting, so that no refusal offers what one withholds
+    (D379)."""
     given = positions or {}
+    own = floors or {}
+    under_k = frozenset(
+        reference
+        for reference, release in releases.items()
+        if _setting_of(release, _effective(floor, own.get(release.manifest))) is not None
+    )
     resolution = resolve(
         written,
         releases,
@@ -300,9 +308,9 @@ def canonicalise(
         predicates=predicates,
         variables=variables,
         endpoints=endpoints,
+        under_k=under_k,
     )
     refusals = list(resolution.refusals)
-    own = floors or {}
     found: dict[str, dict[str, CanonicalCohort]] = {"cohorts": {}, "predicates": {}}
     places = {predicate.key: predicate.at for predicate in predicates}
     for kind, resolved_by in (
@@ -393,8 +401,7 @@ def _cohort(
             packs[pack.id] = PackVersion(
                 version=pack.manifest.version, results_version=pack.manifest.results_version
             )
-    settings = None if dataset is None else dataset.fields.disclosure
-    disclosure = _effective(floor, None if settings is None else settings.min_cell_count)
+    disclosure = _setting_of(release, floor)
     identity = CohortIdentity(
         form,
         resolved.unit,
@@ -489,6 +496,14 @@ def intersection(
     )
 
 
+def _setting_of(release: Release, floor: int | None) -> int | None:
+    """The effective ``min_cell_count`` of a release's cohorts: the largest of ``floor`` and its
+    dataset's setting (§8.4)."""
+    dataset = release.dataset_descriptor
+    settings = None if dataset is None else dataset.fields.disclosure
+    return _effective(floor, None if settings is None else settings.min_cell_count)
+
+
 def _effective(floor: int | None, setting: int | None) -> int | None:
     """The effective ``min_cell_count``: the largest of the floor and the setting (§8.4)."""
     given = [k for k in (floor, setting) if k is not None]
@@ -557,8 +572,10 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
     (D325). A column: ``column`` and its lookups ``via`` (if any); a question: ``aggregate``
     and its canonical clause tree ``question``; an aggregate: ``aggregate``, ``column``, the
     canonical question of its rows ``rows``, the lookups from each row ``lookup`` (if any) and,
-    for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value); a predicate's
-    truth (``predicate_variable``): ``predicate``, its canonical clause tree."""
+    for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value); a count of rows
+    (D378): ``count`` (``"rows"``), ``column``, ``rows`` and ``lookup`` (if any) as an
+    aggregate's, which no other form holds with ``count``; a predicate's truth
+    (``predicate_variable``): ``predicate``, its canonical clause tree."""
     if variable.kind == "column":
         found: dict[str, JsonValue] = {"column": variable.column}
         if variable.via:
@@ -570,6 +587,15 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
             return {"predicate": canonical_clause(variable.question)}
         return {"aggregate": variable.aggregate, "question": canonical_clause(variable.question)}
     assert variable.rows is not None
+    if variable.kind == "rows":
+        found = {
+            "count": "rows",
+            "column": variable.column,
+            "rows": canonical_clause(variable.rows),
+        }
+        if variable.lookup:
+            found["lookup"] = _via(variable.lookup)
+        return found
     assert variable.function is not None
     found = {
         "aggregate": variable.function,

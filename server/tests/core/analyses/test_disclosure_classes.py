@@ -297,3 +297,133 @@ def test_under_k_applicability_still_names_every_requirement_a_release_does_not_
     status, missing = found["survival.km"]
     assert status == "unavailable"
     assert sorted(missing) == sorted(["endpoint", *([] if k is None else ["min_cell_count"])])
+
+
+ROWS = {"column": "orders.channel", "count": "rows"}
+"""A form ``summary.distribution`` withholds under any setting (D379)."""
+
+
+def test_only_a_disclosed_analysis_withholds_a_form_and_says_why() -> None:
+    for analysis in CORE.values():
+        if analysis.withheld_forms:
+            assert analysis.disclosure is DisclosureClass.DISCLOSED
+            assert all(why.strip() for why in analysis.withheld_forms.values())
+    assert set(CORE["summary.distribution"].withheld_forms) == {"columns/*/count"}
+    distribution = CORE["summary.distribution"]
+    for disclosure, forms, because in (
+        (DisclosureClass.REFUSED, {"columns/*/count": "why"}, "no"),
+        (DisclosureClass.DISCLOSED, {"columns/*/count": " "}, None),
+        (DisclosureClass.DISCLOSED, {"columns//count": "why"}, None),
+        (DisclosureClass.DISCLOSED, {"columns/*/cuont": "why"}, None),
+        (DisclosureClass.DISCLOSED, {"colums/*/count": "why"}, None),
+        (DisclosureClass.DISCLOSED, {"columns/count": "why"}, None),
+        (DisclosureClass.DISCLOSED, {"columns/*/column/*": "why"}, None),
+        (DisclosureClass.DISCLOSED, {"columns/*/count/rows": "why"}, None),
+    ):
+        with pytest.raises(ValueError, match="withh"):
+            registry.CoreAnalysis(
+                distribution.entry,
+                distribution.params,
+                distribution.values,
+                disclosure,
+                because=because,
+                withheld_forms=forms,
+            )
+
+
+def _withholding(form: str) -> registry.CoreAnalysis:
+    distribution = CORE["summary.distribution"]
+    return registry.CoreAnalysis(
+        distribution.entry,
+        distribution.params,
+        distribution.values,
+        DisclosureClass.DISCLOSED,
+        withheld_forms={form: "why"},
+    )
+
+
+def test_a_withheld_form_names_no_member_through_a_union_of_models() -> None:
+    """D379: a clause is one of several models, so a path below it names no member of a model
+    the form lies below, even one that some of them have."""
+    with pytest.raises(ValueError, match="withheld form names a member"):
+        _withholding("columns/*/where/*/column")
+
+
+def test_a_withheld_form_lies_below_an_optional_list_through_its_items() -> None:
+    for form in ("columns/*/where", "columns/*/where/*", "columns/*/values/*"):
+        assert set(_withholding(form).withheld_forms) == {form}
+
+
+def test_a_withheld_form_is_found_where_the_parameters_give_it_under_k_alone() -> None:
+    [summary] = [a for a in Analyses().all() if a.id == "summary.distribution"]
+    given = CORE["summary.distribution"].params.model_validate({"columns": [TIER, ROWS, ROWS]})
+    because = CORE["summary.distribution"].withheld_forms["columns/*/count"]
+    assert registry.withheld_form(summary, given, 3) == (("columns", 1, "count"), because)
+    assert registry.withheld_form(summary, given, None) is None
+    plain = CORE["summary.distribution"].params.model_validate({"columns": [TIER]})
+    assert registry.withheld_form(summary, plain, 3) is None
+    [packed] = [a for a in tallies(Echo()).all() if a.pack is not None]
+    assert registry.withheld_form(packed, given, 3) is None
+
+
+def test_the_first_withheld_member_is_the_first_the_parameters_give_whatever_the_forms_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D379: the first member that a form withholds, in the parameters' order (a model's members
+    as it declares them, a list's items in turn), not the order the forms are declared."""
+    distribution = CORE["summary.distribution"]
+    forms = {"columns/*/count": "rows", "columns/*/bins": "edges"}
+    two = registry.CoreAnalysis(
+        distribution.entry,
+        distribution.params,
+        distribution.values,
+        DisclosureClass.DISCLOSED,
+        withheld_forms=forms,
+    )
+    monkeypatch.setattr(registry, "CORE", {**CORE, "summary.distribution": two})
+    [summary] = [a for a in Analyses().all() if a.id == "summary.distribution"]
+    binned = {"column": "orders.amount", "bins": [0, 10]}
+    for columns, expected in (
+        ([TIER, binned, ROWS], (("columns", 1, "bins"), "edges")),
+        ([TIER, ROWS, binned], (("columns", 1, "count"), "rows")),
+        ([{**binned, "count": "rows"}], (("columns", 0, "bins"), "edges")),
+        ([TIER], None),
+    ):
+        given = distribution.params.model_validate({"columns": columns})
+        assert registry.withheld_form(summary, given, 3) == expected
+
+
+@pytest.mark.parametrize("setting", list(SETTINGS))
+def test_phase_2_withholds_a_disclosed_analysis_s_form_exactly_under_k_and_it_stays_available(
+    check: Check, shop: Shop, setting: str
+) -> None:
+    disclosure, floor, published = SETTINGS[setting]
+    release = shop(survived="delayed", disclosure=disclosure)
+    written = document("summary.distribution")
+    written["views"][0]["params"] = {"columns": [TIER, ROWS]}
+    found = check(written, release, floor=floor, published=published)
+    k = max(
+        (x for x in (floor, published, (disclosure or {}).get("min_cell_count")) if x),
+        default=None,
+    )
+    status, missing = _statuses(release, Analyses(), k)["summary.distribution"]
+    assert status != "unavailable"
+    assert "min_cell_count" not in missing
+    if k is None:
+        assert found.refusals == []
+        assert [view.analysis.id for view in found.views] == ["summary.distribution"]
+        return
+    [refusal] = found.refusals
+    assert found.views == []
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.WITHHELD_UNDER_K,
+        "/views/0/params/columns/1/count",
+    )
+    shown = [part.model_dump() for part in refusal.message]
+    said = "".join(part.get("text", "") for part in shown)
+    assert [part["data"] for part in shown if "data" in part] == ["summary.distribution"]
+    assert f"({SOURCES[setting]})" in said
+    assert CORE["summary.distribution"].withheld_forms["columns/*/count"] in said
+    dumped = json.dumps(refusal.model_dump(mode="json"))
+    for value in ('"c1"', '"gold"', '"web"', '"orders.channel"'):
+        assert value not in dumped

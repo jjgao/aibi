@@ -710,6 +710,21 @@ def test_the_bins_of_a_count_bound_numbers_of_rows_and_are_kept() -> None:
     assert found["views"][0]["params"]["columns"][0]["bins"] == [2, 3]
 
 
+def test_the_bins_of_a_count_of_rows_bound_its_column_s_values_and_are_erased() -> None:
+    """A count of rows' ``bins`` divide its column's values, not numbers of rows (D290, D378),
+    in a view as written and in a result's canonical parameters alike."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written = _distribution([{"column": "loans.days", "count": "rows", "bins": [3, 3.0000001]}])
+    found: Any = redaction._Written(terms, "members", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"]["columns"][0]["bins"] == [MARK, 3.0000001]
+    rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}
+    variable: dict[str, JsonValue] = {"count": "rows", "column": "loans.days", "rows": rows}
+    held: JsonValue = {"columns": [{**variable, "bins": [3, 4]}]}
+    kept: JsonValue = {"columns": [{**variable, "bins": [4, 5]}]}
+    assert redaction._params_hold(held, terms)  # pyright: ignore[reportPrivateUsage]
+    assert not redaction._params_hold(kept, terms)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_a_result_s_canonical_variable_holds_its_empty_constant() -> None:
     terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
     rows: JsonValue = {"kind": "exists", "table": "loans", "via": [], "where": []}

@@ -37,6 +37,13 @@ it with its reasons (``UnitValue``):
   children's own at every step), with ``COVERAGE_PROPOSED`` for every step over proposed
   coverage whose parent row is in scope, and ``SCOPE_PARTIAL`` for one closed only for listed
   scope tuples.
+- **A count of rows** (``count: "rows"``, D378): the rows an aggregate of the column would pool,
+  pooled as above, a row once for each path through the kept children that reaches it; a unit
+  with a reason is excluded under them all, and its rows are not read. A pooled unit's value is
+  the number of rows it reached, and each of its rows is read as a column's cell is, through the
+  lookups after the last down step: its value when PRESENT, else excluded, ``NOT_APPLICABLE``,
+  ``NOT_ASSESSED`` or ``NO_INFORMATION`` by the cell's state, or ``NO_PARENT`` for a lookup that
+  reaches no row; a row's exclusion excludes the row, never its unit.
 
 Values are Python's, in the stored types the SQL compiler reads (``store.tables.physical``):
 a ``number`` or ``time_offset`` as a double, an ``integer`` as an integer, a ``category`` as its
@@ -47,9 +54,10 @@ exactly over the largest such power and divided once by Python's correctly round
 integers, which cannot overflow (§9.3, D321, D326).
 
 ``materialise`` counts a variable over one cohort's units (``Materialised``): the units that
-have each value, and those excluded under each reason and in all, with their flags; the SQL
-compiler counts the same (``sql.compile_materialised``), and the differential tests hold the
-two together (§13.3).
+have each value, and those excluded under each reason and in all, with their flags, and for a
+count of rows the rows its pooled units reached with each value and those excluded under each
+reason (``RowCounts``); the SQL compiler counts the same (``sql.compile_materialised``), and the
+differential tests hold the two together (§13.3).
 """
 
 import math
@@ -90,10 +98,15 @@ class UnitValue:
     value: Value | None
     excluded: frozenset[ExclusionReason] = frozenset()
     marks: frozenset[Mark] = frozenset()
+    rows: tuple["UnitValue", ...] = ()
+    """For a count of rows, a pooled unit's rows as they were read, one each for every path that
+    reached it: a value, or the reason the row is excluded (module docstring)."""
 
     def __post_init__(self) -> None:
         if (self.value is None) == (not self.excluded):
             raise ValueError("a unit has a value, or is excluded for a reason")
+        if self.rows and self.value is None:
+            raise ValueError("an excluded unit's rows are not read")
 
 
 @dataclass(frozen=True)
@@ -124,19 +137,37 @@ def joint(values: Sequence[Sequence[UnitValue]], members: Iterable[int]) -> Join
 
 
 @dataclass(frozen=True)
+class RowCounts:
+    """The rows a count of rows reached over a cohort's pooled units (D378): each value and the
+    rows that hold it, and the rows excluded under each reason (every reason listed, zeros
+    included; a row has one reason)."""
+
+    values: Mapping[Value, int]
+    excluded: Mapping[ExclusionReason, int]
+
+    @property
+    def n(self) -> int:
+        """The rows that have a value."""
+        return sum(self.values.values())
+
+
+@dataclass(frozen=True)
 class Materialised:
     """A variable over one cohort's units (``materialise``): each value and the units that have
     it, the units excluded, under each reason (every reason listed, zeros included; a unit
-    counts under each of its reasons) and once each, and their flags together."""
+    counts under each of its reasons) and once each, and their flags together; for a count of
+    rows, ``values`` holds the pooled units by the number of rows each reached, and ``rows`` the
+    rows themselves (``None`` for every other variable)."""
 
     values: Mapping[Value, int]
     excluded_units: int
     excluded: Mapping[ExclusionReason, int]
     marks: frozenset[Mark]
+    rows: RowCounts | None = None
 
     @property
     def n(self) -> int:
-        """The units that have a value."""
+        """The units that have a value: for a count of rows, the units pooled."""
         return sum(self.values.values())
 
 
@@ -204,13 +235,18 @@ def exact_mean(values: Iterable[tuple[Value, int]]) -> float:
     return total / (count << -least)
 
 
-def materialise(values: Sequence[UnitValue], members: Iterable[int]) -> Materialised:
+def materialise(
+    values: Sequence[UnitValue], members: Iterable[int], *, rows: bool = False
+) -> Materialised:
     """A variable over a cohort's units: ``values`` by row of the unit table, and the rows of
-    the cohort's members."""
+    the cohort's members; ``rows`` for a count of rows, whose pooled units' rows are counted
+    too."""
     counted: Counter[Value] = Counter()
     excluded = dict.fromkeys(ExclusionReason, 0)
     excluded_units = 0
     marks: set[Mark] = set()
+    row_values: Counter[Value] = Counter()
+    row_excluded = dict.fromkeys(ExclusionReason, 0)
     for row in members:
         found = values[row]
         marks.update(found.marks)
@@ -218,13 +254,22 @@ def materialise(values: Sequence[UnitValue], members: Iterable[int]) -> Material
             excluded_units += 1
             for reason in found.excluded:
                 excluded[reason] += 1
-        else:
-            counted[found.value] += 1
+            continue
+        counted[found.value] += 1
+        for read in found.rows:
+            if read.value is None:
+                for reason in read.excluded:
+                    row_excluded[reason] += 1
+            else:
+                row_values[read.value] += 1
     return Materialised(
         MappingProxyType(dict(counted)),
         excluded_units,
         MappingProxyType(excluded),
         frozenset(marks),
+        RowCounts(MappingProxyType(dict(row_values)), MappingProxyType(row_excluded))
+        if rows
+        else None,
     )
 
 
@@ -269,6 +314,10 @@ class _Reader:
         if pooled.reasons:
             reasons = frozenset(map(excluded_reason, pooled.reasons))
             return UnitValue(None, reasons, pooled.marks)
+        if variable.kind == "rows":
+            table = levels(variable.rows, variable.depth)[-1].table
+            read = tuple(self._cell(variable.lookup, table, one) for one in pooled.rows)
+            return UnitValue(len(pooled.rows), marks=pooled.marks, rows=read)
         return self._aggregate(pooled)
 
     def _cell(self, via: Path, table: str, row: int) -> UnitValue:
@@ -335,6 +384,7 @@ def _truth(found: TruthValue) -> UnitValue:
 __all__ = [
     "Joint",
     "Materialised",
+    "RowCounts",
     "UnitValue",
     "Value",
     "aggregated",

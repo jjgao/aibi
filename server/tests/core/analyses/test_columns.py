@@ -1102,9 +1102,7 @@ def test_a_comparison_counts_no_rows_and_takes_an_aggregate_of_categories_of_sev
 ) -> None:
     """``compare.columns`` compares units, one value each (§9.2), so neither refusal names a part
     to come (D335)."""
-    rows = check(
-        shop_document({"column": "orders.order_id", "aggregate": "count", "count": "rows"}), shop()
-    )
+    rows = check(shop_document({"column": "orders.channel", "count": "rows"}), shop())
     [refusal] = rows.refusals
     assert (refusal.code, refusal.path) == (
         RefusalCode.INVALID_VALUE,
@@ -1116,7 +1114,11 @@ def test_a_comparison_counts_no_rows_and_takes_an_aggregate_of_categories_of_sev
         RefusalCode.AGGREGATE_REQUIRED,
         "/views/0/params/columns/0/column",
     )
-    assert [one.text for one in refusal.alternatives or []] == ["some", "every", "max", "min"]
+    assert [one.text for one in refusal.alternatives or []] == ["count", "some", "every"]
+    for name in ("count", "some", "every"):
+        values = {"values": ["web"]} if name != "count" else {}
+        given = {"column": "orders.channel", "aggregate": name, **values}
+        assert check(shop_document(given), shop()).refusals == [], name
     for found in (rows, several):
         assert "M3.2" not in json.dumps([s.model_dump() for s in found.refusals[0].message])
 
