@@ -154,12 +154,16 @@ def test_every_core_analysis_states_its_class_and_a_refused_one_says_why() -> No
         assert (analysis.disclosure is DisclosureClass.REFUSED) == bool(analysis.because)
     with pytest.raises(ValueError, match="says why"):
         registry.CoreAnalysis(
-            CORE["survival.km"].entry, CORE["survival.km"].params, DisclosureClass.REFUSED
+            CORE["survival.km"].entry,
+            CORE["survival.km"].params,
+            CORE["survival.km"].values,
+            DisclosureClass.REFUSED,
         )
     with pytest.raises(ValueError, match="says why"):
         registry.CoreAnalysis(
             CORE["compare.existence"].entry,
             CORE["compare.existence"].params,
+            CORE["compare.existence"].values,
             DisclosureClass.DISCLOSED,
             because="no",
         )
@@ -167,6 +171,7 @@ def test_every_core_analysis_states_its_class_and_a_refused_one_says_why() -> No
         registry.CoreAnalysis(
             CORE["survival.km"].entry,
             CORE["survival.km"].params,
+            CORE["survival.km"].values,
             DisclosureClass.REFUSED,
             because="",
         )
@@ -174,6 +179,7 @@ def test_every_core_analysis_states_its_class_and_a_refused_one_says_why() -> No
         registry.CoreAnalysis(
             CORE["compare.existence"].entry,
             CORE["compare.existence"].params,
+            CORE["compare.existence"].values,
             DisclosureClass.DISCLOSED,
             lists_keys=True,
         )

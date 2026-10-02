@@ -62,11 +62,17 @@ from aibi.core.engine.resolve import (
 )
 from aibi.core.schema.analyses import (
     ColumnsParams,
+    ColumnsValues,
     CoxParams,
+    CoxValues,
     DistributionParams,
+    DistributionValues,
     ExistenceParams,
+    ExistenceValues,
     MembersParams,
+    MembersValues,
     SurvivalParams,
+    SurvivalValues,
 )
 from aibi.core.schema.catalog import ApplicableAnalysis
 from aibi.core.schema.descriptors import (
@@ -81,6 +87,7 @@ from aibi.core.schema.descriptors import (
 from aibi.core.schema.document import DocModel
 from aibi.core.schema.ids import CORE_ANALYSIS_FAMILIES
 from aibi.core.schema.jsonschemas import Checker
+from aibi.core.schema.output import Output
 from aibi.core.schema.pack_api import Analysis, PackRegistry, UnknownPack
 from aibi.core.schema.results import PackVersion
 
@@ -98,12 +105,14 @@ class DisclosureClass(StrEnum):
 
 @dataclass(frozen=True)
 class CoreAnalysis:
-    """One of the core's analyses: its entry, its parameters' model, its disclosure class and
-    whether it lists or hands each member's values in the keys' order (D353); ``because`` says
-    why, for a ``refused`` one, in a refusal's words."""
+    """One of the core's analyses: its entry, its parameters' model, its values' model (which
+    reads its digested values back, D374), its disclosure class and whether it lists or hands
+    each member's values in the keys' order (D353); ``because`` says why, for a ``refused`` one,
+    in a refusal's words."""
 
     entry: AnalysisDescriptor
     params: type[DocModel]
+    values: type[Output]
     disclosure: DisclosureClass
     lists_keys: bool = False
     because: str | None = None
@@ -118,22 +127,28 @@ class CoreAnalysis:
 
 
 CORE: Mapping[str, CoreAnalysis] = {
-    existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams, DisclosureClass.DISCLOSED),
+    existence.ENTRY.id: CoreAnalysis(
+        existence.ENTRY, ExistenceParams, ExistenceValues, DisclosureClass.DISCLOSED
+    ),
     distribution.ENTRY.id: CoreAnalysis(
-        distribution.ENTRY, DistributionParams, DisclosureClass.DISCLOSED
+        distribution.ENTRY, DistributionParams, DistributionValues, DisclosureClass.DISCLOSED
     ),
     members.ENTRY.id: CoreAnalysis(
         members.ENTRY,
         MembersParams,
+        MembersValues,
         DisclosureClass.REFUSED,
         lists_keys=True,
         because="a key is held by one unit, and lists give by difference the units of a set of "
         "any size (D332)",
     ),
-    columns.ENTRY.id: CoreAnalysis(columns.ENTRY, ColumnsParams, DisclosureClass.DISCLOSED),
+    columns.ENTRY.id: CoreAnalysis(
+        columns.ENTRY, ColumnsParams, ColumnsValues, DisclosureClass.DISCLOSED
+    ),
     survival.ENTRY.id: CoreAnalysis(
         survival.ENTRY,
         SurvivalParams,
+        SurvivalValues,
         DisclosureClass.REFUSED,
         because="a curve's values can give the censorings between its event times, which no "
         "rule yet protects (D351)",
@@ -141,6 +156,7 @@ CORE: Mapping[str, CoreAnalysis] = {
     cox.ENTRY.id: CoreAnalysis(
         cox.ENTRY,
         CoxParams,
+        CoxValues,
         DisclosureClass.REFUSED,
         because="a Cox model's hazard ratios and tests are functions of the risk sets at every "
         "event time, as a curve's values are, which no rule yet protects (D351)",

@@ -89,7 +89,10 @@ From M3.3f, a covariate may be a predicate, listed as a question of its clause
 From M3.4, `tests/core/determinism/` holds the thread-count determinism tests (§9.3, D372): an
 orchard of a million trees, built once per module, and every tool whose answer DuckDB's queries
 make, compared across `query_threads`; they carry the `million` marker, which `addopts` deselects,
-and CI runs them in a job of their own.
+and CI runs them in a job of their own. From M3.5a, `core/analyses/results.py` gives a view's
+digested content (`digested`, a `Digested` that is written as JSON and read back through the
+analysis's values model, `CoreAnalysis.values`) apart from its rendering for an issuance
+(`render`).
 
 ## Non-negotiables
 
