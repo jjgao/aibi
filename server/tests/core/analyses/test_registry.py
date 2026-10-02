@@ -93,7 +93,12 @@ def test_the_core_s_entry_is_generated_from_its_models() -> None:
 
 def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     analyses = Analyses(shelves([{"role": "orders", "kind": "table"}]))
-    assert analyses.ids() == ["compare.existence", "shelves.restock", "summary.distribution"]
+    assert analyses.ids() == [
+        "compare.existence",
+        "shelves.restock",
+        "summary.distribution",
+        "summary.members",
+    ]
     found = analyses.get("shelves.restock")
     assert found is not None
     assert found.pack == "shelves"
@@ -229,3 +234,34 @@ def test_a_view_of_a_pack_s_analysis_is_listed_but_not_run(check: Check, shop: S
     [refusal] = found.refusals
     assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
     assert "M3.2d" in json.dumps([part.model_dump() for part in refusal.message])
+
+
+@pytest.mark.parametrize(
+    ("disclosure", "k", "missing"),
+    [
+        (None, None, None),
+        (None, 3, ["min_cell_count"]),
+        ({"min_cell_count": 4}, 4, ["min_cell_count"]),
+        ({"min_cell_count": 4, "allow_row_ids": False}, 4, ["allow_row_ids", "min_cell_count"]),
+    ],
+)
+def test_an_analysis_that_lists_keys_is_unavailable_under_a_disclosure_setting_naming_it(
+    shop: Shop, disclosure: dict[str, Any] | None, k: int | None, missing: list[str] | None
+) -> None:
+    release = shop(disclosure=disclosure)
+    for unit in (None, "customers"):
+        found = {
+            item.analysis: (item.status, item.missing)
+            for item in Analyses().applicable(
+                list(release.descriptors),
+                dataset=release.dataset,
+                manifest=release.manifest,
+                unit=unit,
+                k=k,
+            )
+        }
+        if missing is None:
+            assert found["summary.members"] == ("available", [])
+        else:
+            assert found["summary.members"] == ("unavailable", missing)
+        assert found["compare.existence"] == ("available", [])

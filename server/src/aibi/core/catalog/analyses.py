@@ -9,13 +9,15 @@ query worker (§14), which ends ``RECORD_SECONDS`` before the call's deadline
 (``queries.run_crossed``): each cohort counted once, and each crossing of a view's cohorts with its
 predicates (each predicate that holds a lift under the other lift rule too) counted once, views
 asking the same one sharing it; and each materialisation of a view's variables over its cohorts
-read once, views asking the same one sharing it (D327). A crossing's answer is integer counts,
+read once, views asking the same one sharing it (D327); and each cohort a ``summary.members`` view
+names has its members' keys listed once (D333). A crossing's answer is integer counts,
 whose size depends on the number of cohorts and predicates and never on the units (D318); a
 materialisation's grows with the values the units hold, and for ``max``, ``min`` and ``mean``
-with the units, so the answer cap can bound it: an answer over the cap, or a run over the
-worker's seconds or memory, names the view whose materialisation is widest, else the one whose
-crossing is. Each view is then computed by its
-analysis (``existence.compare``, ``distribution.summarise``), disclosed under its effective *k*,
+with the units, so the answer cap can bound it, and a listing of keys has a row per member: an
+answer over the cap, or a run over the worker's seconds or memory, names the first view that
+lists keys, else the view whose materialisation is widest, else the one whose crossing is. Each
+view is then computed by its analysis (``existence.compare``, ``distribution.summarise``,
+``members.list_members``), disclosed under its effective *k*,
 and made into its envelope (``results.envelope``); a column with more categories than a result
 lists refuses the call (``LIMIT_EXCEEDED``, D328).
 
@@ -40,7 +42,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import distribution
+from aibi.core.analyses import distribution, members
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.results import Outcome, envelope, issued_packs
 from aibi.core.analyses.views import CheckedView
@@ -59,19 +61,22 @@ from aibi.core.catalog.cohorts import (
 )
 from aibi.core.catalog.service import DEADLINE, Catalog, Deadline, ToolRefused
 from aibi.core.engine.canonical import CanonicalCohort, intersection
+from aibi.core.engine.members import Key
 from aibi.core.engine.queries import ViewsRun, run_cohorts, run_views
 from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.cohorts import AnalysisResults, RunAnalysis
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import (
     CATEGORIES,
+    LISTED_MEMBERS,
     MAX_CATEGORIES,
     QUERY_ANSWER_BYTES,
     QUERY_MEMORY,
     QUERY_SECONDS,
+    TEXT_CHARACTERS,
 )
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
@@ -127,11 +132,14 @@ def _run(
     workers: Workers,
     deadline: Deadline | None,
     widest: CheckedView,
+    listed: Sequence[ResolvedCohort] = (),
 ) -> ViewsRun:
-    """The call's queries in one run; an answer over the cap names the view to narrow
-    (``widest``, module docstring)."""
+    """The call's queries in one run, ``listed`` the cohorts whose members' keys are listed; an
+    answer over the cap names the view to narrow (``widest``, module docstring)."""
     return _guarded(
-        lambda ends: run_views(cohorts, crossings, materialisations, sources, workers, ends=ends),
+        lambda ends: run_views(
+            cohorts, crossings, materialisations, sources, workers, members=listed, ends=ends
+        ),
         deadline,
         pointer(["views", widest.index]),
     )
@@ -153,13 +161,60 @@ def _too_large(view: CheckedView, column: int) -> ToolRefused:
 
 
 def _widest(views: Sequence[CheckedView]) -> CheckedView:
-    """The view an answer over the cap, or a run over its seconds or memory, names: the one whose
-    materialisation is widest, whose answer grows with the units, else the one whose crossing is
-    (module docstring)."""
+    """The view an answer over the cap, or a run over its seconds or memory, names: the first that
+    lists keys, a row per member, else the one whose materialisation is widest, whose answer grows
+    with the units, else the one whose crossing is (module docstring)."""
+    listing = [view for view in views if isinstance(view.params, MembersParams)]
+    if listing:
+        return listing[0]
     materialising = [view for view in views if view.variables]
     if materialising:
         return max(materialising, key=lambda view: len(view.cohorts) * len(view.variables))
     return max(views, key=lambda view: len(view.cohorts) * (len(view.predicates) + 1))
+
+
+def _listed(
+    view: CheckedView, position: CohortAt, keys: Sequence[Key], deadline: Deadline | None
+) -> members.Outcome:
+    """A ``summary.members`` view's page (D333), taken by the call's deadline, less the time to
+    record; a cohort with more members than a listing reads refuses the call, and so does a page
+    holding a text key longer than a result writes."""
+    assert isinstance(view.params, MembersParams), "a members view"
+    params = view.params
+    try:
+        return _guarded(
+            lambda ends: members.list_members(position, keys, params, k=view.disclosure, ends=ends),
+            deadline,
+        )
+    except members.TooManyMembers as many:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer(["views", view.index]),
+                    message=[
+                        text(f"The cohort has more than {many.most} members, more than a "),
+                        text("listing reads to take a page (§14, D333): narrow the cohort"),
+                    ],
+                    limit=Limit(name=LISTED_MEMBERS, max=many.most),
+                )
+            ]
+        ) from None
+    except members.LongKey as long:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer(["views", view.index]),
+                    message=[
+                        text(f"A key on the page has more than {long.most} characters in "),
+                        data(long.column),
+                        text(", more than a result writes (§14, D331)"),
+                    ],
+                    limit=Limit(name=TEXT_CHARACTERS, max=long.most),
+                )
+            ]
+        ) from None
 
 
 def _too_many(view: CheckedView, column: int) -> ToolRefused:
@@ -232,18 +287,26 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
         asked: list[tuple[list[ResolvedCohort], list[ResolvedCohort]]] = []
         materialisations: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
         read: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
+        listings: dict[str, int] = {}
+        listed: list[ResolvedCohort] = []
         for view in views:
-            members = [cohort.resolved for cohort in view.cohorts]
+            if isinstance(view.params, MembersParams):
+                [cohort] = view.cohorts
+                if cohort.computation_id not in listings:
+                    listings[cohort.computation_id] = len(listed)
+                    listed.append(cohort.resolved)
+                continue
+            members_of = [cohort.resolved for cohort in view.cohorts]
             if view.variables:
                 key = _materialisation_key(view)
                 if key not in materialisations:
                     materialisations[key] = len(read)
-                    read.append((members, _distinct(view)))
+                    read.append((members_of, _distinct(view)))
                 continue
             key = _crossing_key(view)
             if key not in crossings:
                 crossings[key] = len(asked)
-                asked.append((members, [predicate.resolved for predicate in view.predicates]))
+                asked.append((members_of, [predicate.resolved for predicate in view.predicates]))
         manifests = sorted({cohort.release.manifest for cohort in cohorts.values()})
         sources = {manifest: store.sources(manifest) for manifest in manifests}
         ran_views = _run(
@@ -254,6 +317,7 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             workers,
             deadline,
             _widest(views),
+            listed,
         )
         by_id = dict(zip(cohorts, ran_views.counted, strict=True))
         written = dict(request.document)
@@ -268,6 +332,15 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             queries: list[JsonValue] = [
                 {"statements": list(run.sql), "parameters": dict(run.parameters)} for run in used
             ]
+            if isinstance(view.params, MembersParams):
+                [position] = positions
+                run_listed = ran_views.listed[listings[position.cohort.computation_id]]
+                outcomes.append(_listed(view, position, run_listed.keys, deadline))
+                queries.append(
+                    {"statements": list(run_listed.sql), "parameters": dict(run_listed.parameters)}
+                )
+                issues.append(_result_issue(view, {"queries": queries}, written, params))
+                continue
             if isinstance(view.params, DistributionParams):
                 made = ran_views.materialised[materialisations[_materialisation_key(view)]]
                 try:

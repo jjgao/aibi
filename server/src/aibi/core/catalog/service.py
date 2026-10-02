@@ -570,7 +570,7 @@ class Catalog:
                 ],
             ),
             applicable_analyses=self.analyses.applicable(
-                descriptors, dataset=release.dataset, manifest=release.manifest
+                descriptors, dataset=release.dataset, manifest=release.manifest, k=k
             ),
             caveats=sort_caveats(caveats),
             columns_total=position,
@@ -733,6 +733,7 @@ class Catalog:
         with self.store.pin() as pin:
             self._held(pin, release)
             descriptors = self.store.descriptors(release.manifest)
+            k = self._k(pin, release, descriptors)
         tables = [d.id for d in descriptors if isinstance(d, TableDescriptor)]
         if request.unit is not None and request.unit not in tables:
             raise _refused(
@@ -748,6 +749,7 @@ class Catalog:
                 dataset=release.dataset,
                 manifest=release.manifest,
                 unit=request.unit,
+                k=k,
             ),
         )
 

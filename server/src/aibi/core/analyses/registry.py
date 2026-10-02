@@ -3,8 +3,9 @@
 The registry holds the core's analyses, each an entry (a descriptor of kind ``analysis``) with its
 parameters' model and its implementation, and the analyses of the installed packs, each an entry
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
-path computes a result. The core's are ``compare.existence`` (D319) and ``summary.distribution``
-(D328); the rest of §9.5 follows in the later slices of M3 (D315, D324).
+path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
+(D328) and ``summary.members`` (D331); the rest of §9.5 follows in the later slices of M3 (D315,
+D324).
 
 A pack's analysis is registered, listed and matched for applicability like the core's; the core
 runs it from the slice that hands it the inputs its ``requires`` name, materialised (the columns,
@@ -23,15 +24,17 @@ requirement is not met, naming its roles; ``available_with_caveats`` when a requ
 but not by its ``min`` descriptors without a field whose status is ``imported_default``,
 ``proposed`` or ``undeclared`` (an endpoint whose event coding was imported by default); and
 ``available`` otherwise. A requirement predicate reads the release, not the unit table, so it runs
-once for all of them.
+once for all of them. An analysis that lists units' keys (``summary.members``) is ``unavailable``
+under any disclosure setting and where the dataset allows no row ids, ``missing`` naming the
+setting (``min_cell_count``, ``allow_row_ids``), since every view of it is refused there (D332).
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aibi.core.analyses import distribution, existence
+from aibi.core.analyses import distribution, existence, members
 from aibi.core.engine.resolve import UNCONFIRMED, DescriptorCopies, PackView, pack_failed
-from aibi.core.schema.analyses import DistributionParams, ExistenceParams
+from aibi.core.schema.analyses import DistributionParams, ExistenceParams, MembersParams
 from aibi.core.schema.catalog import ApplicableAnalysis
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
@@ -57,17 +60,22 @@ class CoreAnalysis:
 CORE: Mapping[str, CoreAnalysis] = {
     existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams),
     distribution.ENTRY.id: CoreAnalysis(distribution.ENTRY, DistributionParams),
+    members.ENTRY.id: CoreAnalysis(members.ENTRY, MembersParams),
 }
 """The core's analyses, by id."""
 
 LATER: Mapping[str, str] = {
-    "summary.members": "M3.2b",
     "compare.columns": "M3.2c",
     "survival.km": "M3.3",
     "survival.cox": "M3.3",
 }
 """The core's analyses of §9.5 that a later slice of M3 implements, and the slice (D315, D317,
 D324): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
+
+LISTS_KEYS = frozenset({members.ANALYSIS_ID})
+"""The core's analyses that list units' keys, which are refused under any disclosure setting
+and where the dataset allows no row ids (D332), and so are ``unavailable`` there, naming the
+setting: ``min_cell_count``, ``allow_row_ids``."""
 
 PACK_ANALYSES = "M3.2d"
 """The slice that runs packs' analyses (D316, D324)."""
@@ -128,10 +136,14 @@ class Analyses:
         dataset: str,
         manifest: str,
         unit: str | None = None,
+        k: int | None = None,
     ) -> list[ApplicableAnalysis]:
         """Each analysis's applicability to a release (module docstring): for ``unit``, or, with
-        none, the best status over the release's keyed tables."""
+        none, the best status over the release's keyed tables; ``k`` is the release's effective
+        disclosure setting, the floor's included, under which an analysis that lists unit keys
+        is ``unavailable`` (``LISTS_KEYS``)."""
         view = _view(descriptors, dataset, manifest)
+        withheld = _withheld(descriptors, k)
         keyed = [
             descriptor.id
             for descriptor in descriptors
@@ -144,6 +156,10 @@ class Analyses:
             outcomes = [self._matched(analysis, descriptors, view, table, held) for table in units]
             if not outcomes:
                 outcomes = [(_UNAVAILABLE, ["unit"], list[str]())]
+            if withheld and analysis.id in LISTS_KEYS:
+                outcomes = [
+                    (_UNAVAILABLE, [*missing, *withheld], list[str]()) for _, missing, _ in outcomes
+                ]
             found.append(_best(analysis, outcomes))
         return found
 
@@ -223,6 +239,17 @@ def _best(
     )
 
 
+def _withheld(descriptors: Sequence[Descriptor], k: int | None) -> list[str]:
+    """The disclosure settings under which no unit's key is listed (D332): a ``min_cell_count``
+    (the effective *k*, the floor's included) and ``allow_row_ids: false``."""
+    found = [] if k is None else ["min_cell_count"]
+    dataset = next((d for d in descriptors if isinstance(d, DatasetDescriptor)), None)
+    settings = None if dataset is None else dataset.fields.disclosure
+    if settings is not None and not settings.allow_row_ids:
+        found.append("allow_row_ids")
+    return found
+
+
 def _view(descriptors: Sequence[Descriptor], dataset: str, manifest: str) -> PackView:
     """What a requirement predicate reads of the release: its descriptors, copied (§10.1)."""
     found = next((d for d in descriptors if isinstance(d, DatasetDescriptor)), None)
@@ -264,4 +291,12 @@ def _unsettled(descriptor: Descriptor) -> bool:
     return any(entry.status in UNCONFIRMED for entry in descriptor.curation.values())
 
 
-__all__ = ["CORE", "LATER", "PACK_ANALYSES", "Analyses", "CoreAnalysis", "Registered"]
+__all__ = [
+    "CORE",
+    "LATER",
+    "LISTS_KEYS",
+    "PACK_ANALYSES",
+    "Analyses",
+    "CoreAnalysis",
+    "Registered",
+]

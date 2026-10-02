@@ -18,6 +18,8 @@ htmlcov/
 server/data/
 server/aibi.toml
 server/imports/
+# JUnit reports the test steps write (D334)
+server/reports/
 /data/
 coverage.xml
 .coverage.*

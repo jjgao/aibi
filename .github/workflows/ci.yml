@@ -47,7 +47,49 @@ jobs:
       - name: Import boundary
         run: uv run lint-imports
       - name: Core tests, which must load no pack (SPEC P8)
-        run: uv run pytest tests/core
+        run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
       - name: Other tests
         # pytest exits with 5 when it collects no tests, as before the first pack has any.
-        run: uv run pytest --ignore=tests/core || test $? -eq 5
+        run: >-
+          uv run pytest --ignore=tests/core --tb=short -o junit_family=xunit1
+          --junitxml=reports/other.xml || test $? -eq 5
+      - name: Failed tests as annotations
+        # Each failed test's id, place and message becomes a check-run annotation, which the
+        # checks API serves where the job's log cannot be read (D334).
+        if: failure()
+        run: |
+          python3 - <<'EOF'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          def escaped(value, member=False):
+              value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              return value.replace(":", "%3A").replace(",", "%2C") if member else value
+
+          reports = sorted(glob.glob("reports/*.xml"))
+          found = []
+          for report in reports:
+              for case in ET.parse(report).iter("testcase"):
+                  for failed in [*case.findall("failure"), *case.findall("error")]:
+                      name = "::".join(p for p in (case.get("classname"), case.get("name")) if p)
+                      where = f"server/{case.get('file', '')}"
+                      line = int(case.get("line") or 0) + 1
+                      said = f"{failed.get('message') or ''}\n{failed.text or ''}".strip()
+                      found.append(
+                          f"::error file={escaped(where, True)},line={line},"
+                          f"title={escaped(name[:200], True)}::{escaped(said[:4000])}"
+                      )
+          # A step keeps 10 error annotations: past that, one says how many the rest are.
+          if len(found) > 10:
+              print(f"::error title={len(found)} failed::{len(found)} tests failed; the first 9 "
+                    "are annotated, and the job's log holds the rest")
+              found = found[:9]
+          if found:
+              print(*found, sep="\n")
+          if not reports:
+              print("::error title=No report::pytest wrote no report: a step before the tests "
+                    "failed, or pytest stopped before writing one")
+          elif not found:
+              print("::error title=No failed test::No test failed in pytest's reports: a check "
+                    "of the whole session failed, or a step outside the tests did")
+          EOF

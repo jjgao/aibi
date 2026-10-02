@@ -3,6 +3,10 @@
 - ``stats``: the statistical methods, deterministic as §9.3 requires, held to R (D321).
 - ``disclosure``: the disclosure of the counts a result adds, each predicate's split (§8.4, D320).
 - ``existence``: ``compare.existence``, its entry, values, readback and disclosure (D319).
+- ``distribution``: ``summary.distribution`` (D328, D329), and ``common`` what the core's
+  descriptive analyses share.
+- ``members``: ``summary.members``, a page of one cohort's unit keys, refused under any
+  disclosure setting (D331, D332).
 - ``registry``: the registry of the core's and the packs' analyses, and applicability (D316).
 - ``views``: phase 2 of canonicalisation, the views checked against their analyses (D317).
 - ``charts``: Vega-Lite specifications from a result's values (§8.5, D322).
