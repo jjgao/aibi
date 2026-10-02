@@ -59,6 +59,8 @@ core/catalog/analyses.py	_survived	text	many.steps	a number, or a status (an enu
 core/catalog/analyses.py	_too_many_cells	text	many.cells	a number, or a status (an enumeration member)
 core/catalog/analyses.py	_too_many_cells	text	many.most	a number, or a status (an enumeration member)
 core/catalog/cohorts.py	_listed	text	len(names) - ALTERNATIVES	a number (a length)
+core/catalog/cohorts.py	_translated	text	made.most	a number (a limit)
+core/catalog/cohorts.py	_translated	text	made.name	the name of a limit of the server's own (``Tripped``, from the copy's own allowance)
 core/catalog/cohorts.py	late	text	seconds	a number, or a status (an enumeration member)
 core/catalog/cohorts.py	log_full	text	log_bytes	a limit
 core/catalog/service.py	Catalog._refused_release	text	len(listed) - ALTERNATIVES	a number (a length)

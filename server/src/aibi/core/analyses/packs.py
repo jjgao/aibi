@@ -37,9 +37,11 @@ schema within the steps of an object of that many values, shaped as a result's `
 (``positions``, an object per position, and ``view``, an object) with ``not_estimable`` maps that
 name null members (``Values``). Anything else, and anything raised while ``run`` runs or while
 what it gave is read (which runs the pack's code too), ``BaseException``'s subclasses included but
-``_PASSED`` themselves (a pack's subclass of one is its failure), refuses the call
+``schema.guards.PASSED`` themselves (a pack's subclass of one is its failure), refuses the call
 (``PackFailed``: ``PACK_FAILED``, with a message of the core's that quotes nothing the pack gave;
-the log names a built-in exception's type alone, never its message).
+the log names a built-in exception's type alone, never its message). ``run`` is called, and what
+it gave copied (``copiers.values``), through its handle's guard (``Hook.call``, D403); a call
+that returns past its deadline is refused outside the guard (``Late``), nothing of it copied.
 The call's deadline is looked at before ``run``, after it, after its values are checked and after
 they are counted, and throughout the check (``TimedBudget``) and the counting (before each
 column, and every ``DEADLINE_UNITS`` members): a pack's code cannot be stopped, so a call overruns
@@ -73,7 +75,7 @@ import json
 import math
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
@@ -93,12 +95,13 @@ from aibi.core.analyses.survival import endpoint_cells
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.inputs import Listed, TooManyCells, cells
 from aibi.core.engine.readback import variable_readback
-from aibi.core.engine.resolve import ResolvedEndpoint, ResolvedVariable, pack_failed
+from aibi.core.engine.resolve import ResolvedEndpoint, ResolvedVariable
 from aibi.core.engine.variables import Joint, Materialised, Value
 from aibi.core.engine.worker import CallerDeadline
+from aibi.core.schema import copiers, guards
 from aibi.core.schema.analyses import PackParams
 from aibi.core.schema.caveats import Caveat, CaveatCode
-from aibi.core.schema.guards import PASSED
+from aibi.core.schema.guards import Hook, Late, NotJson, Tripped
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.jsonschemas import (
     OUT_OF_STEPS,
@@ -114,17 +117,19 @@ from aibi.core.schema.limits import (
     MAX_RESULT_CHARACTERS,
     MAX_RESULT_VALUES,
     MAX_TEXT,
+    RESULT_CHARACTERS,
+    RESULT_VALUES,
+    TEXT_CHARACTERS,
 )
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import (
+    Analysis,
     AnalysisInputs,
     EndpointRow,
     InputColumn,
     InputEndpoint,
     InputPosition,
-    JsonTooLarge,
     RegisteredAnalysis,
-    plain_json,
 )
 from aibi.core.schema.refusals import Limit
 from aibi.core.schema.results import Analysed, Population, Values
@@ -311,10 +316,9 @@ def run_pack(
         ends=ends,
     )
     _look(ends)
-    given = _guarded(
-        entry.id, "analysis", lambda: cast(object, analysis.implementation.run(handed))
-    )
-    _look(ends)
+    given = _ran(entry.id, analysis.implementation, handed, ends)
+    if isinstance(given, Late):
+        raise CallerDeadline
     values = _checked(entry.id, given, returns, len(positions), ends)
     _look(ends)
     population = populations(positions, None)
@@ -358,62 +362,55 @@ def _inputs_of(
     return found
 
 
-_PASSED = PASSED
-"""What a pack's code raises that is no failure of the pack's (``schema.guards.PASSED``): the
-process out of memory, or asked to stop, each passed as a new instance raised outside the
-handler."""
-
-
-def _guarded[T](entry: str, stage: str, run: Callable[[], T]) -> T:
-    """``run``, which runs a pack's code, its every exception but ``_PASSED`` (``BaseException``
-    subclasses included, which a pack may define) a ``PackFailed`` with a message of the core's;
-    the log names only a built-in exception's type (``pack_failed``)."""
-    passed: type[BaseException] | None = None
+def _ran(
+    entry: str, implementation: Hook[Analysis], handed: AnalysisInputs, ends: float | None
+) -> JsonValue | Tripped | NotJson | Late:
+    """What ``run`` gave, copied within a result's caps (``copiers.values``), through its
+    handle's guard (D403): ``Late`` when it returned past the call's deadline, ``Tripped`` when
+    its values pass a cap, ``NotJson`` when they are not JSON; a ``PackFailed`` with a message
+    of the core's when it fails, raised outside the guard."""
+    allowance = guards.allowance(
+        MAX_RESULT_VALUES,
+        MAX_RESULT_CHARACTERS,
+        MAX_TEXT,
+        (RESULT_VALUES, RESULT_CHARACTERS, TEXT_CHARACTERS),
+    )
+    failed = False
+    found: JsonValue | Tripped | NotJson | Late = None
     try:
-        return run()
-    except BaseException as error:
-        kind = type(error)
-        passed = next((one for one in _PASSED if kind is one), None)
-        if passed is None:
-            pack_failed(entry.partition(".")[0], stage, error)
-    if passed is not None:
-        raise passed()
-    raise PackFailed(text("The pack's analysis "), data(entry), text(" failed"))
-
-
-def _copied(given: object) -> JsonValue | JsonTooLarge | None:
-    """What ``run`` gave, copied within a result's caps (``plain_json``): ``JsonTooLarge`` when it
-    passes one, ``None`` when it is not JSON."""
-    try:
-        return plain_json(
-            given, values=MAX_RESULT_VALUES, characters=MAX_RESULT_CHARACTERS, text=MAX_TEXT
+        found = implementation.call(
+            lambda h: copiers.values(h.run, handed, allowance=allowance, ends=ends)
         )
-    except JsonTooLarge as large:
-        return large
-    except (ValueError, RecursionError):
-        return None
+    except guards.PackFailed:
+        failed = True
+    if failed:
+        raise PackFailed(text("The pack's analysis "), data(entry), text(" failed"))
+    return found
 
 
 def _checked(
-    entry: str, given: object, returns: Checker, positions: int, ends: float | None
+    entry: str,
+    found: JsonValue | Tripped | NotJson,
+    returns: Checker,
+    positions: int,
+    ends: float | None,
 ) -> Values:
     """What ``run`` gave, checked as values (module docstring): copied within its caps while the
-    pack's code that reading it runs is guarded, then checked by the core's code alone, the
-    ``returns`` schema within its steps and the call's deadline. No message quotes what the pack
-    gave: a failing keyword is the schema's."""
+    pack's code that reading it runs is guarded (``_ran``), then checked by the core's code
+    alone, the ``returns`` schema within its steps and the call's deadline. No message quotes
+    what the pack gave: a failing keyword is the schema's."""
 
     def failed(*said: Segment, limit: Limit | None = None) -> PackFailed:
         return PackFailed(
             text("The pack's analysis "), data(entry), text(" gave "), *said, limit=limit
         )
 
-    found = _guarded(entry, "analysis's values", lambda: _copied(given))
-    if isinstance(found, JsonTooLarge):
+    if isinstance(found, Tripped):
         raise failed(
             text(f"values larger than a result holds ({found.name}, at most {found.most})"),
             limit=Limit(name=found.name, max=found.most),
         )
-    if found is None:
+    if isinstance(found, NotJson):
         raise failed(text("what JSON text cannot carry unchanged"))
     try:
         failures = returns.failures(found, budget=TimedBudget(steps(found, WRITE_STEPS_MAX), ends))

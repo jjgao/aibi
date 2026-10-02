@@ -14,7 +14,6 @@ from them (D401).
 import hashlib
 import math
 import re
-import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -43,7 +42,14 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.document import Clause, PackKey, PackLeaf
 from aibi.core.schema.errors import problem
-from aibi.core.schema.guards import PASSED, passed
+from aibi.core.schema.guards import (
+    PASSED,
+    Hook,
+    JsonTooLarge,
+    _Allowance,  # pyright: ignore[reportPrivateUsage]
+    _NotJsonError,  # pyright: ignore[reportPrivateUsage]
+    passed,
+)
 from aibi.core.schema.ids import (
     CORE_ANALYSIS_FAMILIES,
     MAX_SAFE_INTEGER,
@@ -417,10 +423,29 @@ class AnalysisInputs:
     position holds (D352)."""
 
 
-class Refused(Exception):  # noqa: N818 - "refused" is the spec's word for a hook's refusal
-    """Raised by a hook that refuses its input, such as a leaf compiler (SPEC §7.3)."""
+# The aliases are covariant, so that a pack's narrower annotation (``-> list[TextSegment]`` where a
+# ``Segments`` is declared) type-checks; the copiers take, at run time, only what each says:
+# an exact ``list`` or ``tuple`` (D403).
+Refusals = Sequence[Refusal]
+"""What a validator gives, and what a compiler's ``Refused`` holds: at run time an exact ``list``
+or ``tuple`` of exact ``Refusal``s; a generator, another ``Sequence`` or a ``Refusal`` subclass is
+the hook's failure (D403)."""
+Clauses = Sequence[Clause]
+"""What a leaf compiler gives: at run time an exact ``list`` or ``tuple`` of core clauses of
+exact types."""
+Segments = Sequence[Segment]
+"""A summary, or a note's message: at run time an exact ``list`` or ``tuple`` of exact
+segments."""
+Codes = Sequence[str]
+"""What a caveat rule gives: at run time an exact ``list`` or ``tuple`` of text, each a ``str`` (a
+subclass copied as an exact ``str``); a ``str`` itself is the hook's failure."""
 
-    def __init__(self, refusals: Sequence[Refusal]) -> None:
+
+class Refused(Exception):  # noqa: N818 - "refused" is the spec's word for a hook's refusal
+    """Raised by a hook that refuses its input, such as a leaf compiler (SPEC §7.3): this class
+    itself, since a subclass of it is the hook's failure (D403)."""
+
+    def __init__(self, refusals: Refusals) -> None:
         super().__init__("; ".join(refusal.code for refusal in refusals))
         self.refusals = tuple(refusals)
 
@@ -431,7 +456,7 @@ class TranslationNote:
 
     pointer: str
     """A JSON Pointer into the document being translated."""
-    message: Sequence[Segment]
+    message: Segments
 
 
 # --- The extension points (SPEC §10.1) --------------------------------------------------------
@@ -449,9 +474,9 @@ class Validator(Protocol):
     points them at ``/descriptors/…`` on an import and ``/draft/…`` on a draft change (D246).
     ``validate_source`` is given a database snapshot's source as a ``DatabaseSource`` (D305)."""
 
-    def validate_source(self, source: ImportSource, result: ImportResult) -> Sequence[Refusal]: ...
+    def validate_source(self, source: ImportSource, result: ImportResult) -> Refusals: ...
 
-    def validate_descriptors(self, release: ReleaseView) -> Sequence[Refusal]: ...
+    def validate_descriptors(self, release: ReleaseView) -> Refusals: ...
 
 
 class LeafKind(Protocol):
@@ -465,21 +490,24 @@ class LeafKind(Protocol):
         """The JSON Schema of the leaf's members."""
         ...
 
-    def compile(
-        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
-    ) -> Sequence[Clause]: ...
+    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Clauses: ...
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> Segments:
         """A sentence about the leaf as written, shown as the pack's and kept out of digests."""
         ...
+
+
+Notes = Sequence[TranslationNote]
+"""A translation's notes: at run time an exact ``list`` or ``tuple`` of exact
+``TranslationNote``s."""
 
 
 class Translator(Protocol):
     """Translates a document in another format into an aibi document (SPEC §7.1)."""
 
-    def translate(
-        self, document: JsonValue
-    ) -> tuple[Mapping[str, JsonValue], Sequence[TranslationNote]]: ...
+    def translate(self, document: JsonValue) -> tuple[Mapping[str, JsonValue], Notes]:
+        """An exact pair: the document, and an exact ``list`` or ``tuple`` of notes (D403)."""
+        ...
 
 
 class Analysis(Protocol):
@@ -496,13 +524,18 @@ class Analysis(Protocol):
 
 
 OntologyValidator = Callable[[str], bool]
-"""Whether a code belongs to the ontology system (SPEC §5.4)."""
+"""Whether a code belongs to the ontology system (SPEC §5.4): only ``True`` itself holds, so a
+truthy answer that is not ``True`` (a ``re.Match``, ``1``) refuses the code (D403)."""
 Proposer = Callable[[ReleaseView], Sequence[Proposal]]
+"""A release's proposals: at run time an exact ``list`` or ``tuple`` of at most
+``MAX_QUEUE_ITEMS`` exact ``Proposal``s (D249, D403)."""
 RequirementPredicate = Callable[[ReleaseView], bool]
-"""Cited in an analysis's ``requires`` as ``"<pack id>.<name>"`` (SPEC §9.1)."""
+"""Cited in an analysis's ``requires`` as ``"<pack id>.<name>"`` (SPEC §9.1); only ``True``
+itself holds (D403)."""
 Facet = Callable[[ReleaseView], Mapping[str, Sequence[str]]]
-"""Catalogue facets of a release: facet name to values (SPEC §11.1)."""
-CaveatRule = Callable[[ReleaseView, Mapping[str, JsonValue]], Sequence[str]]
+"""Catalogue facets of a release (SPEC §11.1): at run time an exact ``dict`` of facet name to an
+exact ``list`` or ``tuple`` of values (D403), a read-only mapping being the hook's failure."""
+CaveatRule = Callable[[ReleaseView, Mapping[str, JsonValue]], Codes]
 """Caveat codes for a canonical cohort or view; static, with no access to data. It reads a copy
 of the form and a view whose ``label`` it may not read (D287)."""
 
@@ -606,72 +639,9 @@ def _ordinal(position: int) -> str:
     return f"{position}{suffix}"
 
 
-class _NotJsonError(ValueError):
-    """A schema that is not a JSON value."""
-
-
-class JsonTooLarge(ValueError):  # noqa: N818 - raised like a limit's refusal
-    """What a pack gave that holds more than ``plain_json`` allows: ``name`` the limit, ``most``
-    its value (D343)."""
-
-    def __init__(self, name: str, most: int) -> None:
-        super().__init__(f"more than {most} ({name})")
-        self.name = name
-        self.most = most
-
-
 class _RaisedLimitError(RuntimeError):
     """A ``JsonTooLarge`` that the code being copied raised, which is its failure, not a limit
     the copy passed (D343)."""
-
-
-@dataclass
-class _Allowance:
-    """What a copy may still hold: JSON values, and characters of text (keys included), each
-    string at most ``text`` of them; counted before each is copied. It records what the copy
-    itself raised, so that only that is ever quoted or passed on as the copy's: an exception of
-    the same type that is not it was raised by the code being copied (D343, D402)."""
-
-    most_values: int
-    most_characters: int
-    text: int
-    names: tuple[str, str, str]
-    values: int = 0
-    characters: int = 0
-    tripped: JsonTooLarge | None = None
-    """The limit this copy passed, raised as it is."""
-    refused: _NotJsonError | None = None
-    """What this copy found JSON text cannot carry unchanged, raised as it is."""
-    reason: str = ""
-    """``refused``'s reason, in the core's words."""
-
-    @classmethod
-    def unbounded(cls) -> "_Allowance":
-        """An allowance of no limit but the recursion's, for a copy that only records."""
-        most = sys.maxsize
-        return cls(most, most, most, (RESULT_VALUES, RESULT_CHARACTERS, TEXT_CHARACTERS))
-
-    def refuse(self, reason: str) -> _NotJsonError:
-        """The exception that refuses what is being copied, for ``reason``, recorded."""
-        self.reason = reason
-        self.refused = _NotJsonError(reason)
-        return self.refused
-
-    def value(self) -> None:
-        self.values += 1
-        if self.values > self.most_values:
-            self.trip(self.names[0], self.most_values)
-
-    def string(self, length: int) -> None:
-        if length > self.text:
-            self.trip(self.names[2], self.text)
-        self.characters += length
-        if self.characters > self.most_characters:
-            self.trip(self.names[1], self.most_characters)
-
-    def trip(self, name: str, most: int) -> None:
-        self.tripped = JsonTooLarge(name, most)
-        raise self.tripped
 
 
 class _Passing(BaseException):
@@ -1010,12 +980,12 @@ def _schemas(schemas: Mapping[str, JsonSchema]) -> Mapping[str, JsonSchema]:
 
 @dataclass(frozen=True)
 class RegisteredAnalysis:
-    """An analysis as registered: its entry, read once and read back as an exact model, and the
-    pack's implementation, kept by identity and never read by the registry (D402); a caller
-    reads and calls ``implementation.run`` inside a guard (``analyses.packs``)."""
+    """An analysis as registered: its entry, read once and read back as an exact model, and a
+    handle on the pack's implementation (``Hook``), whose object the registry never reads; a
+    caller calls ``implementation.run`` through the handle (``analyses.packs``, D403)."""
 
     _entry: AnalysisDescriptor
-    implementation: Analysis = field(repr=False, compare=False)
+    implementation: "Hook[Analysis]" = field(repr=False, compare=False)
 
     @property
     def entry(self) -> AnalysisDescriptor:
@@ -1023,19 +993,67 @@ class RegisteredAnalysis:
         return self._entry.model_copy(deep=True)
 
 
+@dataclass(frozen=True)
+class PackInfo:
+    """A registered pack as the registry hands it out (D402, D403): copies of the core's, and
+    no hook. Its manifest, concepts, extension schemas, caveat codes and wordings, and the names
+    its hooks are registered under; the hooks themselves are handed out as handles (``Hook``)
+    by the registry's methods alone."""
+
+    manifest: PackManifest
+    concepts: Sequence[ConceptDescriptor] = ()
+    extension_schemas: Mapping[str, JsonSchema] = field(default_factory=dict[str, JsonSchema])
+    caveat_codes: Mapping[str, Severity] = field(default_factory=dict[str, Severity])
+    wording: Mapping[CaveatCode, str] = field(default_factory=dict[CaveatCode, str])
+    ontology_systems: tuple[str, ...] = ()
+    leaf_kinds: tuple[str, ...] = ()
+    translators: tuple[str, ...] = ()
+    """The formats it translates, ``<pack id>.<name>``."""
+    requirement_predicates: tuple[str, ...] = ()
+    analyses: tuple[str, ...] = ()
+    """The ids of its analyses."""
+
+    @property
+    def id(self) -> str:
+        return self.manifest.id
+
+
+@dataclass(frozen=True, eq=False)
+class _Hooks:
+    """The handles on one pack's hook objects, each made once, at registration (D403)."""
+
+    importer: "Hook[Importer] | None" = None
+    validator: "Hook[Validator] | None" = None
+    proposer: "Hook[Proposer] | None" = None
+    facet: "Hook[Facet] | None" = None
+    caveat_rule: "Hook[CaveatRule] | None" = None
+    leaf_kinds: Mapping[str, "Hook[LeafKind]"] = field(default_factory=dict[str, "Hook[LeafKind]"])
+    summaries: Mapping[str, "Hook[LeafKind]"] = field(default_factory=dict[str, "Hook[LeafKind]"])
+    translators: Mapping[str, "Hook[Translator]"] = field(
+        default_factory=dict[str, "Hook[Translator]"]
+    )
+    predicates: Mapping[str, "Hook[RequirementPredicate]"] = field(
+        default_factory=dict[str, "Hook[RequirementPredicate]"]
+    )
+    systems: Mapping[str, "Hook[OntologyValidator]"] = field(
+        default_factory=dict[str, "Hook[OntologyValidator]"]
+    )
+
+
 @dataclass(frozen=True, eq=False)
 class _Kept:
-    """What the registry keeps of one pack: the pack, the copies of its leaf kinds' schemas, and
-    its analyses as registered."""
+    """What the registry keeps of one pack: what it hands out of it, the handles on its hooks,
+    the copies of its leaf kinds' schemas, and its analyses as registered."""
 
-    pack: Pack | None
+    pack: PackInfo | None
+    hooks: _Hooks
     leaf_schemas: dict[str, JsonSchema]
     analyses: list[RegisteredAnalysis]
 
 
 def _analysis_copy(analysis: RegisteredAnalysis) -> RegisteredAnalysis:
     """An analysis as the registry hands it out: a copy of its entry, so that changing what is
-    handed out changes nothing registered, and the same implementation."""
+    handed out changes nothing registered, and the same handle."""
     return RegisteredAnalysis(analysis.entry, analysis.implementation)
 
 
@@ -1134,7 +1152,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             problems.append(f"{label}: translator format {_shown(format)} is not {label}.<name>")
         translators[format] = cast(Translator, translator)
 
-    analyses: list[RegisteredAnalysis] = []
+    analyses: list[tuple[AnalysisDescriptor, Analysis]] = []
     ok, found = reads("analyses", lambda: _sequence(given.analyses))
     for position, analysis in enumerate(found or [], 1):
         allowance = _Allowance.unbounded()
@@ -1156,8 +1174,8 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
                 f"the {member} schema of analysis {_shown(entry.id)}",
                 reads,
             )
-        analyses.append(RegisteredAnalysis(entry, cast(Analysis, analysis)))
-    analysis_ids = [a.entry.id for a in analyses]
+        analyses.append((entry, cast(Analysis, analysis)))
+    analysis_ids = [entry.id for entry, _ in analyses]
     if len(set(analysis_ids)) != len(analysis_ids):
         problems.append(f"{label}: an analysis id appears twice")
 
@@ -1191,14 +1209,14 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             problems.append(f"{label}: caveat code {_shown(code)} is given twice")
             continue
         codes[code] = member
-    for analysis in analyses:
-        for cited in analysis.entry.fields.caveats:
+    for entry, _ in analyses:
+        for cited in entry.fields.caveats:
             owner, dot, _ = cited.partition(".")
             if (dot and owner == name and cited not in codes) or (
                 not dot and cited not in _CORE_CODES
             ):
                 problems.append(
-                    f"{label}: analysis {_shown(analysis.entry.id)} cites {_shown(cited)}, "
+                    f"{label}: analysis {_shown(entry.id)} cites {_shown(cited)}, "
                     "which is not declared"
                 )
 
@@ -1232,47 +1250,67 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     ok, caveat_rule = reads("caveat rule", lambda: given.caveat_rule)
 
     if manifest is None:
-        return _Kept(None, leaf_schemas, analyses)
-    kept = Pack(
+        return _Kept(None, _Hooks(), leaf_schemas, [])
+    pack = manifest.id
+
+    def handle[H](hook: H | None, stage: str) -> Hook[H] | None:
+        return None if hook is None else Hook(hook, pack, stage)
+
+    hooks = _Hooks(
+        importer=handle(importer, "importer"),
+        validator=handle(validator, "validator"),
+        proposer=handle(proposer, "proposer"),
+        facet=handle(facet, "facet"),
+        caveat_rule=handle(caveat_rule, "caveat rule"),
+        leaf_kinds=MappingProxyType(
+            {kind: Hook(leaf, pack, "leaf compiler") for kind, leaf in leaf_kinds.items()}
+        ),
+        summaries=MappingProxyType(
+            {kind: Hook(leaf, pack, "summary") for kind, leaf in leaf_kinds.items()}
+        ),
+        translators=MappingProxyType(
+            {name: Hook(one, pack, "translator") for name, one in translators.items()}
+        ),
+        predicates=MappingProxyType(
+            {name: Hook(one, pack, "requirement predicate") for name, one in predicates.items()}
+        ),
+        systems=MappingProxyType(
+            {name: Hook(one, pack, "ontology validator") for name, one in systems.items()}
+        ),
+    )
+    registered = [
+        RegisteredAnalysis(entry, Hook(implementation, pack, "analysis"))
+        for entry, implementation in analyses
+    ]
+    kept = PackInfo(
         manifest=manifest,
         concepts=tuple(concepts),
-        ontology_systems=MappingProxyType(systems),
         extension_schemas=MappingProxyType(schemas),
-        importer=importer,
-        validator=validator,
-        proposer=proposer,
-        leaf_kinds=MappingProxyType(leaf_kinds),
-        translators=MappingProxyType(translators),
-        analyses=tuple(analysis.implementation for analysis in analyses),
-        requirement_predicates=MappingProxyType(predicates),
-        facet=facet,
         caveat_codes=MappingProxyType(codes),
-        caveat_rule=caveat_rule,
         wording=MappingProxyType(wording),
+        ontology_systems=tuple(systems),
+        leaf_kinds=tuple(leaf_kinds),
+        translators=tuple(translators),
+        requirement_predicates=tuple(predicates),
+        analyses=tuple(analysis.entry.id for analysis in registered),
     )
-    return _Kept(kept, leaf_schemas, analyses)
+    return _Kept(kept, hooks, leaf_schemas, registered)
 
 
-def _handed_out(pack: Pack) -> Pack:
+def _handed_out(pack: PackInfo) -> PackInfo:
     """A registered pack as the registry hands it out, built by keyword: copies of its
-    concepts and schemas, so that changing them changes nothing registered (analyses copy their
-    entries themselves), and the same hook objects."""
-    return Pack(
+    concepts and schemas, so that changing them changes nothing registered, and no hook."""
+    return PackInfo(
         manifest=pack.manifest.model_copy(),
         concepts=tuple(concept.model_copy(deep=True) for concept in pack.concepts),
-        ontology_systems=pack.ontology_systems,
         extension_schemas=_schemas(pack.extension_schemas),
-        importer=pack.importer,
-        validator=pack.validator,
-        proposer=pack.proposer,
+        caveat_codes=pack.caveat_codes,
+        wording=pack.wording,
+        ontology_systems=pack.ontology_systems,
         leaf_kinds=pack.leaf_kinds,
         translators=pack.translators,
-        analyses=pack.analyses,
         requirement_predicates=pack.requirement_predicates,
-        facet=pack.facet,
-        caveat_codes=pack.caveat_codes,
-        caveat_rule=pack.caveat_rule,
-        wording=pack.wording,
+        analyses=pack.analyses,
     )
 
 
@@ -1281,6 +1319,8 @@ class PackRegistry:
 
     Lookups that take ``packs`` consult only those packs: a dataset's ``packs``, or those a
     document names. The registry is built once, from every pack at once, and does not change.
+    It hands out what it keeps of a pack (``PackInfo``) and handles on its hooks (``Hook``),
+    never a hook object: a hook's code runs only through ``Hook.call`` (D403).
     """
 
     def __init__(self, packs: Iterable[Pack], *, core_version: str) -> None:
@@ -1289,9 +1329,8 @@ class PackRegistry:
         except InvalidVersion:
             raise PackError([f"core version {core_version!r} is not a PEP 440 version"]) from None
         problems: list[str] = []
-        kept: list[Pack] = []
+        kept: list[_Kept] = []
         leaf_schemas: dict[str, JsonSchema] = {}
-        registered: dict[str, list[RegisteredAnalysis]] = {}
         readers: list[_Reads] = []
         passing: type[BaseException] | None = None
         try:
@@ -1304,8 +1343,7 @@ class PackRegistry:
                 found = _registered(given, core, readers[-1])
                 leaf_schemas.update(found.leaf_schemas)
                 if found.pack is not None:
-                    kept.append(found.pack)
-                    registered.setdefault(found.pack.id, []).extend(found.analyses)
+                    kept.append(found)
         except _Passing as stop:
             # Only a stop a guard of this registry's raised passes, its type taken by identity.
             ours = any(stop is reads.raised for reads in readers)
@@ -1314,21 +1352,23 @@ class PackRegistry:
                 problems.append("registration was stopped by what is not a guard's")
         if passing is not None:
             raise SystemExit(1) if passing is SystemExit else passing()
-        by_id: dict[str, Pack] = {}
+        by_id: dict[str, _Kept] = {}
         owners: dict[tuple[str, str], str] = {}
-        declared = {code for pack in kept for code in pack.caveat_codes}
-        for pack in kept:
+        declared = {code for one in kept if one.pack for code in one.pack.caveat_codes}
+        for one in kept:
+            pack = one.pack
+            assert pack is not None
             label = _shown(pack.id)
             problems.extend(
                 f"{label}: analysis {_shown(analysis.entry.id)} cites {_shown(code)}, which no "
                 "registered pack declares"
-                for analysis in registered.get(pack.id, [])
+                for analysis in one.analyses
                 for code in analysis.entry.fields.caveats
                 if "." in code and code.partition(".")[0] != pack.id and code not in declared
             )
             if pack.id in by_id:
                 problems.append(f"pack {label} is registered twice")
-            by_id[pack.id] = pack
+            by_id[pack.id] = one
             claims = [("ontology system", system) for system in pack.ontology_systems]
             claims += [("concept", concept.id) for concept in pack.concepts]
             for claim in claims:
@@ -1340,11 +1380,18 @@ class PackRegistry:
                 owners.setdefault(claim, pack.id)
         if problems:
             raise PackError(problems)
-        packs = kept
-        self._packs = MappingProxyType(dict(sorted(by_id.items())))
-        self._systems = {system: pack for pack in packs for system in pack.ontology_systems}
+        ordered = dict(sorted(by_id.items()))
+        self._packs: Mapping[str, PackInfo] = MappingProxyType(
+            {pack_id: cast(PackInfo, one.pack) for pack_id, one in ordered.items()}
+        )
+        self._hooks: Mapping[str, _Hooks] = MappingProxyType(
+            {pack_id: one.hooks for pack_id, one in ordered.items()}
+        )
+        self._systems = {
+            system: hook for one in ordered.values() for system, hook in one.hooks.systems.items()
+        }
         self._analyses = {
-            analysis.entry.id: analysis for pack in packs for analysis in registered[pack.id]
+            analysis.entry.id: analysis for one in ordered.values() for analysis in one.analyses
         }
         self._leaf_checkers = {kind: Checker(schema) for kind, schema in leaf_schemas.items()}
         """The checker of each leaf kind's schema as registered."""
@@ -1363,23 +1410,30 @@ class PackRegistry:
     def ids(self) -> tuple[str, ...]:
         return tuple(self._packs)
 
-    def pack(self, pack_id: str) -> Pack:
-        """The pack as registered, with copies of its concepts and schemas."""
+    def pack(self, pack_id: str) -> PackInfo:
+        """The pack as registered, with copies of its concepts and schemas, and no hook."""
         return _handed_out(self._registered(pack_id))
 
-    def _registered(self, pack_id: str) -> Pack:
+    def _registered(self, pack_id: str) -> PackInfo:
         try:
             return self._packs[pack_id]
         except KeyError:
             raise UnknownPack(pack_id) from None
 
-    def listed(self, packs: Iterable[str]) -> list[Pack]:
+    def _hooks_of(self, pack_id: str) -> _Hooks:
+        self._registered(pack_id)
+        return self._hooks[pack_id]
+
+    def listed(self, packs: Iterable[str]) -> list[PackInfo]:
         """The listed packs, in pack id order, as ``pack`` hands them out; an unregistered one
         raises ``UnknownPack``."""
         return [_handed_out(pack) for pack in self._listed(packs)]
 
-    def _listed(self, packs: Iterable[str]) -> list[Pack]:
+    def _listed(self, packs: Iterable[str]) -> list[PackInfo]:
         return [self._registered(pack_id) for pack_id in sorted(set(packs))]
+
+    def _listed_hooks(self, packs: Iterable[str]) -> list[_Hooks]:
+        return [self._hooks_of(pack.id) for pack in self._listed(packs)]
 
     # --- Extension points consulted for every registered pack ---
 
@@ -1394,9 +1448,9 @@ class PackRegistry:
             key=lambda concept: concept.id,
         )
 
-    def ontology_validator(self, system: str) -> OntologyValidator | None:
-        pack = self._systems.get(system)
-        return None if pack is None else pack.ontology_systems[system]
+    def ontology_validator(self, system: str) -> "Hook[OntologyValidator] | None":
+        """The handle on the validator of an ontology system, if a pack registered it."""
+        return self._systems.get(system)
 
     # --- Extension points consulted for the packs listed ---
 
@@ -1410,17 +1464,17 @@ class PackRegistry:
             if kind in pack.extension_schemas
         }
 
-    def validators(self, packs: Iterable[str]) -> list[Validator]:
-        return [pack.validator for pack in self._listed(packs) if pack.validator is not None]
+    def validators(self, packs: Iterable[str]) -> "list[Hook[Validator]]":
+        return [h.validator for h in self._listed_hooks(packs) if h.validator is not None]
 
-    def proposers(self, packs: Iterable[str]) -> list[Proposer]:
-        return [pack.proposer for pack in self._listed(packs) if pack.proposer is not None]
+    def proposers(self, packs: Iterable[str]) -> "list[Hook[Proposer]]":
+        return [h.proposer for h in self._listed_hooks(packs) if h.proposer is not None]
 
-    def facets(self, packs: Iterable[str]) -> list[Facet]:
-        return [pack.facet for pack in self._listed(packs) if pack.facet is not None]
+    def facets(self, packs: Iterable[str]) -> "list[Hook[Facet]]":
+        return [h.facet for h in self._listed_hooks(packs) if h.facet is not None]
 
-    def caveat_rules(self, packs: Iterable[str]) -> list[CaveatRule]:
-        return [pack.caveat_rule for pack in self._listed(packs) if pack.caveat_rule is not None]
+    def caveat_rules(self, packs: Iterable[str]) -> "list[Hook[CaveatRule]]":
+        return [h.caveat_rule for h in self._listed_hooks(packs) if h.caveat_rule is not None]
 
     def wordings(self, code: CaveatCode, packs: Iterable[str]) -> list[tuple[str, str]]:
         """The listed packs' wordings of a core code, in pack id order (SPEC §10.1)."""
@@ -1430,13 +1484,19 @@ class PackRegistry:
 
     # --- Extension points of one pack ---
 
-    def importer(self, pack_id: str) -> Importer | None:
-        return self._registered(pack_id).importer
+    def importer(self, pack_id: str) -> "Hook[Importer] | None":
+        return self._hooks_of(pack_id).importer
 
-    def leaf_kind(self, kind: str) -> LeafKind | None:
-        """The leaf kind ``<pack id>.<name>``, from the pack its namespace names: ``None`` if
-        that pack has no such kind, and ``UnknownPack`` if no such pack is registered (A3)."""
-        return self._registered(kind.partition(".")[0]).leaf_kinds.get(kind)
+    def leaf_kind(self, kind: str) -> "Hook[LeafKind] | None":
+        """The handle on leaf kind ``<pack id>.<name>``'s compiler, from the pack its namespace
+        names: ``None`` if that pack has no such kind, and ``UnknownPack`` if no such pack is
+        registered (A3)."""
+        return self._hooks_of(kind.partition(".")[0]).leaf_kinds.get(kind)
+
+    def leaf_summary(self, kind: str) -> "Hook[LeafKind] | None":
+        """As ``leaf_kind``, the handle on the same object for its ``summary``, whose failures
+        are logged as the summary's."""
+        return self._hooks_of(kind.partition(".")[0]).summaries.get(kind)
 
     def leaf_checker(self, kind: str) -> Checker:
         """The checker of a registered leaf kind's schema, as the kind had it when its pack was
@@ -1447,9 +1507,9 @@ class PackRegistry:
         """Every registered leaf kind, sorted."""
         return sorted(self._leaf_checkers)
 
-    def translator(self, format: str) -> Translator | None:
+    def translator(self, format: str) -> "Hook[Translator] | None":
         """As ``leaf_kind``, for a document format ``<pack id>.<name>``."""
-        return self._registered(format.partition(".")[0]).translators.get(format)
+        return self._hooks_of(format.partition(".")[0]).translators.get(format)
 
     def analysis(self, analysis_id: str) -> RegisteredAnalysis | None:
         """A pack's analysis, as ``leaf_kind`` finds a kind; a core family's are not packs'
@@ -1470,10 +1530,10 @@ class PackRegistry:
         its entry had them when its pack was registered (D341, D343)."""
         return self._analysis_checkers[analysis_id]
 
-    def requirement_predicate(self, reference: str) -> RequirementPredicate | None:
+    def requirement_predicate(self, reference: str) -> "Hook[RequirementPredicate] | None":
         """A predicate cited as ``<pack id>.<name>``; as ``leaf_kind`` for an unknown pack."""
         pack_id, _, name = reference.partition(".")
-        return self._registered(pack_id).requirement_predicates.get(name)
+        return self._hooks_of(pack_id).predicates.get(name)
 
     def severity(self, code: str) -> Severity | None:
         """The declared severity of a core or pack caveat code: ``None`` for a code no one
@@ -1491,6 +1551,8 @@ __all__ = [
     "AnalysisInputs",
     "CaveatRule",
     "Cell",
+    "Clauses",
+    "Codes",
     "ConfinedPath",
     "DatabaseSource",
     "DirectoryEntry",
@@ -1509,19 +1571,23 @@ __all__ = [
     "JsonTooLarge",
     "LeafKind",
     "NoteKind",
+    "Notes",
     "OntologyValidator",
     "Pack",
     "PackError",
+    "PackInfo",
     "PackManifest",
     "PackRegistry",
     "Previous",
     "Proposal",
     "Proposer",
+    "Refusals",
     "Refused",
     "RegisteredAnalysis",
     "ReleaseView",
     "RequirementPredicate",
     "Reshaped",
+    "Segments",
     "SourceReader",
     "TranslationNote",
     "Translator",

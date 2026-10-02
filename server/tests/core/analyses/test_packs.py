@@ -24,6 +24,7 @@ from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.caveats import CaveatCode
 from aibi.core.schema.descriptors import AnalysisDescriptor
 from aibi.core.schema.document import Clause, PackLeaf
+from aibi.core.schema.guards import Hook
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.jsonschemas import UNEVALUABLE, Checker, Failure, OutOfTime, TimedBudget
 from aibi.core.schema.limits import MAX_INPUT_CELLS, MAX_LISTED, MAX_RESULT_VALUES
@@ -171,10 +172,12 @@ class Web:
     def schema(self) -> Mapping[str, JsonValue]:
         return self._schema
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         return web_clauses()
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         return [text("orders placed on the web")]
 
 
@@ -421,7 +424,7 @@ def test_the_process_out_of_memory_or_asked_to_stop_passes_without_the_pack_s_me
     with pytest.raises(passed) as raised:
         run_view(check, shop, Echo(entry(), stop))
     assert type(raised.value) is passed
-    assert raised.value.args == ()
+    assert raised.value.args == ((1,) if passed is SystemExit else ())
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
 
@@ -617,7 +620,7 @@ def run_checked(view: Any, echo: Echo, ends: float | None = None) -> packs.Outco
     positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
     analyses = tallies(echo)
     registered, _, returns = analyses.implementation("tallies.echo")
-    assert registered.implementation is echo
+    assert registered.implementation.call(lambda h: h) is echo
     return packs.run_pack(
         registered,
         returns,
@@ -1378,7 +1381,7 @@ def test_members_excluded_only_as_not_applicable_raise_no_unknown_excluded(
     )
     _, _, returns = tallies().implementation("tallies.echo")
     outcome = packs.run_pack(
-        RegisteredAnalysis(entry(), Echo(entry())),
+        RegisteredAnalysis(entry(), Hook(Echo(entry()), "tallies", "analysis")),
         returns,
         [CohortAt(cohort, evaluate(cohort.resolved))],
         list(zip(view.roles, view.variables, strict=True)),
