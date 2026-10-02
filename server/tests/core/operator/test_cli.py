@@ -824,7 +824,10 @@ def test_the_cli_prunes_the_log_and_says_what_an_unknown_issuance_is(
 ) -> None:
     run = make_cli(server, tmp_path / "ada")
     pruned = done(run("prune", "--before", "2026-01-01T00:00:00Z")).out
-    assert "Pruned 0 count_cohort issuances recorded before 2026-01-01T00:00:00.000000Z" in pruned
+    assert (
+        "Pruned 0 issuances, of counts recorded before 2026-01-01T00:00:00.000000Z and of "
+        "results before 2026-01-01T00:00:00.000000Z" in pruned
+    )
     unknown = run("issuance", "iss:" + "0" * 26)
     assert unknown.code == 1
     assert "NOT_FOUND" in unknown.out + unknown.err

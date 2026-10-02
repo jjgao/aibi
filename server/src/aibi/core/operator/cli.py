@@ -309,9 +309,7 @@ def _parser() -> _Parser:
         "issuance", help="an issuance of the derivation log, with its document and parameters"
     )
     issuance.add_argument("issuance", help="iss: and a ULID")
-    prune = commands.add_parser(
-        "prune", help="prune count_cohort's issuances from the derivation log"
-    )
+    prune = commands.add_parser("prune", help="prune issuances from the derivation log")
     prune.add_argument(
         "--before",
         help="an RFC 3339 time with its offset; the configured period ([log]) by default",
@@ -778,9 +776,11 @@ def _issuance(logged: LoggedIssuance) -> list[str]:
 
 
 def _pruned(pruned: Pruned) -> list[str]:
+    counts = "kept" if pruned.before is None else f"recorded before {pruned.before}"
+    results = "kept" if pruned.results_before is None else f"before {pruned.results_before}"
     return [
-        f"Pruned {pruned.pruned} count_cohort issuances recorded before {pruned.before}; the log "
-        f"holds {pruned.log_bytes} bytes"
+        f"Pruned {pruned.pruned} issuances, of counts {counts} and of results {results}; the "
+        f"log holds {pruned.log_bytes} bytes"
     ]
 
 

@@ -224,6 +224,7 @@ def make_server(tmp_path: Path) -> Iterator[MakeServer]:
         imports: dict[str, Any] | None = None,
         registry: PackRegistry | None = None,
         databases: dict[str, Any] | None = None,
+        log: dict[str, Any] | None = None,
         **client: Any,
     ) -> Server:
         root = tmp_path / name
@@ -237,9 +238,10 @@ def make_server(tmp_path: Path) -> Iterator[MakeServer]:
             "storage": {"data": "data", "imports": ["imports"]},
             "imports": imports or {},
             "databases": databases or {},
+            **({"log": log} if log is not None else {}),
         }
         config = ServerConfig.model_validate(written, context={BASE: root})
-        store = Store(config.storage.data, clock=_clock())
+        store = Store(config.storage.data, clock=_clock(), log=config.log.limits())
         services = services_of(config, store, registry or PackRegistry((), core_version="0.0.1"))
         if registry is None:
             services = replace(services, registry=None)

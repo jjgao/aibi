@@ -35,10 +35,11 @@ closed, so an unknown key is refused, and every problem is reported at once with
   D278).
 - ``[queries]``: the limits of the workers that run queries (D293): ``query_seconds``,
   ``query_memory``, ``query_workers`` and ``query_threads``.
-- ``[log]``: how long the derivation log keeps ``count_cohort``'s issuances,
-  ``keep_count_issuances_days`` (30 by default, at most ``MAX_KEEP_DAYS``; 0 keeps them until
-  an operator prunes), and ``log_bytes``, the most the log may take, counting the pages of all
-  that pruning can free (D300).
+- ``[log]``: how long the derivation log keeps the issuances of counts,
+  ``keep_count_issuances_days`` (30 by default), and of results, ``keep_result_issuances_days``
+  (365 by default; each at most ``MAX_KEEP_DAYS``, 0 keeping them until an operator prunes), and
+  ``log_bytes``, the most the log may take, counting the pages of all that pruning can free
+  (D300, D318).
 - ``[disclosure] min_cell_count_floor``: the deployment's floor for *k* (§8.4), 2 or more.
 - ``[databases.<identifier>]``: named connections, which an import names (D305): a SQLite or
   DuckDB file inside an import directory, or for Postgres and MySQL the name of the environment
@@ -280,16 +281,21 @@ class Queries(_Config):
 
 
 class Log(_Config):
-    """How long the derivation log keeps ``count_cohort``'s issuances, and how large it grows
-    (D300): ``LogLimits``, with its defaults."""
+    """How long the derivation log keeps the issuances of counts and of results, and how large
+    it grows (D300, D318): ``LogLimits``, with its defaults."""
 
     keep_count_issuances_days: Annotated[StrictInt, Field(ge=0, le=MAX_KEEP_DAYS)] = 30
+    """0 keeps them until an operator prunes; at most ``MAX_KEEP_DAYS``."""
+    keep_result_issuances_days: Annotated[StrictInt, Field(ge=0, le=MAX_KEEP_DAYS)] = 365
     """0 keeps them until an operator prunes; at most ``MAX_KEEP_DAYS``."""
     log_bytes: Annotated[StrictInt, Field(ge=MIN_LOG_BYTES)] = _DEFAULT_LOG.log_bytes
 
     def limits(self) -> LogLimits:
-        days = self.keep_count_issuances_days
-        return LogLimits(keep_count_issuances_days=days or None, log_bytes=self.log_bytes)
+        return LogLimits(
+            keep_count_issuances_days=self.keep_count_issuances_days or None,
+            keep_result_issuances_days=self.keep_result_issuances_days or None,
+            log_bytes=self.log_bytes,
+        )
 
 
 class Disclosure(_Config):

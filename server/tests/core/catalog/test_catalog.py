@@ -252,7 +252,7 @@ def _describe(world: World, catalog: Any = None, **given: JsonValue) -> DatasetD
     return catalog.describe_dataset(DescribeDataset.model_validate(given))
 
 
-def test_a_dataset_is_described_with_its_tables_columns_graph_and_no_analyses(
+def test_a_dataset_is_described_with_its_tables_columns_graph_and_its_analyses(
     world: World, orchard: Orchard
 ) -> None:
     world.publish("orchard", orchard())
@@ -269,7 +269,9 @@ def test_a_dataset_is_described_with_its_tables_columns_graph_and_no_analyses(
     assert [r["id"] for r in found.relationships] == ["rel:harvests.tree_id"]
     assert found.graph.tables == ["harvests", "trees"]
     assert [(e.child, e.parent) for e in found.graph.edges] == [("harvests", "trees")]
-    assert found.applicable_analyses == []
+    assert [(a.analysis, a.version, a.status, a.missing) for a in found.applicable_analyses] == [
+        ("compare.existence", "1.0.0", "available", [])
+    ]
     assert found.columns_total == 9
     assert found.columns_next is None
 

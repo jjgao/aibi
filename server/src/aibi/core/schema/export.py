@@ -18,7 +18,7 @@ from functools import partial
 from pathlib import Path
 from typing import cast
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from aibi.core.schema.catalog import TOOL_MODELS
 from aibi.core.schema.cohorts import DOCUMENT_MARK
@@ -106,6 +106,26 @@ def document_schema() -> JsonObject:
     defs = cast(JsonObject, schema.setdefault("$defs", {}))
     defs["DocumentJson"] = DOCUMENT_JSON
     return {"$schema": SCHEMA_DIALECT, "$id": "document.schema.json", **schema}
+
+
+def params_schema(model: type[BaseModel]) -> JsonObject:
+    """The JSON Schema of an analysis's parameters, as its registry entry carries it (§9.1,
+    D316): a view's ``params`` after substitution, whose clauses are the document's."""
+    schema = cast(JsonObject, _without_null(cast(JsonValue, model.model_json_schema())))
+    schema = cast(JsonObject, _closed(schema))
+    if '"#/$defs/DocumentJson"' in json.dumps(schema):
+        cast(JsonObject, schema.setdefault("$defs", {}))["DocumentJson"] = DOCUMENT_JSON
+    return {"$schema": SCHEMA_DIALECT, **schema}
+
+
+def values_schema(model: type[BaseModel]) -> JsonObject:
+    """The JSON Schema of an analysis's ``values``, as its registry entry carries it (§9.1,
+    D316)."""
+    schema = cast(JsonValue, TypeAdapter(model).json_schema())
+    closed = cast(JsonObject, _output_json(_closed(_optional_without_null(schema))))
+    if '"#/$defs/OutputJson"' in json.dumps(closed):
+        cast(JsonObject, closed.setdefault("$defs", {}))["OutputJson"] = OUTPUT_JSON
+    return {"$schema": SCHEMA_DIALECT, **closed}
 
 
 def _allow_references(node: JsonValue, *, skip: bool = False) -> JsonValue:

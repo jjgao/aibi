@@ -54,8 +54,9 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # query_threads = 1         # DuckDB's threads in a worker
 
 [log]
-# keep_count_issuances_days = 30  # count_cohort's issuances are pruned after this; 0 keeps them
+# keep_count_issuances_days = 30  # the issuances of counts are pruned after this; 0 keeps them
 #                                 # (at most 36500 days)
+# keep_result_issuances_days = 365  # the issuances of results (run_analysis) likewise
 # log_bytes = 8589934592          # what pruning the derivation log can free; past it counts are refused
 
 [disclosure]

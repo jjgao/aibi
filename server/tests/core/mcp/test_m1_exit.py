@@ -212,7 +212,9 @@ def test_m1_datasets_are_imported_curated_found_described_withdrawn_and_reimport
     _asserted(library_described, library_keys, library_relationships)
     graphed = {e["relationship"] for e in examples_described["graph"]["edges"]}
     assert set(example_relationships) <= graphed
-    assert library_described["applicable_analyses"] == []
+    assert [a["analysis"] for a in library_described["applicable_analyses"]] == [
+        "compare.existence"
+    ]
     assert column["statistics"]["states"]["PRESENT"]["count"] > 0
     assert resource["id"] == "dataset"
 

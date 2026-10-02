@@ -104,6 +104,7 @@ source_modules = [
     "aibi.core.store",
     "aibi.core.importers",
     "aibi.core.engine",
+    "aibi.core.analyses",
     "aibi.core.catalog",
 ]
 forbidden_modules = [
@@ -129,7 +130,7 @@ ignore_imports = ["aibi.core.engine.duck -> duckdb", "aibi.core.importers.snapsh
 [[tool.importlinter.contracts]]
 name = "Operator operations are never tools (SPEC §11.2, A4, D278)"
 type = "forbidden"
-source_modules = ["aibi.core.catalog", "aibi.core.mcp"]
+source_modules = ["aibi.core.analyses", "aibi.core.catalog", "aibi.core.mcp"]
 forbidden_modules = [
     "aibi.core.operator",
     "aibi.core.importers",

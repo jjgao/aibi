@@ -35,7 +35,13 @@ from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
 from aibi.core.engine.resolve import Resolution, ResolvedCohort, resolve
-from aibi.core.engine.sql import Accounting, CompiledCohort, compile_cohort
+from aibi.core.engine.sql import (
+    Accounting,
+    CompiledCohort,
+    Crossing,
+    compile_cohort,
+    compile_crossing,
+)
 from aibi.core.engine.truth import TruthValue
 from aibi.core.engine.worker import Rows
 from aibi.core.schema.descriptors import Descriptor, TableDescriptor
@@ -411,6 +417,28 @@ def sql(
 ) -> Callable[[ResolvedCohort], SqlRun]:
     directory = tmp_path_factory.mktemp("blobs")
     return lambda cohort: run_sql(cohort, directory, sessions)
+
+
+def run_crossing(
+    cohorts: Sequence[ResolvedCohort],
+    predicates: Sequence[ResolvedCohort],
+    directory: Path,
+    sessions: Sessions,
+) -> Crossing:
+    """Cohorts crossed with predicates by the SQL compiler, run in a helper's session."""
+    compiled = compile_crossing(cohorts, predicates, release_blobs(cohorts[0].release, directory))
+    answers = sessions.run(
+        compiled.paths, [(statement, compiled.parameters) for statement in compiled.statements]
+    )
+    return compiled.read([packed(*answer) for answer in answers])
+
+
+@pytest.fixture(scope="session")
+def crossed(
+    tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
+) -> Callable[..., Crossing]:
+    directory = tmp_path_factory.mktemp("crossings")
+    return lambda cohorts, predicates: run_crossing(cohorts, predicates, directory, sessions)
 
 
 @pytest.fixture(scope="session")

@@ -871,14 +871,32 @@ def test_the_log_is_pruned_before_the_configured_period_or_a_time_given(server: 
     assert configured.status_code == 200, configured.text
     assert configured.json()["pruned"] == 0
     assert configured.json()["before"].startswith("2025-12-02T00:00:0")  # 30 days before now
+    assert configured.json()["results_before"].startswith("2025-01-01T00:00:0")  # 365 days
     given = server.post("/operator/log/prune", {"before": "2026-01-01T00:00:00+02:00"})
     assert given.json() == {
         "pruned": 0,
         "before": "2025-12-31T22:00:00.000000Z",
+        "results_before": "2025-12-31T22:00:00.000000Z",
         "log_bytes": server.store.derivations.usage(),
     }
     wrong = server.post("/operator/log/prune", {"before": "yesterday"})
     assert (wrong.status_code, codes(wrong)) == (422, [("INVALID_VALUE", None)])
+
+
+def test_the_log_prunes_expired_results_alone_while_counts_are_kept(
+    make_server: MakeServer,
+) -> None:
+    """As the log's own thread does (D318)."""
+    server = make_server(log={"keep_count_issuances_days": 0})
+    configured = server.post("/operator/log/prune")
+    assert configured.status_code == 200, configured.text
+    assert configured.json().get("before") is None
+    assert configured.json()["results_before"].startswith("2025-01-01T00:00:0")  # 365 days
+    kept = make_server(
+        name="kept", log={"keep_count_issuances_days": 0, "keep_result_issuances_days": 0}
+    )
+    refused = kept.post("/operator/log/prune")
+    assert (refused.status_code, codes(refused)) == (422, [("MISSING_MEMBER", None)])
 
 
 def test_an_issuance_is_asked_for_in_the_body_and_one_the_log_does_not_hold_is_not_found(

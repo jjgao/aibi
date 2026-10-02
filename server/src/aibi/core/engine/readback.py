@@ -380,6 +380,17 @@ def readback(cohort: CanonicalCohort) -> list[Segment]:
     return found + _summaries(cohort)
 
 
+def conditions(cohort: CanonicalCohort) -> list[Segment]:
+    """The conditions of a canonical cohort without its opening and closing words: a view's
+    predicate, which its view's readback states for the units of its cohorts (D317), followed
+    by the pack summaries of its pack leaves."""
+    resolved = cohort.resolved
+    reader = _Reader(resolved.release, dict(resolved.coverage))
+    if not resolved.clauses:
+        return [text("every row (an empty all holds for every row)"), *_summaries(cohort)]
+    return [*reader.joined(resolved.clauses, " and "), *_summaries(cohort)]
+
+
 def _summaries(cohort: CanonicalCohort) -> list[Segment]:
     """The pack summaries, each labelled with the leaf keys of the conditions its leaf became
     part of, never with its pointer as written, which holds the cohort's name; in the order of
@@ -406,4 +417,4 @@ def _segments(summary: Sequence[Segment]) -> JsonValue:
     return [segment.model_dump(mode="json") for segment in summary]
 
 
-__all__ = ["LISTED", "constant_text", "readback"]
+__all__ = ["LISTED", "conditions", "constant_text", "readback"]

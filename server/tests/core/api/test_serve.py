@@ -479,6 +479,22 @@ def test_check_and_serve_say_that_count_cohort_is_disabled_without_query_workers
     assert err.getvalue() == f"aibi-server: {serve.NO_WORKERS}\n"
 
 
+def test_the_check_says_how_long_each_kind_of_issuance_is_kept(write_config: Write) -> None:
+    text = f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'
+    for log, said in (
+        (
+            "keep_result_issuances_days = 0",
+            "count issuances kept: 30 days; result issuances kept: until pruned;",
+        ),
+        (
+            "keep_count_issuances_days = 0",
+            "count issuances kept: until pruned; result issuances kept: 365 days;",
+        ),
+    ):
+        code, out, _ = run_main("check", "--config", str(write_config(f"{text}[log]\n{log}\n")))
+        assert (code, said in out) == (0, True)
+
+
 def test_the_check_refuses_a_period_the_log_could_not_count_back(write_config: Write) -> None:
     text = (
         f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'

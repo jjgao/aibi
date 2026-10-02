@@ -39,7 +39,7 @@ returned by ``rid``.
 import json
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import PurePath
 from types import MappingProxyType
@@ -81,6 +81,7 @@ from aibi.core.store.tables import ITEM_STATE, STATE, TableSource, physical
 FALSE_CODE, UNKNOWN_CODE, TRUE_CODE = 0, 1, 2
 """Truth values as the relations code them: ``all`` is the least, ``any`` the greatest."""
 _CODES = {FALSE_CODE: Truth.FALSE, UNKNOWN_CODE: Truth.UNKNOWN, TRUE_CODE: Truth.TRUE}
+_CODE_OF = {truth: code for code, truth in _CODES.items()}
 REASON_BIT = {reason: 1 << index for index, reason in enumerate(Reason)}
 _ALL_REASONS = sum(REASON_BIT.values())
 MARK_BITS = 63
@@ -268,6 +269,41 @@ class TruthValues(Sequence[TruthValue]):
         for index in range(len(self)):
             yield self[index]
 
+    @property
+    def codes(self) -> Sequence[int]:
+        """Each unit's truth value as its code: ``FALSE_CODE``, ``UNKNOWN_CODE`` or
+        ``TRUE_CODE``."""
+        return self._codes
+
+    @property
+    def reason_bits(self) -> Sequence[int]:
+        """Each unit's reasons as bits in ``Reason``'s order (``REASON_BIT``); 0 unless
+        UNKNOWN."""
+        return self._reasons
+
+    def marks_of(self, rows: Iterable[int]) -> frozenset[Mark]:
+        """The flags, with their relationships, of the truth values of ``rows``, together."""
+        words = [0] * len(self._words)
+        for row in rows:
+            for at, word in enumerate(self._words):
+                words[at] |= word[row]
+        return _marks(self._marks, words) if words else frozenset()
+
+    @classmethod
+    def of(cls, values: Sequence[TruthValue]) -> "TruthValues":
+        """Truth values the reference evaluator gave, packed as the values query packs its
+        rows, so that what reads one reads the other alike (§13.3)."""
+        marks = tuple(sorted({mark for value in values for mark in value.marks}))
+        index = {mark: at for at, mark in enumerate(marks)}
+        words = [[0] * len(values) for _ in range(_words(len(marks)))]
+        codes = [_CODE_OF[value.value] for value in values]
+        reasons = [sum(REASON_BIT[reason] for reason in value.reasons) for value in values]
+        for row, value in enumerate(values):
+            for mark in value.marks:
+                bit = index[mark]
+                words[bit // MARK_BITS][row] |= 1 << (bit % MARK_BITS)
+        return cls(codes, reasons, tuple(words), marks)
+
 
 def _marks(marks: tuple[Mark, ...], words: Sequence[int]) -> frozenset[Mark]:
     """The flags whose bits are set in ``words``, bit ``i`` in word ``i // MARK_BITS``."""
@@ -299,6 +335,241 @@ def _scalar_json(value: Scalar) -> JsonValue:
 
 def _words(marks: int) -> int:
     return -(-marks // MARK_BITS)
+
+
+# --- Crossings (D318) ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CrossedSplit:
+    """A predicate over the units of a cohort: those for which it is TRUE, FALSE and UNKNOWN, the
+    UNKNOWN ones by reason, those whose answer the other lift rule changes, and the flags its
+    truth values carry there."""
+
+    true: int
+    false: int
+    unknown: int
+    unknown_by_reason: Mapping[Reason, int]
+    lift_differs: int
+    marks: frozenset[Mark]
+
+
+@dataclass(frozen=True)
+class Crossed:
+    """What a crossing gives of one cohort: each predicate's split of its units, and its units
+    for which some predicate is known and for which none is, those by every reason a predicate
+    gave them."""
+
+    splits: tuple[CrossedSplit, ...]
+    known: int
+    none_known: int
+    none_known_by_reason: Mapping[Reason, int]
+
+
+def pairs(count: int) -> list[tuple[int, int]]:
+    """The pairs of ``count`` positions, each once, in order."""
+    return [(first, second) for first in range(count) for second in range(first + 1, count)]
+
+
+@dataclass(frozen=True)
+class Crossing:
+    """Cohorts crossed with predicates over one unit table: each cohort's ``Crossed``, and the
+    units each pair of cohorts shares (``pairs``' order)."""
+
+    cohorts: tuple[Crossed, ...]
+    shared: tuple[int, ...]
+
+    def overlapping(self) -> list[tuple[int, int]]:
+        """The pairs of cohorts that share units (§7.4)."""
+        return [
+            pair for pair, count in zip(pairs(len(self.cohorts)), self.shared, strict=True) if count
+        ]
+
+
+def cross(
+    cohorts: Sequence[TruthValues],
+    predicates: Sequence[TruthValues],
+    lifted: Sequence[TruthValues | None],
+) -> Crossing:
+    """The crossing of each unit's truth values, as the reference evaluator gives them: what
+    ``compile_crossing``'s queries count, and the differential tests hold them to (§13.3)."""
+    found: list[Crossed] = []
+    held: list[set[int]] = []
+    for cohort in cohorts:
+        rows = [row for row, code in enumerate(cohort.codes) if code == TRUE_CODE]
+        held.append(set(rows))
+        splits: list[CrossedSplit] = []
+        for predicate, other in zip(predicates, lifted, strict=True):
+            codes, bits = predicate.codes, predicate.reason_bits
+            counts = {FALSE_CODE: 0, UNKNOWN_CODE: 0, TRUE_CODE: 0}
+            by_reason = dict.fromkeys(Reason, 0)
+            for row in rows:
+                counts[codes[row]] += 1
+                for reason, bit in REASON_BIT.items():
+                    if bits[row] & bit:
+                        by_reason[reason] += 1
+            lift = 0 if other is None else sum(other.codes[row] != codes[row] for row in rows)
+            splits.append(
+                CrossedSplit(
+                    counts[TRUE_CODE],
+                    counts[FALSE_CODE],
+                    counts[UNKNOWN_CODE],
+                    MappingProxyType(by_reason),
+                    lift,
+                    predicate.marks_of(rows),
+                )
+            )
+        known = none = 0
+        none_by_reason = dict.fromkeys(Reason, 0)
+        for row in rows:
+            if any(predicate.codes[row] != UNKNOWN_CODE for predicate in predicates):
+                known += 1
+                continue
+            none += 1
+            union = 0
+            for predicate in predicates:
+                union |= predicate.reason_bits[row]
+            for reason, bit in REASON_BIT.items():
+                if union & bit:
+                    none_by_reason[reason] += 1
+        found.append(Crossed(tuple(splits), known, none, MappingProxyType(none_by_reason)))
+    shared = tuple(len(held[first] & held[second]) for first, second in pairs(len(cohorts)))
+    return Crossing(tuple(found), shared)
+
+
+@dataclass(frozen=True)
+class CompiledCrossing:
+    """The queries of a crossing as rendered for DuckDB (``compile_crossing``): one per cohort,
+    one pass over its units joined once with every predicate (``GROUPING SETS``), whose rows
+    count its units by each predicate's code and reasons, and by whether some
+    predicate is known and the reasons of all, and, for two cohorts or more, one whose row counts
+    the units each pair shares. Every count is an integer ``COUNT`` and every flag a ``BIT_OR``,
+    so the answer's size depends on the number of cohorts and predicates, never on the units
+    (D294, D318)."""
+
+    statements: tuple[str, ...]
+    parameters: Mapping[str, Parameter]
+    marks: tuple[Mark, ...]
+    cohorts: int
+    predicates: int
+    blobs: frozenset[str] = frozenset()
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        """The blobs the queries read, the only files they may open (D293)."""
+        return tuple(sorted(str(self.parameters[name]) for name in self.blobs))
+
+    @property
+    def columns(self) -> tuple[int, ...]:
+        """Each statement's columns: a cohort's ``t``, ``v``, ``r``, ``n``, ``d`` and the flag
+        words; the overlaps' one per pair."""
+        words = _words(len(self.marks))
+        found = [5 + words] * self.cohorts
+        if self.cohorts > 1:
+            found.append(len(pairs(self.cohorts)))
+        return tuple(found)
+
+    def parameters_json(self) -> dict[str, JsonValue]:
+        """The parameters as the derivation log records them (``CompiledCohort``'s)."""
+        return {
+            name: PurePath(str(value)).name if name in self.blobs else _json(value)
+            for name, value in self.parameters.items()
+        }
+
+    def read(self, answers: Sequence[Rows]) -> Crossing:
+        """The queries' rows read. Raises ``QueryError`` for rows the queries do not give: of
+        another width, with a tag, code, reasons, count or flag word no crossing has, or whose
+        predicates count other units than the cohort has."""
+        if len(answers) != len(self.columns):
+            raise QueryError("a crossing gave another number of answers")
+        for rows, width in zip(answers, self.columns, strict=True):
+            if len(rows.columns) != width:
+                raise QueryError("a crossing's query gave rows of another width")
+        found = [self._cohort(answers[index]) for index in range(self.cohorts)]
+        shared: tuple[int, ...] = ()
+        if self.cohorts > 1:
+            rows = answers[self.cohorts]
+            if len(rows) != 1 or min(rows[0], default=0) < 0:
+                raise QueryError("a crossing's overlaps query gives one row of counts")
+            shared = tuple(rows[0])
+        return Crossing(tuple(found), shared)
+
+    def _cohort(self, rows: Rows) -> Crossed:
+        predicates = self.predicates
+        counts = [{FALSE_CODE: 0, UNKNOWN_CODE: 0, TRUE_CODE: 0} for _ in range(predicates)]
+        by_reason = [dict.fromkeys(Reason, 0) for _ in range(predicates)]
+        lifts = [0] * predicates
+        words = [[0] * _words(len(self.marks)) for _ in range(predicates)]
+        known = none = 0
+        none_by_reason = dict.fromkeys(Reason, 0)
+        for row in rows:
+            tag, v, r, n, d, *flags = row
+            if not (
+                0 <= tag <= predicates
+                and 0 <= r <= _ALL_REASONS
+                and n > 0
+                and 0 <= d <= n
+                and all(word >= 0 for word in flags)
+                and _words_fit(flags, self.marks)
+            ):
+                raise QueryError("a crossing's query gave a row it cannot give")
+            if tag == predicates:
+                if v not in (0, 1) or (v == 1) != (r == 0) or d or any(flags):
+                    raise QueryError("a crossing's query gave a row it cannot give")
+                if v:
+                    known += n
+                    continue
+                none += n
+                for reason, bit in REASON_BIT.items():
+                    if r & bit:
+                        none_by_reason[reason] += n
+                continue
+            if v not in counts[tag] or (v == UNKNOWN_CODE) != (r != 0):
+                raise QueryError("a crossing's query gave a truth value it cannot give")
+            counts[tag][v] += n
+            lifts[tag] += d
+            for reason, bit in REASON_BIT.items():
+                if r & bit:
+                    by_reason[tag][reason] += n
+            for at, word in enumerate(flags):
+                words[tag][at] |= word
+        units = known + none
+        splits: list[CrossedSplit] = []
+        for tag in range(predicates):
+            if sum(counts[tag].values()) != units:
+                raise QueryError("a crossing's predicates count other units than its cohort")
+            splits.append(
+                CrossedSplit(
+                    counts[tag][TRUE_CODE],
+                    counts[tag][FALSE_CODE],
+                    counts[tag][UNKNOWN_CODE],
+                    MappingProxyType(by_reason[tag]),
+                    lifts[tag],
+                    _marks(self.marks, words[tag]) if words[tag] else frozenset(),
+                )
+            )
+        return Crossed(tuple(splits), known, none, MappingProxyType(none_by_reason))
+
+
+def compile_crossing(
+    cohorts: Sequence[ResolvedCohort],
+    predicates: Sequence[ResolvedCohort],
+    sources: Mapping[str, TableSource],
+) -> CompiledCrossing:
+    """The queries that cross cohorts with predicates over one release's unit table, their
+    parts compiled once each over one compiler (a node two of them share is one relation), with
+    each predicate's other lift rule where it holds a lift. Raises ``CompileError``."""
+    parts = [*cohorts, *predicates]
+    if not cohorts or not predicates:
+        raise CompileError("a crossing has cohorts and predicates")
+    first = parts[0]
+    if any(part.release is not first.release or part.unit != first.unit for part in parts):
+        raise CompileError("a crossing's parts share one release and one unit table")
+    coverage: dict[str, Coverage] = {}
+    for part in parts:
+        coverage.update(part.coverage)
+    merged = replace(first, coverage=dict(sorted(coverage.items())))
+    return _Compiler(merged, sources).crossing(cohorts, predicates)
 
 
 def compile_cohort(cohort: ResolvedCohort, sources: Mapping[str, TableSource]) -> CompiledCohort:
@@ -629,7 +900,7 @@ class _Compiler:
             )
         return final
 
-    def with_ctes(self, select: exp.Select, ctes: Sequence[exp.CTE]) -> exp.Select:
+    def with_ctes[Q: exp.Query](self, select: Q, ctes: Sequence[exp.CTE]) -> Q:
         found = select.copy()
         found.set("with_", exp.With(expressions=[cte.copy() for cte in ctes]))
         return found
@@ -645,6 +916,147 @@ class _Compiler:
         columns += [_as(_col("s", column), slot) for column, slot in self.slots[base.table].items()]
         select = _select(*columns).from_(source, copy=False)
         return exp.CTE(this=select, alias=exp.TableAlias(this=_id(base.name)))
+
+    # --- A crossing (D318) ---------------------------------------------------------------------
+
+    def part(self, cohort: ResolvedCohort, *, lifted: bool = False) -> str | None:
+        """The relation of a cohort's truth values over the unit table, or of its other lift
+        rule (``None`` when it holds no lift)."""
+        unit = cohort.unit
+        if lifted:
+            if not any(_lifted(clause) for clause in cohort.clauses):
+                return None
+            return self.combine("all", [self.node(flipped(c), unit) for c in cohort.clauses], unit)
+        return self.combine("all", [self.node(c, unit) for c in cohort.clauses], unit)
+
+    def crossing(
+        self, cohorts: Sequence[ResolvedCohort], predicates: Sequence[ResolvedCohort]
+    ) -> CompiledCrossing:
+        members = [cast(str, self.part(cohort)) for cohort in cohorts]
+        asked = [cast(str, self.part(predicate)) for predicate in predicates]
+        other = [self.part(predicate, lifted=True) for predicate in predicates]
+        selects: list[exp.Query] = [self.crossed(member, asked, other) for member in members]
+        if len(members) > 1:
+            selects.append(self.shared(members))
+        ctes = [self.base_cte(base) for base in self.bases.values()]
+        ctes += [
+            exp.CTE(this=body, alias=exp.TableAlias(this=_id(name))) for name, body in self.ctes
+        ]
+        return CompiledCrossing(
+            statements=tuple(
+                self.with_ctes(select, ctes).sql(dialect="duckdb") for select in selects
+            ),
+            parameters=MappingProxyType(dict(self.parameters)),
+            marks=self.marks,
+            cohorts=len(members),
+            predicates=len(asked),
+            blobs=frozenset(self.blobs),
+        )
+
+    def crossed(self, member: str, asked: Sequence[str], other: Sequence[str | None]) -> exp.Query:
+        """One cohort's rows (``CompiledCrossing``), in one pass over its units joined once with
+        every predicate (and its other lift rule): grouped by each predicate's code and reasons,
+        with those whose answer the other lift rule changes and the flags, and by whether some
+        predicate is known and, where none is, their reasons, as ``GROUPING SETS`` of one
+        ``GROUP BY``."""
+        columns: list[Expression] = []
+        for index, lifted in enumerate(other):
+            p = f"p{index}"
+            columns += [_as(_col(p, "v"), f"v{index}"), _as(_col(p, "r"), f"r{index}")]
+            if lifted is not None:
+                changed = exp.NEQ(this=_col(f"f{index}", "v"), expression=_col(p, "v"))
+                columns.append(_as(changed, f"d{index}"))
+            columns += [_as(word, f"w{index}_{at}") for at, word in enumerate(self.words_of(p))]
+        conditions = [
+            exp.NEQ(this=_col(f"p{index}", "v"), expression=_num(UNKNOWN_CODE))
+            for index in range(len(asked))
+        ]
+        known = conditions[0]
+        for condition in conditions[1:]:
+            known = exp.Or(this=known, expression=condition)
+        reasons = _bits(*(_col(f"p{index}", "r") for index in range(len(asked))))
+        columns += [
+            _as(_case([(exp.Paren(this=known.copy()), _num(1))], _num(0)), "k"),
+            _as(_case([(exp.Paren(this=known.copy()), _num(0))], reasons), "b"),
+        ]
+        inner = _select(*columns).from_(_table(member, "c"), copy=False)
+        for index, (name, lifted) in enumerate(zip(asked, other, strict=True)):
+            inner = inner.join(
+                _table(name, f"p{index}"),
+                on=_eq(_col(f"p{index}", "rid"), _col("c", "rid")),
+                copy=False,
+            )
+            if lifted is not None:
+                inner = inner.join(
+                    _table(lifted, f"f{index}"),
+                    on=_eq(_col(f"f{index}", "rid"), _col("c", "rid")),
+                    copy=False,
+                )
+        inner = inner.where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+
+        def grouped(index: int) -> Expression:
+            return _eq(_fn("grouping", _col("w", f"v{index}")), _num(0))
+
+        def each(values: Sequence[Expression], default: Expression) -> Expression:
+            return _case([(grouped(index), value) for index, value in enumerate(values)], default)
+
+        count = exp.Count(this=exp.Star())
+        lifts = [
+            _num(0)
+            if lifted is None
+            else exp.Filter(this=count.copy(), expression=exp.Where(this=_col("w", f"d{index}")))
+            for index, lifted in enumerate(other)
+        ]
+        outer = _select(
+            _as(each([_num(index) for index in range(len(asked))], _num(len(asked))), "t"),
+            _as(each([_col("w", f"v{i}") for i in range(len(asked))], _col("w", "k")), "v"),
+            _as(each([_col("w", f"r{i}") for i in range(len(asked))], _col("w", "b")), "r"),
+            _as(count, "n"),
+            _as(each(lifts, _num(0)), "d"),
+            *(
+                _as(
+                    each(
+                        [_fn("bit_or", _col("w", f"w{i}_{at}")) for i in range(len(asked))],
+                        _num(0),
+                    ),
+                    f"m{at}",
+                )
+                for at in range(self.words)
+            ),
+        ).from_(exp.Subquery(this=inner, alias=exp.TableAlias(this=_id("w"))), copy=False)
+        sets = [
+            exp.Tuple(expressions=[_col("w", f"v{index}"), _col("w", f"r{index}")])
+            for index in range(len(asked))
+        ]
+        sets.append(exp.Tuple(expressions=[_col("w", "k"), _col("w", "b")]))
+        outer.set("group", exp.Group(expressions=[exp.GroupingSets(expressions=sets)]))
+        return outer
+
+    def shared(self, members: Sequence[str]) -> exp.Select:
+        """One row: the units each pair of cohorts shares."""
+        counts = [
+            _as(
+                exp.Filter(
+                    this=exp.Count(this=exp.Star()),
+                    expression=exp.Where(
+                        this=_and(
+                            _eq(_col(f"c{first}", "v"), _num(TRUE_CODE)),
+                            _eq(_col(f"c{second}", "v"), _num(TRUE_CODE)),
+                        )
+                    ),
+                ),
+                f"s{index}",
+            )
+            for index, (first, second) in enumerate(pairs(len(members)))
+        ]
+        select = _select(*counts).from_(_table(members[0], "c0"), copy=False)
+        for index, name in enumerate(members[1:], start=1):
+            select = select.join(
+                _table(name, f"c{index}"),
+                on=_eq(_col(f"c{index}", "rid"), _col("c0", "rid")),
+                copy=False,
+            )
+        return select
 
     # --- Nodes ---------------------------------------------------------------------------------
 
@@ -1869,11 +2281,22 @@ def _bound(kind: PhysicalType, name: str, bound: Constant) -> object:
 
 
 __all__ = [
+    "FALSE_CODE",
     "MARK_BITS",
     "REASON_BIT",
+    "TRUE_CODE",
+    "UNKNOWN_CODE",
     "Accounting",
     "CompileError",
     "CompiledCohort",
+    "CompiledCrossing",
+    "Crossed",
+    "CrossedSplit",
+    "Crossing",
     "Parameter",
+    "TruthValues",
     "compile_cohort",
+    "compile_crossing",
+    "cross",
+    "pairs",
 ]

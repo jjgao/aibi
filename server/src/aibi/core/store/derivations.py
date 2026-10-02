@@ -19,12 +19,14 @@ the derivations not erased with their objects, and the issuances, each with its 
 
 A call's issuances are recorded together, in one transaction, which ``admit`` can still roll back
 before it commits: ``count_cohort`` records none for a call that will not be answered (D300).
-Their ids are drawn in it, with their times. ``count_cohort``'s issuances are pruned after
-``keep_count_issuances_days`` (``prune_expired``: when the store opens, at most
-``OPEN_BATCHES`` batches, and in a thread of the log's own every ``PRUNE_EVERY`` seconds, never
-in a tool call's) and by an operator (``prune``), ``PRUNE_BATCH`` issuances to a transaction, so
-that no call waits long for the app DB; the derivations and texts no issuance names then go with
-them.
+Their ids are drawn in it, with their times. An issuance of a count (a derivation of kind
+``cohort``, whichever tool issued it: ``count_cohort``'s, and ``run_analysis``'s of a view's
+cohorts and of the units two cohorts share) is pruned after ``keep_count_issuances_days``, and an
+issuance of a result after ``keep_result_issuances_days`` (``prune_expired``: when the store
+opens, at most ``OPEN_BATCHES`` batches, and in a thread of the log's own every ``PRUNE_EVERY``
+seconds, never in a tool call's); an operator prunes every issuance recorded before a time
+(``prune``). Each runs ``PRUNE_BATCH`` issuances to a transaction, so that no call waits long for
+the app DB; the derivations and texts no issuance names then go with them (D300, D318).
 
 Erasure's redactors of the log are ``redaction``'s (D290).
 
@@ -36,12 +38,12 @@ once, none withdrawn and each of the dataset the store records its manifest for,
 and go only with it; an issuance is recorded once, of a derivation whose object is kept and none
 of whose releases is withdrawn (a cache hit naming an issuance of it whose SQL ran), changes only
 by redaction, which points its request and SQL at texts that hold ``[erased]``, and is removed
-only once its derivation is erased or, for ``count_cohort``'s, by pruning, never one a kept
-issuance names; a text never changes, and is removed only while no issuance names it. Each of
-those changes needs the permit (``log_permits``) that redaction or pruning writes first and
-removes last within its transaction. The triggers guard against the store's own mistakes, not
-against a writer with SQL access to the app DB, who could write a permit or drop a trigger
-(D289).
+only once its derivation is erased or by pruning, never one a kept issuance names; a text never
+changes, and is removed only while no issuance names it. Each of those changes needs the permit
+(``log_permits``) that redaction or pruning writes first and removes last within its transaction:
+pruning's names the time before which it removes issuances, of counts or of results. The triggers
+guard against the store's own mistakes, not against a writer with SQL access to the app DB, who
+could write a permit or drop a trigger (D289).
 """
 
 import logging
@@ -306,7 +308,7 @@ class NotAdmittedError(ValueError):
 
 
 PRUNE_EVERY = 3600.0
-"""Seconds between two prunings of expired ``count_cohort`` issuances by the log's thread."""
+"""Seconds between two prunings of expired issuances by the log's thread."""
 PRUNE_BATCH = 1000
 """The issuances one transaction of a pruning removes, with the derivations and texts they
 leave unnamed: tens of milliseconds of the app DB's lock."""
@@ -358,8 +360,8 @@ def _listing(values: Sequence[str]) -> str:
 
 class DerivationLog:
     """The derivation log in the app DB; ``now`` gives each record's timestamp, ``limits`` how
-    long it keeps ``count_cohort``'s issuances and how large it grows, and ``ids`` its issuance
-    ids, seeded with the greatest it holds, so that they increase across restarts."""
+    long it keeps the issuances of counts and of results and how large it grows, and ``ids`` its
+    issuance ids, seeded with the greatest it holds, so that they increase across restarts."""
 
     def __init__(
         self,
@@ -585,45 +587,66 @@ class DerivationLog:
         with self.db.lock:
             return int(self.db.connection.execute(f"SELECT {LOG_USAGE}").fetchone()[0])
 
-    def prune(self, before: str) -> int:
-        """Remove ``count_cohort``'s issuances recorded before ``before``, but those a kept
-        issuance names as ``values_from``, and the derivations and texts no issuance names then;
-        how many issuances went (§12.2). ``before`` is an RFC 3339 time with its offset, in any
-        spelling, written in UTC as the store's clock writes times (``TIME_FORMAT``) before it is
-        compared; ``ValueError`` for anything else (``utc``). It runs ``PRUNE_BATCH`` issuances
-        to a transaction, each of which writes the pruning's permit, which the triggers ask of a
-        removal, first and removes it last."""
-        return self._pruned(utc(before), None).removed
+    def prune(
+        self, before: str | None, *, results_before: str | Literal["same"] | None = "same"
+    ) -> int:
+        """Remove the issuances recorded before ``before``, of counts and results alike
+        (``None`` keeps those of counts), or, with ``results_before``, those of results before
+        it instead (``None`` keeps them), but
+        those a kept issuance names as ``values_from``, and the derivations and texts no issuance
+        names then; how many issuances went (§12.2). Each time is an RFC 3339 time with its
+        offset, in any spelling, written in UTC as the store's clock writes times
+        (``TIME_FORMAT``) before it is compared; ``ValueError`` for anything else (``utc``). It
+        runs ``PRUNE_BATCH`` issuances to a transaction, each of which writes the pruning's
+        permit, which the triggers ask of a removal, first and removes it last."""
+        results = before if results_before == "same" else results_before
+        cutoffs: dict[Kind, str | None] = {
+            "result": None if results is None else utc(results),
+            "cohort": None if before is None else utc(before),
+        }
+        return self._pruned(cutoffs, None).removed
 
-    def _pruned(self, cutoff: str, batches: int | None) -> Pruning:
+    def _pruned(self, cutoffs: dict[Kind, str | None], batches: int | None) -> Pruning:
         removed = done = 0
-        while batches is None or done < batches:
-            with self.db.transaction() as db:
-                found = _prune_batch(db, cutoff)
-            removed += found
-            done += 1
-            if found < PRUNE_BATCH:
-                return Pruning(removed, True)
-        return Pruning(removed, False)
+        for kind, cutoff in cutoffs.items():
+            if cutoff is None:
+                continue
+            while True:
+                if batches is not None and done >= batches:
+                    return Pruning(removed, False)
+                with self.db.transaction() as db:
+                    found = _prune_batch(db, cutoff, kind)
+                removed += found
+                done += 1 if found else 0
+                if found < PRUNE_BATCH:
+                    break
+        return Pruning(removed, True)
 
-    def expired(self) -> str | None:
-        """The time before which ``count_cohort``'s issuances have expired, as the store's clock
-        writes times; ``None`` when they are kept until an operator prunes."""
-        days = self.limits.keep_count_issuances_days
+    def expired(self, kind: Kind = "cohort") -> str | None:
+        """The time before which the issuances of counts (``cohort``) or of results have
+        expired, as the store's clock writes times; ``None`` when they are kept until an
+        operator prunes."""
+        days = (
+            self.limits.keep_count_issuances_days
+            if kind == "cohort"
+            else self.limits.keep_result_issuances_days
+        )
         if days is None:
             return None
         now = datetime.strptime(self.now(), TIME_FORMAT).replace(tzinfo=UTC)
         return stamp(now - timedelta(days=days))
 
     def prune_expired(self, *, batches: int | None = None) -> Pruning:
-        """Prune the issuances that ``keep_count_issuances_days`` let expire (``prune``), at most
-        ``batches`` batches of them. One pruning runs at a time; another asked meanwhile removes
-        nothing and is finished."""
+        """Prune the issuances that ``keep_count_issuances_days`` and
+        ``keep_result_issuances_days`` let expire (``prune``), at most ``batches`` batches of
+        them that remove any, results' first. One pruning runs at a time; another asked
+        meanwhile removes nothing and is finished."""
         if not self._pruning.acquire(blocking=False):
             return Pruning(0, True)
         try:
-            before = self.expired()
-            return Pruning(0, True) if before is None else self._pruned(before, batches)
+            return self._pruned(
+                {"result": self.expired("result"), "cohort": self.expired("cohort")}, batches
+            )
         finally:
             self._pruning.release()
 
@@ -716,18 +739,35 @@ def _releases(releases: Sequence[JsonValue]) -> list[dict[str, JsonValue]]:
     return [release for release in releases if isinstance(release, dict)]
 
 
-def _prune_batch(db: sqlite3.Connection, cutoff: str) -> int:
-    """One batch of a pruning before ``cutoff``, in the transaction ``db``: at most
-    ``PRUNE_BATCH`` issuances, the newest first, so that one a later batch would remove never
-    names one already gone, and the derivations and texts they leave unnamed; how many
-    issuances went."""
+_NAMED_BY_A_RESULT = (
+    " AND NOT EXISTS (SELECT 1 FROM issuances r JOIN derivations e ON e.id = r.derivation"
+    " WHERE e.kind = 'result' AND r.request = i.request AND EXISTS ("
+    " SELECT 1 FROM derivation_releases a JOIN derivation_releases b"
+    " ON b.dataset = a.dataset AND b.manifest = a.manifest"
+    " WHERE a.derivation = i.derivation AND b.derivation = r.derivation))"
+)
+"""A count issuance recorded with a kept result's request, over its release, is one of that
+result's cohorts, kept with it (D318)."""
+
+
+def _prune_batch(db: sqlite3.Connection, cutoff: str, kind: Kind) -> int:
+    """One batch of a pruning of the issuances of ``kind``'s derivations before ``cutoff``, in
+    the transaction ``db``: at most ``PRUNE_BATCH`` issuances, the newest first, so that one a
+    later batch would remove never names one already gone, and the derivations and texts they
+    leave unnamed; how many issuances went. An issuance names as ``values_from`` only one of its
+    own derivation (D300), so of its own kind. A count issuance that a kept result's call
+    recorded beside it (the same request, over the same release) is kept while the result is, so
+    that ``explain`` resolves every cohort id the result names; results are pruned first, so
+    their counts go in the same pruning (D318)."""
+    named = _NAMED_BY_A_RESULT if kind == "cohort" else ""
     rows = db.execute(
-        "SELECT id, derivation, request, sql FROM issuances i"
-        " WHERE tool = 'count_cohort' AND at < ? AND NOT EXISTS ("
-        " SELECT 1 FROM issuances k WHERE k.values_from = i.id AND k.id != i.id"
-        " AND NOT (k.tool = 'count_cohort' AND k.at < ?))"
-        " ORDER BY at DESC, id DESC LIMIT ?",
-        (cutoff, cutoff, PRUNE_BATCH),
+        "SELECT i.id, i.derivation, i.request, i.sql FROM issuances i"
+        " JOIN derivations d ON d.id = i.derivation"
+        " WHERE d.kind = ? AND i.at < ? AND NOT EXISTS ("
+        " SELECT 1 FROM issuances k"
+        f" WHERE k.values_from = i.id AND k.id != i.id AND NOT k.at < ?){named}"
+        " ORDER BY i.at DESC, i.id DESC LIMIT ?",
+        (kind, cutoff, cutoff, PRUNE_BATCH),
     ).fetchall()
     if not rows:
         return 0

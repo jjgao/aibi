@@ -798,6 +798,14 @@ def _discriminated(metadata: list[object]) -> bool:
     return any(isinstance(extra, Discriminator) for extra in metadata)
 
 
+def _clause_union(metadata: list[object]) -> bool:
+    """Whether the metadata makes a union the document's clause union, whose refusals list the
+    leaf kinds wherever a clause is validated, a view's parameters included (D317)."""
+    return any(
+        isinstance(extra, Discriminator) and extra.discriminator is clause_tag for extra in metadata
+    )
+
+
 _TAGS: dict[int, tuple[object, dict[str, object]]] = {}
 """Tags by union, computed once: the unions are those of the models, which live as long."""
 
@@ -985,6 +993,7 @@ def _refusal(details: ErrorDetails, root: object, tokens: Position, at: str | No
         code is RefusalCode.UNKNOWN_KIND
         and root is not Document
         and _discriminated(resolved.metadata)
+        and not _clause_union(resolved.metadata)
     ):
         # A request's union (an edit's op, an import's source) lists its own members.
         alternatives = [text(tag) for tag in _tags(resolved.annotation)]

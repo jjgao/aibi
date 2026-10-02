@@ -282,25 +282,27 @@ def test_validate_document_reads_back_and_marks_ids_not_yet_issued(
     written = document(
         {"tall": [{"kind": "value", "column": "trees.height_m", "range": {"gte": "$h"}}]},
         params={"h": 5, "unused": 1},
-        views=[{"analysis": "summary.counts", "cohorts": ["tall"]}],
+        views=[{"analysis": "summary.distribution", "cohorts": ["tall"]}],
     )
     found = validated(catalog, {"document": written})
-    assert found.valid
-    assert found.refusals == []
+    [deferred] = found.refusals
+    assert (deferred.code, deferred.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
+    assert "M3.2" in json.dumps(deferred.model_dump(mode="json")["message"])
+    assert not found.valid
     [check] = found.cohorts
     assert check.status == "not_issued"
     assert check.cohort.data == "tall"
     assert check.unit == "trees"
     assert check.release.label == 1
-    assert [view.model_dump(mode="json") for view in found.views] == [
-        {"position": 0, "analysis": {"data": "summary.counts"}, "status": "unchecked"}
-    ]
+    assert found.views == []
     assert found.params is not None
     assert found.params.used == {"h": 5}
     assert [name.data for name in found.params.unused] == ["unused"]
     assert {caveat.code for caveat in check.caveats} == {"UNCONFIRMED_SEMANTICS"}
     [named] = counted(catalog, written).counts
     assert named.count.id == check.id
+    [refusal] = refused(answer(catalog, "run_analysis", {"document": written}))
+    assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
     assert named.count.readback == check.readback
     again = validated(catalog, {"document": written})
     assert again.cohorts[0].status == "issued"
@@ -1039,14 +1041,14 @@ def test_an_erasure_while_the_call_canonicalises_refuses_it_and_it_records_nothi
     call records nothing (D290, D300)."""
     world.publish("orchard", orchard(25))
     world.reimport("orchard", orchard())
-    canonical = cohorts._canonical  # pyright: ignore[reportPrivateUsage]
+    canonical = cohorts.canonical_document
 
     def erasing(*given: Any) -> Any:
         found = canonical(*given)
         erase(world.store, "orchard", "trees", ["tree25"], "operator:Ada")
         return found
 
-    monkeypatch.setattr(cohorts, "_canonical", erasing)
+    monkeypatch.setattr(cohorts, "canonical_document", erasing)
     written = document(notes="tree25 among them")
     [refusal] = refused(answer(catalog_of(world), "count_cohort", {"document": written}))
     assert refusal.code == RefusalCode.RELEASE_WITHDRAWN

@@ -504,6 +504,20 @@ def test_the_derivation_log_s_period_and_size_are_configured(write_config: Write
         LogLimits(keep_count_issuances_days=MAX_KEEP_DAYS + 1)
 
 
+def test_the_period_results_are_kept_is_configured_apart_from_counts(write_config: Write) -> None:
+    config = load_config(write_config(minimal(log="keep_result_issuances_days = 7")))
+    assert config.log.limits() == LogLimits(keep_result_issuances_days=7)
+    kept = load_config(write_config(minimal(log="keep_result_issuances_days = 0")))
+    assert kept.log.limits().keep_result_issuances_days is None
+    assert kept.log.limits().keep_count_issuances_days == LogLimits().keep_count_issuances_days
+    [found] = problems(
+        write_config, minimal(log=f"keep_result_issuances_days = {MAX_KEEP_DAYS + 1}")
+    )
+    assert found.startswith("log.keep_result_issuances_days: ")
+    most = load_config(write_config(minimal(log=f"keep_result_issuances_days = {MAX_KEEP_DAYS}")))
+    assert most.log.limits().keep_result_issuances_days == MAX_KEEP_DAYS
+
+
 def test_page_views_have_a_rate_of_their_own_apart_from_the_agents(write_config: Write) -> None:
     rates = load_config(write_config(minimal())).server.rates
     assert (rates.page.per_minute, rates.page.burst) == (120, 30)

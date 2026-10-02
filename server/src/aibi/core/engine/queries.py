@@ -3,7 +3,10 @@
 ``run_cohorts`` compiles each resolved cohort against its release's table blobs (``sql``), runs
 every query of the document in one worker (``worker``), and reads their rows: each cohort's
 accounting, which ``count_parts`` takes as it takes the reference evaluator's, and, when asked,
-each unit's truth value, made as it is read from the answer (``TruthValues``, D293). Rows the
+each unit's truth value, made as it is read from the answer (``TruthValues``, D293).
+``run_crossed`` counts cohorts and, in the same run, crosses cohorts with predicates
+(``sql.compile_crossing``), whose answers are integer counts whose size never depends on the
+number of units: what ``run_analysis`` runs (D318). Rows the
 queries do not give are a fault, ``QueryError``. It returns the SQL as run and its parameters
 beside them, which the derivation log records for an issuance (§12.2): blob paths are recorded
 as their digests, so the log names what was read and not where the server keeps it.
@@ -21,7 +24,13 @@ from types import MappingProxyType
 from pydantic import JsonValue
 
 from aibi.core.engine.resolve import ResolvedCohort
-from aibi.core.engine.sql import Accounting, TruthValues, compile_cohort
+from aibi.core.engine.sql import (
+    Accounting,
+    Crossing,
+    TruthValues,
+    compile_cohort,
+    compile_crossing,
+)
 from aibi.core.engine.worker import Query, QueryError, Workers
 from aibi.core.store.tables import TableSource
 
@@ -76,4 +85,66 @@ def run_cohorts(
     return found
 
 
-__all__ = ["Counted", "run_cohorts"]
+@dataclass(frozen=True)
+class CrossingRun:
+    """Cohorts crossed with predicates by SQL (``sql.compile_crossing``), with the statements
+    as run and their parameters, as ``Counted`` has them."""
+
+    crossing: Crossing
+    sql: tuple[str, ...]
+    parameters: Mapping[str, JsonValue]
+
+
+def run_crossed(
+    cohorts: Sequence[ResolvedCohort],
+    crossings: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedCohort]]],
+    sources: Mapping[str, Mapping[str, TableSource]],
+    workers: Workers,
+    *,
+    ends: float | None = None,
+) -> tuple[list[Counted], list[CrossingRun]]:
+    """Each cohort counted and each crossing (its cohorts and predicates) counted, in one worker
+    run; no query gives a row per unit (D318). Raises as ``run_cohorts`` does."""
+    compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
+    crossed = [
+        compile_crossing(members, asked, sources[members[0].release.manifest])
+        for members, asked in crossings
+    ]
+    queries = [Query(c.counts_sql, c.parameters, c.counts_columns) for c in compiled]
+    for crossing in crossed:
+        queries += [
+            Query(statement, crossing.parameters, columns)
+            for statement, columns in zip(crossing.statements, crossing.columns, strict=True)
+        ]
+    paths = sorted(
+        {path for c in compiled for path in c.paths} | {p for x in crossed for p in x.paths}
+    )
+    rows = workers.run(paths, queries, ends=ends)
+    counted: list[Counted] = []
+    for index, cohort in enumerate(compiled):
+        if len(rows[index]) != 1:
+            raise QueryError("a counts query gives one row")
+        counted.append(
+            Counted(
+                accounting=cohort.accounting(rows[index][0]),
+                values=None,
+                sql=(cohort.counts_sql,),
+                parameters=MappingProxyType(cohort.parameters_json()),
+            )
+        )
+    found: list[CrossingRun] = []
+    at = len(compiled)
+    for crossing in crossed:
+        answers = rows[at : at + len(crossing.statements)]
+        at += len(crossing.statements)
+        found.append(
+            CrossingRun(
+                crossing.read(answers),
+                crossing.statements,
+                MappingProxyType(crossing.parameters_json()),
+            )
+        )
+    return counted, found
+
+
+__all__ = ["Counted", "CrossingRun", "run_cohorts", "run_crossed"]
