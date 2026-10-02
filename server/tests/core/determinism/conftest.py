@@ -69,6 +69,9 @@ MEMORY = 8 << 30
 """The workers' ``query_memory``: the crossing of sixteen predicates needs 4 GiB at one thread and
 more than 4 GiB at four (6 GiB ran it), so the tests give room above the 2 GiB default (D373)."""
 SECONDS = 300
+LIMITS = ImportLimits(import_cells=100_000_000)
+"""The import's limits: the full files hold more cells than the default ``import_cells``
+(20,000,000), which bounds a pack's result as it does the core's importers' (D385)."""
 
 
 BLOCKS = 127
@@ -284,7 +287,7 @@ def orchard(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Orchard]:
     try:
         confinement = Confinement.of(root / "imports")
         options = ImportOptions(
-            dataset="orchard", reader=confinement, limits=ImportLimits(), at=store.now()
+            dataset="orchard", reader=confinement, limits=LIMITS, at=store.now()
         )
         with pytest.MonkeyPatch.context() as patched:
             patched.setattr(parquet, "ROW_GROUP", ROW_GROUP)
