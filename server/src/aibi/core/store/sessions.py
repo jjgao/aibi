@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 from pydantic import JsonValue
 
+from aibi.core.engine.resolve import Operation
 from aibi.core.schema.curation import Accept, ChangeRequest
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.jsonschemas import WRITE_STEPS_MAX
@@ -58,9 +59,9 @@ from aibi.core.store.writes import (
     check_writes,
     packs_of,
     rooted,
+    validated,
     validators,
     versions,
-    view,
 )
 
 HANDLE_PREFIX = "ses_"
@@ -200,12 +201,8 @@ def change(
             except BuildRefused as error:
                 raise EditRefused(by_id(error.refusals, descriptors, "draft")) from None
             draft = built.manifest.hash
-            released = view(dataset, draft, "draft", descriptors)
-            refusals = [
-                refusal
-                for validator in validators(registry, packs_of(descriptors))
-                for refusal in validator.validate_descriptors(released)
-            ]
+            found = validators(registry, packs_of(descriptors))
+            refusals = validated(found, Operation(), dataset, draft, "draft", descriptors)
             if refusals:
                 raise EditRefused(rooted(refusals, "draft"))
             at = store.now()
@@ -232,19 +229,20 @@ def change(
 
 
 def _registered(
-    dataset: str, draft: str, descriptors: tuple[Descriptor, ...], registry: PackRegistry | None
+    dataset: str,
+    draft: str,
+    descriptors: tuple[Descriptor, ...],
+    registry: PackRegistry | None,
+    operation: Operation,
 ) -> None:
     """Refuse a draft that the running registry refuses: the pack checks on every descriptor and
-    the validators of the dataset's packs, as a change runs them (D246, D247)."""
+    the validators of the dataset's packs, as a change runs them (D246, D247), on their packs'
+    views of the draft in the publish's ``operation`` (D388)."""
     refusals = check_writes(descriptors, registry, ceiling=WRITE_STEPS_MAX)
     if refusals:
         raise EditRefused(by_id(refusals, descriptors, "draft"))
-    released = view(dataset, draft, "draft", descriptors)
-    found = [
-        refusal
-        for validator in validators(registry, packs_of(descriptors))
-        for refusal in validator.validate_descriptors(released)
-    ]
+    checking = validators(registry, packs_of(descriptors))
+    found = validated(checking, operation, dataset, draft, "draft", descriptors)
     if found:
         raise EditRefused(rooted(found, "draft"))
 
@@ -262,6 +260,7 @@ def publish(
     ``StoreRefused`` or ``EditRefused``. The curation proposers of the dataset's packs then run on
     it, given a registry, and what they did is returned with the label (D249)."""
     operator(by)
+    operation = Operation()
     with store.exclusive(dataset, "session"):
         session = _checked(store, dataset, handle, expected)
         latest = store.latest(dataset)
@@ -277,7 +276,7 @@ def publish(
         with store.pin() as pin:
             pin.manifest(session.draft)
             descriptors = store.descriptors(session.draft)
-            _registered(dataset, session.draft, descriptors, registry)
+            _registered(dataset, session.draft, descriptors, registry, operation)
             accepted = holding(store, session, descriptors)
         at = store.now()
         with store.db.transaction() as db:
@@ -289,7 +288,7 @@ def publish(
             for proposal in sorted(accepted):
                 store.db.decide(db, proposal, "accepted", at, by)
         store.sweep()
-    proposers = None if registry is None else run_proposers(store, dataset, registry)
+    proposers = None if registry is None else run_proposers(store, dataset, registry, operation)
     return SessionPublished(label, proposers)
 
 

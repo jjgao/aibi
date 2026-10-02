@@ -191,7 +191,7 @@ class OrchardImporter:
         return replace(result, descriptors=found)
 
 
-def region(release: ReleaseView) -> Mapping[str, Sequence[str]]:
+def region(release: ReleaseView) -> dict[str, list[str] | tuple[str, ...]]:
     dataset = release.descriptors["dataset"]
     named = dataset.extensions.get("orchards", {}).get("region")
     return {"region": [named]} if isinstance(named, str) else {}

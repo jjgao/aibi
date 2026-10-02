@@ -39,34 +39,41 @@ while the store encodes and builds, ``decoded_bytes`` when any table is a typed 
 ``import_bytes`` otherwise: the limits that bound what is held (D225).
 """
 
+import os
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Literal
 
+from aibi.core.engine.resolve import Operation
 from aibi.core.importers.checks import for_validator, run_importer
 from aibi.core.importers.databases import DatabaseImporter, Resolved
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
 from aibi.core.importers.files import FileImporter
 from aibi.core.importers.reshaped import declared, owned, undeclared
 from aibi.core.importers.reshaped import notes as reshaped_notes
+from aibi.core.schema.copiers import pack_refusals
 from aibi.core.schema.descriptors import Descriptor, TableDescriptor
+from aibi.core.schema.guards import Hook, PackFailed
 from aibi.core.schema.ids import assignment_order
 from aibi.core.schema.jsonschemas import WRITE_STEPS_MAX
 from aibi.core.schema.limits import DECODED_BYTES, IMPORT_BYTES
 from aibi.core.schema.output import data, text
 from aibi.core.schema.pack_api import (
     ConfinedPath,
+    DatabaseSource,
     Importer,
     ImportNote,
     ImportOptions,
     ImportResult,
+    ImportSource,
     PackRegistry,
     Previous,
     UnknownPack,
     Validator,
 )
-from aibi.core.schema.refusals import RefusalCode
+from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store.build import BuildRefused, Built
 from aibi.core.store.carry import CarryRefused, Change, carry_forward, with_inferences
 from aibi.core.store.manifest import Manifest
@@ -74,7 +81,15 @@ from aibi.core.store.proposals import ProposersRun, run_proposers
 from aibi.core.store.sessions import operator
 from aibi.core.store.sources import TypedSource
 from aibi.core.store.store import Pin, Store, StoreRefused
-from aibi.core.store.writes import by_id, check_writes, packs_of, rooted, versions, view
+from aibi.core.store.writes import (
+    by_id,
+    check_writes,
+    failed,
+    packs_of,
+    rooted,
+    validated,
+    versions,
+)
 
 
 @dataclass(frozen=True)
@@ -151,7 +166,7 @@ def _slot(store: Store, dataset: str, kind: Literal["import", "reimport"]) -> Ge
         raise ImportRefused([error.refusal]) from None
 
 
-def _importer(registry: PackRegistry | None, pack: str) -> Importer:
+def _importer(registry: PackRegistry | None, pack: str) -> Hook[Importer]:
     found = None
     try:
         found = None if registry is None else registry.importer(pack)
@@ -162,7 +177,7 @@ def _importer(registry: PackRegistry | None, pack: str) -> Importer:
     return found
 
 
-def _validators(registry: PackRegistry | None, consulted: set[str]) -> list[Validator]:
+def _validators(registry: PackRegistry | None, consulted: set[str]) -> list[Hook[Validator]]:
     if registry is None or not consulted:
         return []
     try:
@@ -181,9 +196,10 @@ def _read(
     registry: PackRegistry | None,
     pack: str | None,
     packs: Sequence[str] = (),
-) -> tuple[ImportResult, list[Validator]]:
+) -> tuple[ImportResult, list[Hook[Validator]]]:
     """What the importer read, with an inference in every entry of its own, once the validators
-    of the importing pack and the dataset's packs accept the source."""
+    of the importing pack and the dataset's packs accept the source. A pack's importer is called
+    through its own guard (``run_importer``, D385), which its handle enters (D388)."""
     try:
         if isinstance(source, Resolved):
             if pack is not None:
@@ -200,7 +216,8 @@ def _read(
             read = FileImporter().import_source(source, options)
         else:
             importer = _importer(registry, pack)
-            read = run_importer(importer, pack, source, options)
+            confined = source
+            read = importer.enter(lambda h: run_importer(h, pack, confined, options))
             if read.reshaped:
                 assert registry is not None
                 version = registry.pack(pack).manifest.version
@@ -211,12 +228,37 @@ def _read(
     consulted = {*packs_of(result.descriptors), *packs, *([pack] if pack is not None else [])}
     found = _validators(registry, consulted)
     given = source.source if isinstance(source, Resolved) else source
-    refusals = [
-        r for validator in found for r in validator.validate_source(given, for_validator(result))
-    ]
+    refusals = [r for validator in found for r in _source_refusals(validator, given, result)]
     if refusals:
         raise ImportRefused(refusals)
     return result, found
+
+
+def _source_refusals(
+    validator: Hook[Validator], source: ImportSource, result: ImportResult
+) -> list[Refusal]:
+    """One validator's refusals of a source, through its handle's guard (D388): it is given a
+    copy of its own of the source and of what was read (``for_validator``); a validator that
+    fails refuses the import (``PACK_FAILED``)."""
+    pack = validator.pack
+    source_copy = _source_copy(source)
+    result_copy = for_validator(result)
+    try:
+        return list(
+            validator.call(
+                lambda h: pack_refusals(h.validate_source, source_copy, result_copy, pack=pack)
+            )
+        )
+    except PackFailed:
+        return [failed(pack, "validator")]
+
+
+def _source_copy(source: ImportSource) -> ImportSource:
+    """A copy of the core's source for one validator: a confined path made anew from its text,
+    or a database snapshot's source made anew from its fields."""
+    if isinstance(source, DatabaseSource):
+        return DatabaseSource(source.connection, source.kind, source.location)
+    return ConfinedPath(Path(os.fspath(source)))
 
 
 def _out_of_memory(result: ImportResult, options: ImportOptions) -> ImportRefused:
@@ -231,11 +273,12 @@ def _check(
     store: Store,
     dataset: str,
     built: Built,
-    validators: Sequence[Validator],
+    validators: Sequence[Hook[Validator]],
+    operation: Operation,
 ) -> None:
     label = max((label.label for label in store.labels(dataset)), default=0) + 1
-    released = view(dataset, built.manifest.hash, label, built.descriptors)
-    refusals = [r for validator in validators for r in validator.validate_descriptors(released)]
+    hashed = built.manifest.hash
+    refusals = validated(validators, operation, dataset, hashed, label, built.descriptors)
     if refusals:
         raise ImportRefused(rooted(refusals, "descriptors"))
 
@@ -248,10 +291,12 @@ def build_import(
     *,
     registry: PackRegistry | None = None,
     pack: str | None = None,
+    operation: Operation | None = None,
 ) -> Imported:
     """Import ``source`` as a new, unpublished release of ``options.dataset``, with the core's
     file importer, its database importer for a named connection, or the importer of ``pack`` in
-    ``registry``; its blobs stay pinned by ``pin``. Raises ``ImportRefused``."""
+    ``registry``; its blobs stay pinned by ``pin``, and its validators read their packs' views
+    in ``operation``. Raises ``ImportRefused``."""
     result, validators = _read(source, options, registry, pack)
     refusals = check_writes(result.descriptors, registry, ceiling=WRITE_STEPS_MAX)
     if refusals:
@@ -270,7 +315,7 @@ def build_import(
         raise ImportRefused(error.refusals) from None
     except MemoryError:
         raise _out_of_memory(result, options) from None
-    _check(store, options.dataset, built, validators)
+    _check(store, options.dataset, built, validators, operation or Operation())
     return Imported(built, result, built.notes)
 
 
@@ -290,8 +335,10 @@ def _publish(
         raise ImportRefused([error.refusal]) from None
 
 
-def _proposers(store: Store, dataset: str, registry: PackRegistry | None) -> ProposersRun | None:
-    return None if registry is None else run_proposers(store, dataset, registry)
+def _proposers(
+    store: Store, dataset: str, registry: PackRegistry | None, operation: Operation
+) -> ProposersRun | None:
+    return None if registry is None else run_proposers(store, dataset, registry, operation)
 
 
 def _by(by: str) -> None:
@@ -314,6 +361,7 @@ def import_dataset(
     ``ImportRefused``."""
     _by(by)
     dataset = options.dataset
+    operation = Operation()
     with _slot(store, dataset, "import"):
         if store.latest(dataset) is not None:
             raise refused(
@@ -321,10 +369,13 @@ def import_dataset(
                 "The dataset has a published release: re-import it instead",
             )
         with store.pin() as pin:
-            imported = build_import(store, pin, source, options, registry=registry, pack=pack)
+            imported = build_import(
+                store, pin, source, options, registry=registry, pack=pack, operation=operation
+            )
             label = _publish(store, dataset, imported.built, by, "import")
     manifest = imported.built.manifest.hash
-    return Published(label, manifest, imported.notes, (), _proposers(store, dataset, registry))
+    proposers = _proposers(store, dataset, registry, operation)
+    return Published(label, manifest, imported.notes, (), proposers)
 
 
 def _unchanged(new: Manifest, latest: Manifest) -> bool:
@@ -359,6 +410,7 @@ def reimport_dataset(
     operator ``by`` (§12.3, D238–D242). Raises ``ImportRefused``."""
     _by(by)
     dataset = options.dataset
+    operation = Operation()
     with _slot(store, dataset, "reimport"), store.pin() as pin:
         latest = store.latest(dataset)
         if latest is None:
@@ -416,9 +468,9 @@ def reimport_dataset(
                 RefusalCode.NO_CHANGE,
                 "The re-import gives the latest published release again: nothing changed",
             )
-        _check(store, dataset, built, validators)
+        _check(store, dataset, built, validators, operation)
         label = _publish(store, dataset, built, by, "reimport", latest.manifest)
-    proposers = _proposers(store, dataset, registry)
+    proposers = _proposers(store, dataset, registry, operation)
     return Published(label, built.manifest.hash, built.notes, carried.changes, proposers)
 
 

@@ -2,7 +2,7 @@
 exercised with a test-only hygiene pack over the city's food-safety records."""
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -19,12 +19,19 @@ from aibi.core.engine.counts import count_parts
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.schema.caveats import Severity
-from aibi.core.schema.document import Clause, Document, IdsLeaf, PackLeaf
+from aibi.core.schema.document import Clause, Document, IdsLeaf, PackLeaf, ValueLeaf
 from aibi.core.schema.jsonschemas import STEPS_BASE
 from aibi.core.schema.limits import MAX_PACK_LEAVES, MAX_VALUES
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.output import DataSegment, Segment, TextSegment, data, text
-from aibi.core.schema.pack_api import Pack, PackManifest, PackRegistry, Refused, ReleaseView
+from aibi.core.schema.pack_api import (
+    CaveatRule,
+    Pack,
+    PackManifest,
+    PackRegistry,
+    Refused,
+    ReleaseView,
+)
 from aibi.core.schema.refusals import Limit, Refusal
 
 City = Callable[..., Release]
@@ -78,11 +85,13 @@ class Kind:
     def schema(self) -> Mapping[str, JsonValue]:
         return self._schema
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         self.calls.append((release.manifest, pack_version))
         return self._expand(leaf.model_extra or {})  # type: ignore[return-value]
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         if self._summary is not None:
             return self._summary(leaf)  # type: ignore[return-value]
         return [text("establishments with no violation above "), data(str(leaf.model_extra))]
@@ -235,7 +244,7 @@ def _lying_segment() -> object:
     return _LyingSegment()
 
 
-def _rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+def _rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
     return [SELF_REPORTED] if "violations" in str(form) else []
 
 
@@ -243,7 +252,7 @@ def hygiene(
     *,
     version: str = "1.2.0",
     results_version: int = 3,
-    rule: Callable[[ReleaseView, Mapping[str, JsonValue]], Sequence[str]] | None = _rule,
+    rule: CaveatRule | None = _rule,
     leaf_kinds: Mapping[str, Kind] | None = None,
 ) -> Pack:
     return Pack(
@@ -495,7 +504,7 @@ def test_a_caveat_rule_that_gives_undeclared_codes_refuses_the_cohort(
 
 
 def test_a_caveat_rule_reads_a_copy_of_the_form(canon: Canon, city: City, doc: Doc) -> None:
-    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         form.clear()  # type: ignore[attr-defined]
         return []
 
@@ -550,7 +559,7 @@ def test_a_summary_or_caveat_rule_that_raises_is_refused_as_pack_failed(
     summary = canon(doc([{"kind": "hygiene.raising_summary"}]), city(), registry=registry())
     assert refusals(summary) == [("PACK_FAILED", "/cohorts/c/all/0")]
 
-    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         raise KeyError(str(form))
 
     ruled = canon(doc([clean()]), city(), registry=registry(hygiene(rule=rule)))
@@ -600,7 +609,7 @@ def test_packs_read_no_release_label_so_a_draft_and_its_release_share_ids_and_ca
     digests = [count_parts(c, evaluate(c.resolved)).digest for c in cohorts]
     assert digests[0] == digests[1]
 
-    def by_label(view: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def by_label(view: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         return [SELF_REPORTED] if view.label == "draft" else []
 
     for label in (1, "draft"):
@@ -616,7 +625,7 @@ def test_packs_read_no_release_label_so_a_draft_and_its_release_share_ids_and_ca
 def test_a_caveat_rule_that_changes_the_inside_of_its_copy_leaves_the_form_as_it_was(
     canon: Canon, city: City, doc: Doc
 ) -> None:
-    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         for tree in form.values():
             cast_tree: dict[str, Any] = tree  # type: ignore[assignment]
             cast_tree.clear()
@@ -676,6 +685,29 @@ def test_the_expansions_of_a_document_may_hold_exactly_as_many_values_as_a_docum
         assert limits == (["expansion_values"] if refused else [])
 
 
+def _codes(members: Mapping[str, Any]) -> object:
+    """The review's probe of round 2 (m1): a concept expanded to 15 code lists of 10,000 codes of
+    15 characters each, 2,250,000 characters, within ``expansion_values``."""
+    return [
+        ValueLeaf.model_validate(
+            {
+                "kind": "value",
+                "column": "establishments.name",
+                "values": [f"{leaf:02d}-{code:012d}" for code in range(10_000)],
+            }
+        )
+        for leaf in range(15)
+    ]
+
+
+def test_an_expansion_past_a_document_s_bytes_in_characters_resolves_as_before(
+    canon: Canon, city: City, doc: Doc
+) -> None:
+    packs = registry(hygiene(leaf_kinds={**kinds(), "hygiene.codes": Kind(_codes)}))
+    cohort = only(canon(doc([{"kind": "hygiene.codes"}]), city(), registry=packs))
+    assert cohort.identity.packs == {"hygiene": 3}
+
+
 def test_the_step_budget_of_a_document_s_pack_leaves_is_capped_as_an_operator_s_write_is(
     canon: Canon, city: City, doc: Doc, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -702,7 +734,7 @@ def test_an_expansion_s_strings_that_start_with_a_dollar_read_back_escaped(
     assert again.form == cohort.form
 
 
-def _meddling(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+def _meddling(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
     """Changes a descriptor of the release it is shown."""
     fields: Any = release.descriptors["violations.severity"].fields
     fields.missing_codes["pending"] = "UNKNOWN"
@@ -726,7 +758,7 @@ def test_a_caveat_rule_that_changes_a_descriptor_changes_neither_the_release_nor
 def test_a_pack_cannot_replace_a_descriptor_of_the_release_it_is_shown(
     canon: Canon, city: City, doc: Doc
 ) -> None:
-    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         descriptors: Any = release.descriptors
         descriptors["violations.severity"] = None
         return []
@@ -746,7 +778,7 @@ def test_a_compiler_that_changes_a_descriptor_leaves_the_release_as_it_was(
     class Meddling(Kind):
         def compile(
             self, leaf: PackLeaf, release: ReleaseView, pack_version: str
-        ) -> Sequence[Clause]:
+        ) -> list[Clause] | tuple[Clause, ...]:
             _meddling(release, {})
             return super().compile(leaf, release, pack_version)
 
@@ -841,7 +873,7 @@ def test_a_cohort_s_expansion_never_depends_on_what_a_sibling_s_compiler_did_to_
     class Meddling(Kind):
         def compile(
             self, leaf: PackLeaf, release: ReleaseView, pack_version: str
-        ) -> Sequence[Clause]:
+        ) -> list[Clause] | tuple[Clause, ...]:
             fields: Any = release.descriptors["violations.severity"].fields
             fields.missing_codes["zzz"] = "UNKNOWN"
             return super().compile(leaf, release, pack_version)
@@ -853,7 +885,7 @@ def test_a_cohort_s_expansion_never_depends_on_what_a_sibling_s_compiler_did_to_
     class Reading(Kind):
         def compile(
             self, leaf: PackLeaf, release: ReleaseView, pack_version: str
-        ) -> Sequence[Clause]:
+        ) -> list[Clause] | tuple[Clause, ...]:
             return reading(release)
 
     leaf_kinds = {
@@ -886,11 +918,11 @@ def test_a_pack_s_view_holds_no_attribute_that_reaches_the_release_s_descriptors
     assert not any(isinstance(value, Mapping) for value in held)
 
 
-def _marking(mark: str, other: str, code: str) -> Callable[..., Sequence[str]]:
+def _marking(mark: str, other: str, code: str) -> CaveatRule:
     """A caveat rule that marks a descriptor of its view and raises ``code`` if it finds the
     other rule's mark there."""
 
-    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> Sequence[str]:
+    def rule(release: ReleaseView, form: Mapping[str, JsonValue]) -> list[str] | tuple[str, ...]:
         fields: Any = release.descriptors["violations.severity"].fields
         seen = other in fields.missing_codes
         fields.missing_codes[mark] = "UNKNOWN"

@@ -236,6 +236,7 @@ def _ran(run: ProposersRun | None) -> ProposersRan | None:
             )
             for skipped in run.skipped
         ],
+        truncated=run.truncated or None,
     )
 
 

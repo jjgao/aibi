@@ -8,8 +8,10 @@ other members still read; ``MemoryError``, ``KeyboardInterrupt`` and ``SystemExi
 stop registration, raised again as new instances.
 """
 
+import ast
 import dataclasses
 import inspect
+import textwrap
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
@@ -33,10 +35,12 @@ from tests.core.schema.test_pack_api import (
 from aibi.core.schema import pack_api
 from aibi.core.schema.caveats import CaveatCode, Severity
 from aibi.core.schema.descriptors import AnalysisDescriptor, ConceptDescriptor
+from aibi.core.schema.guards import Hook
 from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.pack_api import (
     Pack,
     PackError,
+    PackInfo,
     PackManifest,
     PackRegistry,
     RegisteredAnalysis,
@@ -78,7 +82,7 @@ def test_a_pack_that_is_not_exactly_a_pack_is_refused_and_never_read() -> None:
 def test_the_kept_and_handed_out_packs_are_core_made() -> None:
     packs = PackRegistry([LIBRARY, ARCHIVE], core_version=CORE)
     for pack in (packs.pack("library"), *packs.listed(["library", "archive"])):
-        assert type(pack) is Pack
+        assert type(pack) is PackInfo
         assert type(pack.manifest) is PackManifest
         assert all(type(c) is ConceptDescriptor for c in pack.concepts)
 
@@ -599,7 +603,7 @@ def test_no_hook_object_is_read_after_registration() -> None:
     ]
     assert handed
     called = {
-        "pack", "listed", "importer", "leaf_kind", "translator", "analysis",
+        "pack", "listed", "importer", "leaf_kind", "leaf_summary", "translator", "analysis",
         "requirement_predicate", "ontology_validator", "validators", "proposers", "facets",
         "caveat_rules", "analyses", "concepts", "extension_schemas", "wordings", "severity",
         "leaf_kinds", "leaf_checker", "analysis_checkers", "ids",
@@ -611,21 +615,49 @@ def test_no_hook_object_is_read_after_registration() -> None:
         for field in dataclasses.fields(given):
             getattr(given, field.name)
         given.id  # noqa: B018 - the property reads the manifest
-    assert [object.__getattribute__(h, "reads") for h in hooks] == [[] for _ in hooks]
-    assert packs.importer("library") is pack.importer
-    assert packs.leaf_kind("library.overdue") is pack.leaf_kinds["library.overdue"]
+    handles = [
+        packs.importer("library"),
+        packs.leaf_kind("library.overdue"),
+        packs.leaf_summary("library.overdue"),
+        packs.translator("library.marc"),
+        packs.requirement_predicate("library.has_loans"),
+        packs.ontology_validator("LIBRARY-CODES"),
+        *packs.validators(["library"]),
+        *packs.proposers(["library"]),
+        *packs.facets(["library"]),
+        *packs.caveat_rules(["library"]),
+    ]
     found = packs.analysis("library.loan_rates")
     assert found is not None
-    assert found.implementation is pack.analyses[0]
+    handles.append(found.implementation)
+    for handle in handles:
+        assert type(handle) is Hook
+        repr(handle)
+        hash(handle)
+        assert handle == handle
+        handle.pack  # noqa: B018 - the property reads the handle's own text
+        handle.stage  # noqa: B018
+    assert [object.__getattribute__(h, "reads") for h in hooks] == [[] for _ in hooks]
+    assert _held(packs.importer("library")) is pack.importer
+    assert _held(packs.leaf_kind("library.overdue")) is pack.leaf_kinds["library.overdue"]
+    assert _held(found.implementation) is pack.analyses[0]
 
 
-def test_the_hook_objects_are_the_pack_s_own() -> None:
+def _held(handle: Hook[Any] | None) -> object:
+    """The hook object a handle holds, read from its slot as only a test does."""
+    assert handle is not None
+    return object.__getattribute__(handle, "_hook_object")
+
+
+def test_the_registry_hands_out_handles_on_the_pack_s_own_hook_objects() -> None:
     packs = PackRegistry([LIBRARY, ARCHIVE], core_version=CORE)
-    assert isinstance(packs.leaf_kind("library.overdue"), Overdue)
-    assert isinstance(packs.translator("library.marc"), Marc)
+    assert isinstance(_held(packs.leaf_kind("library.overdue")), Overdue)
+    assert isinstance(_held(packs.translator("library.marc")), Marc)
     found = packs.analysis("library.loan_rates")
     assert type(found) is RegisteredAnalysis
-    assert found.implementation is LIBRARY.analyses[0]
+    assert _held(found.implementation) is LIBRARY.analyses[0]
+    assert packs.leaf_kind("library.overdue") is packs.leaf_kind("library.overdue")
+    assert found.implementation is packs.analyses()[0].implementation
 
 
 # --- What the registry keeps ----------------------------------------------------------------------
@@ -634,9 +666,10 @@ _LEAVES: tuple[type, ...] = (str, int, float, bool, type(None), CaveatCode, Seve
 
 
 def _walk(value: object, hooks: list[object], seen: set[int]) -> None:
-    """Every object the registry keeps is a core-made value of an allowed type, or one of the
-    pack's hook objects, by identity."""
-    if any(value is hook for hook in hooks):
+    """Every object the registry keeps is a core-made value of an allowed type, or a handle on
+    one of the pack's hook objects, by identity; no hook object is kept but in a handle."""
+    if type(value) is Hook:
+        assert any(_held(cast(Hook[Any], value)) is hook for hook in hooks)
         return
     kind = type(value)
     if kind is CaveatCode or kind is Severity:
@@ -663,7 +696,7 @@ def _walk(value: object, hooks: list[object], seen: set[int]) -> None:
             _walk(getattr(value, name), hooks, seen)
         _walk(value.model_extra, hooks, seen)
         return
-    if kind is Pack or kind is RegisteredAnalysis:
+    if kind is PackInfo or kind is RegisteredAnalysis or kind is pack_api._Hooks:  # pyright: ignore[reportPrivateUsage]
         for field in dataclasses.fields(cast(Any, value)):
             _walk(getattr(value, field.name), hooks, seen)
         return
@@ -897,12 +930,12 @@ def test_the_core_s_own_failure_in_a_schema_s_check_is_never_the_pack_s(
         PackRegistry([LIBRARY, ARCHIVE], core_version=CORE)
 
 
-def test_the_handed_out_pack_holds_its_analyses_by_identity() -> None:
-    packs = PackRegistry([LIBRARY, ARCHIVE], core_version=CORE)
-    handed = packs.pack("library").analyses
-    assert len(handed) == len(LIBRARY.analyses)
-    assert all(a is b for a, b in zip(handed, LIBRARY.analyses, strict=True))
-    assert all(type(a) is not RegisteredAnalysis for a in handed)
+def test_the_handed_out_pack_holds_no_hook() -> None:
+    pack, _ = _watched_pack()
+    packs = PackRegistry([pack, ARCHIVE], core_version=CORE)
+    handed = packs.pack("library")
+    assert handed.analyses == ("library.loan_rates",)
+    _walk(handed, [], set())
 
 
 def test_repr_and_equality_read_no_hook() -> None:
@@ -1113,29 +1146,21 @@ def test_a_handed_out_analysis_changes_nothing_registered() -> None:
 # --- Round 3 of #78: the two fixes of round 2 that had no test ------------------------------------
 
 
-class _ManifestKey(str):
-    """A key hashed as ``manifest`` and compared first, which counts each lookup of the field."""
-
-    __slots__ = ()
-    looked: ClassVar[list[int]] = []
-
-    def __hash__(self) -> int:
-        return str.__hash__(self)
-
-    def __eq__(self, other: object) -> bool:
-        _ManifestKey.looked.append(1)
-        return False
-
-
 def test_the_manifest_is_read_once() -> None:
-    given = replace(LIBRARY)
-    fields = vars(given)
-    rebuilt: dict[object, object] = {_ManifestKey("manifest"): None}
-    rebuilt.update(fields)
-    object.__setattr__(given, "__dict__", rebuilt)
-    _ManifestKey.looked.clear()
-    PackRegistry([given, ARCHIVE], core_version=CORE)
-    assert len(_ManifestKey.looked) == 1
+    """The registry reads the given pack's ``manifest`` once, its fields from that one object.
+    This is a property of the code, checked on its syntax: counting a key's comparisons in the
+    instance dictionary depends on CPython's specializing interpreter, which may answer a read
+    from a cached index without a comparison, or compare once more when it specializes."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(pack_api._manifest)))  # pyright: ignore[reportPrivateUsage]
+    reads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "manifest"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "given"
+    ]
+    assert len(reads) == 1
 
 
 def test_a_schema_s_problem_is_cut_with_its_pointer() -> None:

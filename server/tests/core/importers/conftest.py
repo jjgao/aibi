@@ -669,7 +669,9 @@ class BirdImporter:
 
 
 class BirdValidator:
-    def validate_source(self, source: ImportSource, result: ImportResult) -> Sequence[Refusal]:
+    def validate_source(
+        self, source: ImportSource, result: ImportResult
+    ) -> list[Refusal] | tuple[Refusal, ...]:
         counts = result.sources["counts"]
         assert isinstance(counts, TypedSource)
         negative = sum(1 for row in counts.rows if isinstance(row[2], int) and row[2] < 0)
@@ -678,7 +680,7 @@ class BirdValidator:
         message: list[Segment] = [text(f"{negative} counts are negative")]
         return [Refusal(code="birds.NEGATIVE_COUNT", path=None, message=message)]
 
-    def validate_descriptors(self, release: ReleaseView) -> Sequence[Refusal]:
+    def validate_descriptors(self, release: ReleaseView) -> list[Refusal] | tuple[Refusal, ...]:
         dataset = release.descriptors["dataset"]
         if "birds" in dataset.extensions:
             return []
@@ -686,7 +688,7 @@ class BirdValidator:
         return [Refusal(code="birds.NO_PROTOCOL", path="/dataset/extensions", message=message)]
 
 
-def propose_definitions(release: ReleaseView) -> Sequence[Proposal]:
+def propose_definitions(release: ReleaseView) -> list[Proposal] | tuple[Proposal, ...]:
     """A definition for each table that has none."""
     return [
         Proposal(
