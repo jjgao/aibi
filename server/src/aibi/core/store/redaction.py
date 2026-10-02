@@ -955,6 +955,8 @@ def _object_holds(hashed: JsonValue, manifest: str, terms: Terms) -> bool:
         )
     if isinstance(view, dict):
         params = view.get("params")
+        if _of_survival(view) and isinstance(params, dict):
+            return _survival_holds(params, terms)
         if _of_pack(view) and isinstance(params, dict):
             return any(
                 terms.string(key) != key
@@ -967,6 +969,34 @@ def _object_holds(hashed: JsonValue, manifest: str, terms: Terms) -> bool:
             )
         return _params_hold(params, terms)
     return _naming_holds(hashed, terms)
+
+
+def _of_survival(view: Mapping[str, JsonValue]) -> bool:
+    """Whether a view, as written or canonical, is of a survival analysis, whose times are
+    constants on its endpoint's time column (D348)."""
+    analysis = view.get("analysis")
+    if isinstance(analysis, dict):
+        analysis = analysis.get("id")
+    return isinstance(analysis, str) and analysis.partition(".")[0] == "survival"
+
+
+SURVIVAL_TIMES = ("grid", "landmarks")
+"""The members of a survival view's parameters that hold times, on its endpoint's time column
+(D348)."""
+
+
+def _survival_holds(params: Mapping[str, JsonValue], terms: Terms) -> bool:
+    """Whether a survival view's canonical parameters hold a term: its times as constants on its
+    endpoint's time column, which its canonical ``endpoint`` names (``{"id", "time"}``), as a
+    variable's ``bins`` are on its column (D325, D348). The rest, its endpoint's id and time
+    column and its level, are the derivation's structure and settings, never a person's data."""
+    endpoint = params.get("endpoint")
+    column = endpoint.get("time") if isinstance(endpoint, dict) else None
+    place = terms.place(column)
+    return any(
+        isinstance(given, list) and any(terms.in_constant(time, place) for time in given)
+        for given in (params.get(key) for key in SURVIVAL_TIMES)
+    )
 
 
 def _of_pack(view: Mapping[str, JsonValue]) -> bool:
@@ -1151,7 +1181,9 @@ class _Written:
     clause, or as unit keys, of the cohorts and views that refer to it (over ``dataset`` if one
     of them may be, or if none does), and otherwise as a constant in each of those places,
     structure being ``Place.UNKNOWN``, as is a parameter nothing refers to. A pack leaf as
-    written, whose columns the core cannot know, holds every term throughout. A name the
+    written, whose columns the core cannot know, holds every term throughout, and so do a
+    pack analysis's ``options`` and a survival view's ``grid`` and ``landmarks``, times on an
+    endpoint the written document names but does not resolve (D341, D348). A name the
     document gives (a cohort's, a parameter's) is redacted as an object key is, and so is every
     reference to it (a view's ``cohorts`` and ``reference``, a ``cohort`` leaf, ``"$name"``), so
     that each still names what it named."""
@@ -1353,7 +1385,16 @@ class _Written:
         try:
             found: dict[str, JsonValue] = {}
             for key, member in view.items():
-                if key == "params" and _of_pack(view) and isinstance(member, dict):
+                if key == "params" and _of_survival(view) and isinstance(member, dict):
+                    found[key] = self.terms.keyed(
+                        member,
+                        lambda name, given: (
+                            self.constants(given, self.place(None))
+                            if name in SURVIVAL_TIMES
+                            else self.settings(given)
+                        ),
+                    )
+                elif key == "params" and _of_pack(view) and isinstance(member, dict):
                     found[key] = self.terms.keyed(
                         member,
                         lambda name, given: (

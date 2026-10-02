@@ -679,14 +679,267 @@ def test_a_view_with_more_cohorts_than_the_entry_takes_is_refused(check: Check, 
     assert refusals(found) == [("INVALID_VALUE", "/views/0/cohorts")]
 
 
-def test_a_view_of_an_analysis_that_requires_an_endpoint_names_the_slice_that_brings_it(
+ENDPOINT = {"role": "time", "kind": "endpoint", "on": "unit"}
+
+
+def rowed(inputs: AnalysisInputs) -> dict[str, Any]:
+    """Every input, its endpoints' rows included, as values."""
+    found = echoed(inputs)
+    found["view"]["endpoints"] = [[e.role, e.endpoint, e.units, e.entry] for e in inputs.endpoints]
+    for shown, position in zip(found["positions"], inputs.positions, strict=True):
+        shown["endpoints"] = [
+            [None if row is None else list(row) for row in rows] for rows in position.endpoints
+        ]
+        shown["endpoint_excluded"] = [
+            [list(reasons) for reasons in column] for column in position.endpoint_excluded
+        ]
+    return found
+
+
+def retention_rows(rows: Rows, delayed: bool) -> list[Any]:
+    """The old customers' retention rows, in their keys' order, found independently."""
+    found = [row for row in rows(survived=True)["customers"] if int(str(row["age"])) >= 50]
+    found.sort(
+        key=lambda row: json.dumps([row["customer_id"]], ensure_ascii=False).encode("utf-16-be")
+    )
+    return [
+        None
+        if row["left"] == "?"
+        else [row["joined"] if delayed else None, row["tenure"], row["left"] == "yes"]
+        for row in found
+    ]
+
+
+@pytest.mark.parametrize("entered", ["delayed", "origin"])
+def test_a_pack_s_analysis_is_handed_each_member_s_endpoint_row_in_its_key_s_order(
+    analyse: Analyse, shop: Shop, rows: Rows, entered: str
+) -> None:
+    echo = Echo(entry([*REQUIRES, ENDPOINT]), rowed)
+    [found] = analyse(document(), shop(survived=entered), analyses=tallies(echo))
+    [position] = found.result.values.positions
+    expected = retention_rows(rows, entered == "delayed")
+    assert position["endpoints"] == [expected]
+    assert position["endpoint_excluded"] == [
+        [["NOT_ASSESSED"] if row is None else [] for row in expected]
+    ]
+    assert found.result.values.view["endpoints"] == [
+        ["time", "ep:retention", "mo", entered == "delayed"]
+    ]
+    analysed = found.result.analysed[0]
+    assert analysed.variables is not None
+    assert len(analysed.variables) == 2
+    assert analysed.variables[1].n == sum(row is not None for row in expected)
+    assert found.view.identity.params["endpoints"] == {
+        "time": {"id": "ep:retention", "time": "customers.tenure"}
+    }
+
+
+def test_a_row_that_section_5_8_calls_invalid_is_excluded_and_its_caveat_raised(
+    analyse: Analyse, shop: Shop, rows: Rows
+) -> None:
+    given = rows(survived=True)
+    old = [row for row in given["customers"] if int(str(row["age"])) >= 50]
+    old[0]["joined"] = old[0]["tenure"]
+    old[1]["left"] = "?"
+    echo = Echo(entry([*REQUIRES, ENDPOINT]), rowed)
+    [found] = analyse(document(), shop(given, survived="delayed"), analyses=tallies(echo))
+    [position] = found.result.values.positions
+    assert ["INVALID_VALUE"] in position["endpoint_excluded"][0]
+    assert ["NOT_ASSESSED"] in position["endpoint_excluded"][0]
+    raised = {caveat.code for caveat in found.result.caveats}
+    assert {CaveatCode.INVALID_EXCLUDED, CaveatCode.UNKNOWN_EXCLUDED} <= raised
+
+
+def test_a_view_binds_the_endpoint_it_names_to_its_role(check: Check, shop: Shop) -> None:
+    other = build.descriptor(
+        "endpoint",
+        "ep:other",
+        {
+            "table": "customers",
+            "time_column": "tenure",
+            "status_column": "left",
+            "event_coding": {"event": ["no"], "censored": ["yes"]},
+        },
+    )
+    release = shop(survived="origin", extras=[other])
+    requires = [*REQUIRES, ENDPOINT]
+    found = check(document(), release, analyses=tallies(Echo(entry(requires))))
+    assert refusals(found) == [("MISSING_MEMBER", "/views/0/params/endpoints/time")]
+    named = document(params={"endpoints": {"time": "ep:other"}})
+    [view] = check(named, release, analyses=tallies(Echo(entry(requires)))).views
+    assert view.identity.params["endpoints"]["time"]["id"] == "ep:other"
+
+
+@pytest.mark.parametrize(
+    ("member", "column", "coding"),
+    [
+        ("status_column", "customer_id", ["c1", "c2"]),
+        ("status_column", "email", ["a", "b"]),
+        ("time_column", "serial", ["yes", "no"]),
+        ("entry", "serial", ["yes", "no"]),
+    ],
+    ids=["a status that is the key", "a declared status", "a declared time", "a declared entry"],
+)
+def test_an_endpoint_that_reads_an_identifier_column_is_never_handed(
+    check: Check, shop: Shop, member: str, column: str, coding: list[str]
+) -> None:
+    fields: dict[str, Any] = {
+        "table": "customers",
+        "time_column": "tenure",
+        "status_column": "left",
+        "event_coding": {"event": coding[:1], "censored": coding[1:]},
+    }
+    if member == "entry":
+        fields["entry"] = {"column": column}
+    else:
+        fields[member] = column
+    keyed = build.descriptor("endpoint", "ep:keyed", fields)
+    extras = [
+        build.column("customers.email", "string", identifier=True),
+        build.column("customers.serial", "time_offset", identifier=True, units="mo"),
+        keyed,
+    ]
+    release = shop(survived="origin", extras=extras)
+    named = document(params={"endpoints": {"time": "ep:keyed"}})
+    found = check(named, release, analyses=tallies(Echo(entry([*REQUIRES, ENDPOINT]))))
+    assert refusals(found) == [("ROW_IDS_NOT_ALLOWED", "/views/0/params/endpoints/time")]
+    [refusal] = found.refusals
+    assert f"customers.{column}" in json.dumps(refusal.model_dump(mode="json"))
+
+
+def test_an_endpoint_below_the_unit_is_refused_since_a_unit_has_many_of_its_rows(
     check: Check, shop: Shop
 ) -> None:
-    requires = [*REQUIRES, {"role": "time", "kind": "endpoint", "on": "unit"}]
+    below = build.descriptor(
+        "endpoint",
+        "ep:orders",
+        {
+            "table": "orders",
+            "time_column": "days",
+            "status_column": "channel",
+            "event_coding": {"event": ["web"], "censored": ["shop"]},
+        },
+    )
+    extras = [build.column("orders.days", "time_offset", units="d"), below]
+    release = shop(survived="origin", extras=extras)
+    named = document(params={"endpoints": {"time": "ep:orders"}})
+    anywhere = {"role": "time", "kind": "endpoint"}
+    found = check(named, release, analyses=tallies(Echo(entry([*REQUIRES, anywhere]))))
+    assert refusals(found) == [("INVALID_VALUE", "/views/0/params/endpoints/time")]
+    assert "goes below the unit" in said(found.refusals[0])
+
+
+def test_an_endpoint_without_a_table_meets_no_endpoint_requirement_on_any_table(
+    check: Check, shop: Shop, rows: Rows
+) -> None:
+    tableless = build.descriptor(
+        "endpoint",
+        "ep:retention",
+        {
+            "time_column": "tenure",
+            "status_column": "left",
+            "event_coding": {"event": ["yes"], "censored": ["no"]},
+        },
+    )
+    given = shop(survived="origin")
+    descriptors = [d for d in given.descriptors if d.id != "ep:retention"]
+    release = build.release([*descriptors, tableless], rows(survived=True))
+    analyses = tallies(Echo(entry([*REQUIRES, {"role": "time", "kind": "endpoint"}])))
+    found = analyses.applicable(
+        list(release.descriptors), dataset=release.dataset, manifest=release.manifest
+    )
+    [echoed] = [item for item in found if item.analysis == "tallies.echo"]
+    assert (echoed.status, echoed.missing) == ("unavailable", ["time"])
+    checked = check(document(), release, analyses=analyses)
+    assert refusals(checked) == [("MISSING_MEMBER", "/views/0/params/endpoints/time")]
+
+
+def test_a_view_without_a_usable_endpoint_for_a_required_role_is_refused_where_it_goes(
+    check: Check, shop: Shop
+) -> None:
+    requires = [*REQUIRES, ENDPOINT]
     found = check(document(), shop(), analyses=tallies(Echo(entry(requires))))
+    assert refusals(found) == [("MISSING_MEMBER", "/views/0/params/endpoints/time")]
+
+
+def test_an_endpoint_of_a_role_the_analysis_does_not_require_is_refused_with_the_roles_it_does(
+    check: Check, shop: Shop
+) -> None:
+    written = document(params={"endpoints": {"when": "ep:retention"}})
+    requires = [*REQUIRES, ENDPOINT]
+    found = check(written, shop(survived="origin"), analyses=tallies(Echo(entry(requires))))
     [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
-    assert "M3.3" in said(refusal)
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.UNKNOWN_MEMBER,
+        "/views/0/params/endpoints/when",
+    )
+    assert [part.model_dump() for part in refusal.alternatives] == [{"data": "time"}]
+
+
+def test_an_endpoint_requirement_without_on_unit_reads_an_endpoint_through_a_lookup(
+    analyse: Analyse, check: Check, shop: Shop
+) -> None:
+    loose = {"role": "time", "kind": "endpoint"}
+    written = document({"measure": [{"column": "orders.channel"}]}, cohorts={"all": []})
+    written["unit"] = "orders"
+    echo = Echo(entry([*REQUIRES, loose]), rowed)
+    [found] = analyse(written, shop(survived="origin"), analyses=tallies(echo))
+    [position] = found.result.values.positions
+    assert len(position["endpoints"][0]) == position["units"]
+    strict = tallies(Echo(entry([*REQUIRES, ENDPOINT])))
+    refused = check(written, shop(survived="origin"), analyses=strict)
+    assert refusals(refused) == [("MISSING_MEMBER", "/views/0/params/endpoints/time")]
+    named = document({"measure": [{"column": "orders.channel"}]}, cohorts={"all": []})
+    named["unit"] = "orders"
+    named["views"][0]["params"]["endpoints"] = {"time": "ep:retention"}
+    refused = check(named, shop(survived="origin"), analyses=strict)
+    assert refusals(refused) == [("INVALID_VALUE", "/views/0/params/endpoints/time")]
+
+
+def test_an_optional_endpoint_requirement_before_a_required_one_leaves_it_bound(
+    analyse: Analyse, shop: Shop
+) -> None:
+    optional = {"role": "before", "kind": "endpoint", "min": 0}
+    echo = Echo(entry([*REQUIRES, optional, ENDPOINT]), rowed)
+    [found] = analyse(document(), shop(survived="origin"), analyses=tallies(echo))
+    assert [row[0] for row in found.result.values.view["endpoints"]] == ["time"]
+
+
+def test_members_excluded_from_every_input_are_counted_together_by_reason(
+    analyse: Analyse, shop: Shop, rows: Rows
+) -> None:
+    given = rows(survived=True)
+    for row in given["customers"]:
+        if int(str(row["age"])) >= 50:
+            row["tier"], row["left"] = "?", "?"
+            break
+    echo = Echo(entry([*REQUIRES, ENDPOINT]), rowed)
+    written = document({"measure": [TIER]})
+    [found] = analyse(written, shop(given, survived="origin"), analyses=tallies(echo))
+    [position] = found.result.values.positions
+    both = [
+        index
+        for index, reasons in enumerate(position["excluded"][0])
+        if reasons and position["endpoint_excluded"][0][index]
+    ]
+    analysed = found.result.analysed[0]
+    assert len(both) == 1
+    assert analysed.excluded_units == 1
+    assert analysed.excluded is not None
+    assert analysed.excluded["NOT_ASSESSED"] == 1
+    assert analysed.n == position["units"] - 1
+
+
+def test_an_optional_endpoint_is_bound_only_when_it_is_named(analyse: Analyse, shop: Shop) -> None:
+    optional = {**ENDPOINT, "min": 0}
+    echo = Echo(entry([*REQUIRES, optional]), rowed)
+    [unbound] = analyse(document(), shop(survived="origin"), analyses=tallies(echo))
+    assert unbound.result.values.view["endpoints"] == []
+    assert "endpoints" not in unbound.view.identity.params
+    named = document(params={"endpoints": {"time": "ep:retention"}})
+    [bound] = analyse(named, shop(survived="origin"), analyses=tallies(echo))
+    assert bound.result.values.view["endpoints"] == [["time", "ep:retention", "mo", False]]
+    assert unbound.view.identity.id != bound.view.identity.id
 
 
 @pytest.mark.parametrize(
@@ -1020,9 +1273,9 @@ def test_counting_several_columns_stops_at_the_call_s_deadline() -> None:
     values: tuple[tuple[Any, ...], ...] = ((1, None), (None, None))
     reasons = frozenset({ExclusionReason.NO_INFORMATION})
     excluded = ((frozenset(), reasons), (reasons, reasons))
-    one = Listed([("a",), ("b",)], [0, 1], values, excluded, (frozenset(), frozenset()))
+    inputs = list(zip(values, excluded, strict=True))
     with pytest.raises(CallerDeadline):
-        packs._analysed(one, time.monotonic() - 1)  # pyright: ignore[reportPrivateUsage]
+        packs._analysed(2, inputs, time.monotonic() - 1)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_two_columns_are_counted_together_by_the_units_some_column_has_a_value_for() -> None:
@@ -1030,8 +1283,8 @@ def test_two_columns_are_counted_together_by_the_units_some_column_has_a_value_f
     assessed = frozenset({ExclusionReason.NOT_ASSESSED})
     values: tuple[tuple[Any, ...], ...] = ((1, None, None), (None, 2, None))
     excluded = ((frozenset(), no_info, no_info), (assessed, frozenset(), assessed))
-    one = Listed([("a",), ("b",), ("c",)], [0, 1, 2], values, excluded, (frozenset(),) * 2)
-    found = packs._analysed(one)  # pyright: ignore[reportPrivateUsage]
+    inputs = list(zip(values, excluded, strict=True))
+    found = packs._analysed(3, inputs)  # pyright: ignore[reportPrivateUsage]
     assert (found.n, found.excluded_units) == (2, 1)
     assert found.excluded is not None
     assert found.excluded[ExclusionReason.NO_INFORMATION] == 1
@@ -1261,11 +1514,19 @@ def test_an_analysis_no_view_of_which_can_run_is_unavailable_naming_the_role(
     assert (item.status, item.missing) == ("unavailable" if missing else "available", missing)
 
 
-def test_an_analysis_that_requires_an_endpoint_is_unavailable_where_the_release_has_one(
-    check: Check, shop: Shop
+def test_an_analysis_that_requires_an_endpoint_can_be_run_where_the_release_has_one(
+    shop: Shop,
 ) -> None:
-    requires = [*REQUIRES, {"role": "when", "kind": "endpoint"}]
-    assert "when" in packs_registry_unrun(requires)
+    requires = [*REQUIRES, {"role": "when", "kind": "endpoint", "on": "unit"}]
+    assert packs_registry_unrun(requires) == []
+    release = shop(survived="origin")
+    found = {
+        item.analysis: (item.status, item.missing)
+        for item in tallies(Echo(entry(requires))).applicable(
+            list(release.descriptors), dataset=release.dataset, manifest=release.manifest
+        )
+    }
+    assert found["tallies.echo"] == ("available", [])
 
 
 def packs_registry_unrun(requires: list[dict[str, Any]]) -> list[str]:
@@ -1389,7 +1650,7 @@ def test_the_returns_schema_is_checked_by_the_call_s_deadline(
 
 
 @pytest.mark.parametrize(("least", "refused"), [(0, False), (1, True), (None, True)])
-def test_only_an_endpoint_a_view_must_meet_refuses_it_until_m3_3(
+def test_only_an_endpoint_a_view_must_meet_is_missing_from_a_release_without_one(
     check: Check, shop: Shop, least: int | None, refused: bool
 ) -> None:
     requirement: dict[str, Any] = {"role": "when", "kind": "endpoint"}
@@ -1397,16 +1658,18 @@ def test_only_an_endpoint_a_view_must_meet_refuses_it_until_m3_3(
         requirement["min"] = least
     analyses = tallies(Echo(entry([*REQUIRES, requirement])))
     found = check(document(), shop(), analyses=analyses)
-    expected = [("NOT_SUPPORTED", "/views/0/analysis")] if refused else []
+    expected = [("MISSING_MEMBER", "/views/0/params/endpoints/when")] if refused else []
     assert refusals(found) == expected
 
 
 def test_counting_one_column_stops_at_the_call_s_deadline() -> None:
     values: tuple[tuple[Any, ...], ...] = ((1, 2),)
     one = Listed([("a",), ("b",)], [0, 1], values, ((frozenset(), frozenset()),), (frozenset(),))
+    inputs = packs._inputs_of(one, 1, [])  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(CallerDeadline):
-        packs._analysed(one, time.monotonic() - 1)  # pyright: ignore[reportPrivateUsage]
-    assert packs._analysed(one, time.monotonic() + 60).n == 2  # pyright: ignore[reportPrivateUsage]
+        packs._analysed(one.members, inputs, time.monotonic() - 1)  # pyright: ignore[reportPrivateUsage]
+    found = packs._analysed(one.members, inputs, time.monotonic() + 60)  # pyright: ignore[reportPrivateUsage]
+    assert found.n == 2
 
 
 def test_the_inputs_hold_as_many_cells_as_a_listing_reads_members() -> None:

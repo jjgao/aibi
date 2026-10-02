@@ -1081,6 +1081,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
         "compare.existence",
         "summary.distribution",
         "summary.members",
+        "survival.km",
     ]
     assert found.applicable is None
     found = answer(catalog, "list_analyses", {"dataset": "orchard", "unit": "trees"})
@@ -1091,6 +1092,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
         ("compare.existence", "available"),
         ("summary.distribution", "available_with_caveats"),
         ("summary.members", "available"),
+        ("survival.km", "unavailable"),
     ]
     assert found.release is not None
     assert found.release.label == 1
@@ -1109,6 +1111,7 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
         "compare.existence",
         "summary.distribution",
         "summary.members",
+        "survival.km",
     ]
 
 

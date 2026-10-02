@@ -807,3 +807,55 @@ def test_a_pack_view_s_options_are_erased_as_what_the_core_cannot_read() -> None
     assert redaction._object_holds(hashed, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]
     assert not redaction._object_holds(kept, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]
     assert not redaction._object_holds(core, "sha256:x", terms)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_survival_view_s_times_are_erased_as_constants_on_its_endpoint_s_time() -> None:
+    """A survival view's ``grid`` and ``landmarks`` are times on its endpoint's time column (D348):
+    as written, where no endpoint is resolved, a naming place's, by every reading; canonical, its
+    endpoint's time column's, whose units convert them; its level and endpoint stay."""
+    terms = Terms(["m-17", "Grace"], ["2", "3", "1", "r1"], numbers=["2", "3", "1"], naming=NAMING)
+    written: JsonValue = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "loans",
+        "cohorts": {"a": {"all": []}},
+        "views": [
+            {
+                "analysis": "survival.km",
+                "cohorts": ["a"],
+                "params": {
+                    "endpoint": "ep:returned",
+                    "grid": [2, 17],
+                    "landmarks": [5, 3.0],
+                    "level": 0.9,
+                },
+            }
+        ],
+    }
+    found: Any = redaction._Written(terms, "loans", "d").document(written)  # pyright: ignore[reportPrivateUsage]
+    assert found["views"][0]["params"] == {
+        "endpoint": "ep:returned",
+        "grid": [MARK, 17],
+        "landmarks": [5, MARK],
+        "level": 0.9,
+    }
+
+    def hashed(time: str, grid: list[JsonValue], landmarks: list[JsonValue]) -> JsonValue:
+        return {
+            "view": {
+                "analysis": {"id": "survival.km", "version": "1.0.0"},
+                "params": {
+                    "endpoint": {"id": "ep:returned", "time": time},
+                    "grid": grid,
+                    "landmarks": landmarks,
+                    "level": 0.9,
+                },
+            }
+        }
+
+    holds = redaction._object_holds  # pyright: ignore[reportPrivateUsage]
+    assert holds(hashed("loans.days", [3], []), "sha256:x", terms)
+    assert holds(hashed("loans.days", [5, 3], [72]), "sha256:x", terms)
+    assert holds(hashed("loans.days", [], [1, 3.0]), "sha256:x", terms)
+    assert not holds(hashed("loans.days", [2, 5], [72]), "sha256:x", terms)
+    assert not holds(hashed("visits.seq", [3], [2]), "sha256:x", terms)

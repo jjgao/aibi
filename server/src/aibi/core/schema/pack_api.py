@@ -287,6 +287,26 @@ class InputColumn:
 
 
 @dataclass(frozen=True)
+class InputEndpoint:
+    """One endpoint of a pack analysis's inputs, the endpoint its view bound to an ``endpoint``
+    requirement's role (D352)."""
+
+    role: str
+    endpoint: str
+    """Its descriptor's id."""
+    units: str | None
+    """The units of its times, its time column's (§5.8)."""
+    entry: bool
+    """Whether its units enter at their entry column's time; else every unit enters at the
+    origin, just before time 0."""
+
+
+EndpointRow = tuple[float | None, float, bool]
+"""A unit's endpoint row (§5.8, D352): its entry (``None`` at the origin), its time and whether
+its follow-up ended in an event."""
+
+
+@dataclass(frozen=True)
 class InputPosition:
     """The units of one cohort position (D342): its members, in the order of SPEC §9.3 (their
     unit keys' RFC 8785 serialisation compared as UTF-16 code units), their keys not given."""
@@ -297,15 +317,21 @@ class InputPosition:
     excluded: tuple[tuple[tuple[str, ...], ...], ...]
     """Per input column, each unit's reasons for being excluded (``ExclusionReason`` names,
     sorted), ``()`` where it has a value."""
+    endpoints: tuple[tuple[EndpointRow | None, ...], ...] = ()
+    """Per input endpoint, each unit's row, ``None`` where it is excluded (D352)."""
+    endpoint_excluded: tuple[tuple[tuple[str, ...], ...], ...] = ()
+    """Per input endpoint, each unit's reasons for being excluded, ``INVALID_VALUE`` for a row
+    §5.8 calls invalid, ``()`` where it has a row."""
 
 
 @dataclass(frozen=True)
 class AnalysisInputs:
-    """What the core hands a pack analysis's ``run`` (SPEC §10.1; D342): per cohort position in
-    view order, its units with the columns its view bound to the entry's ``column``
-    requirements, materialised by the core; the reference position (0 unless the entry
-    ``uses_reference``); whether the view's cohorts share units, in which case no between-cohort
-    value may be computed (§7.4; an analysis that assumes independent groups gets them only under
+    """What the core hands a pack analysis's ``run`` (SPEC §10.1; D342, D352): per cohort
+    position in view order, its units with the columns its view bound to the entry's ``column``
+    requirements and the rows of the endpoints it bound to its ``endpoint`` requirements,
+    materialised by the core; the reference position (0 unless the entry ``uses_reference``);
+    whether the view's cohorts share units, in which case no between-cohort value may be
+    computed (§7.4; an analysis that assumes independent groups gets them only under
     ``overlap: "allow"``); the view's ``options``, a copy of
     its own; and a seed, which resampling uses and nothing else (§9.3)."""
 
@@ -317,6 +343,9 @@ class AnalysisInputs:
     overlapping: bool
     options: Mapping[str, JsonValue]
     seed: int
+    endpoints: tuple[InputEndpoint, ...] = ()
+    """The endpoints its view bound to the entry's ``endpoint`` requirements, whose rows each
+    position holds (D352)."""
 
 
 class Refused(Exception):  # noqa: N818 - "refused" is the spec's word for a hook's refusal
@@ -1005,6 +1034,7 @@ __all__ = [
     "ConfinedPath",
     "DatabaseSource",
     "DirectoryEntry",
+    "EndpointRow",
     "EntryKind",
     "Facet",
     "ImportNote",
@@ -1013,6 +1043,7 @@ __all__ = [
     "ImportSource",
     "Importer",
     "InputColumn",
+    "InputEndpoint",
     "InputPosition",
     "JsonSchema",
     "JsonTooLarge",

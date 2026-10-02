@@ -581,5 +581,127 @@
     "computation_id": "drv:03ded84481bd3349408a1ee1a39da6a93373f978cf129248ea5e75653c03343e",
     "digest": "sha256:370e0c8b79ad881a0f74dd6efcb339de2785db78f825db0d829a6ef51b453587",
     "floor": 3
+  },
+  "survival_delayed_entry": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "young": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "lt": 50
+              }
+            }
+          ]
+        },
+        "old": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.age",
+              "range": {
+                "gte": 50
+              }
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "survival.km",
+          "cohorts": [
+            "young",
+            "old"
+          ],
+          "reference": "old",
+          "params": {
+            "landmarks": [
+              6,
+              12,
+              24
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "survived": "delayed"
+    },
+    "id": "drv:35f44410421be298ee383af94b6aff05c95f0b4c210876f7a9d02124965c4bda",
+    "computation_id": "drv:c3ecbc09c0436f29cc36c7f6ab9d964c73432d0a50f53a12e2b6ed8a621aeecb",
+    "digest": "sha256:9915ee2bcc82a4479424649d775acc125565d17bfe76a6fb913643b8988e1b25"
+  },
+  "survival_grid_three_tiers": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        },
+        "bronze": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "bronze"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "survival.km",
+          "cohorts": [
+            "gold",
+            "silver",
+            "bronze"
+          ],
+          "params": {
+            "grid": [
+              0,
+              6,
+              12,
+              24,
+              36
+            ],
+            "level": 0.9
+          }
+        }
+      ]
+    },
+    "shop": {
+      "survived": "origin"
+    },
+    "id": "drv:a836f1cc3728a582f3a7c1323a8efe97b29df2afa224ad65d6b7a753b0c502c6",
+    "computation_id": "drv:e1713d6ea7b6eb8a4a9c98b49c7ee3971f3cd349d7f3a662b1c2a80ede4dd9c0",
+    "digest": "sha256:d495a20d1ed592cdf9039106ae99c786a704f66a8e762e5b1661b8580dc6e7c4"
   }
 }

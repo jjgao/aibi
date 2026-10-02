@@ -305,6 +305,7 @@ def canonical_document(catalog: Catalog, pin: Pin, written: Mapping[str, JsonVal
         positions=loaded.positions,
         predicates=[predicate for view in parsed for predicate in view.predicates],
         variables=[variable for view in parsed for variable in view.variables],
+        endpoints=[endpoint for view in parsed for endpoint in view.endpoints],
     )
     # A reference refused here is refused again, as unknown, by resolution: once is enough.
     kept = [
