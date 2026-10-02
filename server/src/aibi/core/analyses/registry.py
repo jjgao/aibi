@@ -9,10 +9,16 @@ path computes a result. The core's are ``compare.existence`` (D319), ``summary.d
 
 A pack's analysis is registered, listed and matched for applicability like the core's, and run
 from M3.2d on the inputs its ``requires`` name, materialised (``analyses.packs``, D341–D343): its
-columns and aggregates, and from M3.3 its endpoints' rows (D352). A pack's values are no counts
-the disclosure pass can protect, so under any disclosure setting a view of one is refused and it
-is ``unavailable``, ``missing`` naming ``min_cell_count`` (D344); so is a survival analysis
-(``WITHHELD``, D351).
+columns and aggregates, and from M3.3 its endpoints' rows (D352).
+
+**Disclosure classes** (§8.4, D353). Every analysis is ``disclosed`` or ``refused``, as the core
+states it (``CoreAnalysis.disclosure``; every pack's analysis is ``refused``, ``disclosure_of``):
+a ``disclosed`` one runs under a disclosure setting and the pass applies to what it shows; a
+``refused`` one's output is nothing the pass can protect (a list of units, D332; what a pack
+computes, D344; survival curves, D351), so under any setting a view of it is refused in phase 2
+and it is ``unavailable``, ``missing`` naming ``min_cell_count``. An analysis that lists or hands
+each member's values in the keys' order (``lists_keys``: ``summary.members`` and every pack's) is
+also refused, and ``unavailable`` naming ``allow_row_ids``, where the dataset allows no row ids.
 
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
@@ -28,23 +34,22 @@ but not by its ``min`` descriptors without a field whose status is ``imported_de
 ``proposed`` or ``undeclared`` (an endpoint whose event coding was imported by default, or whose
 entry is not declared, which its views read as undeclared, D347); and
 ``available`` otherwise. A requirement predicate reads the release, not the unit table, so it runs
-once for all of them. An analysis that lists units' keys (``summary.members``) is ``unavailable``
-under any disclosure setting and where the dataset allows no row ids, ``missing`` naming the
-setting (``min_cell_count``, ``allow_row_ids``), since every view of it is refused there (D332).
-An analysis that shows nothing of numbers but their units under a disclosure setting
+once for all of them. A ``refused`` analysis is ``unavailable`` under any disclosure setting, and
+one that ``lists_keys`` where the dataset allows no row ids, ``missing`` naming the setting
+(``min_cell_count``, ``allow_row_ids``), since every view of it is refused there (D353). An
+analysis that shows nothing of numbers but their units under a disclosure setting
 (``compare.columns``) is ``unavailable`` there for a unit over which no view could compare
 categories: its table has no column of categories (``category``, ``boolean``,
 ``list<category>``) and is in no relationship, through which a path reaches every other table and
 down which (directly, or with a ``via`` back down one it went up) ``some`` and ``every`` make
 categories of any column; ``missing`` names ``columns`` and ``min_cell_count`` (D337). A pack's
-analysis is ``unavailable`` under any disclosure setting and where the dataset allows no row ids,
-as ``summary.members`` is (D344), and wherever it requires an endpoint, or a column of a datatype
-no input column is handed (dates and datetimes), naming those roles, since every view of it is
-refused (D341).
+analysis is also ``unavailable`` wherever it requires a column of a datatype no input column is
+handed (dates and datetimes), naming those roles, since every view of it is refused (D341).
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 from aibi.core.analyses import columns, distribution, existence, members, survival
 from aibi.core.engine.resolve import (
@@ -78,22 +83,68 @@ from aibi.core.schema.pack_api import Analysis, PackRegistry, UnknownPack
 from aibi.core.schema.results import PackVersion
 
 
+class DisclosureClass(StrEnum):
+    """An analysis's disclosure class (§8.4, D353)."""
+
+    DISCLOSED = "disclosed"
+    """It runs under a disclosure setting, and the pass protects what it shows by the rule it
+    cites."""
+    REFUSED = "refused"
+    """Its output is nothing the pass can protect, so a view of it is refused under any
+    setting."""
+
+
 @dataclass(frozen=True)
 class CoreAnalysis:
-    """One of the core's analyses: its entry and its parameters' model."""
+    """One of the core's analyses: its entry, its parameters' model, its disclosure class and
+    whether it lists or hands each member's values in the keys' order (D353); ``because`` says
+    why, for a ``refused`` one, in a refusal's words."""
 
     entry: AnalysisDescriptor
     params: type[DocModel]
+    disclosure: DisclosureClass
+    lists_keys: bool = False
+    because: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.disclosure is DisclosureClass.REFUSED) != bool(
+            self.because and self.because.strip()
+        ):
+            raise ValueError("a refused analysis says why, and only a refused one")
+        if self.lists_keys and self.disclosure is not DisclosureClass.REFUSED:
+            raise ValueError("an analysis that lists keys is refused under k (D332)")
 
 
 CORE: Mapping[str, CoreAnalysis] = {
-    existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams),
-    distribution.ENTRY.id: CoreAnalysis(distribution.ENTRY, DistributionParams),
-    members.ENTRY.id: CoreAnalysis(members.ENTRY, MembersParams),
-    columns.ENTRY.id: CoreAnalysis(columns.ENTRY, ColumnsParams),
-    survival.ENTRY.id: CoreAnalysis(survival.ENTRY, SurvivalParams),
+    existence.ENTRY.id: CoreAnalysis(existence.ENTRY, ExistenceParams, DisclosureClass.DISCLOSED),
+    distribution.ENTRY.id: CoreAnalysis(
+        distribution.ENTRY, DistributionParams, DisclosureClass.DISCLOSED
+    ),
+    members.ENTRY.id: CoreAnalysis(
+        members.ENTRY,
+        MembersParams,
+        DisclosureClass.REFUSED,
+        lists_keys=True,
+        because="a key is held by one unit, and lists give by difference the units of a set of "
+        "any size (D332)",
+    ),
+    columns.ENTRY.id: CoreAnalysis(columns.ENTRY, ColumnsParams, DisclosureClass.DISCLOSED),
+    survival.ENTRY.id: CoreAnalysis(
+        survival.ENTRY,
+        SurvivalParams,
+        DisclosureClass.REFUSED,
+        because="a curve's values can give the censorings between its event times, which no "
+        "rule yet protects (D351)",
+    ),
 }
-"""The core's analyses, by id."""
+"""The core's analyses, by id: ``compare.existence`` is disclosed by D320,
+``summary.distribution`` by D329 and ``compare.columns`` by D337."""
+
+PACK_BECAUSE = (
+    "what a pack computes from every member's values is nothing the pass can read, so no rule "
+    "over counts protects it (D344)"
+)
+"""Why a pack's analysis is refused under a disclosure setting."""
 
 LATER: Mapping[str, str] = {
     "survival.cox": "M3.3b",
@@ -101,19 +152,17 @@ LATER: Mapping[str, str] = {
 """The core's analyses of §9.5 that a later slice of M3 implements, and the slice (D315, D317,
 D324, D346): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
 
-LISTS_KEYS = frozenset({members.ANALYSIS_ID})
-"""The core's analyses that list units' keys, which are refused under any disclosure setting
-and where the dataset allows no row ids (D332), and so are ``unavailable`` there, naming the
-setting: ``min_cell_count``, ``allow_row_ids``."""
 CATEGORIES_UNDER_K = frozenset({columns.ANALYSIS_ID})
 """The analyses that show only numbers' units under a disclosure setting (D337), and so compare
 something there only of a column of categories."""
 CATEGORIES = frozenset({"category", "boolean", "list<category>"})
 
-WITHHELD = frozenset({survival.ANALYSIS_ID})
-"""The core's analyses refused under any disclosure setting, since what they report can give
-counts below *k* that §8.4's rules do not yet protect (D351), and so ``unavailable`` there, naming
-``min_cell_count``; a pack's analysis is too (D344)."""
+REFUSED = frozenset(
+    name for name, analysis in CORE.items() if analysis.disclosure is DisclosureClass.REFUSED
+)
+"""The core's ``refused`` analyses (D353)."""
+DISCLOSED = frozenset(CORE) - REFUSED
+"""The core's ``disclosed`` analyses, which a refusal under a disclosure setting offers."""
 
 
 @dataclass(frozen=True)
@@ -130,6 +179,23 @@ class Registered:
     @property
     def id(self) -> str:
         return self.entry.id
+
+
+def disclosure_of(analysis: Registered) -> tuple[DisclosureClass, bool, str]:
+    """An analysis's disclosure class, whether it lists or hands each member's values in the
+    keys' order, and why it is refused (D353): the core states its own; every pack's analysis is
+    ``refused`` and hands its members' values, whatever its entry says, since a pack's values are
+    nothing the core can read (D344)."""
+    core = None if analysis.pack is not None else CORE.get(analysis.id)
+    if core is None:
+        return DisclosureClass.REFUSED, True, PACK_BECAUSE
+    return core.disclosure, core.lists_keys, core.because or ""
+
+
+def withheld(analysis: Registered, k: int | None) -> bool:
+    """Whether a view of ``analysis`` under the effective disclosure setting ``k`` is refused
+    (D353), which phase 2 refuses and each place that runs one asserts."""
+    return k is not None and disclosure_of(analysis)[0] is DisclosureClass.REFUSED
 
 
 @dataclass(frozen=True)
@@ -213,12 +279,11 @@ class Analyses:
     ) -> list[ApplicableAnalysis]:
         """Each analysis's applicability to a release (module docstring): for ``unit``, or, with
         none, the best status over the release's keyed tables; ``k`` is the release's effective
-        disclosure setting, the floor's included, under which an analysis that lists unit keys
-        is ``unavailable`` (``LISTS_KEYS``), and one that shows only numbers' units for a unit
-        over which no view compares categories (``CATEGORIES_UNDER_K``), and a pack's analysis
-        (D344)."""
+        disclosure setting, the floor's included, under which a ``refused`` analysis is
+        ``unavailable`` (D353), and one that shows only numbers' units for a unit over which no
+        view compares categories (``CATEGORIES_UNDER_K``, D337)."""
         view = _view(descriptors, dataset, manifest)
-        withheld = _withheld(descriptors, k)
+        rowless = _rowless(descriptors)
         keyed = [
             descriptor.id
             for descriptor in descriptors
@@ -231,14 +296,10 @@ class Analyses:
             outcomes = [self._matched(analysis, descriptors, view, table, held) for table in units]
             if not outcomes:
                 outcomes = [(_UNAVAILABLE, ["unit"], list[str]())]
-            if withheld and (analysis.id in LISTS_KEYS or analysis.pack is not None):
+            refused = _refused(analysis, k, rowless)
+            if refused:
                 outcomes = [
-                    (_UNAVAILABLE, [*missing, *withheld], list[str]()) for _, missing, _ in outcomes
-                ]
-            elif k is not None and analysis.id in WITHHELD:
-                outcomes = [
-                    (_UNAVAILABLE, [*missing, "min_cell_count"], list[str]())
-                    for _, missing, _ in outcomes
+                    (_UNAVAILABLE, [*missing, *refused], list[str]()) for _, missing, _ in outcomes
                 ]
             if k is not None and analysis.id in CATEGORIES_UNDER_K and units:
                 outcomes = [
@@ -351,13 +412,20 @@ def _unrun(analysis: Registered) -> list[str]:
     ]
 
 
-def _withheld(descriptors: Sequence[Descriptor], k: int | None) -> list[str]:
-    """The disclosure settings under which no unit's key is listed (D332): a ``min_cell_count``
-    (the effective *k*, the floor's included) and ``allow_row_ids: false``."""
-    found = [] if k is None else ["min_cell_count"]
+def _rowless(descriptors: Sequence[Descriptor]) -> bool:
+    """Whether the release's dataset allows no row ids (``allow_row_ids: false``, §8.4)."""
     dataset = next((d for d in descriptors if isinstance(d, DatasetDescriptor)), None)
     settings = None if dataset is None else dataset.fields.disclosure
-    if settings is not None and not settings.allow_row_ids:
+    return settings is not None and not settings.allow_row_ids
+
+
+def _refused(analysis: Registered, k: int | None, rowless: bool) -> list[str]:
+    """The settings that refuse every view of ``analysis`` (D353), as applicability's
+    ``missing`` names them: ``min_cell_count`` for a ``refused`` one under the effective *k*,
+    and ``allow_row_ids`` for one that lists keys where the dataset allows no row ids."""
+    disclosure, lists_keys, _ = disclosure_of(analysis)
+    found = ["min_cell_count"] if k is not None and disclosure is DisclosureClass.REFUSED else []
+    if lists_keys and rowless:
         found.append("allow_row_ids")
     return found
 
@@ -430,10 +498,14 @@ def _unsettled(descriptor: Descriptor) -> bool:
 __all__ = [
     "CATEGORIES_UNDER_K",
     "CORE",
+    "DISCLOSED",
     "LATER",
-    "LISTS_KEYS",
-    "WITHHELD",
+    "PACK_BECAUSE",
+    "REFUSED",
     "Analyses",
     "CoreAnalysis",
+    "DisclosureClass",
     "Registered",
+    "disclosure_of",
+    "withheld",
 ]

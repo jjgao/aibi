@@ -104,6 +104,10 @@ These come from SPEC.md and are the easiest to break by accident:
 - **Analyses are only reachable through the registry** (§9). A new analysis is a registry entry
   plus an implementation plus golden tests. Numbers that enter a digest are never aggregated
   with DuckDB DOUBLE aggregates, and never non-finite (§8.2, §9.3).
+- **Every analysis has a disclosure class** (§8.4, D353): `disclosed`, citing the §8.4 rule that
+  protects what it shows, or `refused` under any *k*. A core analysis states it in
+  `registry.CoreAnalysis`; a pack's is always `refused`. An analysis leaves `refused` only with a
+  §8.4 rule and a brute force in the same PR.
 - Changing an analysis's output for the same inputs requires bumping its version; the golden
   id and digest tests will fail otherwise, and that failure is the point.
 - Readbacks are generated from templates, never by a model.

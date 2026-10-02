@@ -24,14 +24,14 @@ A view is checked in two steps, around phase 1:
    numbers, ``bins`` only for numbers, under *k* a number's histogram edges from ``bins`` or a
    declared range, and under *k* one set of edges for a column's values across the call's views,
    D328, D329; ``compare.columns``': categories or numbers, and no ``bins``, D336; a pack's: no
-   dates or datetimes, and each of its role's ``datatype`` and ``on``, D341), and, for
-   ``summary.members``, whose dataset allows row ids and which no disclosure setting covers
-   (``ROW_IDS_NOT_ALLOWED`` at ``analysis`` otherwise, D332), and for a pack's analysis, which no
-   disclosure setting covers (D344) and whose requirement predicates hold of the release
-   (``NOT_SUPPORTED`` at ``analysis`` otherwise, D341), and for a survival analysis, which no
-   disclosure setting covers (``NOT_SUPPORTED`` at ``analysis`` otherwise, D351), gets its canonical
-   form and ids (``ViewIdentity``): its cohorts in view order, or by computation id when it lists
-   none (D284); its reference's position, for an analysis that declares ``uses_reference``, the
+   dates or datetimes, and each of its role's ``datatype`` and ``on``, D341), whose disclosure
+   allows it (``_disclosure``, D353: no view of a ``refused`` analysis under any disclosure
+   setting, ``WITHHELD_UNDER_K`` at ``analysis``, and none of one that lists or hands each
+   member's values in the keys' order where the dataset allows no row ids,
+   ``ROW_IDS_NOT_ALLOWED`` there), and, for a pack's analysis, whose requirement predicates hold
+   of the release (``NOT_SUPPORTED`` at ``analysis`` otherwise, D341), gets its canonical form
+   and ids (``ViewIdentity``): its cohorts in view order, or by computation id when it lists none
+   (D284); its reference's position, for an analysis that declares ``uses_reference``, the
    first cohort's by default; ``overlap``, for one that declares ``assumes_independent_groups``; its
    canonical parameters, every default written, every predicate as its canonical clause tree, every
    variable as its canonical form and every endpoint as its (``{"id", "time"}``); the effective *k*
@@ -54,7 +54,15 @@ from typing import cast
 from pydantic import JsonValue, ValidationError
 
 from aibi.core.analyses import columns, distribution, existence, members, packs, survival
-from aibi.core.analyses.registry import CORE, LATER, WITHHELD, Analyses, Registered
+from aibi.core.analyses.registry import (
+    CORE,
+    DISCLOSED,
+    LATER,
+    Analyses,
+    DisclosureClass,
+    Registered,
+    disclosure_of,
+)
 from aibi.core.engine.canonical import (
     CanonicalCohort,
     Canonicalisation,
@@ -780,19 +788,13 @@ def checked(
             if wrong:
                 refusals += wrong
                 continue
-        if isinstance(view.params, MembersParams):
-            published = canonical.published.get(cohorts[0].release.manifest)
-            listing = _listed_members(view.index, cohorts[0], disclosure, published)
-            if listing is not None:
-                refusals.append(listing)
-                continue
-        if view.analysis.id in WITHHELD and disclosure is not None:
-            published = canonical.published.get(cohorts[0].release.manifest)
-            refusals.append(_withheld(view, cohorts[0], disclosure, published))
+        published = canonical.published.get(cohorts[0].release.manifest)
+        withheld = _disclosure(view, cohorts[0], disclosure, published)
+        if withheld is not None:
+            refusals.append(withheld)
             continue
         if isinstance(view.params, PackParams):
-            published = canonical.published.get(cohorts[0].release.manifest)
-            wrong = _packed(view, cohorts[0], variables, disclosure, published, analyses, endpoints)
+            wrong = _packed(view, cohorts[0], variables, analyses, endpoints)
             if wrong:
                 refusals += wrong
                 continue
@@ -828,45 +830,68 @@ def checked(
     return found, refusals
 
 
-def _withheld(view: ParsedView, cohort: CanonicalCohort, k: int, published: int | None) -> Refusal:
-    """What phase 2 refuses of a survival analysis's view under a disclosure setting (D351):
-    every one, the floor's included, whatever its cohorts' sizes, since a curve's values can give
-    the censorings between its event times, counts §8.4's grid rule showed, and a rule that
-    protects them is later work. The refusal names the setting that binds (``_setting``)."""
+def _alternatives() -> list[Segment]:
+    """What a view refused for disclosure offers: ``count_cohort`` and the core's ``disclosed``
+    analyses (D353)."""
+    return [data(name) for name in ("count_cohort", *sorted(DISCLOSED))]
+
+
+def _disclosure(
+    view: ParsedView, cohort: CanonicalCohort, k: int | None, published: int | None
+) -> Refusal | None:
+    """What phase 2 refuses of a view for disclosure (§8.4, D353), before anything else phase 2
+    checks of it that could run pack code or report an identifier column (``_packed``), so that
+    no query runs and no pack code is called: where the dataset allows no
+    row ids, a view of an analysis that lists or hands each member's values in their keys'
+    order (``summary.members``, every pack's), ``ROW_IDS_NOT_ALLOWED``; under the effective
+    setting ``k`` (the floor's included, and a draft's latest published release's,
+    ``published``, D275), a view of a ``refused`` analysis, whatever its cohorts' sizes,
+    ``WITHHELD_UNDER_K`` naming the setting that binds (``_setting``) and why. Each names the
+    analysis and the setting, never a value of the data, and offers ``count_cohort`` and the
+    core's ``disclosed`` analyses."""
+    disclosure, lists_keys, because = disclosure_of(view.analysis)
     dataset = cohort.resolved.release.dataset_descriptor
     settings = None if dataset is None else dataset.fields.disclosure
-    source = _setting(settings, k, published)
-    return Refusal(
-        code=RefusalCode.NOT_SUPPORTED,
-        path=pointer(["views", view.index, "analysis"]),
-        message=[
-            text(f"Under a disclosure setting ({source}, {k}) no survival analysis is run: a "),
-            text("curve's values can give the censorings between its event times, which the "),
-            text("disclosure rules do not yet protect (§8.4, D351)"),
-        ],
-        alternatives=[
-            data(name)
-            for name in ("count_cohort", *sorted(set(CORE) - {members.ANALYSIS_ID} - WITHHELD))
-        ],
-    )
+    at = pointer(["views", view.index, "analysis"])
+    if lists_keys and settings is not None and not settings.allow_row_ids:
+        return Refusal(
+            code=RefusalCode.ROW_IDS_NOT_ALLOWED,
+            path=at,
+            message=[
+                text("The dataset does not allow row ids, so no view of "),
+                data(view.analysis.id),
+                text(" is run: it lists or hands each member's values in their keys' order, "),
+                text("which name units (§8.4, D332, D344, D353): "),
+                data(cohort.release.dataset),
+            ],
+            alternatives=_alternatives(),
+        )
+    if k is not None and disclosure is DisclosureClass.REFUSED:
+        source = _setting(settings, k, published)
+        return Refusal(
+            code=RefusalCode.WITHHELD_UNDER_K,
+            path=at,
+            message=[
+                text(f"Under a disclosure setting ({source}, {k}) no view of "),
+                data(view.analysis.id),
+                text(f" is run, whatever its cohorts' sizes: {because} (§8.4, D353)"),
+            ],
+            alternatives=_alternatives(),
+        )
+    return None
 
 
 def _packed(
     view: ParsedView,
     cohort: CanonicalCohort,
     variables: Sequence[CanonicalVariable],
-    k: int | None,
-    published: int | None,
     analyses: Analyses | None,
     endpoints: Sequence[ResolvedEndpoint] = (),
 ) -> list[Refusal]:
-    """What phase 2 refuses of a pack analysis's resolved view (D341, D342, D344, D352): a
-    dataset that allows no row ids, since a pack handed each member's values in their keys'
-    order can echo a table of units, as ``summary.members`` would list them (D332); any
-    disclosure setting, the floor's included, since no rule over counts protects what a pack
-    computes from every member's values, the refusal naming the setting that binds
-    (``_setting``); an input column that reads the values of an identifier column (§5.4:
-    declared so, a table's primary key or a relationship's column; ``count`` reads no value),
+    """What phase 2 refuses of a pack analysis's resolved view once its disclosure is checked
+    (``_disclosure``; D341, D342, D352): an input column that reads the values of an
+    identifier column (§5.4: declared so, a table's primary key or a relationship's column;
+    ``count`` reads no value),
     which would hand units', rows' or people's identities, or whose ``where`` tests one; an
     endpoint (``endpoints``, as the view binds them) whose time, status or entry column is an
     identifier column, since its rows are handed too; an input column whose values are dates or
@@ -874,44 +899,6 @@ def _packed(
     requires (as applicability matches them, on the column's own datatype); and a ``predicate``
     requirement that does not hold of the release."""
     at = pointer(["views", view.index, "analysis"])
-    alternatives: list[Segment] = [
-        data(name)
-        for name in ("count_cohort", *sorted(set(CORE) - {members.ANALYSIS_ID} - WITHHELD))
-    ]
-    dataset = cohort.resolved.release.dataset_descriptor
-    settings = None if dataset is None else dataset.fields.disclosure
-    if settings is not None and not settings.allow_row_ids:
-        return [
-            Refusal(
-                code=RefusalCode.ROW_IDS_NOT_ALLOWED,
-                path=at,
-                message=[
-                    text(
-                        "The dataset does not allow row ids, so no pack's analysis is run: it is "
-                    ),
-                    text(
-                        "handed each member's values in their keys' order and can give them back "
-                    ),
-                    text("as a table of units (§8.4, D344): "),
-                    data(cohort.release.dataset),
-                ],
-                alternatives=alternatives,
-            )
-        ]
-    if k is not None:
-        source = _setting(settings, k, published)
-        return [
-            Refusal(
-                code=RefusalCode.NOT_SUPPORTED,
-                path=at,
-                message=[
-                    text(f"Under a disclosure setting ({source}, {k}) no pack's analysis is "),
-                    text("run: what it computes from every member's values is no count that the "),
-                    text("disclosure rules can protect (§8.4, D344)"),
-                ],
-                alternatives=alternatives,
-            )
-        ]
     found: list[Refusal] = []
     release = cohort.resolved.release
     requirements = {r.role: r for r in view.analysis.entry.fields.requires if r.kind == "column"}
@@ -1208,47 +1195,6 @@ def _setting(settings: Disclosure | None, k: int, published: int | None) -> str:
     if published == k:
         return "the latest published release's min_cell_count"
     return "the deployment's floor"
-
-
-def _listed_members(
-    index: int, cohort: CanonicalCohort, k: int | None, published: int | None
-) -> Refusal | None:
-    """What ``summary.members`` refuses of its resolved cohort (D332): a dataset that allows no
-    row ids, and any disclosure setting, the floor's included, whatever the cohort's size, since
-    a key is held by one unit and lists give each other's units by difference. The refusal names
-    the setting that binds: the release's own ``min_cell_count``, a draft's latest published
-    release's (``published``, D275), or else the deployment's floor."""
-    dataset = cohort.resolved.release.dataset_descriptor
-    settings = None if dataset is None else dataset.fields.disclosure
-    at = pointer(["views", index, "analysis"])
-    alternatives: list[Segment] = [
-        data(name)
-        for name in ("count_cohort", *sorted(set(CORE) - {members.ANALYSIS_ID} - WITHHELD))
-    ]
-    if settings is not None and not settings.allow_row_ids:
-        return Refusal(
-            code=RefusalCode.ROW_IDS_NOT_ALLOWED,
-            path=at,
-            message=[
-                text("The dataset does not allow row ids, so no unit's key is listed (§8.4): "),
-                data(cohort.release.dataset),
-            ],
-            alternatives=alternatives,
-        )
-    if k is not None:
-        source = _setting(settings, k, published)
-        return Refusal(
-            code=RefusalCode.ROW_IDS_NOT_ALLOWED,
-            path=at,
-            message=[
-                text(f"Under a disclosure setting ({source}, {k}) no unit's key is listed, "),
-                text("whatever the cohort's size, though the dataset allows row ids to be "),
-                text("written: a key is held by one unit, and lists give by difference the "),
-                text("units of a set of any size (§8.4, D332)"),
-            ],
-            alternatives=alternatives,
-        )
-    return None
 
 
 def _canonical_params(

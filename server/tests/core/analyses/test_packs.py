@@ -1035,7 +1035,7 @@ def test_under_any_disclosure_setting_a_pack_s_analysis_is_refused_and_never_run
     written = document({"measure": [AGE, TIER]}, cohorts={"c": cohort})
     found = check(written, shop(disclosure=disclosure), floor=floor, analyses=tallies(echo))
     [refusal] = found.refusals
-    assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
+    assert (refusal.code, refusal.path) == (RefusalCode.WITHHELD_UNDER_K, "/views/0/analysis")
     assert found.views == []
     assert echo.handed == []
     shown = json.dumps(refusal.model_dump(mode="json"))
@@ -1499,19 +1499,22 @@ def test_a_key_column_s_rows_may_be_counted(analyse: Analyse, shop: Shop) -> Non
         ({"role": "day", "kind": "column", "datatype": "date", "min": 0}, []),
     ],
 )
+@pytest.mark.parametrize("k", [None, 3])
 def test_an_analysis_no_view_of_which_can_run_is_unavailable_naming_the_role(
-    shop: Shop, requirement: dict[str, Any], missing: list[str]
+    shop: Shop, requirement: dict[str, Any], missing: list[str], k: int | None
 ) -> None:
     release = joined_shop(shop)
     analyses = tallies(Echo(entry([*REQUIRES, requirement])))
     [item] = [
         a
         for a in analyses.applicable(
-            list(release.descriptors), dataset=release.dataset, manifest=release.manifest
+            list(release.descriptors), dataset=release.dataset, manifest=release.manifest, k=k
         )
         if a.analysis == "tallies.echo"
     ]
-    assert (item.status, item.missing) == ("unavailable" if missing else "available", missing)
+    named = [*missing, *([] if k is None else ["min_cell_count"])]
+    assert item.status == ("unavailable" if named else "available")
+    assert sorted(item.missing) == sorted(named)
 
 
 def test_an_analysis_that_requires_an_endpoint_can_be_run_where_the_release_has_one(

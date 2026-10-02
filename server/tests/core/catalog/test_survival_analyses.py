@@ -296,6 +296,19 @@ def test_a_view_that_needs_an_endpoint_the_release_lacks_is_refused_where_it_is_
     assert '"/views/0/params/endpoint"' in dumped
 
 
+def test_a_view_refused_for_disclosure_that_reached_run_analysis_would_raise_before_any_query(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published(world)
+    catalog = catalog_of(world, floor=3)
+    ran: list[object] = []
+    monkeypatch.setattr(views, "_disclosure", lambda *_: None)
+    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
+    with pytest.raises(ValueError, match="never run"):
+        run(catalog, document())
+    assert ran == []
+
+
 @pytest.mark.parametrize("floor", [2, 5])
 def test_under_a_floor_no_tool_runs_it_or_names_a_value(world: World, floor: int) -> None:
     published(world)
@@ -307,7 +320,7 @@ def test_under_a_floor_no_tool_runs_it_or_names_a_value(world: World, floor: int
             if isinstance(found, list)
             else found.model_dump(mode="json")
         )
-        assert "NOT_SUPPORTED" in dumped
+        assert "WITHHELD_UNDER_K" in dumped
         assert '"/views/0/analysis"' in dumped
         assert '"tree1"' not in dumped
         assert '"curve"' not in dumped

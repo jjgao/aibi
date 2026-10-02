@@ -17,8 +17,9 @@ of which is excluded, since a key column's cells are all PRESENT (§13.2).
 list of them: lists of cohorts whose sizes the pass shows give by difference the keys of a set of
 any size (every unit, ``not X`` and ``X and known X`` name the units whose ``X`` is unknown), and a
 key under *k* is a value that one unit holds, which D329 never names. So the view is refused under
-any disclosure setting, and where the dataset allows no row ids (``ROW_IDS_NOT_ALLOWED``,
-``views.checked``), and applicability says it is unavailable there (``registry``);
+any disclosure setting (``WITHHELD_UNDER_K``: a refused analysis, D353), and where the dataset
+allows no row ids (``ROW_IDS_NOT_ALLOWED``), both in phase 2 (``views.checked``), and
+applicability says it is unavailable there (``registry``);
 ``list_members`` is never given a *k*, and refuses one.
 
 **Bounds** (§14; D333). A listing reads at most ``MAX_LISTED`` members (``TooManyMembers``, which
