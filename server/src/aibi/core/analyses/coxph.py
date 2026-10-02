@@ -33,10 +33,11 @@ set, and a share of a tied time's events, the terms squared each.
 
 import math
 from bisect import bisect_left, bisect_right
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
-from aibi.core.analyses import ieee
+from aibi.core.analyses import cone, ieee
 from aibi.core.analyses.coxfit import (
     CoxFit,
     Evaluated,
@@ -200,11 +201,20 @@ class _Rows:
         """Each stratum's event times, in the order the model visits them."""
         return [t for _, _, _, times in self.strata for t in times]
 
-    def __call__(self, beta: Sequence[float], weights: Sequence[float] | None = None) -> Evaluated:
+    def __call__(
+        self,
+        beta: Sequence[float],
+        weights: Sequence[float] | None = None,
+        tested: Sequence[int] | None = None,
+    ) -> Evaluated:
         self.watch.look()
         m = len(self.columns)
         cells = max(m * m, 1)
-        size = 2 * m if weights is not None else m
+        slot: dict[int, int] = {}
+        if weights is not None:
+            chosen = range(m) if tested is None else sorted(set(tested))
+            slot = {i: m + k for k, i in enumerate(chosen)}
+        size = m + len(slot)
         loglik = 0.0
         score = [0.0] * size
         information = [[0.0] * size for _ in range(size)]
@@ -282,8 +292,8 @@ class _Rows:
                         loglik += row.count * (eta - recenter)
                         for i in range(m):
                             score[i] += row.count * x[i]
-                            if weights is not None:
-                                score[i + m] += timewt * row.count * x[i]
+                            if i in slot:
+                                score[slot[i]] += timewt * row.count * x[i]
                             a2[i] += weight * x[i]
                             for j in range(i + 1):
                                 cmat2[i][j] += weight * x[i] * x[j]
@@ -301,25 +311,28 @@ class _Rows:
                         a[i] += ieee.div(a2[i], ties)
                         mean = ieee.div(a[i], denom)
                         score[i] -= mean
-                        if weights is not None:
-                            score[i + m] -= timewt * mean
+                        if i in slot:
+                            score[slot[i]] -= timewt * mean
                         for j in range(i + 1):
                             cmat[i][j] += ieee.div(cmat2[i][j], ties)
                             cell = ieee.div(cmat[i][j] - mean * a[j], denom)
                             information[j][i] += cell
-                            if weights is not None:
-                                information[j][i + m] += timewt * cell
-                                information[j + m][i + m] += timewt * timewt * cell
+                            if not slot:
+                                continue
+                            if i in slot:
+                                information[j][slot[i]] += timewt * cell
+                                if j in slot:
+                                    information[slot[j]][slot[i]] += timewt * timewt * cell
+                            if j != i and j in slot:
+                                information[i][slot[j]] += timewt * cell
         for i in range(m):
             for j in range(i):
                 information[i][j] = information[j][i]
-                if weights is not None:
-                    information[i][j + m] = information[j][i + m]
-                    information[i + m][j + m] = information[j + m][i + m]
-        if weights is not None:
-            for i in range(m):
-                for j in range(m):
-                    information[i + m][j] = information[j][i + m]
+        for k in range(m, size):
+            for q in range(m, k):
+                information[k][q] = information[q][k]
+            for j in range(m):
+                information[k][j] = information[j][k]
         return Evaluated(loglik, score, information)
 
 
@@ -335,45 +348,182 @@ def _shifted(
     return found
 
 
-def fit(units: Sequence[Unit], watch: Watch, *, counting: bool) -> Fitted:
-    """The Cox model of ``units`` (module docstring), whose entries are all ``ORIGIN`` or none
-    is, as ``counting`` says: R's columns, those whose scale or its square no double holds left
-    out (``unscalable``), then those ``cholesky2`` drops from the information at 0, and
-    ``coxfit.maximise`` over the rest; the coefficients and their variance on the columns' own
-    scale, and not converged where one of them there is not finite."""
+def _prepared(
+    units: Sequence[Unit], watch: Watch, *, counting: bool, columns: Sequence[int] | None
+) -> tuple[list[_Row], list[float], Fitted]:
+    """The rows ``fit`` fits, scaled, the columns' scales, and its columns: of ``columns`` (every
+    column where none are named), those whose scale or its square no double holds
+    (``unscalable``), then those ``cholesky2`` drops from the information at 0, and the rest."""
     m = len(units[0].x) if units else 0
     if any((unit.entry != ORIGIN) != counting for unit in units):
         raise ValueError("counting says whether the units have entries")
     watch.look()
+    named = list(range(m)) if columns is None else sorted(set(columns))
     used = _used(units, counting, watch)
     centres, scales = _centres(units, used, counting, watch)
-    unscalable = tuple(j for j in range(m) if not 0 < scales[j] * scales[j] < math.inf)
-    scalable = [j for j in range(m) if j not in unscalable]
+    unscalable = tuple(
+        j
+        for j in named
+        if not 0 < scales[j] * scales[j] < math.inf or not all(math.isfinite(u.x[j]) for u in units)
+    )
+    scalable = [j for j in named if j not in unscalable]
     rows = _collapsed(_shifted(used, centres, scales, watch), watch)
     watch.look()
     whole = _Rows(rows, scalable, watch, recentre=counting)
     matrix, _ = factored_of(whole([0.0] * len(scalable)))
     kept = tuple(j for k, j in enumerate(scalable) if matrix[k][k] != 0)
     dropped = tuple(j for k, j in enumerate(scalable) if matrix[k][k] == 0)
+    return rows, scales, Fitted(kept, dropped, None, unscalable)
+
+
+def columns_of(
+    units: Sequence[Unit], watch: Watch, *, counting: bool, columns: Sequence[int] | None = None
+) -> Fitted:
+    """``fit``'s columns, without the fit (D359): of ``columns`` (every column where none are
+    named), those it leaves out as ``unscalable``, those it drops as dependent and those it
+    keeps."""
+    return _prepared(units, watch, counting=counting, columns=columns)[2]
+
+
+def fit(
+    units: Sequence[Unit], watch: Watch, *, counting: bool, columns: Sequence[int] | None = None
+) -> Fitted:
+    """The Cox model of ``units`` (module docstring) over ``columns`` (every column where none
+    are named), whose entries are all ``ORIGIN`` or none is, as ``counting`` says: R's columns,
+    those whose scale or its square no double holds left out (``unscalable``), then those
+    ``cholesky2`` drops from the information at 0, and ``coxfit.maximise`` over the rest; the
+    coefficients and their variance on the columns' own scale, and not converged where one of
+    them there is not finite."""
+    rows, scales, found = _prepared(units, watch, counting=counting, columns=columns)
+    return _maximised(rows, scales, found, watch, counting=counting)
+
+
+def _maximised(
+    rows: Sequence[_Row], scales: Sequence[float], found: Fitted, watch: Watch, *, counting: bool
+) -> Fitted:
+    """``fit`` of the rows ``_prepared`` gives, over the columns it keeps."""
+    kept, dropped, unscalable = found.kept, found.dropped, found.unscalable
     if not kept:
         return Fitted(kept, dropped, None, unscalable)
     model = _Rows(rows, kept, watch, recentre=counting)
-    found = maximise(model, len(kept), counting=counting)
+    best = maximise(model, len(kept), counting=counting)
     own = [scales[j] for j in kept]
-    coefficients = tuple(b * s for b, s in zip(found.coefficients, own, strict=True))
+    coefficients = tuple(b * s for b, s in zip(best.coefficients, own, strict=True))
     variance = tuple(
-        tuple(found.variance[i][k] * own[i] * own[k] for k in range(len(kept)))
+        tuple(best.variance[i][k] * own[i] * own[k] for k in range(len(kept)))
         for i in range(len(kept))
     )
     finite = all(math.isfinite(v) for v in coefficients) and all(
         math.isfinite(v) for row in variance for v in row
     )
-    converged = found.converged and finite
+    converged = best.converged and finite
     return Fitted(
         kept,
         dropped,
-        CoxFit(coefficients, variance, converged, found.loglik, found.iterations, found.ascended),
+        CoxFit(coefficients, variance, converged, best.loglik, best.iterations, best.ascended),
         unscalable,
+    )
+
+
+@dataclass(frozen=True)
+class Separated:
+    """A design's columns by what its likelihood's recession cone says of them (D360), and the
+    fit of its finite part (D361):
+
+    - ``estimated``: the columns whose unit vectors the span of the cone is orthogonal to, their
+      coefficients finite and the finite part's;
+    - ``separation``: the others whose d_j keeps one sign on the cone, +1 where the coefficient
+      runs to +∞ and −1 where it runs to −∞;
+    - ``unidentified``: those in the lineality's support (an exact dependency), those
+      ``cholesky2`` drops at 0, those whose d_j takes both signs, and those not separated that
+      the finite part's fit drops or cannot scale (a separated column's value in it is never
+      reported, and a rounding residue there does not undo the exact sign);
+    - ``unscalable``: those no double can scale (``fit``);
+    - ``classes``: each unit's class, its stratum and its covariates less the span of the pairs
+      the cone's last level leaves (``cone.cosets``), the finite part's strata;
+    - ``free``: the columns the finite part fits, the others of the model fixed at 0;
+    - ``fit``: the finite part's fit over ``free``, none where nothing is free."""
+
+    estimated: tuple[int, ...]
+    separation: Mapping[int, int]
+    unidentified: tuple[int, ...]
+    unscalable: tuple[int, ...]
+    classes: tuple[int, ...]
+    free: tuple[int, ...]
+    fit: CoxFit | None
+
+
+def separated(units: Sequence[Unit], watch: Watch, *, counting: bool) -> Separated:
+    """The columns of the design ``units`` by the recession cone of its likelihood, and the fit
+    of its finite part (``Separated``; D360, D361): ``fit``'s columns (``unscalable`` left out,
+    ``cholesky2``'s drop at 0, as R drops them); the pairs' span in exact integers
+    (``cone.span``), the kept columns first, the non-pivots of its echelon form (the later
+    columns of each exact dependency, the dropped among them) fixed at 0 and every column in
+    its orthogonal complement's support not identified; the cone's levels over the kept pivots
+    (``cone.levels``), those its last span holds estimated, the others' signs on the cone
+    (``cone.signs``); and ``fit`` of the units stratified by their classes at the last level
+    over the kept pivots but the last span's non-pivots."""
+    rows, scales, numeric = _prepared(units, watch, counting=counting, columns=None)
+    unscalable = numeric.unscalable
+    order = list(numeric.kept) + list(numeric.dropped)
+    ends = [(u.entry, u.time, u.event) for u in units]
+    strata = [u.stratum for u in units]
+    exact = cone.integers([[u.x[j] for j in order] for u in units], watch)
+    lineal = cone.span(ends, strata, exact, watch)
+    unidentified = {order[k] for k in range(len(order)) if not lineal.holds(k)}
+    unidentified.update(numeric.dropped)
+    pivots = set(lineal.pivots)
+    local = [k for k in range(len(numeric.kept)) if k in pivots]
+    kept = [order[k] for k in local]
+    x = [tuple(row[k] for k in local) for row in exact]
+    pool: cone.Pool = {}
+    found = cone.levels(ends, strata, x, pool, watch)
+    estimated = [j for k, j in enumerate(kept) if found.final.holds(k)]
+    undecided = [k for k, j in enumerate(kept) if j not in unidentified and j not in estimated]
+    sides = cone.signs(ends, strata, x, undecided, pool, found.directions, watch)
+    separation: dict[int, int] = {}
+    for k, (up, down) in sides.items():
+        if not (up or down):
+            raise AssertionError("a column the cone's span does not hold has a sign on it")
+        if up and down:
+            unidentified.add(kept[k])
+        else:
+            separation[kept[k]] = 1 if up else -1
+    final = set(found.final.pivots)
+    free = tuple(j for k, j in enumerate(kept) if k in final)
+    whole = cone.span(ends, found.classes, exact, watch)
+    if whole.full:
+        number = {stratum: k for k, stratum in enumerate(sorted(set(strata)))}
+        classes = tuple(number[stratum] for stratum in strata)
+    else:
+        classes = cone.cosets(strata, exact, whole, watch)
+    if free == numeric.kept:
+        finite = _maximised(rows, scales, numeric, watch, counting=counting)
+    elif free:
+        classified = [
+            Unit(group, u.entry, u.time, u.event, u.x)
+            for group, u in zip(classes, units, strict=True)
+        ]
+        finite = fit(classified, watch, counting=counting, columns=free)
+    else:
+        finite = None
+    if finite is not None:
+        lost = (set(finite.dropped) | set(finite.unscalable)) & set(free)
+        unidentified.update(lost - set(separation))
+    reported = tuple(j for j in estimated if j not in unidentified)
+    if reported and (finite is None or not set(reported) <= set(finite.kept)):
+        raise AssertionError("an estimated column the finite part does not fit")
+    labels = [*reported, *separation, *unidentified, *unscalable]
+    if sorted(labels) != list(range(len(units[0].x) if units else 0)):
+        raise AssertionError("every column has exactly one of the cone's labels")
+    return Separated(
+        reported,
+        MappingProxyType(separation),
+        tuple(sorted(unidentified)),
+        unscalable,
+        classes,
+        free if finite is None else finite.kept,
+        None if finite is None else finite.fit,
     )
 
 
@@ -392,14 +542,20 @@ def _full_rank(information: Sequence[Sequence[float]]) -> bool:
     return cholesky(matrix) == len(matrix)
 
 
-def proportional_hazards(units: Sequence[Unit], fitted: Fitted, watch: Watch) -> Test | None:
+def proportional_hazards(
+    units: Sequence[Unit], fitted: Fitted, watch: Watch, *, tested: Sequence[int] | None = None
+) -> Test | None:
     """The global test of proportional hazards of ``fitted`` over ``units`` (module docstring),
-    over its kept columns; none where the fit has no column or did not converge, or where the
-    extended information has less than full rank (``_full_rank``)."""
+    of its kept columns ``tested`` (all of them where none are named), the others of the fit's
+    score taken as 0 as the terms' own are; none where the fit has no column or did not
+    converge, or where the extended information has less than full rank (``_full_rank``)."""
     if fitted.fit is None or not fitted.fit.converged:
         return None
     kept = list(fitted.kept)
     m = len(kept)
+    chosen = list(range(m)) if tested is None else sorted(kept.index(j) for j in set(tested))
+    if not chosen:
+        return None
     watch.look()
     watch.spend(len(units))
     events = sorted({u.time for u in units if u.event})
@@ -439,12 +595,41 @@ def proportional_hazards(units: Sequence[Unit], fitted: Fitted, watch: Watch) ->
     counting = any(u.entry != ORIGIN for u in units)
     model = _Rows(_collapsed(centred, watch), range(m), watch, recentre=counting)
     weights = [transform[when] - centre for when in model.event_times()]
-    evaluated = model(beta, weights)
+    evaluated = model(beta, weights, chosen)
     if not _full_rank(evaluated.information):
         return None
     score = [0.0] * m + evaluated.score[m:]
     statistic = solved_quadratic(evaluated.information, score)
-    return Test(statistic, m, chi_squared_p(statistic, m))
+    return Test(statistic, len(chosen), chi_squared_p(statistic, len(chosen)))
 
 
-__all__ = ["NOCENTER", "RECENTRE", "Fitted", "Unit", "fit", "proportional_hazards"]
+def separated_hazards(units: Sequence[Unit], found: Separated, watch: Watch) -> Test | None:
+    """The global test of proportional hazards of a design's finite part (D361): of its
+    estimated columns, in the finite part's model (its classes the strata, its free columns
+    fitted, the others' score taken as 0 as the terms' own are), the Kaplan–Meier transform
+    pooled over every unit, as R's ``cox.zph`` pools it; where nothing is separated, the
+    classes are the strata and this is D359's test of the estimated columns. None where nothing
+    is estimated or the finite fit did not converge."""
+    if found.fit is None or not found.fit.converged or not found.estimated:
+        return None
+    classified = [
+        Unit(group, u.entry, u.time, u.event, u.x)
+        for group, u in zip(found.classes, units, strict=True)
+    ]
+    return proportional_hazards(
+        classified, Fitted(found.free, (), found.fit), watch, tested=found.estimated
+    )
+
+
+__all__ = [
+    "NOCENTER",
+    "RECENTRE",
+    "Fitted",
+    "Separated",
+    "Unit",
+    "columns_of",
+    "fit",
+    "proportional_hazards",
+    "separated",
+    "separated_hazards",
+]
