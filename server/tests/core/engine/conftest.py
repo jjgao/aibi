@@ -494,11 +494,13 @@ def run_materialised(
     directory: Path,
     sessions: Sessions,
     ends: float | None = None,
+    declared: bool = False,
 ) -> tuple[tuple[tuple[Materialised, ...], Joint | None], ...]:
     """Variables materialised over cohorts by the SQL compiler, run in a helper's session, and
-    read by the server by ``ends``."""
+    read by the server by ``ends``; with ``declared``, memberships list their declared
+    categories alone (D384)."""
     compiled = compile_materialised(
-        cohorts, variables, release_blobs(cohorts[0].release, directory)
+        cohorts, variables, release_blobs(cohorts[0].release, directory), declared=declared
     )
     answers = sessions.run(
         compiled.paths, [(statement, compiled.parameters) for statement in compiled.statements]
@@ -517,8 +519,8 @@ def materialised(
     tmp_path_factory: pytest.TempPathFactory, sessions: Sessions
 ) -> Callable[..., tuple[tuple[tuple[Materialised, ...], Joint | None], ...]]:
     directory = tmp_path_factory.mktemp("materialised")
-    return lambda cohorts, variables, ends=None: run_materialised(
-        cohorts, variables, directory, sessions, ends
+    return lambda cohorts, variables, ends=None, declared=False: run_materialised(
+        cohorts, variables, directory, sessions, ends, declared
     )
 
 

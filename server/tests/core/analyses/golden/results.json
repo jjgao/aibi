@@ -1118,5 +1118,110 @@
     "id": "drv:82b88c99c8db6198cf00cf21904e4877b33b9091d72de000ae0b400aff80ec86",
     "computation_id": "drv:658a29b5007d178c9e93251bc85af82c528d78147e10ddf5c0375312ddc8e911",
     "digest": "sha256:75523e98a0903ee938fdeb832187729b8fa89c4f368e2d34f7970553ad8b5449"
+  },
+  "order_channel_by_tier_under_k": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        },
+        "silver": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "silver"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.distribution",
+          "cohorts": [
+            "gold",
+            "silver"
+          ],
+          "params": {
+            "columns": [
+              {
+                "column": "orders.channel",
+                "each": "category"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "reasons": true
+    },
+    "floor": 3,
+    "id": "drv:26b7a36e35d9dee163012cd19cc2e2f15f54ed836b627e4ccc7f932bbd283965",
+    "computation_id": "drv:8644f819bc6a4260755758202d82841fd926029b322295862aad588984116d9f",
+    "digest": "sha256:21ed853b182ed93ec7d4be51f6a296b3e8309a4759fb0ece8225dd44ff6ae6a2"
+  },
+  "order_channel_memberships_under_k": {
+    "document": {
+      "aibi": "1",
+      "dataset": "d",
+      "unit": "customers",
+      "cohorts": {
+        "all": {
+          "all": []
+        },
+        "gold": {
+          "all": [
+            {
+              "kind": "value",
+              "column": "customers.tier",
+              "values": [
+                "gold"
+              ]
+            }
+          ]
+        }
+      },
+      "views": [
+        {
+          "analysis": "summary.distribution",
+          "cohorts": [
+            "all",
+            "gold"
+          ],
+          "params": {
+            "columns": [
+              {
+                "column": "customers.tier"
+              },
+              {
+                "column": "orders.channel",
+                "each": "category"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "shop": {
+      "reasons": true
+    },
+    "floor": 3,
+    "id": "drv:ad8b63aed7b612efa5c59da7fcd840bd3f691bb037af6da3682a307a7f95501d",
+    "computation_id": "drv:5e5eae0c2613146b81017d9061d2f87938833d0d12a332643cb3d67ca489ef04",
+    "digest": "sha256:f94856d22e2b3c71f117bb697c6dc4778772ee5f0c05dcfa09fe535adcefcc11"
   }
 }

@@ -24,7 +24,9 @@ as a row that holds it or a coverage that lists it makes it; ``MAX_CATEGORIES`` 
 listing is ``over`` and nothing is counted. Where the last step's coverage filters X on the child
 row (a record filter, §6.5 step 1), its categories are the filter's allowed values, the declared
 ones in their order, then the others in UTF-16 order, zeros included, and no others: a question
-may ask only about those, and the table records no row of another.
+may ask only about those, and the table records no row of another. Under a disclosure setting
+(``declared``) only ``fixed`` is listed, whatever the members hold, so that the listing, whether
+it is ``over``, and every category read depend on the descriptors alone (D384).
 
 **Units** (``membership_units``): a unit's answers over the listed categories, or its default
 alone when none is listed. It is known when one of them is known, and otherwise excluded under
@@ -48,7 +50,13 @@ from typing import cast
 from aibi.core.engine.canonical import category_clause
 from aibi.core.engine.data import PRESENT, Release, key_part
 from aibi.core.engine.evaluate import Evaluator
-from aibi.core.engine.resolve import Coverage, ResolvedCohort, ResolvedVariable, levels
+from aibi.core.engine.resolve import (
+    Coverage,
+    ResolvedCohort,
+    ResolvedVariable,
+    levels,
+    open_path,
+)
 from aibi.core.engine.resolved import RExists, RValue
 from aibi.core.engine.truth import Mark, TruthValue
 from aibi.core.engine.variables import (
@@ -146,6 +154,16 @@ def fixed(variable: ResolvedVariable) -> tuple[Value, ...]:
     return (*(value for value in declared if value in filtered), *others)
 
 
+def bounded_rows(variable: ResolvedVariable) -> bool:
+    """Whether the descriptors may bound how many of a memberships' categories each unit can
+    hold (``resolve.bounded_rows``, D383): not a list, and its path (its template's steps, then
+    its lookups) not proven open (``resolve.open_path``: one open down step from the unit)."""
+    if variable.datatype == "list<category>":
+        return False
+    path = (*(step for node in template(variable).levels for step in node.via), *variable.lookup)
+    return not open_path(variable.release, path)
+
+
 def closed_listing(variable: ResolvedVariable) -> bool:
     """Whether only ``fixed`` is listed: X is filtered by the last step's record filter."""
     return template(variable).allowed is not None
@@ -204,25 +222,30 @@ def evaluate(variable: ResolvedVariable) -> Answers:
     )
 
 
-def listing(answers: Answers, members: Iterable[int]) -> tuple[tuple[Value, ...], bool]:
+def listing(
+    answers: Answers, members: Iterable[int], *, declared: bool = False
+) -> tuple[tuple[Value, ...], bool]:
     """The categories listed over a cohort's members, in order, and whether they are more than
-    ``MAX_CATEGORIES`` (module docstring)."""
+    ``MAX_CATEGORIES`` (module docstring); ``declared``, under a disclosure setting, ``fixed``
+    alone, whatever the members hold (D384)."""
     others: set[Value] = set()
-    if not answers.closed:
-        declared = set(answers.fixed)
+    if not answers.closed and not declared:
+        known = set(answers.fixed)
         for row in members:
-            others.update(value for value in answers.paired[row] if value not in declared)
+            others.update(value for value in answers.paired[row] if value not in known)
     listed = (*answers.fixed, *sorted(others, key=utf16))
     return listed, len(listed) > MAX_CATEGORIES
 
 
-def membership_units(answers: Answers, members: Iterable[int]) -> tuple[UnitValue, ...] | None:
+def membership_units(
+    answers: Answers, members: Iterable[int], *, declared: bool = False
+) -> tuple[UnitValue, ...] | None:
     """Each unit of the unit table, by row, over the categories listed for a cohort's members
-    (module docstring): ``True`` where some answer of its is known, else excluded under the
-    reasons of all of them, with their flags. ``None`` where the listing is ``over``: nothing of
-    the memberships is counted, so no unit is given and no joint count either, as SQL gives none
-    (``sql.CompiledMaterialised.read``, D380)."""
-    listed, over = listing(answers, members)
+    (module docstring; ``declared`` as ``listing`` takes it): ``True`` where some answer of its
+    is known, else excluded under the reasons of all of them, with their flags. ``None`` where
+    the listing is ``over``: nothing of the memberships is counted, so no unit is given and no
+    joint count either, as SQL gives none (``sql.CompiledMaterialised.read``, D380)."""
+    listed, over = listing(answers, members, declared=declared)
     if over:
         return None
     return tuple(_unit(answers, row, listed) for row in range(len(answers.defaults)))
@@ -237,12 +260,14 @@ def _unit(answers: Answers, row: int, listed: Sequence[Value]) -> UnitValue:
     return UnitValue(None, reasons, marks)
 
 
-def materialise(answers: Answers, members: Iterable[int]) -> Materialised:
+def materialise(
+    answers: Answers, members: Iterable[int], *, declared: bool = False
+) -> Materialised:
     """A variable's memberships over a cohort's members (``Materialised``): the units per listed
-    category, and the units known or excluded as ``membership_units`` gives them; nothing is
-    counted where the listing is ``over``."""
+    category (``declared`` as ``listing`` takes it), and the units known or excluded as
+    ``membership_units`` gives them; nothing is counted where the listing is ``over``."""
     rows = list(members)
-    listed, over = listing(answers, rows)
+    listed, over = listing(answers, rows, declared=declared)
     excluded = dict.fromkeys(ExclusionReason, 0)
     if over:
         return Materialised(
@@ -309,12 +334,18 @@ def evaluated(variable: ResolvedVariable) -> Evaluated:
 
 
 def materialise_over(
-    variables: Sequence[ResolvedVariable], evaluations: Sequence[Evaluated], members: Sequence[int]
+    variables: Sequence[ResolvedVariable],
+    evaluations: Sequence[Evaluated],
+    members: Sequence[int],
+    *,
+    declared: bool = False,
 ) -> tuple[tuple[Materialised, ...], Joint | None]:
     """A view's variables over a cohort's members, each as ``evaluated`` gave it, by the reference
     evaluator (D382): each materialised (memberships by ``materialise``, a count of rows with its
     rows), and for two or more their joint counts over the units each gives, a membership's by
-    ``membership_units``, so that a unit is known where some variable knows it; ``None`` for one
+    ``membership_units``, so that a unit is known where some variable knows it; memberships list
+    their declared categories alone with ``declared``, as a view under a disclosure setting reads
+    them (D384); ``None`` for one
     variable, or where some memberships' listing is ``over``, which gives no units, as SQL gives
     none (``sql.CompiledMaterialised.read``). It lives here, not in ``variables``, since memberships
     are this module's and it reads them beside every other variable."""
@@ -326,8 +357,8 @@ def materialise_over(
         if isinstance(given, Answers):
             if variable.kind != "memberships":
                 raise ValueError("memberships' answers are a memberships variable's")
-            found.append(materialise(given, members))
-            units.append(membership_units(given, members))
+            found.append(materialise(given, members, declared=declared))
+            units.append(membership_units(given, members, declared=declared))
         else:
             found.append(materialise_values(given, members, rows=variable.kind == "rows"))
             units.append(given)
@@ -418,6 +449,7 @@ __all__ = [
     "Answers",
     "Evaluated",
     "Template",
+    "bounded_rows",
     "closed_listing",
     "evaluate",
     "evaluated",

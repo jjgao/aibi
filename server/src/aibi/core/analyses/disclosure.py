@@ -42,6 +42,28 @@ more variables, nothing that combines them is shown, as of predicates. Within ``
   under *k* = 3 are the only ones it shows as 3, 4 and 3), as pooling small categories into one
   row does whenever the row's count is read off: 1 each, or *k* − 1 each, or one category alone.
 
+**Memberships** (D383). A variable's memberships (``each: "category"``) ask one question of each
+category a column declares, and every unit's answer for a category none of its rows holds is its
+default (D381), so the categories' splits depend on one another: a category no unit holds splits
+the units as their defaults do, and bounds every other's FALSE and UNKNOWN units from above.
+Each category's row is disclosed as ``some`` of that one category is as a variable of its own
+(``membership_shown``): its split of the position's units into those it is known for (the
+proportion's denominator) and those it is UNKNOWN for is shown whole or not at all
+(``split_hidden``), and its TRUE units (the numerator) only with it and where neither its TRUE
+nor its FALSE units are small, as a question's two categories merge. A numerator shown beside a
+split that is hidden, as a predicate's split shows one, would tell that the UNKNOWN units are
+few, and the default's bounds then pin them (10 units under *k* = 3: beside a category split 0,
+3 and 7, one split 5, 3 and 2 shows 5 alone, and only its UNKNOWN 2 fits); maps of reasons of
+categories that share defaults pin one another's, so no row shows its map, and nothing shows the
+units known for some category, a joint count. Where the descriptors may bound the rows each
+unit reaches, its path not one open down step from the unit (``resolve.bounded_rows``,
+``resolve.open_path``: one row on a one-to-one path, two where a boolean completes a set of the
+child's columns the gate keeps unique, as many as a record filter allows, one where a later
+child is keyed by the unit's key alone), the TRUE counts sum to at most that bound times the
+units, which pins one the rule hides, so the analysis withholds such
+memberships instead (``distribution.withheld_under_k``). The rule assumes a unit may hold any
+set of the declared categories, which an open step gives.
+
 What is computed from a variable's values rather than counted is never shown: values are not
 counts, so the rule that hides counts from 1 to *k* − 1 cannot protect them (a mean over coarse
 bins gives the counts finer bins hide, and a standard deviation of zero every unit's value). Each
@@ -106,6 +128,27 @@ def split_hidden(n: int, excluded_units: int, k: int) -> bool:
     return small(k, n) or small(k, excluded_units)
 
 
+@dataclass(frozen=True)
+class CategoryShown:
+    """What the pass shows of one category of a variable's memberships at a position: its split
+    (the units it is known for, and so those it is UNKNOWN for), and its TRUE units."""
+
+    split: bool
+    numerator: bool
+
+
+def membership_shown(size_shown: bool, split: Split, k: int) -> CategoryShown:
+    """What the pass shows of a category of memberships whose units at a position whose
+    cohort's ``n_true`` is shown or not (``size_shown``) split as ``split`` (module docstring,
+    D383): the split whole where neither the units known nor those UNKNOWN are small, and the
+    TRUE units with it where neither they nor the FALSE ones are."""
+    if not size_shown:
+        return CategoryShown(False, False)
+    whole = not split_hidden(split.true + split.false, split.unknown, k)
+    numerator = whole and not small(k, split.true) and not small(k, split.false)
+    return CategoryShown(whole, numerator)
+
+
 def merged(counts: Sequence[int], k: int) -> list[tuple[int, int]]:
     """Categories' or histogram bins' counts merged under *k* (module docstring): each row of the
     result as the span of those it merges, first and last included."""
@@ -125,4 +168,13 @@ def merged(counts: Sequence[int], k: int) -> list[tuple[int, int]]:
         sizes[start : end + 1] = [sum(sizes[start : end + 1])]
 
 
-__all__ = ["Hidden", "Split", "hidden", "merged", "small", "split_hidden"]
+__all__ = [
+    "CategoryShown",
+    "Hidden",
+    "Split",
+    "hidden",
+    "membership_shown",
+    "merged",
+    "small",
+    "split_hidden",
+]

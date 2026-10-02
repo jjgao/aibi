@@ -433,8 +433,10 @@ class MembershipDistribution(Output):
     row (or item) has it over the units for which that is known, its UNKNOWN units in the
     proportion's ``excluded`` by reason and its ``denominator_definition`` naming the category's
     leaf key (``counts: "known"``). A unit may count in several categories, so the proportions
-    need not sum to 1 (``multi_membership``); nothing is listed where no category is. It is never
-    under a disclosure setting (D382), so nothing is merged or suppressed."""
+    need not sum to 1 (``multi_membership``); nothing is listed where no category is. Under a
+    disclosure setting (D383, D384) only the declared categories are listed, each row's counts
+    as the pass shows them (``null`` where suppressed), its ``excluded`` always ``null``, and no
+    row is merged."""
 
     kind: Literal["memberships"]
     multi_membership: Literal[True]

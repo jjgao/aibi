@@ -301,12 +301,15 @@ OTHERS: list[dict[str, Any]] = [
 # --- The reference evaluator's counts -----------------------------------------------------------
 
 
-def _expected(resolution: Resolution, variables: Sequence[ResolvedVariable]) -> list[Any]:
+def _expected(
+    resolution: Resolution, variables: Sequence[ResolvedVariable], *, declared: bool = False
+) -> list[Any]:
     """Each cohort's variables materialised by the reference evaluator, and their joint counts
-    for two or more (``memberships.materialise_over``)."""
+    for two or more (``memberships.materialise_over``), memberships listing their declared
+    categories alone with ``declared`` (D384)."""
     given = [reference.evaluated(variable) for variable in variables]
     return [
-        reference.materialise_over(variables, given, evaluate(cohort).members)
+        reference.materialise_over(variables, given, evaluate(cohort).members, declared=declared)
         for cohort in resolution.cohorts.values()
     ]
 
@@ -315,11 +318,21 @@ def _variables(resolution: Resolution) -> list[ResolvedVariable]:
     return [resolution.variables[f"0/{index}"] for index in range(len(resolution.variables))]
 
 
-def _agree(resolution: Resolution, materialised: Materialise) -> list[Any]:
+def _agree(
+    resolution: Resolution, materialised: Materialise, *, declared: bool = False
+) -> list[Any]:
     assert resolution.refusals == [], resolution.refusals
     variables = _variables(resolution)
-    expected = _expected(resolution, variables)
-    assert list(materialised(list(resolution.cohorts.values()), variables)) == expected
+    expected = _expected(resolution, variables, declared=declared)
+    found = materialised(list(resolution.cohorts.values()), variables, declared=declared)
+    assert list(found) == expected
+    if declared:
+        for each, _ in expected:
+            for variable, one in zip(variables, each, strict=True):
+                if one.memberships is not None:
+                    listed = tuple(m.category for m in one.memberships.categories)
+                    assert listed in ((), reference.fixed(variable)), listed
+                    assert not one.memberships.over or len(reference.fixed(variable)) > 150
     return expected
 
 
@@ -340,7 +353,9 @@ def test_memberships_counted_by_the_compiler_are_those_the_evaluator_asks_catego
     UNKNOWN by reason with their flags, the categories listed and their order, the units known
     and excluded by reason (``membership_units``), and for two variables or more their joint
     counts, counted in SQL as pairs plus default as the reference evaluator asks each category's
-    question of each unit; with one flag to a word, so that every word is read."""
+    question of each unit; with one flag to a word, so that every word is read. Under a
+    disclosure setting (``declared``, D384) both list the declared categories alone, and only
+    their number makes the listing ``over``."""
     rows, options = data
     release = city(rows, **options)
     written = {
@@ -350,9 +365,10 @@ def test_memberships_counted_by_the_compiler_are_those_the_evaluator_asks_catego
     asked = extra.draw(st.lists(membership_variables(), min_size=1, max_size=2))
     others = extra.draw(st.lists(st.sampled_from(OTHERS), max_size=1))
     resolution = variables_of(doc(written), release, extra.draw(st.permutations(asked + others)))
+    declared = extra.draw(st.booleans())
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(compiler, "MARK_BITS", 1)
-        _agree(resolution, materialised)
+        _agree(resolution, materialised, declared=declared)
 
 
 @FEWER
@@ -1390,6 +1406,60 @@ def test_over_150_categories_nothing_is_counted_and_the_listing_says_so(
         )
     )
     assert len(cut.memberships.categories) == MAX_CATEGORIES
+
+
+def test_under_a_disclosure_setting_only_declared_categories_are_listed_whatever_units_hold(
+    city: City, doc: Doc, variables_of: Resolved, materialised: Materialise
+) -> None:
+    """D384: listing the declared categories alone (``declared``), neither engine lists a value
+    the column does not declare, however many the units hold: 151 undeclared topics are no
+    ``over`` (a column that declares none lists nothing, its units counted by their default),
+    and a declared column lists its declared values in their order, zeros included, beside an
+    undeclared value every unit holds."""
+    topics = city(
+        {
+            "establishments": [{"establishment_id": "e0"}],
+            "complaints": [
+                {
+                    "complaint_id": f"c{n}",
+                    "establishment_id": "e0",
+                    "channel": "web",
+                    "topic": f"t{n:03}",
+                }
+                for n in range(MAX_CATEGORIES + 1)
+            ],
+        },
+        extra=[TOPIC],
+    )
+    resolution = variables_of(doc([]), topics, [{"column": "complaints.topic", "each": "category"}])
+    found = _only(_agree(resolution, materialised, declared=True))
+    assert found.memberships == Memberships((), found.memberships.known, False)
+    assert found.n + found.excluded_units == 1
+    codes = city(
+        {
+            "establishments": [{"establishment_id": "e0"}, {"establishment_id": "e1"}],
+            "inspections": [
+                {"inspection_id": f"i{n}", "establishment_id": f"e{n}", "kind": "routine"}
+                for n in range(2)
+            ],
+            "violations": [
+                {"violation_id": f"v{n}{code}", "inspection_id": f"i{n}", "code": code}
+                for n in range(2)
+                for code in ("zzz", "pest")
+            ],
+        }
+    )
+    resolution = variables_of(doc([]), codes, [{"column": "violations.code", "each": "category"}])
+    found = _only(_agree(resolution, materialised, declared=True))
+    assert [m.category for m in found.memberships.categories] == ["temp", "pest", "label"]
+    assert [m.true for m in found.memberships.categories] == [0, 2, 0]
+    undeclared = _only(_agree(resolution, materialised))
+    assert [m.category for m in undeclared.memberships.categories] == [
+        "temp",
+        "pest",
+        "label",
+        "zzz",
+    ]
 
 
 def test_past_150_categories_no_joint_count_is_given_beside_another_variable(

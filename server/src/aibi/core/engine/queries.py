@@ -175,27 +175,37 @@ def run_views(
     *,
     members: Sequence[ResolvedCohort] = (),
     shared: Sequence[bool] = (),
+    declared: Sequence[bool] = (),
     inputs: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedVariable]]] = (),
     ends: float | None = None,
 ) -> ViewsRun:
     """Each cohort counted, each crossing counted, each materialisation (its cohorts and
     variables) read, with the units each pair of its cohorts shares where ``shared`` says so (by
-    materialisation, none by default, D339), each of ``members``' members' keys listed, and each
-    of ``inputs``' cohorts' members listed with its variables' values, in one worker run (D318,
-    D327, D333, D342), the server's reading of a materialisation's and a listing's rows held to
-    ``ends`` as the worker is. Raises as ``run_cohorts`` does, and ``sql.TooManyListed`` or
-    ``inputs.TooManyCells`` for a listing of inputs over its caps, naming it (``listing``)."""
+    materialisation, none by default, D339) and memberships' declared categories alone where
+    ``declared`` does (by materialisation, none by default, D384), each of ``members``' members'
+    keys listed, and each of ``inputs``' cohorts' members listed with its variables' values, in
+    one worker run (D318, D327, D333, D342), the server's reading of a materialisation's and a
+    listing's rows held to ``ends`` as the worker is. Raises as ``run_cohorts`` does, and
+    ``sql.TooManyListed`` or ``inputs.TooManyCells`` for a listing of inputs over its caps,
+    naming it (``listing``)."""
     compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
     crossed = [
         compile_crossing(members, asked, sources[members[0].release.manifest])
         for members, asked in crossings
     ]
     overlaps = [*shared, *[False] * (len(materialisations) - len(shared))]
+    listed_declared = [*declared, *[False] * (len(materialisations) - len(declared))]
     made = [
         compile_materialised(
-            members, variables, sources[members[0].release.manifest], shared=counted
+            members,
+            variables,
+            sources[members[0].release.manifest],
+            shared=counted,
+            declared=fixed,
         )
-        for (members, variables), counted in zip(materialisations, overlaps, strict=True)
+        for (members, variables), counted, fixed in zip(
+            materialisations, overlaps, listed_declared, strict=True
+        )
     ]
     listing = [compile_members(cohort, sources[cohort.release.manifest]) for cohort in members]
     handed = [
