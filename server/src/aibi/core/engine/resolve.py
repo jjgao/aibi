@@ -369,6 +369,8 @@ GATE_CHECKS: Mapping[tuple[str, str], Literal["unique", "domain", "presence", "n
             ("record_filter", "OUTSIDE_RECORD_FILTER"): "domain",
             ("record_filter", "NOT_APPLICABLE_IN_FILTER"): "presence",
             ("_drop", "UNKNOWN_DESCRIPTOR"): "none",
+            ("absent_rows", "INVALID_VALUE"): "domain",
+            ("declarations", "INVALID_VALUE"): "domain",
         }
     )
 )
@@ -415,8 +417,20 @@ def _restricted(release: Release, table: str) -> set[str]:
     values the derivation may bound (a value missing from a value map is UNKNOWN, §5.7). A
     derivation the gate checks nowhere bounds nothing. ``COVERAGE_UNKNOWN`` restricts only the
     columns of a table a coverage names, which no relationship joins (§5.6), so never a step's
-    child."""
+    child. In a table a pack unpivoted (a column with ``absent`` values, D401), that column
+    (``absent_rows``) and the table's key, whose cells its coverage lists (``declarations``),
+    are restricted too."""
     found: set[str] = set()
+    reshaped = [
+        column
+        for column in release.columns(table)
+        if (described := release.column(table, column)) is not None
+        and described.fields.absent is not None
+    ]
+    if reshaped:
+        found.update(reshaped)
+        table_described = release.table(table)
+        found.update((table_described and table_described.fields.primary_key) or ())
     for other in release.relationships:
         if other.fields.child_table != table:
             continue

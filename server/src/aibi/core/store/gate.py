@@ -34,6 +34,7 @@ relationship lists (kept, since they are evidence, §6.5), and endpoint rows who
 outside ``event_coding``, whose time is negative or whose entry is at or after their time (§5.8).
 """
 
+import hashlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, cast
@@ -42,6 +43,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from aibi.core.engine.data import PRESENT, Cell, KeyPart, key_part
 from aibi.core.schema.descriptors import (
+    ColumnDescriptor,
     CoverageDescriptor,
     Descriptor,
     DirectCoverage,
@@ -51,11 +53,13 @@ from aibi.core.schema.descriptors import (
     RelationshipDescriptor,
     TableDescriptor,
 )
-from aibi.core.schema.jsonio import pointer
+from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.output import Message, text
+from aibi.core.schema.pack_api import cell_digest
 from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
 from aibi.core.schema.semantics import ObservationState
+from aibi.core.store.manifest import Declared
 
 Mode = Literal["import", "change"]
 REFERENCED_ROWS = 5
@@ -177,6 +181,9 @@ def needed(descriptors: Iterable[Descriptor]) -> dict[str, set[str]]:
             if child is not None:
                 add(child, scopes.values())
                 add(child, coverage.record_filter or {})
+        elif isinstance(descriptor, ColumnDescriptor) and descriptor.fields.absent is not None:
+            table, column = descriptor.id.split(".", 1)
+            add(table, [column])
         elif isinstance(descriptor, EndpointDescriptor):
             endpoint = descriptor.fields
             if endpoint.table is not None:
@@ -188,10 +195,108 @@ def needed(descriptors: Iterable[Descriptor]) -> dict[str, set[str]]:
     return found
 
 
+CHECK_VERSION = "aibi.reshaped-coverage/1"
+"""The version of the coverage's check against a declaration (``_Checks.declarations``), digested
+with its inputs: bumped whenever that check's logic changes, or a helper it shares with the gate
+(``tuples``, ``_part``, ``key_part``, ``cell_digest``, ``decode_cells``), so that a release checked
+by an earlier version is checked again at its next change (D401)."""
+
+
+def declaration_inputs(
+    table: str,
+    declaration: Declared,
+    descriptors: Sequence[Descriptor],
+    hashes: Mapping[str, str],
+) -> str:
+    """The digest of what the check of ``table``'s coverage against ``declaration`` reads
+    (``_Checks.declarations``), as RFC 8785 JSON: the check's version; the declaration; the
+    table's id and key; the ids of its columns with absent values, with those values; each
+    relationship into it (its id, child table and columns, parent columns); each of their
+    coverages (its id, relationship and ``parents``); and the content hash of the table and of
+    each coverage table. The typed cells it compares are in those tables, whose hashes change
+    with their content. The check is a function of these alone, so a build whose digest is the
+    one the release kept from its last passing check has the same outcome; any other field (a
+    label, a category's label, ``completeness``, ``grain``) does not run it again. The table is
+    read by its whole content hash, not by its key cells alone, so a change that rebuilds it (a
+    parse field, a derived column on it, D220) runs the check again (D401)."""
+    described = next(
+        (d for d in descriptors if isinstance(d, TableDescriptor) and d.id == table), None
+    )
+    absent = sorted(
+        [d.id, list(d.fields.absent)]
+        for d in descriptors
+        if isinstance(d, ColumnDescriptor)
+        and d.id.split(".", 1)[0] == table
+        and d.fields.absent is not None
+    )
+    relationships = sorted(
+        (
+            d
+            for d in descriptors
+            if isinstance(d, RelationshipDescriptor) and d.fields.child_table == table
+        ),
+        key=lambda d: d.id,
+    )
+    ids = {relationship.id for relationship in relationships}
+    coverages = sorted(
+        (
+            d
+            for d in descriptors
+            if isinstance(d, CoverageDescriptor) and d.fields.relationship in ids
+        ),
+        key=lambda d: d.id,
+    )
+    read: set[str] = {table}
+    for coverage in coverages:
+        parents = coverage.fields.parents
+        if isinstance(parents, DirectCoverage):
+            read.add(parents.table)
+        elif isinstance(parents, GroupedCoverage):
+            read.update((parents.assignment.table, parents.groups.table))
+    given: JsonValue = {
+        "check": CHECK_VERSION,
+        "declaration": cast(JsonValue, declaration.model_dump(mode="json", exclude={"checked"})),
+        "table": table,
+        "key": (
+            None
+            if described is None or described.fields.primary_key is None
+            else list(described.fields.primary_key)
+        ),
+        "absent": cast(JsonValue, absent),
+        "relationships": [
+            {
+                "id": d.id,
+                "child_table": d.fields.child_table,
+                "child_columns": list(d.fields.child_columns),
+                "parent_columns": list(d.fields.parent_columns),
+            }
+            for d in relationships
+        ],
+        "coverages": [
+            {
+                "id": d.id,
+                "relationship": d.fields.relationship,
+                "parents": cast(JsonValue, d.model_dump(mode="json")["fields"].get("parents")),
+            }
+            for d in coverages
+        ],
+        "tables": {name: hashes.get(name) for name in sorted(read)},
+    }
+    return hashlib.sha256(canonical(given)).hexdigest()
+
+
 def check(
-    descriptors: Sequence[Descriptor], tables: Mapping[str, Cells], *, mode: Mode
+    descriptors: Sequence[Descriptor],
+    tables: Mapping[str, Cells],
+    *,
+    mode: Mode,
+    declared: Mapping[str, Declared] | None = None,
 ) -> GateResult:
-    """The gate over the descriptors of a release and its typed tables, by table id."""
+    """The gate over the descriptors of a release and its typed tables, by table id.
+    ``declared`` holds what a pack's importer dropped from each table it unpivoted, as the
+    import declared it and the release keeps it, which the coverage of each such table is
+    checked against at an import and at every change whose inputs to that check differ from
+    those of its last passing check (``declaration_inputs``, D401)."""
     current = list(descriptors)
     positions = list(range(len(descriptors)))
     dropped: list[Dropped] = []
@@ -201,6 +306,11 @@ def check(
         if not drops:
             break
         current, positions = _drop(current, positions, drops, dropped)
+    if not failures:
+        checks = _Checks(current, tables)
+        checks.absent_rows()
+        checks.declarations(declared or {})
+        failures = checks.found
     refusals = [_refusal(f.code, [positions[f.at], *f.where], f.message) for f in failures]
     if not refusals:
         refusals = [_moved(refusal, positions) for refusal in check_release(current)]
@@ -410,7 +520,7 @@ class _Checks:
     ) -> None:
         """A failure at ``where``: ``message`` is the server's own sentence, a literal, which the
         rows found complete; it names no id or value (D397)."""
-        said = (text(f"{message} {rows.text()}"),)
+        said = (text(f"{message} {rows.text()}" if rows else message),)
         self.found.append(_Failure(code, at, where, said, rows.count, tuple(rows.first), drop))
 
     # --- The structural checks -----------------------------------------------------------------
@@ -642,6 +752,198 @@ class _Checks:
                 code = RefusalCode.NOT_APPLICABLE_IN_FILTER
                 self.fail(code, at, where, message, inapplicable, drop)
 
+    # --- Reshaped tables (D401) ------------------------------------------------------------------
+
+    def absent_rows(self) -> None:
+        """In a column with absent values, every cell PRESENT, none an absent value, and each
+        one of the column's permissible values: a missing code can't make a kept cell missing,
+        and no kept cell holds what the reshape dropped or a value no question can name."""
+        for at, descriptor in enumerate(self.descriptors):
+            if not isinstance(descriptor, ColumnDescriptor) or descriptor.fields.absent is None:
+                continue
+            table, column = descriptor.id.split(".", 1)
+            cells = self.column(table, column)
+            if cells is None:
+                continue
+            fields = descriptor.fields
+            allowed = (
+                None
+                if fields.permissible_values is None
+                else {entry.value for entry in fields.permissible_values.values}
+            )
+            absent = set(fields.absent or ())
+            missing, outside = _Rows(), _Rows()
+            for row, cell in enumerate(cells):
+                if cell.state is not PRESENT:
+                    missing.add(row)
+                elif cell.value in absent or (allowed is not None and cell.value not in allowed):
+                    outside.add(row)
+            if missing:
+                message = (
+                    "A cell of a column with absent values is not PRESENT, which a missing code "
+                    "made it (D401): set the codes without the values the rows hold, in"
+                )
+                self.fail(
+                    RefusalCode.INVALID_VALUE,
+                    at,
+                    ("fields", "missing_codes"),
+                    message,
+                    missing,
+                    None,
+                )
+            if outside:
+                message = (
+                    "A cell of a column with absent values holds an absent value or one that is "
+                    "not permissible (D401), in"
+                )
+                self.fail(
+                    RefusalCode.INVALID_VALUE,
+                    at,
+                    ("fields", "permissible_values"),
+                    message,
+                    outside,
+                    None,
+                )
+
+    def declarations(self, declared: Mapping[str, Declared]) -> None:
+        """Each coverage of a relationship into a table a pack unpivoted lists exactly the cells
+        its source held: every row's key among the listed cells, and the listed cells without a
+        row, the absent cells, as many as the pack dropped and with their digest (D401)."""
+        tables = {d.id: d for d in self.descriptors if isinstance(d, TableDescriptor)}
+        places = {d.id: at for at, d in enumerate(self.descriptors)}
+        columns = {d.id: d for d in self.descriptors if isinstance(d, ColumnDescriptor)}
+        for table, declaration in sorted(declared.items()):
+            column = columns.get(f"{table}.{declaration.column}")
+            if table in places and (column is None or column.fields.absent is None):
+                message = "The column the importer declared holds no absent values (D401)"
+                self.fail(RefusalCode.INVALID_VALUE, places[table], (), message, _Rows(), None)
+        for at, descriptor in enumerate(self.descriptors):
+            if not isinstance(descriptor, CoverageDescriptor):
+                continue
+            relationship = self.relationships.get(descriptor.fields.relationship)
+            if relationship is None:
+                continue
+            child = relationship.fields.child_table
+            declaration = declared.get(child)
+            table = tables.get(child)
+            if declaration is None or table is None:
+                continue
+            parents = descriptor.fields.parents
+            if not isinstance(parents, DirectCoverage | GroupedCoverage):
+                continue
+            rows = self.tuples(child, table.fields.primary_key or [])
+            if rows is None:
+                continue
+            most = sum(1 for found in rows if found is not None) + declaration.dropped
+            problem = self.listed_cells(relationship, parents, table.fields.primary_key or [], most)
+            if isinstance(problem, str):
+                self.fail(
+                    RefusalCode.INVALID_VALUE, at, ("fields", "parents"), problem, _Rows(), None
+                )
+                continue
+            listed = problem
+            outside, held = _Rows(), set[Tuple]()
+            for row, found in enumerate(rows):
+                if found is None:
+                    continue
+                held.add(found)
+                if found not in listed:
+                    outside.add(row)
+            if outside:
+                message = "Rows lie outside the cells the coverage lists (D401), in"
+                self.fail(
+                    RefusalCode.INVALID_VALUE, at, ("fields", "parents"), message, outside, None
+                )
+                continue
+            missing = listed - held
+            digest = cell_digest([str(part[1]) for part in cell] for cell in missing)
+            if len(missing) != declaration.dropped or digest != declaration.digest:
+                counted = (
+                    f"{len(missing)} listed, {declaration.dropped} dropped"
+                    if len(missing) != declaration.dropped
+                    else f"as many, {len(missing)}, but other cells"
+                )
+                message = (
+                    "The coverage lists cells without a row that are not the cells the importer "
+                    f"dropped as absent ({counted}) (D401)"
+                )
+                self.fail(
+                    RefusalCode.INVALID_VALUE, at, ("fields", "parents"), message, _Rows(), None
+                )
+
+    def listed_cells(
+        self,
+        relationship: RelationshipDescriptor,
+        parents: DirectCoverage | GroupedCoverage,
+        key: Sequence[str],
+        most: int,
+    ) -> set[Tuple] | str:
+        """The distinct cells the coverage lists, as keys of the child table in ``key``'s order
+        (its parent columns and scope columns, which ``check_release`` pins to the key), or why
+        they can't be read. A grouped coverage lists the product of each parent and its group's
+        scopes, which is counted before it is built: a listing of more than ``most`` cells (the
+        table's rows and the cells dropped as absent) cannot pass, so it is refused unbuilt."""
+        fields = relationship.fields
+        stands = dict(zip(fields.parent_columns, fields.child_columns, strict=True))
+        if isinstance(parents, DirectCoverage):
+            by_parent = {parent: own for own, parent in parents.parent_columns.items()}
+            scopes = parents.scope_columns or {}
+            source = parents.table
+        else:
+            by_parent = {parent: own for own, parent in parents.assignment.parent_columns.items()}
+            scopes = parents.groups.scope_columns or {}
+            source = parents.assignment.table
+        if set(by_parent) != set(stands):
+            return "The coverage's parent columns do not stand for the relationship's (D401)"
+        order = [stands[parent] for parent in fields.parent_columns] + list(scopes.values())
+        if sorted(order) != sorted(key):
+            return "The coverage's columns are not the reshaped table's key (D401)"
+        place = [order.index(column) for column in key]
+        owners = self.tuples(source, [by_parent[parent] for parent in fields.parent_columns])
+        if owners is None:
+            return "The coverage's parent columns are not read"
+        cells: set[Tuple] = set()
+
+        def add(parent: Tuple, scope: Tuple) -> None:
+            whole = (*parent, *scope)
+            cells.add(tuple(whole[i] for i in place))
+
+        if isinstance(parents, DirectCoverage):
+            scoped = self.tuples(source, list(scopes))
+            if scoped is None:
+                return "The coverage's scope columns are not read"
+            for owner, scope in zip(owners, scoped, strict=True):
+                if owner is not None and scope is not None:
+                    add(owner, scope)
+            return cells
+        assignment, groups = parents.assignment, parents.groups
+        named = self.tuples(assignment.table, [assignment.group_column])
+        group_names = self.tuples(groups.table, [groups.group_column])
+        scoped = self.tuples(groups.table, list(scopes))
+        if named is None or group_names is None or scoped is None:
+            return "The coverage's group columns are not read"
+        members: dict[Tuple, Tuple] = {}
+        for owner, group in zip(owners, named, strict=True):
+            if owner is None or group is None:
+                continue
+            if owner in members:
+                return "A parent has more than one assignment row in the coverage (D401)"
+            members[owner] = group
+        listed: dict[Tuple, set[Tuple]] = {}
+        for group, scope in zip(group_names, scoped, strict=True):
+            if group is not None and scope is not None:
+                listed.setdefault(group, set()).add(scope)
+        size = sum(len(listed.get(group, ())) for group in members.values())
+        if size > most:
+            return (
+                f"The coverage lists {size} cells, more than the table's rows and the cells "
+                f"dropped as absent ({most}) (D401)"
+            )
+        for owner, group in members.items():
+            for scope in listed.get(group, ()):
+                add(owner, scope)
+        return cells
+
     # --- Semantic gaps -------------------------------------------------------------------------
 
     def gaps(self) -> list[Gap]:
@@ -787,6 +1089,7 @@ class _Checks:
 
 
 __all__ = [
+    "CHECK_VERSION",
     "REFERENCED_ROWS",
     "Cells",
     "Dropped",
@@ -794,5 +1097,6 @@ __all__ = [
     "GateResult",
     "Mode",
     "check",
+    "declaration_inputs",
     "needed",
 ]
