@@ -557,7 +557,7 @@ class _Small(float):
         ({"maximum": _Small(2.0**60)}, "beyond"),
         ({"title": _Ascii(chr(0xD800))}, "not Unicode"),
         ({_Ascii(chr(0xD800)): {}}, "not Unicode text"),
-        ({_Apart("maximum"): 1, "maximum": 2}, "two keys written as 'maximum'"),
+        ({_Apart("maximum"): 1, "maximum": 2}, "two keys written as the same text"),
     ],
     ids=["int subclass", "float subclass", "str subclass", "str subclass key", "colliding keys"],
 )

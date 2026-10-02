@@ -114,7 +114,10 @@ their declared categories alone (`memberships.listing(…, declared=True)`,
 maps, `analysed` `null`; unless the column is a list or its path is one down step from the
 unit to another table, open by the gate's checks (`resolve.open_path`, `resolve.open_step`,
 `resolve.GATE_CHECKS`), they are withheld (`distribution.withheld_under_k`,
-`views._withheld_form`), and `withheld_forms` withholds only `columns/*/count`.
+`views._withheld_form`), and `withheld_forms` withholds only `columns/*/count`. From M4.0c-1,
+`schema/pack_api.PackRegistry` keeps copies of the core's of what a pack gives, read once
+inside a guard per member (`schema/guards.PASSED`), and its hook objects by identity, never read
+again (D387).
 
 ## Non-negotiables
 
