@@ -6,7 +6,10 @@ accounting, which ``count_parts`` takes as it takes the reference evaluator's, a
 each unit's truth value, made as it is read from the answer (``TruthValues``, D293).
 ``run_crossed`` counts cohorts and, in the same run, crosses cohorts with predicates
 (``sql.compile_crossing``), whose answers are integer counts whose size never depends on the
-number of units: what ``run_analysis`` runs (D318). Rows the
+number of units, and ``run_views`` materialises variables over cohorts in that run too
+(``sql.compile_materialised``), whose answers grow with the distinct values and, for ``max``,
+``min`` and ``mean``, with the units, which the answer cap bounds: what ``run_analysis`` runs
+(D318, D327). Rows the
 queries do not give are a fault, ``QueryError``. It returns the SQL as run and its parameters
 beside them, which the derivation log records for an issuance (§12.2): blob paths are recorded
 as their digests, so the log names what was read and not where the server keeps it.
@@ -23,14 +26,16 @@ from types import MappingProxyType
 
 from pydantic import JsonValue
 
-from aibi.core.engine.resolve import ResolvedCohort
+from aibi.core.engine.resolve import ResolvedCohort, ResolvedVariable
 from aibi.core.engine.sql import (
     Accounting,
     Crossing,
     TruthValues,
     compile_cohort,
     compile_crossing,
+    compile_materialised,
 )
+from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import Query, QueryError, Workers
 from aibi.core.store.tables import TableSource
 
@@ -105,10 +110,48 @@ def run_crossed(
 ) -> tuple[list[Counted], list[CrossingRun]]:
     """Each cohort counted and each crossing (its cohorts and predicates) counted, in one worker
     run; no query gives a row per unit (D318). Raises as ``run_cohorts`` does."""
+    ran = run_views(cohorts, crossings, (), sources, workers, ends=ends)
+    return ran.counted, ran.crossed
+
+
+@dataclass(frozen=True)
+class MaterialisedRun:
+    """Variables materialised over cohorts by SQL (``sql.compile_materialised``): for each
+    cohort, each variable's values and, for two or more, their joint accounting; with the
+    statements as run and their parameters, as ``Counted`` has them."""
+
+    materialised: tuple[tuple[tuple[Materialised, ...], Joint | None], ...]
+    sql: tuple[str, ...]
+    parameters: Mapping[str, JsonValue]
+
+
+@dataclass(frozen=True)
+class ViewsRun:
+    counted: list[Counted]
+    crossed: list[CrossingRun]
+    materialised: list[MaterialisedRun]
+
+
+def run_views(
+    cohorts: Sequence[ResolvedCohort],
+    crossings: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedCohort]]],
+    materialisations: Sequence[tuple[Sequence[ResolvedCohort], Sequence[ResolvedVariable]]],
+    sources: Mapping[str, Mapping[str, TableSource]],
+    workers: Workers,
+    *,
+    ends: float | None = None,
+) -> ViewsRun:
+    """Each cohort counted, each crossing counted and each materialisation (its cohorts and
+    variables) read, in one worker run (D318, D327), the server's reading of a materialisation's
+    rows held to ``ends`` as the worker is. Raises as ``run_cohorts`` does."""
     compiled = [compile_cohort(cohort, sources[cohort.release.manifest]) for cohort in cohorts]
     crossed = [
         compile_crossing(members, asked, sources[members[0].release.manifest])
         for members, asked in crossings
+    ]
+    made = [
+        compile_materialised(members, variables, sources[members[0].release.manifest])
+        for members, variables in materialisations
     ]
     queries = [Query(c.counts_sql, c.parameters, c.counts_columns) for c in compiled]
     for crossing in crossed:
@@ -116,8 +159,20 @@ def run_crossed(
             Query(statement, crossing.parameters, columns)
             for statement, columns in zip(crossing.statements, crossing.columns, strict=True)
         ]
+    for materialisation in made:
+        queries += [
+            Query(statement, materialisation.parameters, columns, values)
+            for statement, columns, values in zip(
+                materialisation.statements,
+                materialisation.columns,
+                materialisation.values,
+                strict=True,
+            )
+        ]
     paths = sorted(
-        {path for c in compiled for path in c.paths} | {p for x in crossed for p in x.paths}
+        {path for c in compiled for path in c.paths}
+        | {p for x in crossed for p in x.paths}
+        | {p for m in made for p in m.paths}
     )
     rows = workers.run(paths, queries, ends=ends)
     counted: list[Counted] = []
@@ -144,7 +199,26 @@ def run_crossed(
                 MappingProxyType(crossing.parameters_json()),
             )
         )
-    return counted, found
+    materialised: list[MaterialisedRun] = []
+    for materialisation in made:
+        answers = rows[at : at + len(materialisation.statements)]
+        at += len(materialisation.statements)
+        materialised.append(
+            MaterialisedRun(
+                materialisation.read(answers, ends),
+                materialisation.statements,
+                MappingProxyType(materialisation.parameters_json()),
+            )
+        )
+    return ViewsRun(counted, found, materialised)
 
 
-__all__ = ["Counted", "CrossingRun", "run_cohorts", "run_crossed"]
+__all__ = [
+    "Counted",
+    "CrossingRun",
+    "MaterialisedRun",
+    "ViewsRun",
+    "run_cohorts",
+    "run_crossed",
+    "run_views",
+]

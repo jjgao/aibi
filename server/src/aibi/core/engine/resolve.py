@@ -65,6 +65,7 @@ from aibi.core.engine.resolved import (
     value_leaves,
 )
 from aibi.core.engine.units import convertible
+from aibi.core.schema.analyses import EXCLUDE, Variable
 from aibi.core.schema.descriptors import (
     ColumnDescriptor,
     CoverageDescriptor,
@@ -286,6 +287,10 @@ class Resolution:
     refusals: list[Refusal]
     predicates: Mapping[str, ResolvedCohort] = field(default_factory=dict[str, ResolvedCohort])
     """The views' predicates resolved, by key; one with a refusal is left out (D317)."""
+    variables: Mapping[str, "ResolvedVariable"] = field(
+        default_factory=dict[str, "ResolvedVariable"]
+    )
+    """The views' variables resolved, by key; one with a refusal is left out (D325)."""
 
 
 @dataclass(frozen=True)
@@ -301,6 +306,72 @@ class ViewPredicate:
     clause: ClauseModel
 
 
+Function = Literal["count", "max", "min", "mean"]
+"""A numeric aggregate (§9.2)."""
+VariableKind = Literal["column", "aggregate", "question"]
+
+
+@dataclass(frozen=True)
+class ViewVariable:
+    """A column a view's parameters read, one value per unit of its cohorts (§9.2, D325):
+    resolved on the document's unit table in the release of ``reference``, and refused where it
+    is written, ``at``."""
+
+    key: str
+    reference: str
+    at: Position
+    variable: Variable
+
+
+@dataclass(frozen=True)
+class ResolvedVariable:
+    """A variable resolved (D325), of one of three kinds:
+
+    - ``column``: a column of the unit table, or of the row its up steps ``via`` look up, which
+      holds one value per unit;
+    - ``aggregate``: ``function`` (``count``, ``max``, ``min`` or ``mean``) of the rows reached at
+      the last down step of ``rows``, a chain of ``depth`` single-step ``exists``, each but the
+      last with the next as its one ``where`` clause and the variable's ``lift``, the last with
+      the variable's conditions and no lift (quantifiers unused), each row's value read from the
+      row ``lookup`` looks up from it; ``empty`` the value of a unit whose rows hold none, or
+      ``None`` to exclude it (``NO_ROWS``); ``order`` an ordered category's values in order,
+      whose positions ``max`` and ``min`` compare;
+    - ``question``: ``some`` or ``every`` of the rows (or a list's items), an existence
+      question on the unit table whose truth value is the unit's value."""
+
+    key: str
+    release: Release
+    unit: str
+    column: str
+    """The column's descriptor id."""
+    datatype: str | None
+    kind: VariableKind
+    via: Path = ()
+    function: Function | None = None
+    rows: RExists | None = None
+    depth: int = 0
+    lookup: Path = ()
+    empty: Constant | None = None
+    order: tuple[str, ...] | None = None
+    question: RClause | None = None
+    aggregate: Literal["some", "every"] | None = None
+    fields: tuple[FieldRead, ...] = ()
+    coverage: Mapping[str, Coverage] = field(default_factory=dict[str, Coverage])
+    leaves: frozenset[Position] = frozenset()
+    """The positions of the leaves of its ``where`` as written."""
+
+    @property
+    def unconfirmed(self) -> tuple[FieldRead, ...]:
+        """The fields that raise ``UNCONFIRMED_SEMANTICS``, as ``ResolvedCohort.unconfirmed``
+        has them."""
+        return tuple(
+            read
+            for read in self.fields
+            if read.status in UNCONFIRMED
+            and not (read.pointer == "/fields/parents" and read.status == "proposed")
+        )
+
+
 def resolve(
     document: Document,
     releases: Mapping[str, Release],
@@ -308,13 +379,14 @@ def resolve(
     *,
     registry: PackRegistry | None = None,
     predicates: Sequence[ViewPredicate] = (),
+    variables: Sequence[ViewVariable] = (),
 ) -> Resolution:
     """Resolve a loaded document. ``releases`` maps each dataset reference as written (``d``,
     ``d@3``) to its release; ``positions`` are the loader's, so that refusals point into the
     document as written. ``registry`` holds the packs whose leaves may be expanded.
-    ``predicates`` are resolved after the cohorts, in the same resolution, so that their pack
-    leaves share the document's budget of steps (D285, D317)."""
-    return _Resolver(document, releases, positions or {}, registry).run(predicates)
+    ``predicates`` and ``variables`` are resolved after the cohorts, in the same resolution, so
+    that their pack leaves share the document's budget of steps (D285, D317, D325)."""
+    return _Resolver(document, releases, positions or {}, registry).run(predicates, variables)
 
 
 def check_parent_scopes(release: Release) -> list[Refusal]:
@@ -587,7 +659,9 @@ class _Resolver:
 
     # --- Documents and cohorts -------------------------------------------------------------
 
-    def run(self, predicates: Sequence[ViewPredicate] = ()) -> Resolution:
+    def run(
+        self, predicates: Sequence[ViewPredicate] = (), variables: Sequence[ViewVariable] = ()
+    ) -> Resolution:
         self._document_packs()
         self._mixed_releases()
         for name in self._order():
@@ -598,7 +672,12 @@ class _Resolver:
             resolved = self._view_predicate(predicate)
             if resolved is not None:
                 found[predicate.key] = resolved
-        return Resolution(cohorts, finish_refusals(self.refusals), found)
+        read: dict[str, ResolvedVariable] = {}
+        for variable in variables:
+            made = self._view_variable(variable)
+            if made is not None:
+                read[variable.key] = made
+        return Resolution(cohorts, finish_refusals(self.refusals), found, read)
 
     def _order(self) -> list[str]:
         """Cohorts after those they reference, in document order otherwise."""
@@ -766,6 +845,288 @@ class _Resolver:
             [(predicate.clause, predicate.at)],
             predicate.at,
         )
+
+    def _view_variable(self, given: ViewVariable) -> ResolvedVariable | None:
+        """A view's variable, resolved on the unit table (§9.2, D325); the refusals of its
+        release and unit are its cohorts'."""
+        release = self.releases.get(given.reference)
+        unit = self.document.unit
+        if release is None or ":" in unit or release.table(unit) is None:
+            return None
+        graph = self.graphs.get(id(release))
+        if graph is None:
+            graph = self.graphs[id(release)] = Graph.of(release)
+        context = _Cohort(given.key, given.reference, release, graph, unit)
+        self._read(context, release.table(unit), unit, "/fields/primary_key")
+        made = self._variable(context, given)
+        if made is None or context.failed:
+            return None
+        return replace(
+            made,
+            fields=tuple(sorted(context.fields)),
+            coverage=dict(sorted(context.coverage.items())),
+            leaves=frozenset(context.written),
+        )
+
+    def _variable(self, context: _Cohort, given: ViewVariable) -> ResolvedVariable | None:
+        variable, at, unit = given.variable, given.at, context.unit
+        if ":" in variable.column:
+            self.refuse(
+                RefusalCode.NOT_SUPPORTED,
+                (*at, "column"),
+                text("Concept references are resolved from M6: "),
+                data(variable.column),
+            )
+            return None
+        name, column = variable.column.split(".", 1)
+        target = self._table(context, name, (*at, "column"))
+        if target is None:
+            return None
+        release = context.release
+        descriptor = release.column(target, column)
+        if descriptor is None:
+            self.refuse(
+                RefusalCode.UNKNOWN_COLUMN,
+                (*at, "column"),
+                text("Table "),
+                data(target),
+                text(" has no column "),
+                data(column),
+                alternatives=self.listed(list(release.columns(target))),
+            )
+            return None
+        path = self._path(context, variable.via, at, unit, target, "column")
+        if path is None:
+            return None
+        datatype = descriptor.fields.datatype
+        aggregate = variable.aggregate
+        counting = aggregate == "count"
+        if datatype is None and not counting:
+            self.refuse(
+                RefusalCode.UNDECLARED_DATATYPE,
+                (*at, "column"),
+                text("The column's datatype is undeclared, so its values cannot be read: "),
+                data(descriptor.id),
+            )
+            return None
+        if not counting and self._identifier(context, descriptor) and not self._row_ids(context):
+            self.refuse(
+                RefusalCode.ROW_IDS_NOT_ALLOWED,
+                (*at, "column"),
+                text("The dataset does not allow row ids, so identifier columns are not read "),
+                text("(§8.4): "),
+                data(descriptor.id),
+            )
+            return None
+        multi = bool(down_steps(path)) or datatype == "list<category>"
+        base = ResolvedVariable(given.key, release, unit, descriptor.id, datatype, "column", path)
+        if aggregate is None:
+            if multi:
+                self._not_single(descriptor, datatype, at)
+                return None
+            self._read_column(context, descriptor)
+            self._read_path(context, path)
+            return base
+        if not multi:
+            self.refuse(
+                RefusalCode.AGGREGATE_NOT_ALLOWED,
+                (*at, "aggregate"),
+                text("The column holds one value per unit, so it takes no aggregate: "),
+                data(descriptor.id),
+            )
+            return None
+        if aggregate in ("some", "every"):
+            return self._question(context, variable, base, at)
+        if datatype == "list<category>":
+            self.refuse(
+                RefusalCode.AGGREGATE_NOT_ALLOWED,
+                (*at, "aggregate"),
+                text("A list column's items are asked about by some and every, not counted or "),
+                text("compared: "),
+                data(descriptor.id),
+            )
+            return None
+        return self._aggregate(context, variable, base, descriptor, path, at)
+
+    def _not_single(self, descriptor: ColumnDescriptor, datatype: str | None, at: Position) -> None:
+        """A variable that is multi-valued for the unit, given no aggregate (§9.2)."""
+        if datatype in ("category", "boolean", "list<category>"):
+            self.refuse(
+                RefusalCode.NOT_SUPPORTED,
+                (*at, "column"),
+                text("Counts per category of a column with several values per unit are "),
+                text(
+                    "given from M3.2c (#46); until then, give an aggregate (some, every, or max or "
+                ),
+                text("min of an ordered category): "),
+                data(descriptor.id),
+            )
+            return
+        self.refuse(
+            RefusalCode.AGGREGATE_REQUIRED,
+            (*at, "column"),
+            text("The column has several values per unit, below it or in a list, so the view "),
+            text("gives an aggregate, one value per unit (§9.2): "),
+            data(descriptor.id),
+            alternatives=[text(name) for name in ("count", "max", "min", "mean", "some", "every")],
+        )
+
+    def _question(
+        self, context: _Cohort, variable: Variable, base: ResolvedVariable, at: Position
+    ) -> ResolvedVariable | None:
+        """``some`` or ``every``: whether some row, or every row, has a value in ``values``,
+        an existence question (§6.5, §9.2): the value leaf of those values over the variable's
+        path, its quantifier the aggregate at every down step and, for a list column, ``match``
+        ``any`` or ``all`` of its items."""
+        aggregate = cast(Literal["some", "every"], variable.aggregate)
+        listed = base.datatype == "list<category>"
+        members: dict[str, object] = {
+            "kind": "value",
+            "column": variable.column,
+            "values": list(variable.values or []),
+            "quantifier": aggregate if down_steps(base.via) else None,
+            "match": ("any" if aggregate == "some" else "all") if listed else None,
+            "lift": variable.lift,
+            "via": variable.via,
+        }
+        leaf = ValueLeaf.model_validate(
+            {name: value for name, value in members.items() if value is not None}
+        )
+        question = self._value(context, leaf, at, context.unit)
+        if question is None:
+            return None
+        top = self._within_caps(context, at, (question,))
+        if top is None:
+            return None
+        return replace(
+            base,
+            kind="question",
+            via=(),
+            question=top[0] if len(top) == 1 else RAll(top),
+            aggregate=aggregate,
+        )
+
+    def _aggregate(
+        self,
+        context: _Cohort,
+        variable: Variable,
+        base: ResolvedVariable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+        at: Position,
+    ) -> ResolvedVariable | None:
+        """``count``, ``max``, ``min`` or ``mean`` of the rows reached at the last down step of
+        the path (§9.2): their chain of questions, whose last ``where`` holds the variable's
+        conditions (resolved on the column's table, the trailing lookups prefixed, as an
+        ``exists`` leaf's ``where`` is), and every scope column of their coverage restricted to
+        a finite set of values."""
+        function = cast(Function, variable.aggregate)
+        datatype = base.datatype
+        ordered = descriptor.fields.permissible_values
+        order: tuple[str, ...] | None = None
+        if function == "mean" and datatype not in _NUMERIC:
+            self._not_aggregated(function, descriptor, at, "numbers")
+            return None
+        if function in ("max", "min"):
+            if datatype in ("category",) and ordered is not None and ordered.ordered:
+                order = tuple(entry.value for entry in ordered.values)
+            elif datatype not in _NUMERIC:
+                self._not_aggregated(function, descriptor, at, "numbers and ordered categories")
+                return None
+        empty: Constant | None = None
+        if variable.empty is not None and variable.empty != EXCLUDE:
+            kind = "number" if function == "mean" else datatype or ""
+            empty = typed_constant(variable.empty, kind)
+            if empty is None or (order is not None and empty not in order):
+                self.refuse(
+                    RefusalCode.INVALID_CONSTANT,
+                    (*at, "empty"),
+                    text('empty is "exclude", or a value of the aggregate: '),
+                    text(_EXPECTED.get(kind, "typed") if order is None else "a listed value"),
+                    alternatives=self.listed(list(order or ())),
+                )
+                return None
+        trailing = _trailing(path)
+        served = context.served
+        context.served = bool(trailing)
+        try:
+            where, failed = self._resolved(
+                context, variable.where or [], (*at, "where"), descriptor.id.split(".", 1)[0], True
+            )
+        finally:
+            context.served = served
+        quantifiers = [_quantifier("some")] * down_steps(path)
+        chain = self._chain(
+            context,
+            path,
+            quantifiers,
+            variable.lift or "strict",
+            False,
+            conjuncts(where),
+            at,
+            context.unit,
+        )
+        if failed or not isinstance(chain, RExists):
+            return None
+        depth = down_steps(path)
+        chain = _last_unlifted(chain, depth)
+        top = self._within_caps(context, at, (chain,))
+        if top is None:
+            return None
+        chain = cast(RExists, top[0])
+        if not self._closable(context, chain, depth, at):
+            return None
+        if function != "count":
+            self._read_column(context, descriptor)
+        return replace(
+            base,
+            kind="aggregate",
+            via=(),
+            function=function,
+            rows=chain,
+            depth=depth,
+            lookup=trailing,
+            empty=empty,
+            order=order,
+        )
+
+    def _not_aggregated(
+        self, function: str, descriptor: ColumnDescriptor, at: Position, takes: str
+    ) -> None:
+        self.refuse(
+            RefusalCode.AGGREGATE_NOT_ALLOWED,
+            (*at, "aggregate"),
+            text(f"{function} takes {takes}; "),
+            data(descriptor.id),
+            text(f" is a {descriptor.fields.datatype} column"),
+            alternatives=[text("count"), *([] if function == "mean" else [text("mean")])],
+        )
+
+    def _closable(self, context: _Cohort, chain: RExists, depth: int, at: Position) -> bool:
+        """Whether every step of an aggregate's chain can close a unit: a step whose coverage has
+        scope columns records its rows only for the listed values of them, so the last step's
+        conditions restrict each to a finite set, in a top-level ``values`` conjunct on the row
+        itself; an earlier step has no conditions of its own and cannot (§9.2)."""
+        for index, node in enumerate(levels(chain, depth)):
+            coverage = context.coverage[node.step.rel]
+            last = index == depth - 1
+            if coverage.scope_columns:
+                admitted = _admitted_columns(node) if last else set[str]()
+                open_columns = [c for c in coverage.scope_columns if c not in admitted]
+                if open_columns:
+                    self.refuse(
+                        RefusalCode.OPEN_SCOPE,
+                        (*at, "where") if last else (*at, "column"),
+                        text("The coverage of "),
+                        data(coverage.relationship),
+                        text(" records rows only for the listed values of its scope columns, so "),
+                        text("an aggregate over its rows restricts each to a finite set of "),
+                        text("values in a top-level values conjunct of where, and only the last "),
+                        text("step's can (§9.2): "),
+                        *[data(column) for column in open_columns],
+                    )
+                    return False
+        return True
 
     def _of_clauses(
         self,
@@ -2222,6 +2583,39 @@ def _interned(leaves: dict[Position, list[int]]) -> dict[Position, frozenset[int
     return interned
 
 
+def levels(chain: RExists, depth: int) -> list[RExists]:
+    """An aggregate's chain as its questions, outermost first: each but the last has the next as
+    its one ``where`` clause."""
+    found = [chain]
+    while len(found) < depth:
+        found.append(cast(RExists, found[-1].where[0]))
+    return found
+
+
+def _last_unlifted(chain: RExists, depth: int) -> RExists:
+    """The chain with no lift on its last question, whose rows an aggregate reads: the lift is
+    the rule of the steps before it (§9.2)."""
+    found = levels(chain, depth)
+    node = replace(found[-1], lift=None)
+    for outer in reversed(found[:-1]):
+        node = replace(outer, where=(node,))
+    return node
+
+
+def _admitted_columns(node: RExists) -> set[str]:
+    """The columns of a question's child table that a top-level ``values`` conjunct without
+    ``negate`` restricts, on the child row itself (§6.5)."""
+    return {
+        clause.column.split(".", 1)[1]
+        for clause in node.where
+        if isinstance(clause, RValue)
+        and not clause.via
+        and not clause.negate
+        and isinstance(clause.predicate, Values)
+        and clause.column.split(".", 1)[0] == node.table
+    }
+
+
 def _trailing(path: Path) -> Path:
     """The up steps after the last down step."""
     last = max(index for index, step in enumerate(path) if step.dir == "down")
@@ -2238,13 +2632,18 @@ __all__ = [
     "UNCONFIRMED",
     "Coverage",
     "FieldRead",
+    "Function",
     "Label",
     "LabelNotShownError",
     "PackView",
     "Resolution",
     "ResolvedCohort",
+    "ResolvedVariable",
+    "VariableKind",
     "ViewPredicate",
+    "ViewVariable",
     "check_parent_scopes",
+    "levels",
     "pack_failed",
     "resolve",
     "typed_constant",

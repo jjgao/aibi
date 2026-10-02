@@ -25,6 +25,11 @@ It states, in the canonical order (step 8 of §7.6):
 Long lists are cut: at most ``LISTED`` constants of a ``values`` list, keys of an ``ids`` leaf or
 values of a scope, then how many more there are; each data token is cut at 200 characters and
 marked (§8.1). Everything read from data is a data token, never template text (A6).
+
+``variable_readback`` states a view's variable the same way (D325): its column and lookups; for
+an aggregate, the function, the rows reached at its last down step with their conditions, then
+each earlier step they are pooled through, and what a unit with no value takes; for ``some`` or
+``every``, its question.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -33,11 +38,11 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.engine.canonical import CanonicalCohort, canonical_clause
+from aibi.core.engine.canonical import CanonicalCohort, CanonicalVariable, canonical_clause
 from aibi.core.engine.data import Release
 from aibi.core.engine.graph import Path
 from aibi.core.engine.ids import order_key, sorted_unique
-from aibi.core.engine.resolve import Coverage
+from aibi.core.engine.resolve import Coverage, ResolvedVariable, levels
 from aibi.core.engine.resolved import (
     Bounds,
     Constant,
@@ -214,7 +219,6 @@ class _Reader:
         return found
 
     def exists(self, node: RExists) -> list[Segment]:
-        step = node.step
         if node.quantifier == "every":
             quantified = "every "
         elif node.min_count is not None and node.min_count > 1:
@@ -225,6 +229,24 @@ class _Reader:
             text(quantified),
             self.label(node.table),
             text(" rows" if node.min_count is not None and node.min_count > 1 else " row"),
+            *self.reached(node),
+        ]
+        if node.where:
+            found.append(
+                text(
+                    ", each of which is such that "
+                    if node.quantifier == "every"
+                    else ", such that "
+                )
+            )
+            found += self.joined(node.where, " and ")
+        return found
+
+    def reached(self, node: RExists) -> list[Segment]:
+        """How a question reaches its rows: its relationship and lookups, ``exclude_self``, the
+        coverage it relies on and its lift rule."""
+        step = node.step
+        found: list[Segment] = [
             text(" linked through "),
             self.label(step.rel),
             *self.lookups(node.via[:-1]),
@@ -244,15 +266,21 @@ class _Reader:
                 self.label(node.table),
                 text(" rows that could be assessed)"),
             ]
-        if node.where:
-            found.append(
-                text(
-                    ", each of which is such that "
-                    if node.quantifier == "every"
-                    else ", such that "
-                )
-            )
-            found += self.joined(node.where, " and ")
+        return found
+
+    def pooled(self, variable: ResolvedVariable) -> list[Segment]:
+        """An aggregate's rows: those reached at its last down step, then each earlier step
+        they are pooled through, innermost first (§9.2)."""
+        assert variable.rows is not None
+        chain = levels(variable.rows, variable.depth)
+        last = chain[-1]
+        found: list[Segment] = [self.label(last.table), text(" rows")]
+        found += self.reached(last)
+        if last.where:
+            found += [text(", such that "), *self.joined(last.where, " and ")]
+        for node in reversed(chain[:-1]):
+            found += [text(", of the "), self.label(node.table), text(" rows")]
+            found += self.reached(node)
         return found
 
     def recorded(self, relationship: str) -> list[Segment]:
@@ -380,6 +408,39 @@ def readback(cohort: CanonicalCohort) -> list[Segment]:
     return found + _summaries(cohort)
 
 
+_FUNCTIONS = {"max": "greatest", "min": "least", "mean": "mean"}
+
+
+def variable_readback(variable: CanonicalVariable) -> list[Segment]:
+    """A view's variable (D325), for its view's readback: the column and the rows it reads,
+    from the release's descriptors."""
+    resolved = variable.resolved
+    reader = _Reader(resolved.release, dict(resolved.coverage))
+    if resolved.kind == "column":
+        return [text("the "), reader.label(resolved.column), *reader.lookups(resolved.via)]
+    if resolved.kind == "question":
+        assert resolved.question is not None
+        return [text("whether "), *reader.clause(resolved.question)]
+    function = resolved.function
+    assert function is not None
+    if function == "count":
+        return [text("the number of "), *reader.pooled(resolved)]
+    found: list[Segment] = [
+        text(f"the {_FUNCTIONS[function]} "),
+        reader.label(resolved.column),
+        *reader.lookups(resolved.lookup),
+        text(" over the "),
+        *reader.pooled(resolved),
+    ]
+    if resolved.order is not None:
+        found.append(text(", in the column's listed order"))
+    if resolved.empty is None:
+        found.append(text("; a unit with no value there is left out"))
+    else:
+        found += [text("; "), data(constant_text(resolved.empty)), text(" for a unit with none")]
+    return found
+
+
 def conditions(cohort: CanonicalCohort) -> list[Segment]:
     """The conditions of a canonical cohort without its opening and closing words: a view's
     predicate, which its view's readback states for the units of its cohorts (D317), followed
@@ -417,4 +478,4 @@ def _segments(summary: Sequence[Segment]) -> JsonValue:
     return [segment.model_dump(mode="json") for segment in summary]
 
 
-__all__ = ["LISTED", "conditions", "constant_text", "readback"]
+__all__ = ["LISTED", "conditions", "constant_text", "readback", "variable_readback"]

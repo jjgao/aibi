@@ -23,6 +23,7 @@ from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import CompileError, Crossing, TruthValues, compile_cohort, cross
+from aibi.core.engine.variables import evaluate_variable, joint, materialise
 from aibi.core.schema.semantics import Flag
 
 City = Callable[..., Release]
@@ -130,6 +131,7 @@ def city_data(draw: st.DrawFn) -> tuple[dict[str, list[dict[str, Any]]], dict[st
                     "establishment_id": pick([place, place, place, None, "gone"]),
                     "kind": pick(["routine", "follow_up", "courtesy", None]),
                     "score": pick([None, 40, 90]),
+                    "rating": pick(["n/a", "low", "mid", "high", "later", "extreme", None]),
                 }
             )
             checklist = pick([None, "basic", "temps", "all", "missing"])
@@ -360,6 +362,149 @@ def clauses(scoped: bool, size: int = 6) -> st.SearchStrategy[Any]:
     )
 
 
+@st.composite
+def variables(draw: st.DrawFn, scoped: bool) -> dict[str, Any]:
+    """A variable of a view on establishments (§9.2, D325), never refused: a column of the unit
+    or of a row it looks up, a question, or an aggregate of the rows below the unit, through
+    one down step or two, with conditions, record filters, scope columns restricted, lifts and
+    empties; multi-valued categories, ordered (``inspections.rating``, and the unit's grade
+    looked up from each inspection) under ``max`` and ``min`` and every other aggregate, and
+    unordered under those they take, over rows NOT_APPLICABLE, NOT_ASSESSED, outside the list
+    or null, and units with none."""
+    pick = lambda options: draw(st.sampled_from(options))  # noqa: E731
+    lift = pick([{}, {"lift": "strict"}, {"lift": "assessed"}])
+    function = pick(["count", "max", "min", "mean"])
+    fraction = [7.5] if function == "mean" else []
+    empty = (
+        {"empty": pick(["exclude", 0, *fraction])}
+        if function != "count" and draw(st.booleans())
+        else {}
+    )
+    choice = draw(st.integers(0, 15))
+    if choice == 0:
+        return {
+            "column": pick(
+                [
+                    "establishments.seats",
+                    "establishments.frontage",
+                    "establishments.revenue",
+                    "establishments.grade",
+                    "establishments.cuisine",
+                    "establishments.chain",
+                    "establishments.name",
+                ]
+            )
+        }
+    if choice == 1:
+        return {"column": "owners.region"}
+    if choice == 2:
+        aggregate = pick(["some", "every"])
+        return {
+            "column": "establishments.tags",
+            "aggregate": aggregate,
+            "values": _subset(draw, ["vegan", "halal"]),
+        }
+    if choice == 3:
+        # every over a scoped relationship may not mention its scope column (§6.5).
+        aggregate = pick(["some"] if scoped else ["some", "every"])
+        return {
+            "column": "violations.code",
+            "aggregate": aggregate,
+            "values": _subset(draw, ["temp", "pest", "label"]),
+            **lift,
+        }
+    if choice == 4:
+        where = draw(
+            st.lists(
+                st.sampled_from(
+                    [
+                        _value("inspections.kind", values=["routine"]),
+                        _value("inspections.score", range={"gte": 50}),
+                    ]
+                ),
+                max_size=2,
+            )
+        )
+        return {"column": "inspections.score", "aggregate": function, "where": where, **empty}
+    if choice == 5:
+        where: list[Any] = (
+            [_value("violations.code", values=_subset(draw, ["temp", "pest"]))] if scoped else []
+        )
+        if draw(st.booleans()):
+            where.append(_value("violations.severity", range={"lt": 5}))
+        return {
+            "column": "violations.severity",
+            "aggregate": function,
+            "where": where,
+            **lift,
+            **empty,
+        }
+    if choice == 6:
+        where = [_value("readings.appliance", values=_subset(draw, ["fridge", "freezer"]))]
+        column = (
+            "readings.celsius"
+            if function != "count"
+            else pick(["readings.celsius", "readings.reading_id"])
+        )
+        doubles = {"empty": pick(["exclude", 0, 7.5])} if empty else {}
+        return {"column": column, "aggregate": function, "where": where, **lift, **doubles}
+    if choice == 7:
+        where = (
+            [_value("complaints.channel", values=_subset(draw, ["phone", "web"]))]
+            if draw(st.booleans())
+            else []
+        )
+        return {"column": "complaints.severity", "aggregate": function, "where": where, **empty}
+    if choice == 8:
+        return {"column": "licence_types.tier", "aggregate": function, **empty}
+    if choice == 9:
+        return {"column": "staff.staff_id", "aggregate": "count"}
+    if choice >= 11:
+        return draw(category_variables())
+    return {"column": "inspections.score", "aggregate": function, **empty}
+
+
+@st.composite
+def category_variables(draw: st.DrawFn) -> dict[str, Any]:
+    """A variable over a multi-valued category (§9.2, D325), never refused: an ordered one
+    (``inspections.rating``, or the unit's grade looked up from each inspection) under ``max``,
+    ``min`` (with or without ``empty`` and a ``where``), ``count``, ``some`` and ``every``, and
+    an unordered one (``inspections.kind``) under ``count``, ``some`` and ``every``; the rows are
+    drawn NOT_APPLICABLE, NOT_ASSESSED, outside the list or null, and units may have none."""
+    pick = lambda options: draw(st.sampled_from(options))  # noqa: E731
+    if draw(st.integers(0, 3)) == 0:
+        unordered = pick(["count", "some", "every"])
+        if unordered == "count":
+            return {"column": "inspections.kind", "aggregate": "count"}
+        return {
+            "column": "inspections.kind",
+            "aggregate": unordered,
+            "values": _subset(draw, ["routine", "follow_up", "courtesy"]),
+        }
+    rating = draw(st.booleans())
+    ordered = pick(["max", "min", "max", "min", "count", "some", "every"])
+    rows: dict[str, Any] = (
+        {"column": "inspections.rating"}
+        if rating
+        else {
+            "column": "establishments.grade",
+            "via": [{"rel": INSPECTED, "dir": "down"}, {"rel": INSPECTED, "dir": "up"}],
+        }
+    )
+    listed = ["low", "mid", "high"] if rating else ["C", "B", "A"]
+    if ordered in ("some", "every"):
+        return {**rows, "aggregate": ordered, "values": _subset(draw, listed)}
+    where = (
+        [_value("inspections.kind", values=["routine"])] if rating and draw(st.booleans()) else []
+    )
+    filled = (
+        {"empty": pick(["exclude", listed[1]])}
+        if ordered != "count" and draw(st.booleans())
+        else {}
+    )
+    return {**rows, "aggregate": ordered, "where": where, **filled}
+
+
 def _resolved(run: Runner, doc: Doc, release: Release, written: list[Any] | dict[str, Any]) -> Any:
     result = run(doc(written), release)
     limits = {refusal.limit.name for refusal in result.resolution.refusals if refusal.limit}
@@ -477,6 +622,72 @@ def test_a_crossing_by_the_compiler_counts_what_the_evaluator_s_truth_values_giv
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(compiler, "MARK_BITS", 1)
         assert crossed(cohorts, predicates) == expected
+
+
+@FEWER
+@given(data=city_data(), extra=st.data())
+def test_variables_materialised_by_the_compiler_count_what_the_evaluator_gives_each_unit(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    materialised: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """Variables over cohorts (D326, D327): each value's units, the units excluded by reason,
+    and the flags, and for several variables the units for which some has a value, counted in
+    SQL as the reference evaluator gives each unit's value; with one flag to a word."""
+    rows, options = data
+    release = city(rows, **options)
+    scoped = options["violations"].get("parents") is GROUPED
+    written = {
+        f"c{index}": extra.draw(st.lists(clauses(scoped, 3), min_size=0, max_size=2))
+        for index in range(extra.draw(st.integers(min_value=1, max_value=2)))
+    }
+    given = extra.draw(st.lists(variables(scoped), min_size=1, max_size=3))
+    resolution = variables_of(doc(written), release, given)
+    limits = {refusal.limit.name for refusal in resolution.refusals if refusal.limit}
+    assume(not limits & {"clause_depth", "leaves_per_cohort"})
+    assert resolution.refusals == [], resolution.refusals
+    cohorts = [resolution.cohorts[name] for name in written]
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    values = [evaluate_variable(variable) for variable in found]
+    expected = []
+    for cohort in cohorts:
+        members = evaluate(cohort).members
+        together = joint(values, members) if len(found) > 1 else None
+        expected.append((tuple(materialise(value, members) for value in values), together))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(compiler, "MARK_BITS", 1)
+        assert materialised(cohorts, found) == tuple(expected)
+
+
+@EXAMPLES
+@given(data=city_data(), extra=st.data())
+def test_category_variables_materialised_by_the_compiler_count_what_the_evaluator_gives(
+    city: City,
+    doc: Doc,
+    variables_of: Callable[..., Any],
+    materialised: Callable[..., Any],
+    data: Any,
+    extra: st.DataObject,
+) -> None:
+    """The property above over multi-valued categories alone (``category_variables``), their
+    rows' coverage all declared, so that an ordered category's ``max`` and ``min`` meet rows
+    NOT_APPLICABLE, NOT_ASSESSED and outside the list, which SQL must skip or exclude as the
+    reference evaluator does (§9.2, D326)."""
+    rows, options = data
+    release = city(rows, **{**options, "inspections": {"parents": "all"}})
+    given = extra.draw(st.lists(category_variables(), min_size=1, max_size=3))
+    resolution = variables_of(doc({"every": []}), release, given)
+    assert resolution.refusals == [], resolution.refusals
+    [cohort] = resolution.cohorts.values()
+    found = [resolution.variables[f"0/{index}"] for index in range(len(given))]
+    values = [evaluate_variable(variable) for variable in found]
+    members = evaluate(cohort).members
+    together = joint(values, members) if len(found) > 1 else None
+    expected = ((tuple(materialise(value, members) for value in values), together),)
+    assert materialised([cohort], found) == expected
 
 
 def test_a_crossing_counts_a_lift_s_one_changed_unit_and_no_unknown_unit_as_shared(

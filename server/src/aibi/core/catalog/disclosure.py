@@ -21,10 +21,12 @@ under the effective *k*: the largest of the deployment's floor and the dataset's
   summed without counting a row twice: its count is ``null`` (suppressed) whenever categories were
   pooled. Histograms take their edges from the declared range; one whose edges came from the
   data is not reported (``no_declared_range``). Bins with 1 to *k* − 1 values are merged as §8.4
-  says, the smallest first (the leftmost on a tie), with the nearest non-empty bin on the side
-  whose neighbour holds fewer values (the left on a tie), empty bins between them included, until
-  none is left or one non-empty bin remains; one that still holds 1 to *k* − 1 suppresses the
-  distribution. Minima and maxima are not reported.
+  and D329 say, by ``analyses.disclosure.merged``, which results share: repeatedly, the leftmost
+  with 1 to *k* − 1 values merges with the nearest non-empty bin on its right (on its left when
+  none is), empty bins between them included, until none is left or one non-empty bin remains;
+  one that still holds 1 to *k* − 1 suppresses the distribution. (D271's smallest-first rule gave
+  its order away, D329.) Categories are still pooled as D271 says, which can pin a pooled count
+  (#49). Minima and maxima are not reported.
 - **Values an output cannot carry**: categories whose listed values are not all Unicode text of
   at most ``MAX_TEXT`` characters with a reference of at most ``MAX_POINTER`` characters of
   pointer (a value holding a noncharacter, or a very long one) are not reported, with or without
@@ -47,6 +49,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from aibi.core.analyses.disclosure import merged
 from aibi.core.schema.catalog import (
     Bin,
     CategoriesOut,
@@ -227,44 +230,29 @@ def _pooled(raw: dict[str, JsonValue], k: int) -> _Shown:
 
 
 def _merged(raw: dict[str, JsonValue], k: int) -> _Shown:
-    bins = _raw_bins(raw)
-    merged = False
-    while True:
-        small = [
-            (cast(int, b["count"]), i)
-            for i, b in enumerate(bins)
-            if _small(k, cast(int, b["count"]))
-        ]
-        filled = [i for i, b in enumerate(bins) if cast(int, b["count"]) > 0]
-        if not small or len(filled) <= 1:
-            break
-        _, at = min(small)
-        left = max((i for i in filled if i < at), default=None)
-        right = min((i for i in filled if i > at), default=None)
-        if left is None or (
-            right is not None and cast(int, bins[right]["count"]) < cast(int, bins[left]["count"])
-        ):
-            start, end = at, cast(int, right)
-        else:
-            start, end = left, at
-        span = bins[start : end + 1]
-        joined: dict[str, JsonValue] = {
-            "low": span[0]["low"],
-            "high": span[-1]["high"],
-            "includes_low": span[0]["includes_low"],
-            "includes_high": span[-1]["includes_high"],
-            "count": sum(cast(int, b["count"]) for b in span),
-        }
-        bins[start : end + 1] = [joined]
-        merged = True
+    raw_bins = _raw_bins(raw)
+    spans = merged([cast(int, b["count"]) for b in raw_bins], k)
+    bins: list[dict[str, JsonValue]] = []
+    for start, end in spans:
+        span = raw_bins[start : end + 1]
+        bins.append(
+            {
+                "low": span[0]["low"],
+                "high": span[-1]["high"],
+                "includes_low": span[0]["includes_low"],
+                "includes_high": span[-1]["includes_high"],
+                "count": sum(cast(int, b["count"]) for b in span),
+            }
+        )
+    was_merged = len(bins) < len(raw_bins)
     if any(_small(k, cast(int, b["count"])) for b in bins):
-        return _Shown(_none("suppressed"), suppressed=True, pooled=merged)
+        return _Shown(_none("suppressed"), suppressed=True, pooled=was_merged)
     shown: dict[str, JsonValue] = {
         "kind": "histogram",
         "from": raw["from"],
         "bins": cast(JsonValue, bins),
     }
-    return _Shown(shown, suppressed=merged, pooled=merged)
+    return _Shown(shown, suppressed=was_merged, pooled=was_merged)
 
 
 def _value(value: JsonValue) -> float | Data:

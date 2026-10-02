@@ -53,7 +53,11 @@ holds the analysis registry and applicability (`registry.py`), phase 2 of canoni
 (`views.py`), `compare.existence` (`existence.py`) with its methods held to R (`stats.py`, the
 fixture in `tests/core/analyses/reference/`), the disclosure of a predicate's counts in a result
 (`disclosure.py`), charts (`charts.py`) and result envelopes (`results.py`);
-`core/catalog/analyses.py` serves `run_analysis`, and the catalogue `list_analyses`.
+`core/catalog/analyses.py` serves `run_analysis`, and the catalogue `list_analyses`. From M3.2a,
+`core/engine/variables.py` gives a view's variables (columns and aggregates) their values by the
+reference evaluator, `sql.compile_materialised` counts them by SQL, and
+`core/analyses/distribution.py` is `summary.distribution`, `core/analyses/common.py` what the
+core's descriptive analyses share.
 
 ## Non-negotiables
 

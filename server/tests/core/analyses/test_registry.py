@@ -2,6 +2,7 @@
 D316), with a test-only pack, ``shelves``, that registers an analysis and a requirement
 predicate."""
 
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -50,7 +51,7 @@ class Restock:
         return self._entry
 
     def run(self, inputs: AnalysisInputs) -> Mapping[str, JsonValue]:
-        raise AssertionError("the core runs no pack's analysis until M3.2")
+        raise AssertionError("the core runs no pack's analysis until M3.2d")
 
 
 def stocked(release: ReleaseView) -> bool:
@@ -92,7 +93,7 @@ def test_the_core_s_entry_is_generated_from_its_models() -> None:
 
 def test_the_registry_holds_the_core_s_analyses_and_the_packs_by_id() -> None:
     analyses = Analyses(shelves([{"role": "orders", "kind": "table"}]))
-    assert analyses.ids() == ["compare.existence", "shelves.restock"]
+    assert analyses.ids() == ["compare.existence", "shelves.restock", "summary.distribution"]
     found = analyses.get("shelves.restock")
     assert found is not None
     assert found.pack == "shelves"
@@ -227,3 +228,4 @@ def test_a_view_of_a_pack_s_analysis_is_listed_but_not_run(check: Check, shop: S
     found = check(written, shop(), analyses=Analyses(shelves([])))
     [refusal] = found.refusals
     assert (refusal.code, refusal.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
+    assert "M3.2d" in json.dumps([part.model_dump() for part in refusal.message])

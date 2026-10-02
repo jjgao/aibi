@@ -36,9 +36,12 @@ child process of its own (``duck.serve``), sends it the queries, reads their row
   ``query_answer_bytes`` when the child finds its rows larger), read and parsed under the
   deadline into a buffer of its size: integers packed column by column, which the server reads
   in place (``Rows``), making no object per row until one is read. Each query says how many
-  columns its rows have (``Query.columns``, at least one), and a result of another number of
-  columns is a fault, so that what the server makes of a frame is bounded by the queries it
-  sent, not by what the child claims. A frame of another shape, or a larger one, is a fault.
+  columns its rows have (``Query.columns``, at least one), and which of them are values, whose
+  rows may hold doubles or text as well (``Query.values``, D327); a result of another number of
+  columns, or a column that is not a value holding anything but integers, is a fault, so that
+  what the server makes of a frame is bounded by the queries it sent, not by what the child
+  claims. A frame of another shape, or a larger one, is a fault, and so is text that is not
+  UTF-8.
 - The child's whole process group is killed, and a process it started that left the group (a
   session of its own) would not be: nothing a child runs starts one, as its session loads no
   extension and runs one ``SELECT`` per statement.
@@ -53,6 +56,7 @@ before it answers, or an error of DuckDB's, is a fault of the compiler or the en
 The worker bounds what a query makes the engine consume; it is not a privilege boundary.
 """
 
+import codecs
 import contextlib
 import os
 import pickle
@@ -64,10 +68,11 @@ import subprocess
 import sys
 import threading
 import time
+from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, cast, overload
 
 import aibi
 from aibi.core.schema.limits import (
@@ -97,6 +102,9 @@ _CHILD = (
 )
 _VALUE, _MEMORY, _TOO_LARGE, _ERROR = b"V", b"M", b"A", b"E"
 """The first byte of an answer, as ``duck.answer`` writes it."""
+_DOUBLES, _TEXTS, _LENGTHS = ord("d"), ord("s"), "I"
+"""The type codes of a value column of doubles and of text, and the array type of a text
+column's lengths, as ``duck`` writes them."""
 _WIDTHS: dict[int, Literal["b", "h", "i", "q"]] = {
     ord("b"): "b",
     ord("h"): "h",
@@ -128,32 +136,96 @@ class CallerDeadline(Exception):  # noqa: N818 - a deadline, not an error of the
 
 @dataclass(frozen=True)
 class Query:
-    """One statement for a worker: SQL the compiler rendered, its parameters by name, and how
-    many columns its rows have, which its answer must hold (D293)."""
+    """One statement for a worker: SQL the compiler rendered, its parameters by name, how many
+    columns its rows have, which its answer must hold, and which of them are values, whose rows
+    may hold doubles or text as well as integers (D293, D327)."""
 
     sql: str
     parameters: Mapping[str, object]
     columns: int
+    values: frozenset[int] = frozenset()
 
     def __post_init__(self) -> None:
         if self.columns < 1:
             raise ValueError("a query's rows have at least one column")
+        if any(not 0 <= index < self.columns for index in self.values):
+            raise ValueError("a query's value columns are among its columns")
+
+
+Column = Sequence[int] | Sequence[float] | Sequence[str]
+"""A column of an answer, packed in place: integers, or, for a value column, doubles or text."""
+
+
+class Texts(Sequence[str]):
+    """A text column as the answer packs it: each row's text is decoded when it is read."""
+
+    __slots__ = ("_data", "_starts")
+
+    def __init__(self, data: memoryview, starts: Sequence[int]) -> None:
+        self._data = data
+        self._starts = starts
+        """Where each row's bytes start, and after them where the last one ends."""
+
+    def __len__(self) -> int:
+        return len(self._starts) - 1
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | Sequence[str]:
+        if isinstance(index, slice):
+            return [self[at] for at in range(*index.indices(len(self)))]
+        if index < 0:
+            index += len(self)
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        return bytes(self._data[self._starts[index] : self._starts[index + 1]]).decode("utf-8")
 
 
 class Rows(Sequence[tuple[int, ...]]):
-    """A query's rows as the answer holds them, columns of integers packed in place; each row
-    is made as it is read."""
+    """A query's rows as the answer holds them, columns packed in place; each row is made as it
+    is read. Rows are read as integers; a query's value columns, which may hold doubles or text,
+    are read by ``value_column``."""
 
-    __slots__ = ("_columns", "_count")
+    __slots__ = ("_columns", "_count", "_integral")
 
-    def __init__(self, columns: Sequence[memoryview], count: int) -> None:
+    def __init__(self, columns: Sequence[Column], count: int) -> None:
         self._columns = tuple(columns)
         self._count = count
+        self._integral = all(
+            not isinstance(column, Texts)
+            and not (isinstance(column, memoryview) and column.format == "d")
+            for column in self._columns
+        )
 
     @property
-    def columns(self) -> tuple[memoryview, ...]:
-        """The columns as the answer packs them, each ``len(self)`` integers long."""
-        return self._columns
+    def width(self) -> int:
+        """The number of columns."""
+        return len(self._columns)
+
+    @property
+    def columns(self) -> tuple[Sequence[int], ...]:
+        """The columns of integers as the answer packs them, each ``len(self)`` long."""
+        self._integers()
+        return cast(tuple[Sequence[int], ...], self._columns)
+
+    def value_column(self, index: int) -> Column:
+        """A value column (``Query.values``): its integers, doubles or text."""
+        return self._columns[index]
+
+    def integer_column(self, index: int) -> Sequence[int]:
+        """A column that holds integers only; ``QueryError`` for one that does not."""
+        column = self._columns[index]
+        if isinstance(column, Texts) or (isinstance(column, memoryview) and column.format == "d"):
+            raise QueryError("a query's column holds doubles or text where integers are read")
+        return cast(Sequence[int], column)
+
+    def _integers(self) -> None:
+        if not self._integral:
+            raise QueryError("a query's rows hold doubles or text where integers are read")
 
     def __len__(self) -> int:
         return self._count
@@ -165,17 +237,19 @@ class Rows(Sequence[tuple[int, ...]]):
     def __getitem__(self, index: slice) -> Sequence[tuple[int, ...]]: ...
 
     def __getitem__(self, index: int | slice) -> tuple[int, ...] | Sequence[tuple[int, ...]]:
+        self._integers()
         if isinstance(index, slice):
             return [self[at] for at in range(*index.indices(self._count))]
         if index < 0:
             index += self._count
         if not 0 <= index < self._count:
             raise IndexError(index)
-        return tuple(int(column[index]) for column in self._columns)
+        return tuple(int(cast(Sequence[int], column)[index]) for column in self._columns)
 
     def __iter__(self) -> Iterator[tuple[int, ...]]:
+        self._integers()
         for index in range(self._count):
-            yield tuple(int(column[index]) for column in self._columns)
+            yield tuple(int(cast(Sequence[int], column)[index]) for column in self._columns)
 
 
 def _refused(message: str, name: str, maximum: int) -> QueryRefused:
@@ -320,7 +394,7 @@ class _Malformed(Exception):  # noqa: N818 - a signal between two functions, not
 
 def _rows(frame: memoryview, queries: Sequence[Query], deadline: float) -> list[Rows]:
     """A ``VALUE`` answer's rows, one ``Rows`` for each query, each of the query's number of
-    columns, parsed under ``deadline``."""
+    columns, its value columns alone holding doubles or text, parsed under ``deadline``."""
     try:
         (count,) = struct.unpack_from("!I", frame, 1)
         at = 5
@@ -334,22 +408,51 @@ def _rows(frame: memoryview, queries: Sequence[Query], deadline: float) -> list[
             at += 12
             if columns != query.columns:
                 raise _Malformed
-            packed: list[memoryview] = []
-            for _ in range(columns):
-                code = _WIDTHS.get(frame[at])
-                if code is None:
+            packed: list[Column] = []
+            for index in range(columns):
+                kind = frame[at]
+                code = _WIDTHS.get(kind)
+                if code is None and kind == _DOUBLES and index in query.values:
+                    code = "d"
+                if code is not None:
+                    end = at + 1 + rows * struct.calcsize(code)
+                    if end > len(frame):
+                        raise _Malformed
+                    packed.append(frame[at + 1 : end].cast(code))
+                    at = end
+                elif kind == _TEXTS and index in query.values:
+                    column, at = _texts(frame, at + 1, rows)
+                    packed.append(column)
+                else:
                     raise _Malformed
-                end = at + 1 + rows * struct.calcsize(code)
-                if end > len(frame):
-                    raise _Malformed
-                packed.append(frame[at + 1 : end].cast(code))
-                at = end
             found.append(Rows(packed, rows))
-    except (struct.error, IndexError):
+    except (struct.error, IndexError, ValueError):
         raise _Malformed from None
     if at != len(frame):
         raise _Malformed
     return found
+
+
+def _texts(frame: memoryview, at: int, rows: int) -> tuple[Texts, int]:
+    """A text column at ``at``: its total bytes, each row's length, and the bytes, which must be
+    UTF-8; and where it ends."""
+    (total,) = struct.unpack_from("!Q", frame, at)
+    at += 8
+    end = at + rows * struct.calcsize(_LENGTHS)
+    if end + total > len(frame):
+        raise _Malformed
+    lengths = frame[at:end].cast(_LENGTHS)
+    starts = array("q", [0])
+    for length in lengths:
+        starts.append(starts[-1] + length)
+    if starts[-1] != total:
+        raise _Malformed
+    data = frame[end : end + total]
+    try:
+        codecs.decode(data, "utf-8")
+    except UnicodeDecodeError:
+        raise _Malformed from None
+    return Texts(data, starts), end + total
 
 
 class Workers:
@@ -409,7 +512,7 @@ class Workers:
             limits.query_memory // 2,
             limits.query_threads,
             MAX_QUERY_ANSWER_BYTES,
-            [(query.sql, dict(query.parameters)) for query in queries],
+            [(query.sql, dict(query.parameters), query.values) for query in queries],
         )
         child = _launch()
 
@@ -490,4 +593,13 @@ class Workers:
         return QueryError(f"a query worker ended with {code} before it answered")
 
 
-__all__ = ["CallerDeadline", "Query", "QueryError", "QueryRefused", "Rows", "Workers"]
+__all__ = [
+    "CallerDeadline",
+    "Column",
+    "Query",
+    "QueryError",
+    "QueryRefused",
+    "Rows",
+    "Texts",
+    "Workers",
+]
