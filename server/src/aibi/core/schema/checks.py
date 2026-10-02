@@ -4,24 +4,18 @@ Each check reports refusals with a JSON Pointer into the substituted document; t
 pointers back to the document as written.
 """
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import cast
 
 from aibi.core.schema.document import (
-    AllClause,
-    AnyClause,
-    ClauseModel,
     Cohort,
     CohortLeaf,
     CoveredLeaf,
     Document,
     ExistsLeaf,
     IdsLeaf,
-    KnownClause,
-    NotClause,
-    UnknownClause,
     ValueLeaf,
+    walk,
 )
 from aibi.core.schema.jsonio import pointer
 from aibi.core.schema.output import data, text
@@ -41,41 +35,6 @@ class Unknown:
     """Cohorts whose ``unmapped`` was null."""
     view_cohorts: frozenset[int] = frozenset()
     """Views whose ``cohorts`` was null."""
-
-
-def _children(clause: ClauseModel, path: Path) -> Iterator[tuple[ClauseModel, Path, bool]]:
-    """Direct sub-clauses, with their paths and whether they sit inside a ``where``."""
-    if isinstance(clause, AllClause):
-        for index, member in enumerate(clause.all):
-            yield member, [*path, "all", index], False
-    elif isinstance(clause, AnyClause):
-        for index, member in enumerate(clause.any):
-            yield member, [*path, "any", index], False
-    elif isinstance(clause, NotClause):
-        yield clause.not_, [*path, "not"], False
-    elif isinstance(clause, KnownClause):
-        yield clause.known, [*path, "known"], False
-    elif isinstance(clause, UnknownClause):
-        yield clause.unknown, [*path, "unknown"], False
-    elif isinstance(clause, ExistsLeaf):
-        for index, member in enumerate(clause.where or []):
-            yield member, [*path, "where", index], True
-
-
-def walk(
-    clauses: list[ClauseModel], path: Path, in_where: bool = False
-) -> Iterator[tuple[ClauseModel, Path, bool]]:
-    """Every clause under ``path``, depth first, with whether it is inside some ``where``."""
-    for index, clause in enumerate(clauses):
-        stack: list[tuple[ClauseModel, Path, bool]] = [(clause, [*path, index], in_where)]
-        while stack:
-            current, current_path, inside = stack.pop()
-            yield current, current_path, inside
-            children = list(_children(current, current_path))
-            stack.extend(
-                (child, child_path, inside or nested)
-                for child, child_path, nested in reversed(children)
-            )
 
 
 def _datasets(cohort: Cohort, document: Document) -> tuple[str, ...] | None:

@@ -1532,6 +1532,13 @@ def test_parent_scope_kinds_are_refused_at_the_kind(
         ]
 
 
+def test_analysis_methods_are_named_by_identifiers() -> None:
+    fields = {**ANALYSIS["fields"], "methods": {"log-log": "survfit(conf.type = 'log-log')"}}
+    assert refusals_of({**ANALYSIS, "fields": fields}) == [
+        ("INVALID_VALUE", "/fields/methods/log-log")
+    ]
+
+
 # --- Round 4: banned leaves at scale and in every shape, the release's sides ----------------------
 
 

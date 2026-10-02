@@ -20,6 +20,7 @@ A number is a value, not a spelling: an integral number such as ``2.0`` is read 
 
 import json
 import math
+import re
 from collections.abc import Sequence
 from typing import cast
 
@@ -60,6 +61,11 @@ class JsonError(Exception):
         self.limit = limit
 
 
+def utf16_key(value: str) -> bytes:
+    """A sort key that orders strings by UTF-16 code units, as RFC 8785 orders keys."""
+    return value.encode("utf-16-be", "surrogatepass")
+
+
 def escape_token(token: str | int) -> str:
     return str(token).replace("~", "~0").replace("/", "~1")
 
@@ -67,6 +73,44 @@ def escape_token(token: str | int) -> str:
 def pointer(tokens: Sequence[str | int]) -> str:
     """The RFC 6901 JSON Pointer for a sequence of object keys and array indices."""
     return "".join("/" + escape_token(token) for token in tokens)
+
+
+_MISSING = object()
+
+
+_ESCAPE = re.compile(r"~(?![01])")
+
+
+def lookup(value: JsonValue, path: str) -> object:
+    """The value a JSON Pointer names, or ``MISSING`` when it names nothing, as for a string
+    that is no pointer (one not starting with ``/``, or with a ``~`` not followed by 0 or 1)."""
+    if path == "":
+        return value
+    if not path.startswith("/") or _ESCAPE.search(path):
+        return MISSING
+    current: object = value
+    for raw in path[1:].split("/"):
+        token = raw.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict) and token in current:
+            current = cast(dict[str, object], current)[token]
+        elif (
+            isinstance(current, list)
+            and token.isascii()
+            and token.isdigit()
+            and (token == "0" or token[0] != "0")
+            and len(token) <= _MAX_INTEGER_DIGITS  # longer is no index, and int() has a limit
+        ):
+            items = cast(list[object], current)
+            if int(token) >= len(items):
+                return MISSING
+            current = items[int(token)]
+        else:
+            return MISSING
+    return current
+
+
+MISSING = _MISSING
+"""Returned by ``lookup`` for a pointer that names nothing."""
 
 
 class _Pairs(list[tuple[str, JsonValue]]):

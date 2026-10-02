@@ -57,15 +57,23 @@ ISSUANCE_ID_RE = re.compile(r"^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 """``iss:`` and a ULID in Crockford's base 32; never hashed."""
 DECIMAL_INTEGER_RE = re.compile(r"^(?:0|-?[1-9][0-9]*)$")
 PACK_CODE_RE = re.compile(rf"^{IDENT}\.{CODE}$")
+"""A pack's refusal or caveat code: ``<pack id>.<CODE>``."""
 ANY_CODE_RE = re.compile(rf"^(?:{IDENT}\.)?{CODE}$")
+"""A core code (unprefixed) or a pack's."""
 
 MAX_SAFE_INTEGER = 2**53 - 1
 """Integers beyond ±(2^53 - 1) are carried as decimal strings (SPEC §5.1)."""
 
 CORE_ANALYSIS_FAMILIES = frozenset({"summary", "compare", "survival"})
 CORE_LEAF_KINDS = frozenset({"value", "exists", "covered", "ids", "cohort"})
-RESERVED_PACK_IDS = CORE_ANALYSIS_FAMILIES | CORE_LEAF_KINDS | {"core"}
-"""Pack ids equal no core analysis family, no core leaf kind and not the ``core`` namespace."""
+ID_PREFIXES = frozenset(
+    {"rel", "cov", "ep", "model", "dataset", "sha256", "drv", "leaf", "iss", "stat"}
+)
+"""The words that begin the core's id forms (SPEC §5.1). A pack taking one as its id would make
+its concepts, analyses or codes look like those ids, such as a concept ``rel:t.c``."""
+RESERVED_PACK_IDS = CORE_ANALYSIS_FAMILIES | CORE_LEAF_KINDS | ID_PREFIXES | {"core"}
+"""Pack ids equal no core analysis family, no core leaf kind, no prefix of the core's id forms,
+and not the ``core`` namespace."""
 
 DATASET_DESCRIPTOR_ID = "dataset"
 """The dataset descriptor's id, which no table may take (SPEC §5.1)."""
@@ -300,6 +308,15 @@ def is_identifier(value: str) -> bool:
 
 def is_pack_id(value: str) -> bool:
     return is_identifier(value) and value not in RESERVED_PACK_IDS
+
+
+def is_pack_code(value: str) -> bool:
+    """Whether a code is a pack's, ``<pack id>.<CODE>``, in a namespace that is a pack id."""
+    return (
+        PACK_CODE_RE.fullmatch(value) is not None
+        and "__" not in value
+        and _namespace(value, ".") not in RESERVED_PACK_IDS
+    )
 
 
 def integer_value(value: int) -> int | str:

@@ -7,11 +7,12 @@ segments (SPEC §8.1).
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import Field, JsonValue
+from pydantic import Field
 
 from aibi.core.schema.ids import JsonPointer, PackCode
 from aibi.core.schema.limits import MAX_REFUSALS, REFUSALS
-from aibi.core.schema.output import Output, Segment, text
+from aibi.core.schema.output import DATA_MARK, LAX, Count, Output, Segment, text
+from aibi.core.schema.results import CohortCount
 
 
 class RefusalCode(StrEnum):
@@ -49,22 +50,23 @@ class Limit(Output):
     """The limit a refusal hit: one of the names in ``aibi.core.schema.limits``, or a pack's."""
 
     name: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]
-    max: int
+    max: Count
 
 
 class Refusal(Output):
     """A structured error (SPEC §8.6).
 
-    ``path`` is a JSON Pointer into the document as written, or ``None``. ``counts`` carries
-    cohort counts where a refusal reports numbers; their schema is defined with results.
+    ``path`` is a JSON Pointer into the document as written, or ``None``.
     """
 
-    code: RefusalCode | PackCode
-    path: JsonPointer | None
+    code: Annotated[RefusalCode, LAX] | PackCode
+    path: Annotated[JsonPointer, Field(json_schema_extra=DATA_MARK)] | None
+    """Its tokens are the document's own keys, so it is data (A6)."""
     message: list[Segment]
     alternatives: list[Segment] = Field(default_factory=list[Segment])
     limit: Limit | None = None
-    counts: list[JsonValue] | None = None
+    counts: list[CohortCount] | None = None
+    """Cohort counts, with their ids, where a refusal reports numbers (e.g. an overlap, §7.4)."""
 
 
 def sort_refusals(refusals: list[Refusal]) -> list[Refusal]:

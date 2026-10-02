@@ -1,0 +1,2043 @@
+{
+  "$defs": {
+    "Analysed": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/n"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/n"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "excluded_units": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded_units"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded_units"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded_units"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "excluded_units": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded_units"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/n",
+                  "/excluded",
+                  "/excluded_units"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "excluded": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/ExclusionReason"
+              },
+              "required": [
+                "NOT_ASSESSED",
+                "NOT_COVERED",
+                "NO_INFORMATION",
+                "NO_PARENT",
+                "OUT_OF_SCOPE",
+                "NO_ROWS",
+                "NOT_APPLICABLE",
+                "INVALID_VALUE"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded",
+          "x-aibi-computed": true
+        },
+        "excluded_units": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded Units",
+          "x-aibi-computed": true
+        },
+        "n": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "const": "suppressed"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "variables": {
+          "items": {
+            "$ref": "#/$defs/AnalysedVariable"
+          },
+          "minItems": 2,
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "n",
+        "excluded",
+        "excluded_units"
+      ],
+      "title": "Analysed",
+      "type": "object"
+    },
+    "AnalysedVariable": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/n"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/n"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "excluded": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "excluded_units": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded_units"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded_units"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/excluded_units"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "excluded_units": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "excluded_units"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/n",
+                  "/excluded",
+                  "/excluded_units"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "excluded": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/ExclusionReason"
+              },
+              "required": [
+                "NOT_ASSESSED",
+                "NOT_COVERED",
+                "NO_INFORMATION",
+                "NO_PARENT",
+                "OUT_OF_SCOPE",
+                "NO_ROWS",
+                "NOT_APPLICABLE",
+                "INVALID_VALUE"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded",
+          "x-aibi-computed": true
+        },
+        "excluded_units": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Excluded Units",
+          "x-aibi-computed": true
+        },
+        "n": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "const": "suppressed"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        }
+      },
+      "required": [
+        "n",
+        "excluded",
+        "excluded_units"
+      ],
+      "title": "AnalysedVariable",
+      "type": "object"
+    },
+    "AnalysisRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "AnalysisRef",
+      "type": "object"
+    },
+    "Caveat": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNKNOWN_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "INVALID_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SCOPE_PARTIAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COVERAGE_PROPOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNCONFIRMED_SEMANTICS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNMAPPED_COMPARISON"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "TIME_ORIGIN_MISMATCH"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "block"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "CONFOUNDED_WITH_DATASET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COHORTS_OVERLAP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SMALL_N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "PH_VIOLATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "DRAFT_RELEASE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SUPPRESSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "NOT_ESTIMABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "LIFT_DIFFERS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "POOLED_ACROSS_DATASETS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        }
+      ],
+      "description": "``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.",
+      "properties": {
+        "affects": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$"
+            },
+            {
+              "enum": [
+                "UNKNOWN_EXCLUDED",
+                "INVALID_EXCLUDED",
+                "SCOPE_PARTIAL",
+                "COVERAGE_PROPOSED",
+                "UNCONFIRMED_SEMANTICS",
+                "UNMAPPED_COMPARISON",
+                "TIME_ORIGIN_MISMATCH",
+                "CONFOUNDED_WITH_DATASET",
+                "COHORTS_OVERLAP",
+                "SMALL_N",
+                "PH_VIOLATED",
+                "DRAFT_RELEASE",
+                "SUPPRESSED",
+                "NOT_ESTIMABLE",
+                "LIFT_DIFFERS",
+                "POOLED_ACROSS_DATASETS"
+              ]
+            }
+          ],
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "affects"
+      ],
+      "title": "Caveat",
+      "type": "object"
+    },
+    "CohortRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "position": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "reference": {
+          "title": "Reference",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "position",
+        "id",
+        "reference"
+      ],
+      "title": "CohortRef",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1).",
+      "properties": {
+        "data": {
+          "maxLength": 10000,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
+    "DataSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "maxLength": 200,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "truncated": {
+          "const": true,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataSegment",
+      "type": "object"
+    },
+    "Derivation": {
+      "additionalProperties": false,
+      "description": "What an output was computed from, all of it hashed into its id (SPEC §7.6).",
+      "properties": {
+        "analysis": {
+          "$ref": "#/$defs/AnalysisRef"
+        },
+        "disclosure": {
+          "$ref": "#/$defs/Disclosure"
+        },
+        "document": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Document",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "engine": {
+          "pattern": "^aibi [0-9A-Za-z.+!_-]{1,64}$",
+          "title": "Engine",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "packs": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "$ref": "#/$defs/PackVersion"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "cov",
+                    "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
+                    "exists",
+                    "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            }
+          },
+          "title": "Packs",
+          "type": "object"
+        },
+        "releases": {
+          "items": {
+            "$ref": "#/$defs/ReleaseRef"
+          },
+          "minItems": 1,
+          "title": "Releases",
+          "type": "array"
+        },
+        "semantics_version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Semantics Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "document",
+        "analysis",
+        "releases",
+        "packs",
+        "semantics_version",
+        "disclosure",
+        "engine"
+      ],
+      "title": "Derivation",
+      "type": "object"
+    },
+    "Disclosure": {
+      "additionalProperties": false,
+      "description": "The effective disclosure setting of an output (SPEC §8.4).",
+      "properties": {
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "required": [
+        "min_cell_count"
+      ],
+      "title": "Disclosure",
+      "type": "object"
+    },
+    "ExclusionReason": {
+      "description": "Why an analysis left out a unit or row (SPEC §6.6): the reasons, and two more.",
+      "enum": [
+        "NOT_ASSESSED",
+        "NOT_COVERED",
+        "NO_INFORMATION",
+        "NO_PARENT",
+        "OUT_OF_SCOPE",
+        "NO_ROWS",
+        "NOT_APPLICABLE",
+        "INVALID_VALUE"
+      ],
+      "title": "ExclusionReason",
+      "type": "string"
+    },
+    "Issuance": {
+      "additionalProperties": false,
+      "description": "One time an output was produced. ``values_from`` names the issuance whose SQL produced\nthe values: this one, or for a cache hit the one that filled the cache.",
+      "properties": {
+        "cache_hit": {
+          "title": "Cache Hit",
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "values_from": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Values From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "cache_hit",
+        "values_from"
+      ],
+      "title": "Issuance",
+      "type": "object"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "PackVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "results_version": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Results Version",
+          "type": "integer"
+        },
+        "version": {
+          "maxLength": 64,
+          "pattern": "^(?:[0-9]+!)?[0-9]+(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:\\+[a-z0-9]+(?:\\.[a-z0-9]+)*)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "results_version"
+      ],
+      "title": "PackVersion",
+      "type": "object"
+    },
+    "Population": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n_true": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_true"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_true"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_true"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_true": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_true"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_false": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_false"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_false"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_false"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_false": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_false"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_unknown"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/n_unknown"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_reason"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_reason"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_leaf"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_leaf"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/unknown_by_leaf"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "unknown_by_leaf"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lift_differs": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "lift_differs"
+            ]
+          },
+          "then": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/lift_differs"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "suppressed": {
+                "contains": {
+                  "const": "/lift_differs"
+                }
+              }
+            },
+            "required": [
+              "suppressed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lift_differs": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "lift_differs"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n_unknown": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "n_unknown"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unknown_by_leaf": {
+                "type": "null"
+              },
+              "unknown_by_reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "suppressed": {
+              "items": {
+                "enum": [
+                  "/n_true",
+                  "/n_false",
+                  "/n_unknown",
+                  "/unknown_by_reason",
+                  "/unknown_by_leaf",
+                  "/lift_differs"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A cohort's accounting over the unit table (SPEC §6.6).\n\nA count is ``null`` only when the disclosure settings suppressed it, and ``suppressed``\nlists exactly those members. A breakdown is ``null`` with its total.",
+      "properties": {
+        "lift_differs": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lift Differs",
+          "x-aibi-computed": true
+        },
+        "n_false": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N False",
+          "x-aibi-computed": true
+        },
+        "n_true": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N True",
+          "x-aibi-computed": true
+        },
+        "n_unknown": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N Unknown",
+          "x-aibi-computed": true
+        },
+        "suppressed": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)+$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Suppressed",
+          "type": "array"
+        },
+        "unknown_by_leaf": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "patternProperties": {
+                "^leaf:[0-9a-f]{64}$": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unknown By Leaf",
+          "x-aibi-computed": true
+        },
+        "unknown_by_reason": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/Reason"
+              },
+              "required": [
+                "NOT_ASSESSED",
+                "NOT_COVERED",
+                "NO_INFORMATION",
+                "NO_PARENT",
+                "OUT_OF_SCOPE",
+                "NO_ROWS"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unknown By Reason",
+          "x-aibi-computed": true
+        }
+      },
+      "required": [
+        "n_true",
+        "n_false",
+        "n_unknown",
+        "unknown_by_reason",
+        "unknown_by_leaf",
+        "lift_differs"
+      ],
+      "title": "Population",
+      "type": "object"
+    },
+    "Readback": {
+      "additionalProperties": false,
+      "properties": {
+        "cohorts": {
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextSegment"
+                },
+                {
+                  "$ref": "#/$defs/DataSegment"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "title": "Cohorts",
+          "type": "array"
+        },
+        "view": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "View",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cohorts",
+        "view"
+      ],
+      "title": "Readback",
+      "type": "object"
+    },
+    "Reason": {
+      "description": "Why a truth value is UNKNOWN (SPEC §6.3). An UNKNOWN always has at least one.",
+      "enum": [
+        "NOT_ASSESSED",
+        "NOT_COVERED",
+        "NO_INFORMATION",
+        "NO_PARENT",
+        "OUT_OF_SCOPE",
+        "NO_ROWS"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "description": "A release an output drew on. The label is recorded beside the manifest, never hashed.",
+      "else": {
+        "properties": {
+          "label": {
+            "type": "integer"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "draft"
+          }
+        }
+      },
+      "properties": {
+        "dataset": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "label",
+        "manifest",
+        "status"
+      ],
+      "then": {
+        "properties": {
+          "label": {
+            "const": "draft"
+          }
+        }
+      },
+      "title": "ReleaseRef",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "description": "The document as written, the leaves it maps to and the parameters used; outside every\ndigest, and data as a whole (A6).",
+      "properties": {
+        "document": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Document",
+          "type": "object"
+        },
+        "leaves": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "items": {
+                "pattern": "^leaf:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Leaves",
+          "type": "object"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "document",
+        "leaves",
+        "params"
+      ],
+      "title": "Source",
+      "type": "object",
+      "x-aibi-data": true
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    },
+    "Values": {
+      "additionalProperties": false,
+      "description": "Analysis values: per position in view order, and for the view as a whole.\n\nTheir shape is the analysis entry's ``returns`` (M3); until then the whole of it is data\n(A6), and only its ``not_estimable`` maps are checked.",
+      "properties": {
+        "positions": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/OutputJson"
+            },
+            "type": "object"
+          },
+          "title": "Positions",
+          "type": "array"
+        },
+        "view": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "View",
+          "type": "object"
+        }
+      },
+      "required": [
+        "positions",
+        "view"
+      ],
+      "title": "Values",
+      "type": "object",
+      "x-aibi-data": true
+    }
+  },
+  "$id": "result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "derivation": {
+            "properties": {
+              "releases": {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "draft"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "issuance": {
+            "properties": {
+              "cache_hit": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "description": "One view's result (SPEC §8.1).",
+  "properties": {
+    "analysed": {
+      "items": {
+        "$ref": "#/$defs/Analysed"
+      },
+      "title": "Analysed",
+      "type": "array"
+    },
+    "caveats": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/Caveat"
+          },
+          {
+            "else": {
+              "properties": {
+                "affects": {
+                  "items": {
+                    "pattern": "^(?:/cohorts|/population|/analysed|/values)(?:/[\\s\\S]*)?$"
+                  }
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "code": {
+                  "const": "DRAFT_RELEASE"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "affects": {
+                  "items": {
+                    "pattern": "^(?:/cohorts|/population|/analysed|/values|/derivation/releases)(?:/[\\s\\S]*)?$"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "title": "Caveats",
+      "type": "array"
+    },
+    "charts": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/OutputJson"
+        },
+        "type": "object"
+      },
+      "title": "Charts",
+      "type": "array",
+      "x-aibi-data": true
+    },
+    "cohorts": {
+      "contains": {
+        "properties": {
+          "reference": {
+            "const": true
+          }
+        }
+      },
+      "items": {
+        "$ref": "#/$defs/CohortRef"
+      },
+      "maxContains": 1,
+      "maxItems": 6,
+      "minContains": 0,
+      "minItems": 1,
+      "prefixItems": [
+        {
+          "properties": {
+            "position": {
+              "const": 0
+            }
+          }
+        },
+        {
+          "properties": {
+            "position": {
+              "const": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "position": {
+              "const": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "position": {
+              "const": 3
+            }
+          }
+        },
+        {
+          "properties": {
+            "position": {
+              "const": 4
+            }
+          }
+        },
+        {
+          "properties": {
+            "position": {
+              "const": 5
+            }
+          }
+        }
+      ],
+      "title": "Cohorts",
+      "type": "array"
+    },
+    "derivation": {
+      "$ref": "#/$defs/Derivation"
+    },
+    "digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    },
+    "issuance": {
+      "$ref": "#/$defs/Issuance"
+    },
+    "labels": {
+      "items": {
+        "$ref": "#/$defs/Data"
+      },
+      "title": "Labels",
+      "type": "array"
+    },
+    "population": {
+      "items": {
+        "$ref": "#/$defs/Population"
+      },
+      "title": "Population",
+      "type": "array"
+    },
+    "readback": {
+      "$ref": "#/$defs/Readback"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "values": {
+      "$ref": "#/$defs/Values"
+    }
+  },
+  "required": [
+    "derivation",
+    "issuance",
+    "source",
+    "digest",
+    "cohorts",
+    "population",
+    "analysed",
+    "values",
+    "caveats",
+    "readback",
+    "labels",
+    "charts"
+  ],
+  "title": "ResultEnvelope",
+  "type": "object"
+}

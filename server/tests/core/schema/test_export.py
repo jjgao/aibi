@@ -365,3 +365,112 @@ def test_the_descriptor_schema_accepts_what_the_loader_accepts(descriptor: dict[
     assert load_descriptor(json.dumps(descriptor)).refusals == []
     validator = jsonschema.Draft202012Validator(SCHEMAS["descriptor.schema.json"]())
     assert validator.is_valid(descriptor)
+
+
+_KEYWORDS = frozenset(
+    [
+        "$schema",
+        "$id",
+        "$ref",
+        "$defs",
+        "$comment",
+        "$anchor",
+        "$dynamicRef",
+        "$dynamicAnchor",
+        "$vocabulary",
+        "type",
+        "enum",
+        "const",
+        "multipleOf",
+        "maximum",
+        "exclusiveMaximum",
+        "minimum",
+        "exclusiveMinimum",
+        "maxLength",
+        "minLength",
+        "pattern",
+        "maxItems",
+        "minItems",
+        "uniqueItems",
+        "maxContains",
+        "minContains",
+        "maxProperties",
+        "minProperties",
+        "required",
+        "dependentRequired",
+        "properties",
+        "patternProperties",
+        "additionalProperties",
+        "propertyNames",
+        "items",
+        "prefixItems",
+        "contains",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "dependentSchemas",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "format",
+        "contentEncoding",
+        "contentMediaType",
+        "contentSchema",
+        "title",
+        "description",
+        "default",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+        "examples",
+        "discriminator",
+    ]
+)
+"""The keywords of JSON Schema 2020-12, and the ``discriminator`` annotation Pydantic writes."""
+_SCHEMA_MAPS = ("properties", "patternProperties", "$defs", "dependentSchemas")
+_SCHEMA_LISTS = ("allOf", "anyOf", "oneOf", "prefixItems")
+_SCHEMA_VALUES = (
+    "items",
+    "additionalProperties",
+    "propertyNames",
+    "contains",
+    "not",
+    "if",
+    "then",
+    "else",
+    "unevaluatedItems",
+    "unevaluatedProperties",
+    "contentSchema",
+)
+
+
+def _unknown_keywords(schema: Any, at: str = "#") -> Iterator[str]:
+    """Every member of a schema object that is neither a keyword nor an ``x-`` extension."""
+    if not isinstance(schema, dict):
+        return
+    for key, value in schema.items():
+        if key not in _KEYWORDS and not key.startswith("x-"):
+            yield f"{at}/{key}"
+        if key in _SCHEMA_MAPS:
+            for name, member in value.items():
+                yield from _unknown_keywords(member, f"{at}/{key}/{name}")
+        elif key in _SCHEMA_LISTS:
+            for index, member in enumerate(value):
+                yield from _unknown_keywords(member, f"{at}/{key}/{index}")
+        elif key in _SCHEMA_VALUES:
+            yield from _unknown_keywords(value, f"{at}/{key}")
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS))
+def test_schemas_use_only_json_schema_keywords(name: str) -> None:
+    """Pydantic writes a constraint it cannot translate under its own name (``gt``), which a
+    validator ignores."""
+    assert list(_unknown_keywords(SCHEMAS[name]())) == []
+
+
+def test_the_keyword_walker_finds_unknown_members() -> None:
+    schema = {"properties": {"gt": {"type": "number", "gt": 0}}, "allOf": [{"lt": 1}]}
+    assert list(_unknown_keywords(schema)) == ["#/properties/gt/gt", "#/allOf/0/lt"]
