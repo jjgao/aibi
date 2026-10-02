@@ -13,11 +13,17 @@ import pytest
 
 from aibi.core.analyses import columns, stats
 from aibi.core.analyses.charts import columns_charts
-from aibi.core.analyses.distribution import TooLarge, TooManyCategories
+from aibi.core.analyses.distribution import (
+    LongCategory,
+    NonTextCategory,
+    TooLarge,
+    TooManyCategories,
+)
 from aibi.core.engine import build
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.caveats import CaveatCode
+from aibi.core.schema.limits import MAX_TEXT
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.schema.semantics import ExclusionReason
 
@@ -227,6 +233,36 @@ def test_more_categories_than_a_result_lists_refuse(
         contrasted(view, [148, 1], one_each(made(values), made({"gold": 1})))
     del values["v000"]
     contrasted(view, [147, 1], one_each(made(values), made({"gold": 1})))
+
+
+@pytest.mark.parametrize(
+    ("label", "raised_as"),
+    [
+        ("x" * (MAX_TEXT + 1), LongCategory),
+        ("\U0001d11e" * (MAX_TEXT + 1), LongCategory),
+        ("pe\ufdd0ar", NonTextCategory),
+        ("\ufffe", NonTextCategory),
+    ],
+    ids=["longer", "longer outside the BMP", "holding a noncharacter", "a noncharacter"],
+)
+def test_a_category_longer_than_a_result_writes_or_not_unicode_refuses_and_one_it_writes_runs(
+    columned: Columned, contrasted: Contrasted, label: str, raised_as: type[Exception]
+) -> None:
+    """m2 of #72's review and m1 of its round 2 (D368, D382): a label of more than ``MAX_TEXT``
+    characters, counted in code points, which no output's text holds, raises ``LongCategory`` at
+    its column, refused as ``LIMIT_EXCEEDED``, and one that is not Unicode text
+    ``NonTextCategory``, refused as ``NOT_SUPPORTED``; one of ``MAX_TEXT`` code points is shown,
+    of ASCII or outside the BMP."""
+    view = columned([TIER])
+    with pytest.raises(raised_as) as raised:
+        contrasted(view, [1, 1], one_each(made({label: 1}), made({"gold": 1})))
+    assert cast(LongCategory | NonTextCategory, raised.value).column == 0
+    assert label not in str(raised.value)
+    for widest in ("x" * MAX_TEXT, "\U0001d11e" * MAX_TEXT):
+        found = contrasted(view, [1, 1], one_each(made({widest: 1}), made({"gold": 1})))
+        assert found.values.view.columns[0].model_dump()["categories"][-1]["values"] == [
+            {"data": widest}
+        ]
 
 
 # --- Numbers --------------------------------------------------------------------------------------

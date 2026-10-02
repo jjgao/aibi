@@ -12,11 +12,13 @@ at their positions, the population disclosed, and the caveats their cohorts rais
 - ``shown`` and ``analysed_of``: what the pass shows of a variable at a position, its split of
   the cohort's units and their reasons, and ``analysed`` from it, nothing that combines
   variables under *k* (D329).
+- ``unwritable``: why a result cannot write a text from the data as data (§8.2, §14, D271):
+  longer than ``MAX_TEXT`` characters, or not Unicode text.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from aibi.core.analyses.disclosure import small, split_hidden
 from aibi.core.analyses.existence import CohortAt
@@ -25,6 +27,8 @@ from aibi.core.engine.suppression import disclosed
 from aibi.core.engine.truth import Mark
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode
+from aibi.core.schema.jsonio import is_text
+from aibi.core.schema.limits import MAX_TEXT
 from aibi.core.schema.numbers import NotEstimableReason
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.results import Analysed, AnalysedCounts, AnalysedVariable, Population
@@ -208,6 +212,18 @@ def analysed_of(
     return Analysed.model_validate({**counted.model_dump(), "variables": variables})
 
 
+def unwritable(label: str) -> Literal["long", "not_text"] | None:
+    """Why no output's text holds ``label``, a text from the data, as data (§8.2, §14), by the
+    rule the catalogue's statistics apply to their categories (D271): ``"long"`` for more than
+    ``MAX_TEXT`` characters, counted in code points as ``Data`` counts them, ``"not_text"`` for
+    text that is not Unicode (a lone surrogate or a noncharacter, ``jsonio.is_text``), which a
+    release's cells may hold though no document or descriptor does; ``None`` where it holds it.
+    Callers refuse either without writing ``label`` anywhere."""
+    if len(label) > MAX_TEXT:
+        return "long"
+    return None if is_text(label) else "not_text"
+
+
 __all__ = [
     "FLAGS",
     "CohortAt",
@@ -219,4 +235,5 @@ __all__ = [
     "listed",
     "populations",
     "shown",
+    "unwritable",
 ]

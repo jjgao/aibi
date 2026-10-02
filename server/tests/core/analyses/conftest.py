@@ -9,17 +9,22 @@ rules differ (§6.5).
 - ``shop`` builds the release from rows (``rows`` the default rows, ``customers`` of them).
 - ``analyse`` loads a document, checks its views, canonicalises its cohorts, predicates,
   variables and endpoints, runs each by the reference evaluator (``evaluate``,
-  ``evaluate_variable``, ``members.keys``, ``inputs.listed`` for a pack's or a survival analysis,
-  a pack's registry given) and makes its result envelope as ``run_analysis`` does, returning each
-  view's ``Analysed``. ``shop(extended=True)`` adds an order's amount, a number with a declared
-  range, and declares the customers' ages' range, for ``summary.distribution``;
+  ``memberships.materialise_over``, ``members.keys``, ``inputs.listed`` for a pack's or a
+  survival analysis, a pack's registry given) and makes its result envelope as ``run_analysis``
+  does, returning each view's ``Analysed``. ``shop(extended=True)`` adds an order's amount, a
+  number with a declared range, and declares the customers' ages' range, for
+  ``summary.distribution``; ``shop(reasons=True)`` varies the returns' reasons, two of them
+  undeclared, and gives some orders two returns, for memberships (D382), changing the rows alone;
   ``shop(survived=...)`` adds each customer's months until they left (``tenure``, ``left``,
   ``joined``) and the endpoint ``ep:retention`` over them, its customers entering at ``joined``
   (``"delayed"``), at the origin (``"origin"``) or as it leaves undeclared (``"undeclared"``).
 - ``scoped`` builds the extended shop with each customer's visits to stalls, recorded only for
   the stalls the customer's list names (direct coverage scoped by ``visits.stall``, §5.6),
   whether each was paid (``visits.paid``), another column of their rows, and the booth each
-  visit looks up, whose own ``stall`` (``booths.stall``) is named as the scope column is.
+  visit looks up, whose own ``stall`` (``booths.stall``) is named as the scope column is;
+  ``scoped(grouped=True)`` lists the stalls by a plan assigned to the customer instead (grouped
+  coverage), and ``scoped(items=True)`` adds each visit's items, recorded only for the kinds its
+  list names (coverage scoped by ``visit_items.kind``, two down steps from the unit).
 - ``distributed`` checks a ``summary.distribution`` view of the extended shop over cohorts of the
   pattern document, and ``summarised`` runs it over variables materialised as given, under a
   *k*, each cohort's size given, for checks that run one view many times; ``columned`` and
@@ -54,11 +59,12 @@ from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.inputs import listed, shared
 from aibi.core.engine.inputs import ordered as ordered_inputs
 from aibi.core.engine.members import keys, ordered
+from aibi.core.engine.memberships import evaluated, materialise_over
 from aibi.core.engine.resolve import Label, ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import Accounting, Crossing, TruthValues, cross
 from aibi.core.engine.truth import Truth, TruthValue
-from aibi.core.engine.variables import Joint, Materialised, evaluate_variable, joint, materialise
+from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.schema.analyses import (
     ColumnsParams,
     CoxParams,
@@ -170,15 +176,21 @@ def shop_descriptors(
     ]
 
 
+REASONS = ("size", "late", "broken", "\U0001f4e6", "｡")
+"""The returns' reasons with ``reasons``: the three declared, then two undeclared whose UTF-16
+order (U+1F4E6's high surrogate first) is not their code points' (U+FF61 first)."""
+
+
 def shop_rows(
-    customers: int = 24, *, extended: bool = False, survived: bool = False
+    customers: int = 24, *, extended: bool = False, survived: bool = False, reasons: bool = False
 ) -> dict[str, list[dict[str, object]]]:
     """Customers of three tiers, every fifth tier not assessed, of ages 20 to 69; each places
     an order or two, one in four through the phone; every other order is checked for returns,
     and one in three of the checked ones has one. ``extended``: every order has an amount but
     every seventh, whose amount is empty. ``survived``: each customer has a tenure of 1 to 37
     months and joined in month 0 to 4 of it (0 for every third), and two in three left (every
-    eleventh's leaving not assessed)."""
+    eleventh's leaving not assessed). ``reasons``: a return's reason is the ``REASONS`` in turn
+    rather than ``size``, and every third order with one has a second, of the next reason."""
     rows: dict[str, list[dict[str, object]]] = {
         "customers": [],
         "orders": [],
@@ -214,18 +226,30 @@ def shop_rows(
             if order % 2:
                 rows["checked_orders"].append({"order_id": f"o{order}"})
                 if order % 3 == 0:
+                    turn = order // 3
+                    reason = REASONS[turn % len(REASONS)] if reasons else "size"
                     rows["returns"].append(
-                        {"return_id": f"r{order}", "order_id": f"o{order}", "reason": "size"}
+                        {"return_id": f"r{order}", "order_id": f"o{order}", "reason": reason}
                     )
+                    if reasons and order % 9 == 0:
+                        again = REASONS[(turn + 1) % len(REASONS)]
+                        rows["returns"].append(
+                            {"return_id": f"r{order}b", "order_id": f"o{order}", "reason": again}
+                        )
     return rows
 
 
 def shop_release(
     rows: Mapping[str, Sequence[Mapping[str, object]]] | None = None, **options: Any
 ) -> Release:
+    reasons = bool(options.pop("reasons", False))
     extended = bool(options.get("extended"))
     survived = options.get("survived") is not None
-    given = rows if rows is not None else shop_rows(extended=extended, survived=survived)
+    given = (
+        rows
+        if rows is not None
+        else shop_rows(extended=extended, survived=survived, reasons=reasons)
+    )
     return build.release(shop_descriptors(**options), given)
 
 
@@ -417,22 +441,14 @@ def materialise_by_evaluator(
     view: CheckedView,
 ) -> list[tuple[tuple[Materialised, ...], Joint | None]]:
     """A view's variables materialised over its cohorts by the reference evaluator, as
-    ``run_analysis`` reads them by SQL (D327)."""
-    values = [evaluate_variable(variable.resolved) for variable in view.variables]
+    ``run_analysis`` reads them by SQL (D327, D382)."""
+    resolved = [variable.resolved for variable in view.variables]
+    given = [evaluated(variable) for variable in resolved]
     found: list[tuple[tuple[Materialised, ...], Joint | None]] = []
     for cohort in view.cohorts:
         truth = evaluate(cohort.resolved).values
         members = [row for row, value in enumerate(truth) if value.is_true]
-        together = joint(values, members) if len(values) > 1 else None
-        found.append(
-            (
-                tuple(
-                    materialise(value, members, rows=variable.resolved.kind == "rows")
-                    for value, variable in zip(values, view.variables, strict=True)
-                ),
-                together,
-            )
-        )
+        found.append(materialise_over(resolved, given, members))
     return found
 
 
@@ -742,12 +758,53 @@ def compare_materialised(
     )
 
 
-def scoped_release(**options: Any) -> Release:
+def scoped_release(*, grouped: bool = False, items: bool = False, **options: Any) -> Release:
     """The extended shop with the customers' visits, recorded for the stalls their lists name:
     one visit each for the first twelve customers, to stall ``a`` or ``b``, every third paid, at
     booth ``b1`` or ``b2``, whose stalls are ``a`` and ``b``, and stall ``a`` listed for every
-    other customer. ``options`` go to ``shop_descriptors``."""
+    other customer; with ``grouped``, listed by a plan assigned to every other customer, whose
+    stalls are ``a`` (grouped coverage scoped by ``visits.stall``); with ``items``, each visit's
+    items below it, one of kind ``x`` and one of kind ``y``, recorded for the kinds its list
+    names, ``x`` for every visit (coverage scoped by ``visit_items.kind``, a second down step's).
+    ``options`` go to ``shop_descriptors``."""
     column = build.column
+    listed: list[Descriptor] = [
+        build.coverage(
+            VISITS,
+            {
+                "table": "visit_lists",
+                "parent_columns": {"customer_id": "customer_id"},
+                "scope_columns": {"stall": "stall"},
+            },
+        ),
+        build.table("visit_lists", ["customer_id", "stall"], role="coverage"),
+        column("visit_lists.customer_id", "string"),
+        column("visit_lists.stall", "string"),
+    ]
+    if grouped:
+        listed = [
+            build.coverage(
+                VISITS,
+                {
+                    "assignment": {
+                        "table": "visit_plans",
+                        "parent_columns": {"customer_id": "customer_id"},
+                        "group_column": "plan",
+                    },
+                    "groups": {
+                        "table": "plan_stalls",
+                        "group_column": "plan",
+                        "scope_columns": {"stall": "stall"},
+                    },
+                },
+            ),
+            build.table("visit_plans", ["customer_id"], role="coverage"),
+            column("visit_plans.customer_id", "string"),
+            column("visit_plans.plan", "string"),
+            build.table("plan_stalls", ["plan", "stall"], role="coverage"),
+            column("plan_stalls.plan", "string"),
+            column("plan_stalls.stall", "string"),
+        ]
     visits = [
         build.table("visits", ["visit_id"], role="event"),
         column("visits.visit_id", "string"),
@@ -760,17 +817,7 @@ def scoped_release(**options: Any) -> Release:
         column("booths.booth_id", "string"),
         column("booths.stall", "category"),
         build.relationship("visits", ["booth_id"], "booths", role="booth"),
-        build.coverage(
-            VISITS,
-            {
-                "table": "visit_lists",
-                "parent_columns": {"customer_id": "customer_id"},
-                "scope_columns": {"stall": "stall"},
-            },
-        ),
-        build.table("visit_lists", ["customer_id", "stall"], role="coverage"),
-        column("visit_lists.customer_id", "string"),
-        column("visit_lists.stall", "string"),
+        *listed,
     ]
     rows = shop_rows(extended=True)
     rows["visits"] = [
@@ -784,7 +831,36 @@ def scoped_release(**options: Any) -> Release:
         for n in range(1, 13)
     ]
     rows["booths"] = [{"booth_id": "b1", "stall": "a"}, {"booth_id": "b2", "stall": "b"}]
-    rows["visit_lists"] = [{"customer_id": f"c{n}", "stall": "a"} for n in range(1, 25, 2)]
+    if grouped:
+        rows["visit_plans"] = [{"customer_id": f"c{n}", "plan": "p"} for n in range(1, 25, 2)]
+        rows["plan_stalls"] = [{"plan": "p", "stall": "a"}]
+    else:
+        rows["visit_lists"] = [{"customer_id": f"c{n}", "stall": "a"} for n in range(1, 25, 2)]
+    if items:
+        visits += [
+            build.table("visit_items", ["item_id"], role="event"),
+            column("visit_items.item_id", "string"),
+            column("visit_items.visit_id", "string"),
+            column("visit_items.kind", "category"),
+            build.relationship("visit_items", ["visit_id"], "visits", role="visit"),
+            build.coverage(
+                "rel:visit_items.visit",
+                {
+                    "table": "item_lists",
+                    "parent_columns": {"visit_id": "visit_id"},
+                    "scope_columns": {"kind": "kind"},
+                },
+            ),
+            build.table("item_lists", ["visit_id", "kind"], role="coverage"),
+            column("item_lists.visit_id", "string"),
+            column("item_lists.kind", "string"),
+        ]
+        rows["visit_items"] = [
+            {"item_id": f"i{n}{kind}", "visit_id": f"v{n}", "kind": kind}
+            for n in range(1, 13)
+            for kind in "xy"
+        ]
+        rows["item_lists"] = [{"visit_id": f"v{n}", "kind": "x"} for n in range(1, 13)]
     extras = [*options.pop("extras", ()), *visits]
     return build.release(shop_descriptors(extended=True, extras=extras, **options), rows)
 

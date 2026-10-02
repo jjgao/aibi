@@ -280,7 +280,7 @@ def _listed(
 ) -> members.Outcome:
     """A ``summary.members`` view's page (D333), taken by the call's deadline, less the time to
     record; a cohort with more members than a listing reads refuses the call, and so does a page
-    holding a text key longer than a result writes."""
+    holding a text key longer than a result writes, or not Unicode text."""
     assert isinstance(view.params, MembersParams), "a members view"
     params = view.params
     try:
@@ -317,6 +317,59 @@ def _listed(
                 )
             ]
         ) from None
+    except members.NonTextKey as unwritten:
+        raise ToolRefused(
+            [
+                Refusal(
+                    code=RefusalCode.NOT_SUPPORTED,
+                    path=pointer(["views", view.index]),
+                    message=[
+                        text("A key on the page in "),
+                        data(unwritten.column),
+                        text(" is not Unicode text (it holds a lone surrogate or a "),
+                        text("noncharacter), which a result does not write (§8.2, D331)"),
+                    ],
+                )
+            ]
+        ) from None
+
+
+def _long_category(view: CheckedView, column: int) -> ToolRefused:
+    """A category of a column longer than an output's text holds (``distribution.LongCategory``),
+    refused at the column as a covariate's level is (``cox.LongLevel``; §14, D368, D382)."""
+    return ToolRefused(
+        [
+            Refusal(
+                code=RefusalCode.LIMIT_EXCEEDED,
+                path=pointer(["views", view.index, "params", "columns", column]),
+                message=[
+                    text(f"A category of the column has more than {MAX_TEXT} characters, more "),
+                    text("than a result writes (§14, D382)"),
+                ],
+                limit=Limit(name=TEXT_CHARACTERS, max=MAX_TEXT),
+            )
+        ]
+    )
+
+
+def _non_text_category(view: CheckedView, column: int) -> ToolRefused:
+    """A category of a column that is not Unicode text (``distribution.NonTextCategory``), which
+    no output's text holds, refused at the column as a covariate's level is
+    (``cox.NonTextLevel``; §8.2, D271's rule, D382), naming no limit, since no length is at fault,
+    and never the value."""
+    return ToolRefused(
+        [
+            Refusal(
+                code=RefusalCode.NOT_SUPPORTED,
+                path=pointer(["views", view.index, "params", "columns", column]),
+                message=[
+                    text("A category of the column is not Unicode text (it holds a lone "),
+                    text("surrogate or a noncharacter), which a result does not write (§8.2, "),
+                    text("D382)"),
+                ],
+            )
+        ]
+    )
 
 
 def _too_many(view: CheckedView, column: int) -> ToolRefused:
@@ -620,6 +673,10 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                         raise late(cast(Deadline, deadline)) from None
                     except distribution.TooManyCategories as many:
                         raise _too_many(view, many.column) from None
+                    except distribution.LongCategory as long:
+                        raise _long_category(view, long.column) from None
+                    except distribution.NonTextCategory as unwritten:
+                        raise _non_text_category(view, unwritten.column) from None
                     except distribution.TooLarge as large:
                         raise _too_large(view, large.column) from None
                     own = made.sql[:-1] if made.shared else made.sql
@@ -663,6 +720,10 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                         raise late(cast(Deadline, deadline)) from None
                     except distribution.TooManyCategories as many:
                         raise _too_many(view, many.column) from None
+                    except distribution.LongCategory as long:
+                        raise _long_category(view, long.column) from None
+                    except distribution.NonTextCategory as unwritten:
+                        raise _non_text_category(view, unwritten.column) from None
                     except distribution.TooLarge as large:
                         raise _too_large(view, large.column) from None
                     queries.append(
@@ -903,6 +964,13 @@ def _coxed(
             text("result writes (§14, D368)"),
             limit=Limit(name=TEXT_CHARACTERS, max=MAX_TEXT),
         ) from None
+    except cox.NonTextLevel as unwritten:
+        raise _refused(
+            RefusalCode.NOT_SUPPORTED,
+            [*at, "covariates", unwritten.covariate],
+            text("A level of the covariate is not Unicode text (it holds a lone surrogate or a "),
+            text("noncharacter), which a result does not write (§8.2, D368)"),
+        ) from None
     except cox.TooManyParameters as many:
         raise _refused(
             RefusalCode.LIMIT_EXCEEDED,
@@ -1075,13 +1143,14 @@ def _expanded(
 ) -> list[tuple[list[Materialised], Joint | None]]:
     """A materialisation of a view's distinct variables given back for each of its variables;
     the joint accounting of distinct variables is that of all of them, and one variable read
-    several times is its own."""
+    several times is its own. Distinct variables may have none, where some memberships list more
+    than ``MAX_CATEGORIES`` (D380), which ``summarise`` refuses before it reads one (D382)."""
     forms = _forms(view)
     order = list(dict.fromkeys(forms))
     expanded: list[tuple[list[Materialised], Joint | None]] = []
     for found, together in read:
         joined = together
-        if joined is None and len(forms) > 1:
+        if joined is None and len(forms) > 1 and len(found) == 1:
             [one] = found
             joined = Joint(one.n, one.excluded_units, one.excluded)
         expanded.append(([found[order.index(form)] for form in forms], joined))

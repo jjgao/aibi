@@ -10,9 +10,11 @@ mean, standard deviation, median and quartiles (``stats``), minimum and maximum,
 Categories are listed as the column declares them, its permissible values in their order, zeros
 included, then, without a disclosure setting, the other values found in canonical order (strings
 compared as UTF-16 code units, §9.3), at most ``MAX_CATEGORIES`` rows (``LIMIT_EXCEEDED``
-otherwise, ``TooManyCategories``). Numbers' values and standard deviation lie within ±(2^53 − 1),
-as an output's numbers do (§8.2; ``TooLarge`` otherwise, without a disclosure setting, the only
-case that computes them); sums of doubles are scaled so that none overflows (``stats``).
+otherwise, ``TooManyCategories``), each label at most ``MAX_TEXT`` characters (``LongCategory``,
+D382) and Unicode text (``NonTextCategory``, ``NOT_SUPPORTED``). Numbers' values and standard
+deviation lie within ±(2^53 − 1), as an output's numbers do (§8.2; ``TooLarge`` otherwise,
+without a disclosure setting, the only case that computes them); sums of doubles are scaled so
+that none overflows (``stats``).
 A histogram's edges are the view's ``bins``, else the column's declared ``range`` in
 ``BINS_OF_A_RANGE`` equal bins (``count`` has none), else, without a disclosure setting, the
 same between the least and the greatest value; bins are [eᵢ, eᵢ₊₁), the last closed, with an
@@ -29,6 +31,19 @@ counted by reason in ``excluded_rows``, and never excludes its unit; ``analysed`
 units, those pooled (with no rows included) and those excluded, for their pooling's reasons, as
 an aggregate's are. It is withheld under any disclosure setting (D379), which phase 2 refuses and
 ``summarise`` asserts.
+
+**Memberships** (§9.2, D380, D382). A variable's memberships (``each: "category"``) give, for
+each category listed over the cohort (``engine.memberships``: the declared values in their order,
+zeros included, then the others in UTF-16 order, or a filtered column's allowed values), the
+units for which some row (or item) has it over the units for which that is known, its UNKNOWN
+units left out of that category alone and counted by reason in the proportion's ``excluded``, its
+denominator definition naming the category's leaf key (``canonical.category_key``, as
+``compare.existence`` names a predicate's); a unit may count in several categories, so no sum ties
+them to ``n`` (``multi_membership``). ``analysed`` counts a unit where its answer for some listed
+category is known, which depends on the categories the cohort lists, and excludes it otherwise
+under the reasons of all its answers. More than ``MAX_CATEGORIES`` listed is ``TooManyCategories``.
+They are withheld under any disclosure setting (D382), which phase 2 refuses and ``summarise``
+asserts.
 
 **Accounting** (§8.1). ``analysed`` counts, per position, the units a variable has a value for
 (``n``) and those it excludes (``excluded_units``, and ``excluded`` by every reason): a column's
@@ -77,12 +92,13 @@ from aibi.core.analyses.common import (
     flag_caveats,
     populations,
     shown,
+    unwritable,
 )
 from aibi.core.analyses.disclosure import merged
-from aibi.core.engine.canonical import CanonicalVariable
+from aibi.core.engine.canonical import CanonicalVariable, category_key
 from aibi.core.engine.readback import variable_readback
-from aibi.core.engine.resolve import ResolvedVariable, aggregates_taken
-from aibi.core.engine.variables import Joint, Materialised, RowCounts, Value
+from aibi.core.engine.resolve import ResolvedVariable, aggregates_of, aggregates_taken
+from aibi.core.engine.variables import Joint, Materialised, Membership, RowCounts, Value
 from aibi.core.engine.worker import CallerDeadline
 from aibi.core.schema.analyses import (
     BINS_OF_A_RANGE,
@@ -95,6 +111,7 @@ from aibi.core.schema.analyses import (
     DistributionValues,
     Histogram,
     HistogramBin,
+    MembershipDistribution,
     NoViewValues,
     NumberDistribution,
     NumberRows,
@@ -146,7 +163,10 @@ ENTRY = AnalysisDescriptor.model_validate(
             "minimum, maximum and a histogram; each column's excluded units by reason. A "
             'column with count "rows" gives the same over the rows its units reach, with the '
             "rows excluded by reason, and is withheld under a disclosure setting. "
-            "Descriptive only."
+            'A column with each "category" gives its memberships: for each category, the units '
+            "for which some row or item has it over those for which that is known, its excluded "
+            "units by reason, a unit counting in each category it has (multi_membership), and is "
+            "withheld under a disclosure setting. Descriptive only."
         ),
         "fields": {
             "requires": [
@@ -195,13 +215,35 @@ class TooManyCategories(Exception):  # noqa: N818 - a limit reached, as the refu
         self.column = column
 
 
+class LongCategory(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A categorical variable, ``column`` its index among the view's columns, a category of which,
+    shown as data, is longer than ``MAX_TEXT`` characters, more than an output's text holds
+    (``within_text``; D368, D382)."""
+
+    def __init__(self, column: int) -> None:
+        super().__init__(f"column {column}")
+        self.column = column
+
+
+class NonTextCategory(ValueError):  # noqa: N818 - raised like a limit's refusal
+    """A categorical variable, ``column`` its index among the view's columns, a category of which,
+    shown as data, is not Unicode text (a lone surrogate or a noncharacter), which no output's
+    text holds (§8.2; ``within_text``, D382)."""
+
+    def __init__(self, column: int) -> None:
+        super().__init__(f"column {column}")
+        self.column = column
+
+
 # --- Variables ------------------------------------------------------------------------------------
 
 
 def categorical(variable: CanonicalVariable) -> bool:
-    """Whether a variable's values are categories (module docstring), else numbers."""
+    """Whether a variable's values are categories (module docstring), else numbers: a
+    variable's memberships are categories, a list's included, so that, taking no ``bins``, their
+    canonical parameters hold none (``views``' canonical parameters, D382)."""
     resolved = variable.resolved
-    if resolved.kind == "question":
+    if resolved.kind in ("question", "memberships"):
         return True
     if resolved.kind == "aggregate":
         return resolved.order is not None
@@ -211,6 +253,11 @@ def categorical(variable: CanonicalVariable) -> bool:
 def counts_rows(variable: CanonicalVariable) -> bool:
     """Whether a variable counts rows (``count: "rows"``, D378)."""
     return variable.resolved.kind == "rows"
+
+
+def memberships(variable: CanonicalVariable) -> bool:
+    """Whether a variable gives its memberships of each category (``each``, D380)."""
+    return variable.resolved.kind == "memberships"
 
 
 def summarised(variable: CanonicalVariable) -> bool:
@@ -247,14 +294,27 @@ def _range_of(descriptor: ColumnDescriptor | None) -> tuple[float, float] | None
 
 
 def forms_under_k(variable: CanonicalVariable, written: Variable | None = None) -> list[str]:
-    """The forms of a variable that counts rows which the analysis gives under a disclosure
-    setting in its place (D379): each aggregate its column takes (``aggregates_taken``), with
-    ``bins`` where its histogram would otherwise take edges from the data (``needs_edges``: always
-    for ``count``, whose values have no range, and for a number's ``max``, ``min`` and ``mean``
-    where its column declares none), and ``some`` and ``every`` with ``values``. Of the variable
-    as ``written``, its ``where`` and ``bins`` are kept: ``some`` and ``every``, which take
-    neither, are not offered beside them, and an aggregate whose values are categories is
-    offered without the ``bins``."""
+    """The forms of a variable the analysis withholds which it gives under a disclosure setting
+    in its place, each of which runs there and the analysis reads (``summarises``: an aggregate
+    or a question). For memberships (D382): ``some`` and ``every`` with ``values`` where the
+    path allows them (``resolve.aggregates_of``, as resolution offers them: ``every`` of a
+    scope column of the last step's child row is ``SCOPE_COLUMN_MENTION``, and ``some`` always
+    runs), each an existence question whose split the pass protects as a predicate's (D320), one
+    category at a time; the variable took no ``where`` or ``bins``. For a count of rows (D379):
+    each aggregate its column takes over its path (``resolve.aggregates_of``; with a ``where``,
+    whose conditions close every step for the count of rows as they do for an aggregate, each
+    it takes, ``aggregates_taken``), with ``bins`` where its histogram would otherwise take edges
+    from the data (``needs_edges``: always for ``count``, whose values have no range, and for a
+    number's ``max``, ``min`` and ``mean`` where its column declares none), and ``some`` and
+    ``every`` with ``values``. Of the variable as ``written``, its ``where`` and ``bins`` are
+    kept: ``some`` and ``every``, which take neither, are not offered beside them, and an
+    aggregate whose values are categories is offered without the ``bins``."""
+    if memberships(variable):
+        return [
+            f'aggregate: "{name}" with values'
+            for name in aggregates_of(variable.resolved)
+            if name in ("some", "every")
+        ]
     descriptor = _descriptor(variable)
     if descriptor is None:
         return []
@@ -263,7 +323,7 @@ def forms_under_k(variable: CanonicalVariable, written: Variable | None = None) 
     where = written is not None and written.where is not None
     binned = written is not None and written.bins is not None
     found: list[str] = []
-    for name in aggregates_taken(descriptor):
+    for name in aggregates_taken(descriptor) if where else aggregates_of(variable.resolved):
         given = f'aggregate: "{name}"'
         if name in ("some", "every"):
             if where or binned:
@@ -302,6 +362,22 @@ def category_label(value: Value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def within_text(values: Iterable[Value], column: int) -> None:
+    """Checks that an output's text holds each label (``category_label``) of the categories a
+    result lists of the view's column ``column`` (``common.unwritable``, D271's rule): one longer
+    than ``MAX_TEXT`` characters raises ``LongCategory``, refused as ``LIMIT_EXCEEDED`` as
+    ``cox.LongLevel`` is (D368), and one that is not Unicode text ``NonTextCategory``, refused as
+    ``NOT_SUPPORTED`` (D382), the first such label in the listing's order deciding, for a
+    column's categories, a count of rows' and memberships' alike, whatever the disclosure pass
+    then shows of them."""
+    for value in values:
+        why = unwritable(category_label(value))
+        if why == "long":
+            raise LongCategory(column)
+        if why == "not_text":
+            raise NonTextCategory(column)
 
 
 # --- Values ---------------------------------------------------------------------------------------
@@ -343,6 +419,7 @@ def _category_distribution(
         rows = [([value], False) for value in declared] + ([([], True)] if open_list else [])
     if len(rows) > MAX_CATEGORIES:
         raise TooManyCategories(column)
+    within_text((value for listed, _ in rows for value in listed), column)
     if not shown.split:
         return CategoryDistribution(
             kind="categories", categories=None, not_estimable={"/categories": _SUPPRESSED}
@@ -384,6 +461,7 @@ def _category_rows(
     listed = _listed(declared_categories(variable), rows.values)
     if len(listed) > MAX_CATEGORIES:
         raise TooManyCategories(column)
+    within_text(listed, column)
     shares = [
         CategoryShare(
             values=[Data(data=category_label(value))],
@@ -392,6 +470,53 @@ def _category_rows(
         for value in listed
     ]
     return CategoryRows(kind="category_rows", categories=shares, excluded_rows=dict(rows.excluded))
+
+
+def _memberships(
+    variable: CanonicalVariable, found: Materialised, position: int, column: int
+) -> MembershipDistribution:
+    """A variable's memberships at a position (module docstring, D382): each listed category's
+    units over those for which it is known, its UNKNOWN units by reason, its key the category's
+    (``canonical.category_key``); past ``MAX_CATEGORIES``, ``TooManyCategories``, and a label
+    past ``MAX_TEXT``, ``LongCategory``, or not Unicode text, ``NonTextCategory``."""
+    listed = found.memberships
+    assert listed is not None, "memberships are materialised with their categories"
+    if listed.over or len(listed.categories) > MAX_CATEGORIES:
+        raise TooManyCategories(column)
+    within_text((one.category for one in listed.categories), column)
+    template = variable.resolved.question
+    assert template is not None, "memberships have their template"
+    return MembershipDistribution(
+        kind="memberships",
+        multi_membership=True,
+        categories=[
+            CategoryShare(
+                values=[Data(data=category_label(one.category))],
+                proportion=_membership(one, position, category_key(template, one.category)),
+            )
+            for one in listed.categories
+        ],
+    )
+
+
+def _membership(one: Membership, position: int, key: str) -> Proportion:
+    """A category's proportion (D382): TRUE over TRUE and FALSE, UNKNOWN in ``excluded`` by
+    every reason, zeros included; no interval, the analysis being descriptive."""
+    known = one.true + one.false
+    return Proportion.model_validate(
+        {
+            "estimate": one.true / known if known else None,
+            "numerator": one.true,
+            "denominator": known,
+            "denominator_definition": DenominatorDefinition(
+                position=position, predicate=key, counts="known"
+            ),
+            "excluded": {
+                reason: one.unknown_by_reason.get(reason, 0) for reason in ExclusionReason
+            },
+            "not_estimable": None if known else {"/estimate": _NO_UNITS},
+        }
+    )
 
 
 def open_categories(variable: CanonicalVariable) -> bool:
@@ -654,15 +779,18 @@ def summarise(
     """``summary.distribution`` over a view's cohorts and variables (module docstring), from
     each variable materialised over each cohort's units (``engine.sql``: counted by SQL, or by
     ``engine.variables`` from the reference evaluator's values). Raises
-    ``TooManyCategories``, ``TooLarge``, and ``CallerDeadline`` when ``time.monotonic()`` has
-    passed ``ends`` (the call's deadline) before a column is summarised, so that the call
-    overruns it by one column's statistics at most (D327)."""
+    ``TooManyCategories``, ``LongCategory``, ``NonTextCategory``, ``TooLarge``, and
+    ``CallerDeadline`` when ``time.monotonic()`` has passed ``ends`` (the call's deadline) before
+    a column is summarised, so that the call overruns it by one column's statistics at most
+    (D327)."""
     if len(materialised) != len(positions) or any(
         len(found) != len(variables) for found, _ in materialised
     ):
         raise ValueError("each variable materialised over each of the view's cohorts")
     if k is not None and any(counts_rows(variable) for variable in variables):
         raise ValueError("a count of rows is never summarised under a disclosure setting (D379)")
+    if k is not None and any(memberships(variable) for variable in variables):
+        raise ValueError("memberships are never summarised under a disclosure setting (D382)")
     population = populations(positions, k)
     at_positions: list[DistributionPosition] = []
     analysed: list[Analysed] = []
@@ -683,6 +811,8 @@ def summarise(
                     if categorical(variable)
                     else _number_rows(variable, one.rows, index, bins)
                 )
+            elif memberships(variable):
+                columns.append(_memberships(variable, one, position, index))
             elif categorical(variable):
                 columns.append(_category_distribution(variable, one, position, index, visible, k))
             else:
@@ -705,8 +835,10 @@ def _caveats(
     """The caveats that the view's data raise (module docstring); the static ones are the
     view's. ``UNKNOWN_EXCLUDED`` names the values wherever a unit is excluded from one for a
     reason other than ``NOT_APPLICABLE``, and always under *k*, so that it says nothing of one;
-    and, in a message of its own, wherever a count of rows leaves a row out for such a reason
-    (D378), which no disclosure setting sees (D379)."""
+    in a message of its own, wherever a count of rows leaves a row out for such a reason (D378),
+    which no disclosure setting sees (D379); and in another, wherever a category of memberships
+    leaves a unit out of its denominator, UNKNOWN for it (NOT_APPLICABLE is FALSE there, §6.4),
+    which no disclosure setting sees either (D382)."""
     found_unknown = k is not None or any(
         count
         for row, _ in materialised
@@ -734,6 +866,24 @@ def _caveats(
                     "Rows whose value of a column that counts rows could not be decided or has "
                     "none are left out of that column's rows; its excluded_rows counts them by "
                     "reason"
+                ),
+            )
+        )
+    if any(
+        category.unknown
+        for row, _ in materialised
+        for one in row
+        if one.memberships is not None
+        for category in one.memberships.categories
+    ):
+        found.append(
+            caveat(
+                CaveatCode.UNKNOWN_EXCLUDED,
+                ["/values"],
+                text(
+                    "Units for which a category of a column of memberships could not be decided "
+                    "are left out of that category's denominator; its proportion's excluded "
+                    "counts them by reason"
                 ),
             )
         )
@@ -790,6 +940,16 @@ def view_readback(cohorts: int, variables: Sequence[CanonicalVariable]) -> list[
                 "reason."
             )
         )
+    if any(memberships(variable) for variable in variables):
+        found.append(
+            text(
+                " A column of memberships gives, for each of its categories, the units for "
+                "which some row or item has it over those for which that is known; a unit for "
+                "which it cannot be decided is left out of that category and counted by reason, "
+                "and a unit may count in several categories, so the proportions need not sum "
+                "to 1."
+            )
+        )
     return found
 
 
@@ -799,6 +959,8 @@ __all__ = [
     "ENTRY",
     "METHODS",
     "VERSION",
+    "LongCategory",
+    "NonTextCategory",
     "Outcome",
     "TooLarge",
     "TooManyCategories",
@@ -807,9 +969,11 @@ __all__ = [
     "declared_range",
     "effective_edges",
     "histogram",
+    "memberships",
     "needs_edges",
     "summarise",
     "summarised",
     "summarises",
     "view_readback",
+    "within_text",
 ]

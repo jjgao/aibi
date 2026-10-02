@@ -239,8 +239,8 @@ def test_a_step_over_rows_whose_coverage_is_unknown_excludes_the_unit_under_its_
         ({"column": "establishments.nothing"}, "UNKNOWN_COLUMN", "/column"),
         ({"column": "establishments.notes"}, "UNDECLARED_DATATYPE", "/column"),
         ({"column": "inspections.score"}, "AGGREGATE_REQUIRED", "/column"),
-        ({"column": "violations.code"}, "NOT_SUPPORTED", "/column"),
-        ({"column": "establishments.tags"}, "NOT_SUPPORTED", "/column"),
+        ({"column": "violations.code"}, "AGGREGATE_REQUIRED", "/column"),
+        ({"column": "establishments.tags"}, "AGGREGATE_REQUIRED", "/column"),
         (
             {"column": "establishments.seats", "aggregate": "max"},
             "AGGREGATE_NOT_ALLOWED",
@@ -339,15 +339,27 @@ def test_the_mean_of_huge_doubles_does_not_overflow() -> None:
     assert stats.sd([(-1e200, 1), (1e200, 1)], 0.0) == math.sqrt(2) * 1e200
 
 
-def test_counts_per_category_of_a_multi_valued_column_are_not_supported_until_their_part(
+def test_a_multi_valued_category_without_an_aggregate_requires_one_or_its_memberships(
     city: City, doc: Doc, variables_of: Callable[..., Resolution]
 ) -> None:
+    """D382: a bare multi-valued category is ``AGGREGATE_REQUIRED``, a descriptive analysis
+    offered its memberships beside the aggregates its path allows; no part number is named. The
+    violations' code scopes their grouped coverage, so no aggregate that pools rows, no count of
+    them and no ``every`` of it is offered (D377, D380), and its memberships are."""
     resolution = variables_of(doc([]), city(), [{"column": "violations.code"}])
     [refusal] = resolution.refusals
-    assert (refusal.code, refusal.path) == ("NOT_SUPPORTED", "/views/0/params/columns/0/column")
+    assert (refusal.code, refusal.path) == (
+        "AGGREGATE_REQUIRED",
+        "/views/0/params/columns/0/column",
+    )
     said = json.dumps([part.model_dump() for part in refusal.message])
-    assert "M3.2e-2a (#52)" in said
-    assert "M3.2b" not in said
+    assert "M3.2e" not in said
+    assert [one.model_dump().get("text") for one in refusal.alternatives or []] == [
+        "some",
+        'each: "category"',
+    ]
+    each = {"column": "violations.code", "each": "category"}
+    assert variables_of(doc([]), city(), [each]).refusals == []
 
 
 def test_a_count_of_rows_reads_each_pooled_row_once_for_every_path_that_reaches_it(
@@ -485,7 +497,7 @@ def test_a_count_of_rows_excludes_a_unit_for_its_pooling_and_a_row_for_its_value
     ("variable", "code", "at"),
     [
         ({"column": "establishments.seats", "count": "rows"}, "INVALID_VALUE", "/count"),
-        ({"column": "establishments.tags", "count": "rows"}, "NOT_SUPPORTED", "/count"),
+        ({"column": "establishments.tags", "count": "rows"}, "INVALID_VALUE", "/count"),
         ({"column": "violations.severity", "count": "rows"}, "OPEN_SCOPE", "/where"),
         ({"column": "establishments.notes", "count": "rows"}, "UNDECLARED_DATATYPE", "/column"),
     ],

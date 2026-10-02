@@ -46,7 +46,8 @@ it with its reasons (``UnitValue``):
   reaches no row; a row's exclusion excludes the row, never its unit.
 
 - **Memberships** (``each``, D380) are no value per unit but an answer per category, which
-  ``memberships`` gives; ``evaluate_variable`` does not read them.
+  ``memberships`` gives; ``evaluate_variable`` does not read them, and
+  ``memberships.materialise_over`` counts them beside the others (D382).
 
 Values are Python's, in the stored types the SQL compiler reads (``store.tables.physical``):
 a ``number`` or ``time_offset`` as a double, an ``integer`` as an integer, a ``category`` as its

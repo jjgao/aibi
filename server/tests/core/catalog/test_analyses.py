@@ -25,11 +25,12 @@ from aibi.core.engine import worker as worker_module
 from aibi.core.engine.canonical import canonicalise
 from aibi.core.engine.evaluate import evaluate
 from aibi.core.engine.members import keys, ordered
+from aibi.core.engine.memberships import evaluated as evaluated_variable
+from aibi.core.engine.memberships import materialise_over
 from aibi.core.engine.queries import run_cohorts
 from aibi.core.engine.resolve import ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import TruthValues, cross
-from aibi.core.engine.variables import evaluate_variable, joint, materialise
 from aibi.core.engine.worker import CallerDeadline, QueryRefused, Workers
 from aibi.core.schema.analyses import (
     ColumnsParams,
@@ -160,7 +161,8 @@ def evaluated(
             )
             continue
         if isinstance(view.params, DistributionParams | ColumnsParams):
-            values = [evaluate_variable(variable.resolved) for variable in view.variables]
+            resolved = [variable.resolved for variable in view.variables]
+            given = [evaluated_variable(variable) for variable in resolved]
             materialised = []
             held: list[set[int]] = []
             for cohort in view.cohorts:
@@ -170,16 +172,7 @@ def evaluated(
                     if value.is_true
                 ]
                 held.append(set(units))
-                together = joint(values, units) if len(values) > 1 else None
-                materialised.append(
-                    (
-                        tuple(
-                            materialise(v, units, rows=variable.resolved.kind == "rows")
-                            for v, variable in zip(values, view.variables, strict=True)
-                        ),
-                        together,
-                    )
-                )
+                materialised.append(materialise_over(resolved, given, units))
             if isinstance(view.params, ColumnsParams):
                 shared = any(a & b for i, a in enumerate(held) for b in held[i + 1 :])
                 outcome = columns.compare_columns(
@@ -341,6 +334,189 @@ def test_a_withheld_count_of_rows_that_reached_run_analysis_would_raise_before_a
     with pytest.raises(ValueError, match="never run"):
         run(catalog, distribution_document([ROWS[0]]))
     assert ran == []
+
+
+EACH: list[dict[str, Any]] = [
+    {"column": "harvests.grade", "each": "category"},
+    {"column": "harvests.grade", "each": "category", "lift": "assessed"},
+    {"column": "trees.tags", "each": "category"},
+]
+"""A distribution view's memberships over the orchard (D382): the harvests' grades under both
+lifts, and the trees' tags, a list."""
+
+
+def test_memberships_run_by_sql_give_the_reference_evaluator_s_result(
+    world: World, orchard: Orchard
+) -> None:
+    """D382: memberships beside a column, counted by SQL as pairs plus default (D381), give the
+    reference evaluator's values, joint counts and digest."""
+    published = world.publish("orchard", orchard(40, harvests=60))
+    written = distribution_document([COLUMNS[0], *EACH])
+    [result] = run(catalog_of(world), written).results
+    [expected] = evaluated(world, published.manifest, written)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+    assert result.analysed == expected.analysed
+    dumped = result.values.model_dump(mode="json")
+    kinds = [one["kind"] for one in dumped["positions"][0]["columns"]]
+    assert kinds == ["categories", "memberships", "memberships", "memberships"]
+    tags = dumped["positions"][0]["columns"][3]["categories"]
+    assert [row["values"][0]["data"] for row in tags] == ["old", "tall", "young"]
+    assert len(result.charts) == 1 + len(EACH)
+
+
+def test_under_a_floor_memberships_are_withheld_and_no_query_runs(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world, floor=3)
+    ran: list[object] = []
+    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
+    written = distribution_document([COLUMNS[0], EACH[2]])
+    for tool in ("validate_document", "count_cohort", "run_analysis"):
+        found = answer(catalog, tool, {"document": written})
+        dumped = json.dumps(
+            [refusal.model_dump(mode="json") for refusal in found]
+            if isinstance(found, list)
+            else found.model_dump(mode="json")
+        )
+        assert "WITHHELD_UNDER_K" in dumped, tool
+        assert '"/views/0/params/columns/1/each"' in dumped, tool
+        assert '"tree1"' not in dumped
+        assert '"old"' not in dumped
+    assert ran == []
+
+
+def test_withheld_memberships_that_reached_run_analysis_would_raise_before_any_query(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.publish("orchard", orchard())
+    catalog = catalog_of(world, floor=3)
+    ran: list[object] = []
+    monkeypatch.setattr(views, "_withheld_form", lambda *_: None)
+    monkeypatch.setattr(analyses_module, "_run", lambda *args, **kwargs: ran.append(args))
+    with pytest.raises(ValueError, match="never run"):
+        run(catalog, distribution_document([EACH[0]]))
+    assert ran == []
+
+
+def test_memberships_with_more_categories_than_a_result_lists_refuse_the_call(
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past ``MAX_CATEGORIES`` SQL counts no membership and gives no joint count (D380), and the
+    call is refused at the column, beside another column or alone (D382)."""
+    world.publish("orchard", orchard())
+    monkeypatch.setattr(sql_module, "MAX_CATEGORIES", 1)
+    for given in ([COLUMNS[1], EACH[0]], [EACH[0]], [EACH[0], EACH[0]]):
+        refusal = refused(
+            answer(catalog_of(world), "run_analysis", {"document": distribution_document(given)})
+        )
+        at = given.index(EACH[0])
+        assert (refusal.code, refusal.path) == (
+            RefusalCode.LIMIT_EXCEEDED,
+            f"/views/0/params/columns/{at}",
+        )
+        assert refusal.limit is not None
+        assert refusal.limit.name == "categories"
+
+
+LONG = "x" * (MAX_TEXT + 1)
+UNWRITTEN = {
+    "longer": LONG,
+    "holding a noncharacter": "pe\ufdd0ar",
+    "a noncharacter": "\ufffe",
+}
+"""Cells a result cannot write as data (``common.unwritable``, D271's rule): more than
+``MAX_TEXT`` characters, and text that is not Unicode, which a CSV file's cells may hold."""
+
+
+def _tagged(trees: bytes, tree: str, tag: str) -> bytes:
+    """The trees' CSV text with ``tag`` added to the tags of ``tree``."""
+    lines = trees.decode().split("\n")
+    at = lines[0].split(",").index("tags")
+    for n, line in enumerate(lines):
+        cells = line.split(",")
+        if cells[0] == tree:
+            cells[at] = f"{cells[at]};{tag}"
+            lines[n] = ",".join(cells)
+    return "\n".join(lines).encode()
+
+
+@pytest.mark.parametrize("unwritten", list(UNWRITTEN))
+@pytest.mark.parametrize(
+    ("analysis", "given"),
+    [
+        ("summary.distribution", {"column": "trees.variety"}),
+        ("summary.distribution", ROWS[0]),
+        ("summary.distribution", EACH[0]),
+        ("summary.distribution", EACH[2]),
+        ("compare.columns", {"column": "trees.variety"}),
+    ],
+    ids=[
+        "categories",
+        "a count of rows",
+        "memberships",
+        "a list's memberships",
+        "compared categories",
+    ],
+)
+def test_a_category_longer_than_a_result_writes_or_not_unicode_refuses_the_call_at_its_column(
+    world: World,
+    orchard: Orchard,
+    caplog: pytest.LogCaptureFixture,
+    analysis: str,
+    given: dict[str, Any],
+    unwritten: str,
+) -> None:
+    """m2 of #72's review and m1 of its round 2 (D368, D382): a tree's variety, a harvest's grade
+    and a tree's tag of more than ``MAX_TEXT`` characters, which no output's text holds, are
+    refused as ``LIMIT_EXCEEDED`` at the column, naming ``text_characters``, as a covariate's
+    long level is (``cox.LongLevel``), and those that are not Unicode text, holding a
+    noncharacter, as ``NOT_SUPPORTED`` there, naming no limit, never raised as an internal
+    error, for categories, a count of rows' and memberships alike, a list's included, every
+    tree's harvests recorded so that the count pools them; neither the refusal nor the log
+    quotes the cell."""
+    label = UNWRITTEN[unwritten]
+    files = orchard()
+    files["trees.csv"] = files["trees.csv"].replace(b"\ntree4,pear,", f"\ntree4,{label},".encode())
+    files["trees.csv"] = _tagged(files["trees.csv"], "tree4", label)
+    files["harvests.csv"] = files["harvests.csv"].replace(
+        b"\nh2,tree3,12,A\n", f"\nh2,tree3,12,{label}\n".encode()
+    )
+    world.publish("orchard", files)
+    coverage = {
+        "kind": "coverage",
+        "id": "cov:harvests.tree_id",
+        "label": "Every tree's harvests are recorded",
+        "fields": {"relationship": "rel:harvests.tree_id", "parents": "all"},
+    }
+    world.curate("orchard", {"op": "put", "descriptor": coverage})
+    cohorts = {"apple": [APPLE], "old": [OLD]}
+    written = (
+        columns_document([given], cohorts, overlap="allow")
+        if analysis == "compare.columns"
+        else document(
+            cohorts,
+            view={
+                "analysis": analysis,
+                "cohorts": list(cohorts),
+                "params": {"columns": [COLUMNS[1], given]},
+            },
+        )
+    )
+    refusal = refused(answer(catalog_of(world), "run_analysis", {"document": written}))
+    at = 0 if analysis == "compare.columns" else 1
+    long = label == LONG
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.LIMIT_EXCEEDED if long else RefusalCode.NOT_SUPPORTED,
+        f"/views/0/params/columns/{at}",
+    )
+    assert refusal.limit == (Limit(name="text_characters", max=MAX_TEXT) if long else None)
+    said = "".join(str(one.model_dump().get("text") or "") for one in refusal.message)
+    assert ("characters" if long else "not Unicode text") in said
+    assert label not in refusal.model_dump_json()
+    assert label not in caplog.text
 
 
 def test_a_distribution_s_issuance_records_its_materialisation_after_its_cohorts_counts(
@@ -776,22 +952,31 @@ def test_a_cohort_with_more_members_than_a_listing_reads_refuses_the_call(
     assert refusal.limit == Limit(name="listed_members", max=3)
 
 
-def test_a_page_holding_a_key_longer_than_a_result_writes_refuses_the_call_naming_its_column(
-    world: World, orchard: Orchard
+@pytest.mark.parametrize("longest", ["t" * (MAX_TEXT + 1), "t\ufdd0"], ids=["longer", "not text"])
+def test_a_page_holding_a_key_longer_than_a_result_writes_or_not_unicode_refuses_the_call(
+    world: World, orchard: Orchard, longest: str
 ) -> None:
+    """D331, m1 of round 2 of #72's review: a page holding a key of more than ``MAX_TEXT``
+    characters refuses the call as ``LIMIT_EXCEEDED`` naming ``text_characters``, and one holding
+    a key that is not Unicode text as ``NOT_SUPPORTED`` naming no limit, each naming the key
+    column and never the key; a cohort whose page holds neither runs."""
     files = orchard()
-    longest = "t" * (MAX_TEXT + 1)
     files["trees.csv"] = files["trees.csv"].replace(b"\ntree1,", f"\n{longest},".encode())
     world.publish("orchard", files)
     written = members_document(cohorts=["pear"])
     found = answer(catalog_of(world), "run_analysis", {"document": written})
     refusal = refused(found)
-    assert (refusal.code, refusal.path) == (RefusalCode.LIMIT_EXCEEDED, "/views/0")
-    assert refusal.limit == Limit(name="text_characters", max=MAX_TEXT)
+    long = len(longest) > MAX_TEXT
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.LIMIT_EXCEEDED if long else RefusalCode.NOT_SUPPORTED,
+        "/views/0",
+    )
+    assert refusal.limit == (Limit(name="text_characters", max=MAX_TEXT) if long else None)
     assert {"data": "trees.tree_id"} in [
         segment.model_dump(exclude_none=True) for segment in refusal.message
     ]
     assert "ttt" not in refusal.model_dump_json()
+    assert longest not in refusal.model_dump_json()
     [result] = run(catalog_of(world), members_document(cohorts=["apple"])).results
     assert result.values.model_dump(mode="json")["positions"][0]["keys"]
 

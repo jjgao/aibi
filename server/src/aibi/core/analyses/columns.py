@@ -104,6 +104,7 @@ from aibi.core.analyses.distribution import (
     category_label,
     declared_categories,
     open_categories,
+    within_text,
 )
 from aibi.core.engine.canonical import CanonicalVariable
 from aibi.core.engine.readback import variable_readback
@@ -267,7 +268,9 @@ def _rows(
     ``MAX_CATEGORIES`` raise ``TooManyCategories`` before any value is read where the declared
     ones are too many, else at the first undeclared value too many, before any is sorted, so a
     column of a million values is refused after reading about ``MAX_CATEGORIES`` of them, the
-    deadline checked before each position's."""
+    deadline checked before each position's; a label longer than ``MAX_TEXT`` raises
+    ``LongCategory``, and one that is not Unicode text ``NonTextCategory``
+    (``distribution.within_text``, D382)."""
     declared = declared_categories(variable)
     if k is not None:
         rows = [_Row((value,), False) for value in declared]
@@ -289,6 +292,7 @@ def _rows(
         rows = [_Row((value,), False) for value in [*declared, *others]]
     if len(rows) > MAX_CATEGORIES:
         raise TooManyCategories(column)
+    within_text((value for row in rows for value in row.values), column)
     return rows
 
 
@@ -757,9 +761,9 @@ def compare_columns(
     variable materialised over each cohort's units (``engine.sql``: counted by SQL, or by
     ``engine.variables`` from the reference evaluator's values); ``overlap`` says that the view
     allows overlap and its cohorts share units, and ``computation`` is the view's computation id,
-    which seeds the bootstrap. Raises ``TooManyCategories``, ``TooLarge``, and ``CallerDeadline``
-    when ``time.monotonic()`` has passed ``ends`` before a column or one of its steps (module
-    docstring)."""
+    which seeds the bootstrap. Raises ``TooManyCategories``, ``LongCategory``,
+    ``NonTextCategory``, ``TooLarge``, and ``CallerDeadline`` when ``time.monotonic()`` has passed
+    ``ends`` before a column or one of its steps (module docstring)."""
     if len(materialised) != len(positions) or any(
         len(found) != len(variables) for found, _ in materialised
     ):

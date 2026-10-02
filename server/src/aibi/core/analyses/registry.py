@@ -24,7 +24,9 @@ allows no row ids.
 A ``disclosed`` analysis may also **withhold a variable form** under any setting
 (``CoreAnalysis.withheld_forms``, D379): a member of its parameters, by its path below them, whose
 presence the pass cannot protect (``summary.distribution``'s ``count: "rows"``, a sum of each
-unit's number of rows, a statistic of values D329 withholds). Under any setting a view that gives
+unit's number of rows, a statistic of values D329 withholds, and its ``each``, a split of the
+cohort's units per category, predicates that depend on one another, which no rule yet discloses
+together, D382). Under any setting a view that gives
 one is refused in phase 2 at that member, before anything else phase 2 checks of its variables
 (``withheld_form``), and the analysis stays ``available``: its other views run.
 
@@ -192,7 +194,10 @@ CORE: Mapping[str, CoreAnalysis] = {
         DisclosureClass.DISCLOSED,
         withheld_forms={
             "columns/*/count": "a column's rows total each unit's number of rows, a statistic of "
-            "values that the pass withholds, and one unit's rows can be k or more (D329)"
+            "values that the pass withholds, and one unit's rows can be k or more (D329)",
+            "columns/*/each": "a column's memberships split the cohort's units once for each of "
+            "its categories, predicates that depend on one another, which no rule yet discloses "
+            "together (D382)",
         },
     ),
     members.ENTRY.id: CoreAnalysis(
