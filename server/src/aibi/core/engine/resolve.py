@@ -136,6 +136,8 @@ UNCONFIRMED = frozenset({"imported_default", "proposed", "undeclared"})
 """Curation statuses that raise ``UNCONFIRMED_SEMANTICS`` for a field read (§5.1)."""
 
 _NUMERIC = ("number", "integer", "time_offset")
+_MEMBERSHIPS = ("category", "boolean", "list<category>")
+"""The datatypes whose categories a variable's ``each`` asks about (D380)."""
 _ORDERED = ("number", "integer", "date", "datetime", "time_offset")
 _LISTED = 64
 """Alternatives listed in a refusal before the rest are counted."""
@@ -274,6 +276,68 @@ def aggregates_taken(descriptor: ColumnDescriptor) -> tuple[Aggregate, ...]:
     )
 
 
+_POOLED: tuple[Aggregate, ...] = ("count", "max", "min", "mean")
+
+
+def _scope_columns(release: Release, relationship: str) -> tuple[str, ...]:
+    """The child's scope columns of a relationship's coverage, in the coverage's order (§5.6):
+    none but for direct or grouped ``parents``."""
+    descriptor = release.coverage(relationship)
+    parents = None if descriptor is None else descriptor.fields.parents
+    if isinstance(parents, DirectCoverage):
+        return tuple((parents.scope_columns or {}).values())
+    if isinstance(parents, GroupedCoverage):
+        return tuple((parents.groups.scope_columns or {}).values())
+    return ()
+
+
+def aggregates_over(
+    descriptor: ColumnDescriptor, scopes: Sequence[tuple[str, ...]], trailing: bool
+) -> tuple[Aggregate, ...]:
+    """The aggregates a column of several values per unit takes over its path given with no
+    ``where``, as a refusal offers them in place of another form (§9.2, D377, D380): those of
+    ``aggregates_taken`` that the path allows, ``scopes`` the scope columns of each down step's
+    coverage, outermost first, and ``trailing`` whether lookups follow the last. An aggregate
+    that pools rows (``count``, ``max``, ``min``, ``mean``, and so ``count: "rows"``) restricts
+    every scope column of its steps in its ``where`` (``OPEN_SCOPE``, ``_closable``), so none is
+    offered below a step with scope columns; ``every`` mentions X, and may not where X is a
+    scope column of the last step's child row (``SCOPE_COLUMN_MENTION``, ``_mentions``). So
+    ``some``, given values, always runs."""
+    column = descriptor.id.split(".", 1)[1]
+    pooled = not any(scopes)
+    mentioned = bool(scopes) and not trailing and column in scopes[-1]
+    return tuple(
+        name
+        for name in aggregates_taken(descriptor)
+        if (pooled or name not in _POOLED) and not (mentioned and name == "every")
+    )
+
+
+def _scopes(release: Release, path: Path) -> list[tuple[str, ...]]:
+    """The scope columns of each down step's coverage along a path, outermost first."""
+    return [_scope_columns(release, step.rel) for step in path if step.dir == "down"]
+
+
+def _ordered(descriptor: ColumnDescriptor) -> tuple[str, ...] | None:
+    """An ordered category's values in order, which ``max`` and ``min`` compare (§9.2); ``None``
+    for any other column."""
+    allowed = descriptor.fields.permissible_values
+    if descriptor.fields.datatype != "category" or allowed is None or not allowed.ordered:
+        return None
+    return tuple(entry.value for entry in allowed.values)
+
+
+def _empty_holds(
+    empty: object, function: str, datatype: str | None, order: tuple[str, ...] | None
+) -> bool:
+    """Whether an aggregate's ``empty`` is ``"exclude"`` or a value of the aggregate (§9.2): a
+    number for ``mean``, else of the column's datatype, one of an ordered category's values."""
+    if empty is None or empty == EXCLUDE:
+        return True
+    typed = typed_constant(empty, "number" if function == "mean" else datatype or "")
+    return typed is not None and (order is None or typed in order)
+
+
 @dataclass(frozen=True, order=True)
 class FieldRead:
     """A descriptor field that resolution or evaluation reads, with its curation status."""
@@ -371,12 +435,21 @@ class ViewPredicate:
 
 Function = Literal["count", "max", "min", "mean"]
 """A numeric aggregate (§9.2)."""
-VariableKind = Literal["column", "aggregate", "question", "rows"]
+VariableKind = Literal["column", "aggregate", "question", "rows", "memberships"]
 
 
 PER_CATEGORY = "M3.2e-2a (#52)"
 """The part that gives descriptive analyses per-category counts of multi-valued columns, their
 memberships (D335, D377)."""
+MEMBERSHIPS = "M3.2e-2a-2 (#52)"
+"""The part whose ``summary.distribution`` reads a variable's memberships (``each``); until then
+no analysis does (D380)."""
+
+
+Reads = Callable[["ResolvedVariable", Mapping[str, "ResolvedEndpoint"]], bool]
+"""A view's analysis's check of a form a refusal offers in place of another (D377, D380): the
+variable as it resolves in that form (``_as_offered``), and the view's endpoints as resolved, by
+key; ``True`` where phase 2 refuses nothing of it but its ``bins``."""
 
 
 @dataclass(frozen=True)
@@ -390,9 +463,13 @@ class ViewVariable:
     at: Position
     variable: Variable
     independent: bool = False
-    """Whether the view's analysis assumes independent groups, whose variables are one value per
-    unit whatever the column (§9.2), so that a multi-valued column of categories takes an
-    aggregate as one of numbers does, with no part to come (D335)."""
+    """Whether the view's analysis reads one value per unit whatever the column: one that assumes
+    independent groups (§9.2) or a pack's (D341), so that a multi-valued column of categories
+    takes an aggregate as one of numbers does, with no part to come (D335)."""
+    reads: "Reads | None" = None
+    """Whether the view's analysis reads the column in a form a refusal offers in place of
+    another, by its own phase-2 checks of the column and its form; ``None`` reads every form
+    (D377, D380)."""
 
 
 @dataclass(frozen=True)
@@ -412,7 +489,14 @@ class ResolvedVariable:
       question on the unit table whose truth value is the unit's value;
     - ``rows``: ``count: "rows"``, the rows an aggregate of the column would pool, ``rows`` and
       ``depth`` and ``lookup`` as an aggregate's, each row's value read and counted rather than
-      aggregated into one per unit (D378); no ``function``, ``empty`` or ``order``."""
+      aggregated into one per unit (D378); no ``function``, ``empty`` or ``order``;
+    - ``memberships``: ``each: "category"``, the unit's memberships of each category of a
+      multi-valued categorical column (D380): ``question`` its template, the existence question
+      of ``some`` of the rows (or ``any`` of a list's items) over the variable's path, at every
+      down step ``some`` with ``min_count`` 1 and the variable's ``lift``, whose value leaf asks
+      about no value (``values: []``), ``category_clause`` giving each category's question
+      (canonical); ``depth`` its down steps and ``lookup`` the lookups after the last (for a
+      list with none, the lookups to it)."""
 
     key: str
     release: Release
@@ -766,6 +850,9 @@ class _Resolver:
         self.view_clauses: list[ClauseModel] = []
         """The clauses of the views' predicates and of their variables' ``where``, whose pack
         leaves share the document's budget of steps (D345)."""
+        self.ends: dict[str, ResolvedEndpoint] = {}
+        """The views' endpoints resolved, by key, before their variables, whose offers an
+        analysis checks against them (``ViewVariable.reads``)."""
 
     @property
     def document(self) -> Document:
@@ -832,17 +919,16 @@ class _Resolver:
             resolved = self._view_predicate(predicate)
             if resolved is not None:
                 found[predicate.key] = resolved
+        for endpoint in endpoints:
+            resolved = self._view_endpoint(endpoint)
+            if resolved is not None:
+                self.ends[endpoint.key] = resolved
         read: dict[str, ResolvedVariable] = {}
         for variable in variables:
             made = self._view_variable(variable)
             if made is not None:
                 read[variable.key] = made
-        ends: dict[str, ResolvedEndpoint] = {}
-        for endpoint in endpoints:
-            resolved = self._view_endpoint(endpoint)
-            if resolved is not None:
-                ends[endpoint.key] = resolved
-        return Resolution(cohorts, finish_refusals(self.refusals), found, read, ends)
+        return Resolution(cohorts, finish_refusals(self.refusals), found, read, dict(self.ends))
 
     def _order(self) -> list[str]:
         """Cohorts after those they reference, in document order otherwise."""
@@ -1295,11 +1381,13 @@ class _Resolver:
             return None
         multi = bool(down_steps(path)) or datatype == "list<category>"
         base = ResolvedVariable(given.key, release, unit, descriptor.id, datatype, "column", path)
+        if variable.each is not None:
+            return self._memberships(context, variable, base, descriptor, path, at, given)
         if variable.count is not None:
             return self._rows(context, variable, base, descriptor, path, at)
         if aggregate is None:
             if multi:
-                self._not_single(descriptor, at, given.independent, context.dataset)
+                self._not_single(context, given, base, descriptor, path)
                 return None
             self._read_column(context, descriptor)
             self._read_path(context, path)
@@ -1321,32 +1409,40 @@ class _Resolver:
                 text("A list column's items are asked about by some and every, not counted or "),
                 text("compared: "),
                 data(descriptor.id),
-                alternatives=[text(name) for name in aggregates_taken(descriptor)],
+                alternatives=self._offered(context, given, base, descriptor, path),
             )
             return None
-        return self._aggregate(context, variable, base, descriptor, path, at)
+        return self._aggregate(context, given, base, descriptor, path)
 
     def _not_single(
-        self, descriptor: ColumnDescriptor, at: Position, independent: bool, reference: str
+        self,
+        context: _Cohort,
+        given: ViewVariable,
+        base: ResolvedVariable,
+        descriptor: ColumnDescriptor,
+        path: Path,
     ) -> None:
         """A variable that is multi-valued for the unit, given no aggregate (§9.2): for an
-        analysis that assumes independent groups, or of numbers, an aggregate is required; a
-        descriptive analysis's per-category counts of categories come with M3.2e-2a (D377).
-        Either lists the aggregates the column takes (``aggregates_taken``). A descriptive
-        analysis is offered ``count: "rows"`` too (D378) for numbers and for categories below the
-        unit, never for a list, whose items are no rows, and never under a disclosure setting,
-        which withholds it (``under_k``, D379)."""
+        analysis that reads one value per unit (``ViewVariable.independent``), or of numbers, an
+        aggregate is required; a descriptive analysis's per-category counts of categories come
+        with M3.2e-2a (D377). Either lists the aggregates that run in its place (``_offered``). A
+        descriptive analysis is offered ``count: "rows"`` too (D378) for numbers and for
+        categories below the unit, never for a list, whose items are no rows, never under a
+        disclosure setting, which withholds it (``under_k``, D379), and never below a step with
+        scope columns, whose rows it pools as ``count`` does."""
+        at, independent = given.at, given.independent
         datatype = descriptor.fields.datatype
         listed = datatype == "list<category>"
         categories = listed or datatype in ("category", "boolean")
         rows = (
             not independent
-            and reference not in self.under_k
+            and context.dataset not in self.under_k
             and not listed
+            and not any(_scopes(context.release, path))
             and (categories or datatype in _NUMERIC)
         )
         alternatives = [
-            *(text(name) for name in aggregates_taken(descriptor)),
+            *self._offered(context, given, base, descriptor, path),
             *([text('count: "rows"')] if rows else []),
         ]
         if categories and not independent:
@@ -1416,37 +1512,35 @@ class _Resolver:
     def _aggregate(
         self,
         context: _Cohort,
-        variable: Variable,
+        given: ViewVariable,
         base: ResolvedVariable,
         descriptor: ColumnDescriptor,
         path: Path,
-        at: Position,
     ) -> ResolvedVariable | None:
         """``count``, ``max``, ``min`` or ``mean`` of the rows reached at the last down step of
         the path (§9.2): their chain of questions, whose last ``where`` holds the variable's
         conditions (resolved on the column's table, the trailing lookups prefixed, as an
         ``exists`` leaf's ``where`` is), and every scope column of their coverage restricted to
         a finite set of values."""
+        variable, at = given.variable, given.at
         function = cast(Function, variable.aggregate)
         datatype = base.datatype
-        ordered = descriptor.fields.permissible_values
         order: tuple[str, ...] | None = None
         if function == "mean" and datatype not in _NUMERIC:
-            self._not_aggregated(function, descriptor, at, "numbers", variable)
+            self._not_aggregated(context, given, base, descriptor, path, "numbers")
             return None
         if function in ("max", "min"):
-            if datatype in ("category",) and ordered is not None and ordered.ordered:
-                order = tuple(entry.value for entry in ordered.values)
-            elif datatype not in _NUMERIC:
+            order = _ordered(descriptor)
+            if order is None and datatype not in _NUMERIC:
                 self._not_aggregated(
-                    function, descriptor, at, "numbers and ordered categories", variable
+                    context, given, base, descriptor, path, "numbers and ordered categories"
                 )
                 return None
         empty: Constant | None = None
         if variable.empty is not None and variable.empty != EXCLUDE:
             kind = "number" if function == "mean" else datatype or ""
             empty = typed_constant(variable.empty, kind)
-            if empty is None or (order is not None and empty not in order):
+            if not _empty_holds(variable.empty, function, datatype, order):
                 self.refuse(
                     RefusalCode.INVALID_CONSTANT,
                     (*at, "empty"),
@@ -1517,6 +1611,104 @@ class _Resolver:
             lookup=_trailing(path),
         )
 
+    def _memberships(
+        self,
+        context: _Cohort,
+        variable: Variable,
+        base: ResolvedVariable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+        at: Position,
+        given: ViewVariable,
+    ) -> ResolvedVariable | None:
+        """``each: "category"``, the memberships of each category (§9.2, D380): the template of
+        its categories' questions, the chain ``_question`` gives ``some`` over the path, its value
+        leaf of no value (``Values(())``), a list's ``match`` ``any``, with the variable's
+        ``lift``. ``ValueList`` requires a value, so the leaf is built here and ``_value``'s
+        checks repeated: the datatype and row ids (``_variable``), the list's ``match`` and the
+        fields read; the rules on what ``W_C`` mentions (``_chain``) and the caps apply. An
+        analysis that reads one value per unit (``ViewVariable.independent``, D335) reads no
+        memberships, and a column that is not categorical, or holds one value per unit, has
+        none. Each refusal offers what runs in its place: leaving ``each`` out where the column
+        holds one value per unit and the analysis reads it as it is (``ViewVariable.reads``),
+        else the aggregates that run (``_offered``); where nothing runs, nothing is offered and
+        the message says so."""
+        at_each: Position = (*at, "each")
+        datatype = base.datatype
+        listed = datatype == "list<category>"
+        downs = down_steps(path)
+        single = not downs and not listed
+        instead = (
+            ([text("leave each out")] if self._reads(given, base) else [])
+            if single
+            else self._offered(context, given, base, descriptor, path)
+        )
+        advice = ("leave each out" if single else "give an aggregate") if instead else ""
+        if given.independent:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                at_each,
+                text("This analysis reads one value per unit of each variable (§9.2, D335), not "),
+                text("its memberships"),
+                text(f": {advice}" if advice else ", and it reads no form of this column"),
+                alternatives=instead,
+            )
+            return None
+        if datatype not in _MEMBERSHIPS:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                at_each,
+                text("each asks about the categories of a category, boolean or list column; "),
+                data(descriptor.id),
+                text(f" is a {datatype} column"),
+                text(f": {advice}" if advice else ", and this analysis reads no form of it"),
+                alternatives=instead,
+            )
+            return None
+        if single:
+            self.refuse(
+                RefusalCode.INVALID_VALUE,
+                at_each,
+                text("The column holds one value per unit, so each unit is in one category: "),
+                text("leave each out: " if instead else "this analysis reads no form of it: "),
+                data(descriptor.id),
+                alternatives=instead,
+            )
+            return None
+        self._read_column(context, descriptor)
+        self._read_path(context, path)
+        node = RValue(
+            descriptor.id, Values(()), (), False, None, "any" if listed else None, frozenset({at})
+        )
+        if downs:
+            quantifiers = [_quantifier("some")] * downs
+            chained = self._chain(
+                context,
+                path,
+                quantifiers,
+                variable.lift or "strict",
+                False,
+                (node,),
+                at,
+                context.unit,
+            )
+            if chained is None:
+                return None
+            template: RClause = chained
+        else:
+            template = replace(node, via=path)
+        top = self._within_caps(context, at, (template,))
+        if top is None:
+            return None
+        return replace(
+            base,
+            kind="memberships",
+            via=(),
+            question=top[0],
+            depth=downs,
+            lookup=_trailing(path) if downs else path,
+        )
+
     def _pooling(
         self,
         context: _Cohort,
@@ -1563,30 +1755,94 @@ class _Resolver:
 
     def _not_aggregated(
         self,
-        function: str,
+        context: _Cohort,
+        given: ViewVariable,
+        base: ResolvedVariable,
         descriptor: ColumnDescriptor,
-        at: Position,
+        path: Path,
         takes: str,
-        variable: Variable,
     ) -> None:
-        """An aggregate the column does not take, offering those it does that the variable's
-        other members allow (§9.2): not ``some`` or ``every`` beside a ``where``, and only
-        ``max``, ``min`` and ``mean`` beside an ``empty``."""
-        offered = [
-            name
-            for name in aggregates_taken(descriptor)
-            if name != function
-            and not (variable.where is not None and name in ("some", "every"))
-            and not (variable.empty is not None and name not in ("max", "min", "mean"))
-        ]
+        """An aggregate the column does not take (§9.2), offering those that run in its place
+        (``_offered``)."""
+        function = cast(Aggregate, given.variable.aggregate)
         self.refuse(
             RefusalCode.AGGREGATE_NOT_ALLOWED,
-            (*at, "aggregate"),
+            (*given.at, "aggregate"),
             text(f"{function} takes {takes}; "),
             data(descriptor.id),
             text(f" is a {descriptor.fields.datatype} column"),
-            alternatives=[text(name) for name in offered],
+            alternatives=self._offered(context, given, base, descriptor, path),
         )
+
+    def _offered(
+        self,
+        context: _Cohort,
+        given: ViewVariable,
+        base: ResolvedVariable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+    ) -> list[Segment]:
+        """The aggregates a refusal of a multi-valued column's form offers in its place, each of
+        which runs with the variable's other members (§9.2, D377, D380): of those its column
+        takes (``aggregates_taken``), not the one given; with no ``where``, those its path allows
+        (``aggregates_over``); beside a ``where``, which ``some`` and ``every`` do not take,
+        those that pool rows where they run with it (``_pooled``), their rows its conditions;
+        beside an ``empty``, ``max``, ``min`` and ``mean`` alone, where it is a value of theirs
+        (``_empty_holds``); and of those, the ones the view's analysis reads (``_reads``)."""
+        variable = given.variable
+        over = aggregates_over(
+            descriptor,
+            _scopes(context.release, path),
+            bool(down_steps(path)) and bool(_trailing(path)),
+        )
+        order = _ordered(descriptor)
+        rows: RExists | None = None
+        if variable.where is not None and down_steps(path):
+            rows = self._pooled(context, variable, descriptor, path, given.at)
+        offered: list[Segment] = []
+        for name in aggregates_taken(descriptor):
+            if name == variable.aggregate:
+                continue
+            if variable.where is None:
+                if name not in over:
+                    continue
+            elif name not in _POOLED or rows is None:
+                continue
+            if variable.empty is not None and (
+                name not in ("max", "min", "mean")
+                or not _empty_holds(variable.empty, name, base.datatype, order)
+            ):
+                continue
+            if self._reads(given, _as_offered(base, descriptor, path, name, rows)):
+                offered.append(text(name))
+        return offered
+
+    def _reads(self, given: ViewVariable, variable: ResolvedVariable) -> bool:
+        """Whether the view's analysis reads a variable in a form offered in place of another,
+        by its phase-2 checks (``ViewVariable.reads``), against the view's endpoints as
+        resolved."""
+        return given.reads is None or given.reads(variable, self.ends)
+
+    def _pooled(
+        self,
+        context: _Cohort,
+        variable: Variable,
+        descriptor: ColumnDescriptor,
+        path: Path,
+        at: Position,
+    ) -> RExists | None:
+        """The rows an aggregate that pools them reads over the variable's path with its
+        ``where`` (``_pooling``: every step can close a unit), or ``None`` where it refuses them,
+        asked of an aggregate offered in place of another: what it refuses is not the variable's
+        refusal, and the expansions it counts are given back, since the variable is refused and
+        reads none."""
+        kept, values, failed = self.refusals, self.expansion_values, context.failed
+        self.refusals = []
+        try:
+            chain = self._pooling(context, variable, descriptor, path, at)
+            return None if self.refusals else chain
+        finally:
+            self.refusals, self.expansion_values, context.failed = kept, values, failed
 
     def _closable(self, context: _Cohort, chain: RExists, depth: int, at: Position) -> bool:
         """Whether every step of an aggregate's chain can close a unit: a step whose coverage has
@@ -2823,15 +3079,12 @@ class _Resolver:
         if descriptor is not None and "/fields/parents" in descriptor.curation:
             status = descriptor.curation["/fields/parents"].status
         form: Literal["undeclared", "all", "direct", "grouped"] = "undeclared"
-        scope_columns: tuple[str, ...] = ()
         if parents == "all":
             form = "all"
         elif isinstance(parents, DirectCoverage):
             form = "direct"
-            scope_columns = tuple((parents.scope_columns or {}).values())
         elif isinstance(parents, GroupedCoverage):
             form = "grouped"
-            scope_columns = tuple((parents.groups.scope_columns or {}).values())
         record_filter: tuple[tuple[str, frozenset[str]], ...] = ()
         parent_scope: RClause | None = None
         if descriptor is not None:
@@ -2858,7 +3111,7 @@ class _Resolver:
             status == "proposed",
             parent_scope,
             record_filter,
-            scope_columns,
+            _scope_columns(release, relationship),
             descriptor,
         )
         context.coverage[relationship] = coverage
@@ -3092,6 +3345,32 @@ def _admitted_columns(node: RExists) -> set[str]:
     }
 
 
+def _as_offered(
+    base: ResolvedVariable,
+    descriptor: ColumnDescriptor,
+    path: Path,
+    form: Aggregate,
+    rows: RExists | None = None,
+) -> ResolvedVariable:
+    """A multi-valued column's variable as it resolves under an aggregate a refusal offers in
+    place of another form (D377, D380): ``some`` or ``every`` of it, or an aggregate that pools
+    its rows, ``rows`` the chain of the variable's ``where`` (``_pooled``), with none none; what
+    the view's analysis checks of it in phase 2 (``ViewVariable.reads``). The column read as it
+    is resolves to ``base`` itself."""
+    if form in ("some", "every"):
+        return replace(base, kind="question", via=(), aggregate=form)
+    return replace(
+        base,
+        kind="aggregate",
+        via=(),
+        function=form,
+        rows=rows,
+        depth=down_steps(path),
+        lookup=_trailing(path) if down_steps(path) else (),
+        order=_ordered(descriptor) if form in ("max", "min") else None,
+    )
+
+
 def _trailing(path: Path) -> Path:
     """The up steps after the last down step."""
     last = max(index for index, step in enumerate(path) if step.dir == "down")
@@ -3105,6 +3384,7 @@ def _quantifier(given: object) -> tuple[Quantifier, int | None]:
 
 
 __all__ = [
+    "MEMBERSHIPS",
     "PER_CATEGORY",
     "UNCONFIRMED",
     "Coverage",
@@ -3121,6 +3401,7 @@ __all__ = [
     "ViewEndpoint",
     "ViewPredicate",
     "ViewVariable",
+    "aggregates_over",
     "aggregates_taken",
     "check_parent_scopes",
     "identifying",

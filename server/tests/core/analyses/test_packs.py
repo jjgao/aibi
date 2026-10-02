@@ -1832,3 +1832,125 @@ def test_more_pack_leaves_in_a_predicate_than_a_cohort_may_have_are_refused(
     assert refusals(found) == [("LIMIT_EXCEEDED", at)]
     monkeypatch.setattr(views, "MAX_PACK_LEAVES", 2)
     assert check(written, shop(survived="origin"), analyses=tallies()).refusals == []
+
+
+# --- Memberships ---------------------------------------------------------------------------------
+
+PACKED_EXTRAS = [
+    build.column("customers.born", "date"),
+    build.column("customers.seen", "datetime"),
+]
+PACKED_EACH: dict[str, tuple[str, list[str], list[Any]]] = {
+    "a category": ("customers.tier", ["leave each out"], []),
+    "an integer": ("customers.age", ["leave each out"], []),
+    "the endpoint's time": ("customers.tenure", ["leave each out"], []),
+    "the endpoint's status": ("customers.left", ["leave each out"], []),
+    "a date": ("customers.born", [], []),
+    "a datetime": ("customers.seen", [], []),
+    "an identifier": ("customers.customer_id", [], []),
+    "an identifier below the unit": ("orders.order_id", ["count"], []),
+    "a category below the unit": ("orders.channel", ["count", "some", "every"], ["web"]),
+}
+"""A column of each kind a pack's input column may name, what a refusal of its memberships offers
+in their place, and the values ``some`` and ``every`` ask about."""
+
+
+def packed_each(
+    check: Check,
+    release: Any,
+    analyses: Analyses,
+    column: str,
+    offered: list[str],
+    values: list[Any],
+) -> None:
+    """``each`` of a column in the ``measure`` role is refused, offering ``offered``, where the
+    message says whether anything runs; the bare column below the unit offers the same, and a view
+    of each alternative runs."""
+    written = document({"measure": [{"column": column, "each": "category"}]})
+    [refusal] = check(written, release, analyses=analyses).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.INVALID_VALUE,
+        "/views/0/params/columns/measure/0/each",
+    )
+    assert "compares units" not in said(refusal)
+    assert ("reads no form of this column" in said(refusal)) is not offered
+    assert [one.text for one in refusal.alternatives or []] == offered
+    bare = check(document({"measure": [{"column": column}]}), release, analyses=analyses)
+    if column.startswith("orders."):
+        [required] = bare.refusals
+        assert required.code == RefusalCode.AGGREGATE_REQUIRED
+        assert [one.text for one in required.alternatives or []] == offered
+    else:
+        assert (bare.refusals == []) is bool(offered)
+    for name in offered:
+        given: dict[str, Any] = {"column": column}
+        if name != "leave each out":
+            given["aggregate"] = name
+        if name in ("some", "every"):
+            given["values"] = values
+        found = check(document({"measure": [given]}), release, analyses=analyses)
+        assert found.refusals == [], given
+
+
+@pytest.mark.parametrize("kind", list(PACKED_EACH))
+def test_a_pack_s_analysis_takes_no_memberships_and_offers_only_the_forms_it_is_handed(
+    check: Check, shop: Shop, kind: str
+) -> None:
+    """A pack's analysis reads one value per unit of each variable (D335, D341), so ``each`` is
+    invalid, whether or not its entry assumes independent groups, and its refusal offers only
+    what the pack's phase 2 takes in its place (``views._pack_unread``, D380): leaving ``each``
+    out for a column of one value per unit it is handed as it is (the endpoint's time and status
+    among them, which a pack reads), never for a date, a datetime or an identifier, and of an
+    identifier below the unit ``count`` alone, which reads no value."""
+    column, offered, values = PACKED_EACH[kind]
+    release = shop(extended=True, survived="delayed", extras=PACKED_EXTRAS)
+    analyses = tallies(Echo(entry([*REQUIRES, ENDPOINT])))
+    packed_each(check, release, analyses, column, offered, values)
+
+
+@pytest.mark.parametrize(
+    ("requirement", "column", "offered"),
+    [
+        ({"datatype": "integer"}, "customers.tier", []),
+        ({"datatype": "integer"}, "customers.age", ["leave each out"]),
+        ({"on": "unit"}, "orders.channel", []),
+    ],
+)
+def test_a_refusal_of_memberships_offers_only_the_forms_the_role_takes(
+    check: Check, shop: Shop, requirement: dict[str, Any], column: str, offered: list[str]
+) -> None:
+    """A role's datatype and ``"on": "unit"`` are phase 2's too (``views._pack_unread``): a role
+    of integers is offered leaving ``each`` out of an integer column alone, and one on the unit
+    no aggregate, which reads no column of the unit table as it is (D380)."""
+    measure = {**REQUIRES[1], **requirement}
+    analyses = tallies(Echo(entry([REQUIRES[0], measure], independent=True)))
+    release = shop(extended=True)
+    packed_each(check, release, analyses, column, offered, ["web"])
+
+
+@pytest.mark.parametrize(
+    ("tested", "values", "offered"),
+    [("orders.channel", ["web"], ["count"]), ("orders.order_id", ["o1"], [])],
+)
+def test_an_aggregate_not_taken_offers_count_only_where_its_conditions_name_no_identifier(
+    check: Check, shop: Shop, tested: str, values: list[str], offered: list[str]
+) -> None:
+    """Beside a ``where``, the refusal of an aggregate the column does not take offers those
+    that pool rows only where phase 2 takes their conditions (D342, D377): a pack is handed no
+    value computed from an identifier column, so a ``count`` of rows whose ``where`` tests one
+    is refused, and none is offered."""
+    leaf = {"kind": "value", "column": tested, "values": values}
+    variable = {"column": "orders.channel", "aggregate": "mean", "where": [leaf]}
+    release = shop(extended=True)
+    [refusal] = check(document({"measure": [variable]}), release, analyses=tallies()).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.AGGREGATE_NOT_ALLOWED,
+        "/views/0/params/columns/measure/0/aggregate",
+    )
+    assert [one.text for one in refusal.alternatives or []] == offered
+    counted = {**variable, "aggregate": "count"}
+    found = check(document({"measure": [counted]}), release, analyses=tallies())
+    expected = (
+        [] if offered else [("ROW_IDS_NOT_ALLOWED", "/views/0/params/columns/measure/0/where")]
+    )
+    assert refusals(found) == expected

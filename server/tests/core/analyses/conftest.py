@@ -16,6 +16,10 @@ rules differ (§6.5).
   ``shop(survived=...)`` adds each customer's months until they left (``tenure``, ``left``,
   ``joined``) and the endpoint ``ep:retention`` over them, its customers entering at ``joined``
   (``"delayed"``), at the origin (``"origin"``) or as it leaves undeclared (``"undeclared"``).
+- ``scoped`` builds the extended shop with each customer's visits to stalls, recorded only for
+  the stalls the customer's list names (direct coverage scoped by ``visits.stall``, §5.6),
+  whether each was paid (``visits.paid``), another column of their rows, and the booth each
+  visit looks up, whose own ``stall`` (``booths.stall``) is named as the scope column is.
 - ``distributed`` checks a ``summary.distribution`` view of the extended shop over cohorts of the
   pattern document, and ``summarised`` runs it over variables materialised as given, under a
   *k*, each cohort's size given, for checks that run one view many times; ``columned`` and
@@ -72,6 +76,7 @@ from aibi.core.schema.semantics import Reason
 
 ORDERS = "rel:orders.customer"
 RETURNS = "rel:returns.order"
+VISITS = "rel:visits.customer"
 ENGINE = "aibi test"
 
 
@@ -735,6 +740,58 @@ def compare_materialised(
         computation=view.identity.computation_id,
         ends=ends,
     )
+
+
+def scoped_release(**options: Any) -> Release:
+    """The extended shop with the customers' visits, recorded for the stalls their lists name:
+    one visit each for the first twelve customers, to stall ``a`` or ``b``, every third paid, at
+    booth ``b1`` or ``b2``, whose stalls are ``a`` and ``b``, and stall ``a`` listed for every
+    other customer. ``options`` go to ``shop_descriptors``."""
+    column = build.column
+    visits = [
+        build.table("visits", ["visit_id"], role="event"),
+        column("visits.visit_id", "string"),
+        column("visits.customer_id", "string"),
+        column("visits.stall", "category"),
+        column("visits.paid", "boolean"),
+        column("visits.booth_id", "string"),
+        build.relationship("visits", ["customer_id"], "customers", role="customer"),
+        build.table("booths", ["booth_id"]),
+        column("booths.booth_id", "string"),
+        column("booths.stall", "category"),
+        build.relationship("visits", ["booth_id"], "booths", role="booth"),
+        build.coverage(
+            VISITS,
+            {
+                "table": "visit_lists",
+                "parent_columns": {"customer_id": "customer_id"},
+                "scope_columns": {"stall": "stall"},
+            },
+        ),
+        build.table("visit_lists", ["customer_id", "stall"], role="coverage"),
+        column("visit_lists.customer_id", "string"),
+        column("visit_lists.stall", "string"),
+    ]
+    rows = shop_rows(extended=True)
+    rows["visits"] = [
+        {
+            "visit_id": f"v{n}",
+            "customer_id": f"c{n}",
+            "stall": "ab"[n % 2],
+            "paid": n % 3 == 0,
+            "booth_id": f"b{n % 2 + 1}",
+        }
+        for n in range(1, 13)
+    ]
+    rows["booths"] = [{"booth_id": "b1", "stall": "a"}, {"booth_id": "b2", "stall": "b"}]
+    rows["visit_lists"] = [{"customer_id": f"c{n}", "stall": "a"} for n in range(1, 25, 2)]
+    extras = [*options.pop("extras", ()), *visits]
+    return build.release(shop_descriptors(extended=True, extras=extras, **options), rows)
+
+
+@pytest.fixture(scope="session")
+def scoped() -> Callable[..., Release]:
+    return scoped_release
 
 
 @pytest.fixture(scope="session")

@@ -23,6 +23,9 @@ form, and each leaf as written the keys of the clauses it became part of (``sour
 The packs involved in a cohort run their caveat rules on its canonical form (D287); what they
 raise is static, like ``UNCONFIRMED_SEMANTICS``, and joins its caveats.
 
+A variable's memberships (``each``, D380) have the form of their template, whose value leaf asks
+about no value; ``category_clause`` gives each category's question, and its leaf key.
+
 Phase 2 is the registry's (``aibi.core.analyses.views``, D317): it checks each view against its
 analysis, and hands the clauses of its parameters (``ViewPredicate``) to ``canonicalise``, which
 resolves them with the cohorts, in one resolution, and canonicalises each as a cohort of one
@@ -53,6 +56,7 @@ from aibi.core.engine.resolve import (
     resolve,
 )
 from aibi.core.engine.resolved import (
+    Constant,
     RAll,
     RAny,
     RClause,
@@ -62,6 +66,7 @@ from aibi.core.engine.resolved import (
     RKnown,
     RNot,
     RValue,
+    Values,
     constant_json,
     document,
     measure,
@@ -575,7 +580,14 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
     for ``max``, ``min`` and ``mean``, ``empty`` (``"exclude"`` or its value); a count of rows
     (D378): ``count`` (``"rows"``), ``column``, ``rows`` and ``lookup`` (if any) as an
     aggregate's, which no other form holds with ``count``; a predicate's truth
-    (``predicate_variable``): ``predicate``, its canonical clause tree."""
+    (``predicate_variable``): ``predicate``, its canonical clause tree; memberships (D380):
+    ``each`` (``"category"``) and ``question``, the canonical clause tree of its template, whose
+    value leaf holds ``"values": []``, which no clause holds (§7.6): the form of a variable, never
+    a clause, it names no category, and its written position maps to no leaf key, since it has
+    no ``where`` and so no leaf as written (``ResolvedVariable.leaves``)."""
+    if variable.kind == "memberships":
+        assert variable.question is not None
+        return {"each": "category", "question": canonical_clause(variable.question)}
     if variable.kind == "column":
         found: dict[str, JsonValue] = {"column": variable.column}
         if variable.via:
@@ -607,6 +619,22 @@ def variable_form(variable: ResolvedVariable) -> dict[str, JsonValue]:
     if variable.function != "count":
         found["empty"] = "exclude" if variable.empty is None else constant_json(variable.empty)
     return found
+
+
+def category_clause(template: RClause, category: Constant) -> RClause:
+    """A category's question of a variable's memberships (D380): its template with ``values:
+    [category]`` in its value leaf. Its leaf key (``leaf_key`` of its canonical clause) is a
+    category's key; a declared category's equals that of ``compare.existence``'s predicate
+    ``{"kind": "value", "column", "via", "values": [category], "quantifier": "some", "lift"}``,
+    however the path is written (§6.1), and a key gives back its clause by the same
+    substitution."""
+    if isinstance(template, RValue):
+        if not isinstance(template.predicate, Values) or template.predicate.values:
+            raise ValueError("a memberships' template asks about no value")
+        return replace(template, predicate=Values((category,)))
+    if isinstance(template, RExists) and len(template.where) == 1:
+        return replace(template, where=(category_clause(template.where[0], category),))
+    raise ValueError("a memberships' template is a chain of questions over one value leaf")
 
 
 def predicate_variable(key: str, predicate: CanonicalCohort) -> CanonicalVariable:
@@ -714,6 +742,7 @@ __all__ = [
     "as_document",
     "canonical_clause",
     "canonicalise",
+    "category_clause",
     "intersection",
     "predicate_variable",
     "variable_form",

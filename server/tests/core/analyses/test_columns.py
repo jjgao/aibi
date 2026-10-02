@@ -1097,6 +1097,110 @@ def test_a_column_the_analysis_does_not_take_is_refused_where_it_is_written(
     )
 
 
+EACH: dict[str, tuple[str, list[str], list[Any]]] = {
+    "an unordered category": ("orders.channel", ["count", "some", "every"], ["web"]),
+    "an ordered category": ("orders.grade", ["count", "max", "min", "some", "every"], ["b"]),
+    "a boolean": ("orders.paid", ["count", "some", "every"], [True]),
+    "a number": ("orders.amount", ["count", "max", "min", "mean", "some", "every"], [10.5]),
+    "a list": ("customers.labels", ["some", "every"], ["new"]),
+    "a category on the unit": ("customers.tier", ["leave each out"], []),
+    "a boolean on the unit": ("customers.flag", ["leave each out"], []),
+    "an integer on the unit": ("customers.age", ["leave each out"], []),
+    "a number on the unit": ("customers.spent", ["leave each out"], []),
+    "a time offset on the unit": ("customers.waited", ["leave each out"], []),
+    "a date on the unit": ("customers.born", [], []),
+    "a datetime on the unit": ("customers.seen", [], []),
+    "a string on the unit": ("customers.nick", [], []),
+}
+"""A column of each datatype, below the unit or a list, and one on the unit of each: what a
+comparison of its memberships offers in their place (for one on the unit, leaving ``each`` out
+where the analysis compares the column as it is, else nothing), and the values ``some`` and
+``every`` ask about."""
+
+
+@pytest.mark.parametrize("kind", list(EACH))
+def test_a_comparison_takes_no_memberships_and_offers_what_runs_in_their_place(
+    check: Check, shop: Shop, kind: str
+) -> None:
+    """``compare.columns`` compares units, one value each (§9.2), so ``each`` is invalid, naming
+    no part to come (D380), and offers the aggregates the column takes
+    (``resolve.aggregates_over``), or, for a column of one value per unit, leaving ``each``
+    out where it compares the column as it is, and nothing where a view of it is refused; a view
+    of each runs."""
+    column, offered, values = EACH[kind]
+    extras = [
+        build.column("customers.labels", "list<category>"),
+        build.column("orders.paid", "boolean"),
+        build.column(
+            "orders.grade",
+            "category",
+            permissible_values={"values": [{"value": v} for v in "abc"], "ordered": True},
+        ),
+        build.column("customers.flag", "boolean"),
+        build.column("customers.spent", "number"),
+        build.column("customers.waited", "time_offset", units="d"),
+        build.column("customers.born", "date"),
+        build.column("customers.seen", "datetime"),
+        build.column("customers.nick", "string"),
+    ]
+    release = shop(extended=True, extras=extras)
+    if column.startswith("customers.") and not offered:
+        [bare] = check(shop_document({"column": column}), release).refusals
+        assert (bare.code, bare.path) == (
+            RefusalCode.NOT_SUPPORTED,
+            "/views/0/params/columns/0/column",
+        )
+    [refusal] = check(shop_document({"column": column, "each": "category"}), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.INVALID_VALUE,
+        "/views/0/params/columns/0/each",
+    )
+    assert "M3.2" not in json.dumps([s.model_dump() for s in refusal.message])
+    assert [one.text for one in refusal.alternatives or []] == offered
+    for name in offered:
+        given: dict[str, Any] = {"column": column}
+        if name != "leave each out":
+            given["aggregate"] = name
+        if name in ("some", "every"):
+            given["values"] = values
+        assert check(shop_document(given), release).refusals == [], given
+
+
+BELOW_SCOPE: dict[str, tuple[str, list[str], list[Any]]] = {
+    "the scope column": ("visits.stall", ["some"], ["a"]),
+    "another column of its rows": ("visits.paid", ["some", "every"], [True]),
+    "a column its rows look up, named as the scope column": (
+        "booths.stall",
+        ["some", "every"],
+        ["a"],
+    ),
+}
+"""A column of rows whose coverage is scoped by value, or one they look up, what a comparison of
+its memberships offers in their place, and the values ``some`` and ``every`` ask about."""
+
+
+@pytest.mark.parametrize("kind", list(BELOW_SCOPE))
+def test_below_scoped_coverage_a_comparison_offers_the_aggregates_the_path_allows(
+    check: Check, scoped: Shop, kind: str
+) -> None:
+    """D380: below a step whose coverage is scoped by value, an aggregate that pools rows
+    (``count``) restricts its scope columns in its ``where``, and ``every`` may not mention its
+    scope column, so a refusal of memberships offers neither (``resolve.aggregates_over``), but
+    ``every`` of a column the rows look up, whatever its name; a view of each alternative runs."""
+    column, offered, values = BELOW_SCOPE[kind]
+    release = scoped()
+    given = {"column": column, "each": "category"}
+    [refusal] = check(shop_document(given), release).refusals
+    assert (refusal.code, refusal.path) == (
+        RefusalCode.INVALID_VALUE,
+        "/views/0/params/columns/0/each",
+    )
+    assert [one.text for one in refusal.alternatives or []] == offered
+    for name in offered:
+        asked = {"column": column, "aggregate": name, "values": values}
+        assert check(shop_document(asked), release).refusals == [], name
+
+
 def test_a_comparison_counts_no_rows_and_takes_an_aggregate_of_categories_of_several_rows(
     check: Check, shop: Shop
 ) -> None:

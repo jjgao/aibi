@@ -99,7 +99,11 @@ analysis's values model, `CoreAnalysis.values`) apart from its rendering for an 
 `resolve._rows`, kind `rows`): the evaluator reads each pooled row (`UnitValue.rows`,
 `RowCounts`), `sql.compile_materialised` counts them by value and by reason, `summary.distribution`
 gives `category_rows` and `number_rows`, and `registry.CoreAnalysis.withheld_forms` withholds it
-under any *k* (`registry.withheld_form`, `views._withheld_form`).
+under any *k* (`registry.withheld_form`, `views._withheld_form`). From M3.2e-2a-1, a variable's memberships
+(`each: "category"`, `resolve._memberships`, kind `memberships`) ask each category's existence
+question (`canonical.category_clause`): `core/engine/memberships.py` is the reference evaluator,
+`sql._Compiler.memberships` counts them as pairs plus default (`Materialised.memberships`,
+`membership_units`), and every analysis still refuses `each`.
 
 ## Non-negotiables
 

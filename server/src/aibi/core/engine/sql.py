@@ -35,6 +35,17 @@ compared as the evaluator compares them (numbers by value, exactly; nothing else
 and ``BOOL_OR`` over integers; no aggregate over a double enters a digest (§9.3). Rows are
 returned by ``rid``.
 
+**Memberships (D381).** A variable's memberships (``each``) are not a relation per category:
+a unit's answer for a category that none of the rows it reaches holds and no coverage lists for it
+depends on the unit alone, its default. So each step of the template's chain, from its value leaf
+up, gives two relations, each row's default and its pairs, the categories whose answer is not its
+default; a step's tallies per parent are its children's defaults' counts, and per parent and
+category those plus the counts of its children's pairs less those of their defaults, each a
+``COUNT`` of a condition (a bit of a reason or flag counted, never an OR subtracted), and its
+answers §6.5's of those tallies. A cohort's categories are listed and capped before its pairs are
+counted, its defaults and each listed category's pairs and displaced defaults counted by code,
+reasons and flag words, and the server derives each category's units from them.
+
 **Members (D333).** ``compile_members`` lists a cohort's members' unit keys, one row per member,
 each key column as it is stored, dates and datetimes as integers; the server orders them as the
 canonical form orders keys (``members.select``), since DuckDB's collation is not that order.
@@ -59,6 +70,7 @@ from aibi.core.engine.canonical import canonical_clause, variable_form
 from aibi.core.engine.data import KeyPart, Release, key_part
 from aibi.core.engine.graph import Path, Step
 from aibi.core.engine.inputs import Listed, TooManyCells
+from aibi.core.engine.memberships import Template, closed_listing, fixed, template, utf16
 from aibi.core.engine.resolve import (
     Coverage,
     Function,
@@ -87,6 +99,8 @@ from aibi.core.engine.units import scale
 from aibi.core.engine.variables import (
     Joint,
     Materialised,
+    Membership,
+    Memberships,
     RowCounts,
     Value,
     aggregated,
@@ -95,7 +109,7 @@ from aibi.core.engine.variables import (
 from aibi.core.engine.worker import CallerDeadline, QueryError, Rows
 from aibi.core.schema.descriptors import DirectCoverage, GroupedCoverage
 from aibi.core.schema.jsonio import canonical
-from aibi.core.schema.limits import MAX_INPUT_CELLS, MAX_LISTED
+from aibi.core.schema.limits import MAX_CATEGORIES, MAX_INPUT_CELLS, MAX_LISTED
 from aibi.core.schema.semantics import ExclusionReason, Flag, ObservationState, Reason
 from aibi.core.store.parquet import PhysicalType
 from aibi.core.store.tables import ITEM_STATE, STATE, TableSource, physical
@@ -605,7 +619,9 @@ def compile_crossing(
 
 _VALUE_ROWS, _EXCLUDED_ROWS, _UNIT_ROWS, _EMPTY_ROWS, _EXTREME_ROWS = 0, 1, 2, 3, 4
 _REACHED_ROWS, _ROW_VALUE_ROWS, _ROW_EXCLUDED_ROWS = 5, 6, 7
+_KNOWN_ROWS, _LISTED_ROWS, _DEFAULT_ROWS, _PAIR_ROWS, _DISPLACED_ROWS = 8, 9, 10, 11, 12
 """The kinds of a materialised variable's rows (``CompiledMaterialised``)."""
+PRESENT_STATE = ObservationState.PRESENT.value
 _DEADLINE_ROWS = 1 << 16
 """How many rows the server reads of a materialisation between looks at the call's deadline."""
 _MATERIALISED_VALUE = 2
@@ -621,6 +637,8 @@ class _Shape:
     function: str | None
     order: tuple[str, ...] | None
     empty: Value | None
+    categories: tuple[Value, ...] = ()
+    """For memberships, the categories listed whatever the data (``memberships.fixed``)."""
 
 
 def _shape(variable: ResolvedVariable) -> _Shape:
@@ -632,6 +650,7 @@ def _shape(variable: ResolvedVariable) -> _Shape:
         None
         if variable.empty is None
         else normalised(cast(Value, variable.empty), variable.datatype, variable.function),
+        fixed(variable) if variable.kind == "memberships" else (),
     )
 
 
@@ -729,11 +748,13 @@ class CompiledMaterialised:
         self, answers: Sequence[Rows], ends: float | None = None
     ) -> "tuple[tuple[tuple[Materialised, ...], Joint | None], ...]":
         """The queries' rows read: for each cohort, each variable materialised and, for two or
-        more, their joint accounting. Raises ``QueryError`` for rows the queries do not give,
-        and ``CallerDeadline`` once ``time.monotonic()`` passes ``ends`` (the call's deadline,
-        looked at every ``_DEADLINE_ROWS`` rows, and every ``_DEADLINE_ROWS`` units while a
-        ``mean``'s units are averaged: its rows are one per unit and value, read on the server
-        after the worker has answered)."""
+        more, their joint accounting, ``None`` where some memberships' listing is ``over``: their
+        units are counted over the categories the cap kept, not over all of them, and so no
+        joint count is given (``memberships.membership_units``, D380). Raises ``QueryError`` for
+        rows the queries do not give, and ``CallerDeadline`` once ``time.monotonic()`` passes
+        ``ends`` (the call's deadline, looked at every ``_DEADLINE_ROWS`` rows, and every
+        ``_DEADLINE_ROWS`` units while a ``mean``'s units are averaged: its rows are one per unit
+        and value, read on the server after the worker has answered)."""
         if len(answers) != len(self.columns):
             raise QueryError("a materialisation gave another number of answers")
         for rows, width in zip(answers, self.columns, strict=True):
@@ -749,12 +770,15 @@ class CompiledMaterialised:
             at += len(self.shapes)
             together: Joint | None = None
             if self.joint:
-                together = self._joint(answers[at])
+                over = any(one.memberships is not None and one.memberships.over for one in read)
+                together = None if over else self._joint(answers[at])
                 at += 1
             found.append((read, together))
         return tuple(found)
 
     def _variable(self, rows: Rows, shape: _Shape, ends: float | None) -> Materialised:
+        if shape.kind == "memberships":
+            return self._memberships(rows, shape, ends)
         tags, rids = rows.integer_column(0), rows.integer_column(1)
         bits, counts = rows.integer_column(3), rows.integer_column(4)
         words = [rows.integer_column(5 + at) for at in range(_words(len(self.marks)))]
@@ -816,6 +840,131 @@ class CompiledMaterialised:
             else None,
         )
 
+    def _memberships(self, rows: Rows, shape: _Shape, ends: float | None) -> Materialised:
+        """A memberships' rows read (``_Compiler.membership_rows``): each listed category's
+        units, the defaults less its displaced ones and plus its pairs, grouped by code, reasons
+        and flag words, the undeclared categories ordered in UTF-16 order (D381); nothing counted
+        where more than ``MAX_CATEGORIES`` are listed. Raises ``QueryError`` for rows the query
+        does not give, and ``CallerDeadline`` as ``read`` does."""
+        tags, ranks = rows.integer_column(0), rows.integer_column(1)
+        bits, counts = rows.integer_column(3), rows.integer_column(4)
+        words = [rows.integer_column(5 + at) for at in range(_words(len(self.marks)))]
+        raw = rows.value_column(_MATERIALISED_VALUE)
+        fixed_ones = shape.categories
+        known = excluded_units = 0
+        excluded = dict.fromkeys(ExclusionReason, 0)
+        flags = [0] * len(words)
+        listed: list[tuple[int, Value]] = []
+        defaults: Counter[tuple[int, int, tuple[int, ...]]] = Counter()
+        answered: dict[Value, Counter[tuple[int, int, tuple[int, ...]]]] = {}
+        displaced: dict[Value, Counter[tuple[int, int, tuple[int, ...]]]] = {}
+        for index in range(len(rows)):
+            if ends is not None and not index % _DEADLINE_ROWS and time.monotonic() >= ends:
+                raise CallerDeadline
+            tag, rank, bit, count = tags[index], ranks[index], bits[index], counts[index]
+            flagged = tuple(word[index] for word in words)
+            if count <= 0 or not 0 <= bit <= _ALL_EXCLUSIONS or min(flagged, default=0) < 0:
+                raise QueryError("a memberships' query gave a row it cannot give")
+            if not _words_fit(flagged, self.marks):
+                raise QueryError("a memberships' query gave a flag it cannot give")
+            if tag in (_EXCLUDED_ROWS, _KNOWN_ROWS):
+                if (tag == _EXCLUDED_ROWS) != (bit != 0):
+                    raise QueryError("a memberships' query gave a row it cannot give")
+                for at, word in enumerate(flagged):
+                    flags[at] |= word
+                if tag == _KNOWN_ROWS:
+                    known += count
+                    continue
+                excluded_units += count
+                for reason, flag in EXCLUSION_BIT.items():
+                    if bit & flag:
+                        excluded[reason] += count
+            elif tag == _LISTED_ROWS:
+                if count != 1 or bit or any(flagged) or not 0 <= rank <= len(fixed_ones):
+                    raise QueryError("a memberships' query gave a row it cannot give")
+                listed.append((rank, _read_class(raw[index], shape)))
+            elif tag in (_DEFAULT_ROWS, _PAIR_ROWS, _DISPLACED_ROWS):
+                if rank not in _CODES or (rank == UNKNOWN_CODE) != (bit != 0) or bit > _ALL_REASONS:
+                    raise QueryError("a memberships' query gave a truth value it cannot give")
+                key = (rank, bit, flagged)
+                if tag == _DEFAULT_ROWS:
+                    defaults[key] += count
+                    continue
+                into = answered if tag == _PAIR_ROWS else displaced
+                into.setdefault(_read_class(raw[index], shape), Counter())[key] += count
+            else:
+                raise QueryError("a memberships' query gave a row it cannot give")
+        placed = sorted((rank, category) for rank, category in listed if rank < len(fixed_ones))
+        others = sorted(
+            (category for rank, category in listed if rank == len(fixed_ones)), key=utf16
+        )
+        if any(fixed_ones[rank] != category for rank, category in placed) or len(
+            {rank for rank, _ in placed}
+        ) != len(placed):
+            raise QueryError("a memberships' query listed a category it cannot list")
+        if len(listed) > MAX_CATEGORIES:
+            none = MappingProxyType(dict.fromkeys(ExclusionReason, 0))
+            return Materialised(
+                MappingProxyType({}), 0, none, frozenset(), None, Memberships((), 0, True)
+            )
+        categories = [category for _, category in placed] + others
+        if len(placed) != len(fixed_ones) or len(set(categories)) != len(categories):
+            raise QueryError("a memberships' query listed a category it cannot list")
+        if not set(answered) | set(displaced) <= set(categories):
+            raise QueryError("a memberships' query counted a category it did not list")
+        members = sum(defaults.values())
+        if members != known + excluded_units:
+            raise QueryError("a memberships' defaults count other units than its members")
+        found = [
+            self._membership(category, defaults, answered, displaced, members)
+            for category in categories
+        ]
+        return Materialised(
+            MappingProxyType({}),
+            excluded_units,
+            MappingProxyType(excluded),
+            _marks(self.marks, flags) if flags else frozenset(),
+            None,
+            Memberships(tuple(found), known),
+        )
+
+    def _membership(
+        self,
+        category: Value,
+        defaults: Counter[tuple[int, int, tuple[int, ...]]],
+        answered: Mapping[Value, Counter[tuple[int, int, tuple[int, ...]]]],
+        displaced: Mapping[Value, Counter[tuple[int, int, tuple[int, ...]]]],
+        members: int,
+    ) -> Membership:
+        """One listed category's units (D381): the members' defaults, less those its pairs
+        displace and plus its pairs, by code, reasons and flag words, each count at least 0 and
+        together the members. Raises ``QueryError`` otherwise."""
+        tally = Counter(defaults)
+        tally.subtract(displaced.get(category, Counter()))
+        tally.update(answered.get(category, Counter()))
+        if min(tally.values(), default=0) < 0 or sum(tally.values()) != members:
+            raise QueryError("a memberships' pairs displace units its defaults do not hold")
+        by_code = dict.fromkeys(_CODES, 0)
+        by_reason = dict.fromkeys(ExclusionReason, 0)
+        flags = [0] * _words(len(self.marks))
+        for (code, bit, flagged), count in tally.items():
+            if not count:
+                continue
+            by_code[code] += count
+            for at, word in enumerate(flagged):
+                flags[at] |= word
+            for reason, flag in EXCLUSION_BIT.items():
+                if bit & flag:
+                    by_reason[reason] += count
+        return Membership(
+            category,
+            by_code[TRUE_CODE],
+            by_code[FALSE_CODE],
+            by_code[UNKNOWN_CODE],
+            MappingProxyType(by_reason),
+            _marks(self.marks, flags) if flags else frozenset(),
+        )
+
     @staticmethod
     def _joint(rows: Rows) -> Joint:
         known = none = 0
@@ -869,6 +1018,18 @@ def _read_value(raw: object, shape: _Shape) -> Value:
     if isinstance(raw, float) and not math.isfinite(raw):
         raise QueryError("a materialisation's query gave a value it cannot give")
     return normalised(cast(Value, raw), shape.datatype)
+
+
+def _read_class(raw: object, shape: _Shape) -> Value:
+    """A memberships' category as its query's rows hold it: a boolean as ``false`` or ``true``,
+    else its text."""
+    if shape.datatype == "boolean":
+        if raw not in (0, 1) or isinstance(raw, float):
+            raise QueryError("a memberships' query gave a category it cannot give")
+        return bool(raw)
+    if not isinstance(raw, str):
+        raise QueryError("a memberships' query gave a category it cannot give")
+    return raw
 
 
 def _read_extreme(raw: object, shape: _Shape) -> Value:
@@ -1739,15 +1900,22 @@ class _Compiler:
         shared: bool = False,
     ) -> CompiledMaterialised:
         members = [cast(str, self.part(cohort)) for cohort in cohorts]
-        units = [self.variable(variable) for variable in variables]
+        units = [
+            None if variable.kind == "memberships" else self.variable(variable)
+            for variable in variables
+        ]
         selects: list[exp.Query] = []
         for member in members:
-            selects += [
-                self.materialised_rows(member, variable, found)
-                for variable, found in zip(variables, units, strict=True)
-            ]
+            together: list[str] = []
+            for variable, found in zip(variables, units, strict=True):
+                if found is None:
+                    selects.append(self.membership_rows(member, variable))
+                    together.append(self.membership_units(member, variable)[0])
+                else:
+                    selects.append(self.materialised_rows(member, variable, found))
+                    together.append(found[0])
             if len(variables) > 1:
-                selects.append(self.joint(member, [found[0] for found in units]))
+                selects.append(self.joint(member, together))
         if shared and len(members) > 1:
             selects.append(self.shared(members))
         ctes = [self.base_cte(base) for base in self.bases.values()]
@@ -1896,6 +2064,8 @@ class _Compiler:
         and the flag words; and, for ``max``, ``min`` and ``mean``, the relation of each unit's
         pooled rows by value (``rid``, ``val``, ``n``), and for a count of rows that of each of
         its pooled rows (``rows_variable``)."""
+        if variable.kind == "memberships":
+            raise CompileError("memberships are counted per category over a cohort, never listed")
         key = ("variable", canonical(variable_form(variable)))
         found = self.memo.get(key)
         if found is not None:
@@ -2486,6 +2656,713 @@ class _Compiler:
         )
         return outer.group_by(_col("w", "k"), _col("w", "b"), copy=False)
 
+    # --- Memberships (D380, D381) ----------------------------------------------------------------
+
+    def memberships(self, variable: ResolvedVariable) -> tuple[str, str]:
+        """A variable's memberships over the unit table as pairs plus default (D381): each
+        unit's default D(u), its answer for every category that no row it reaches holds and no
+        coverage lists for it, a truth relation (``rid``, ``v``, ``r`` and the flag words); and
+        its pairs, each category whose answer is not its default, with that answer (``rid``,
+        ``cls``, ``v``, ``r`` and the words): the value leaf's (``membership_leaf``), read through
+        the lookups after the last down step, then each step's from the last to the first
+        (``membership_step``), read through the lookups before it."""
+        key = ("memberships", canonical(variable_form(variable)))
+        found = self.memo.get(key)
+        if found is not None:
+            return found, self.memo[(*key, "pairs")]
+        shape = template(variable)
+        steps = shape.levels
+        default, pairs = self.membership_leaf(shape.leaf)
+        start = steps[-1].table if steps else variable.unit
+        default, pairs = self.routed(start, shape.leaf.via, shape.table, default, pairs)
+        for index in range(len(steps) - 1, -1, -1):
+            node = steps[index]
+            last = index == len(steps) - 1
+            default, pairs = self.membership_step(node, shape, last, default, pairs)
+            table = variable.unit if index == 0 else steps[index - 1].table
+            parent = self.coverage[node.step.rel].parent_table
+            default, pairs = self.routed(table, node.via[:-1], parent, default, pairs)
+        self.memo[key] = default
+        self.memo[(*key, "pairs")] = pairs
+        return default, pairs
+
+    def pair_row(
+        self, alias: str, cls: Expression, v: Expression, r: Expression, m: Sequence[Expression]
+    ) -> list[Expression]:
+        """A pair's columns: its row, its category, and its answer's code, reasons and words."""
+        columns: list[Expression] = [_as(_col(alias, "rid"), "rid"), _as(cls, "cls")]
+        columns += [_as(v, "v"), _as(r, "r")]
+        return columns + [_as(word, f"m{index}") for index, word in enumerate(m)]
+
+    def membership_leaf(self, node: RValue) -> tuple[str, str]:
+        """The value leaf on X's own table (D381): a PRESENT value gives the default FALSE and a
+        pair, the value, TRUE; a cell that is not PRESENT its base result (§6.4) and no pair; a
+        PRESENT list the default ``any`` of its items, each PRESENT one FALSE and one that is not
+        its base result, and a pair TRUE for each distinct PRESENT item (m3)."""
+        table, column = node.column.split(".", 1)
+        key = ("membership leaf", table, column)
+        found = self.memo.get(key)
+        if found is not None:
+            return found, self.memo[(*key, "pairs")]
+        base = self.base(table).name
+        state = self.state_of("o", table, column)
+        stored = self.stored_value("o", table, column)
+        present = _eq(state, exp.Literal.string(PRESENT_STATE)) if state is not None else None
+        true_row = (_num(TRUE_CODE), _num(0), self.zeros())
+        if node.match is None:
+            v, r = _based(state, _num(FALSE_CODE), _num(0))
+            default = self.cte(
+                _select(*self.truth_row("o", v, r, self.zeros())).from_(
+                    _table(base, "o"), copy=False
+                )
+            )
+            select = _select(*self.pair_row("o", stored, *true_row)).from_(
+                _table(base, "o"), copy=False
+            )
+            if present is not None:
+                select = select.where(present, copy=False)
+            pairs = self.cte(select)
+        else:
+            items_state = self.slot(table, column + ITEM_STATE, companion=True)
+            columns: list[Expression] = [
+                _as(_col("o", "rid"), "rid"),
+                _as(_fn("unnest", stored), "item"),
+            ]
+            if items_state is not None:
+                columns.append(_as(_fn("unnest", _col("o", items_state)), "state"))
+            unnested = self.cte(_select(*columns).from_(_table(base, "o"), copy=False))
+            item_state = _col("i", "state") if items_state is not None else None
+            iv, ir = _based(item_state, _num(FALSE_CODE), _num(0))
+            items = self.cte(
+                _select(_as(_col("i", "rid"), "rid"), _as(iv, "v"), _as(ir, "r")).from_(
+                    _table(unnested, "i"), copy=False
+                )
+            )
+            unknown = _eq(_col("i", "v"), _num(UNKNOWN_CODE))
+            summary = _select(
+                _as(_col("i", "rid"), "rid"),
+                _as(exp.Max(this=_col("i", "v")), "hi"),
+                _as(
+                    _zero(
+                        exp.Filter(
+                            this=_fn("bit_or", _col("i", "r")), expression=exp.Where(this=unknown)
+                        )
+                    ),
+                    "ru",
+                ),
+            ).from_(_table(items, "i"), copy=False)
+            summarised = self.cte(summary.group_by(_col("i", "rid"), copy=False))
+            items_v = _zero(_col("a", "hi"))
+            items_r = _case([(_eq(items_v.copy(), _num(UNKNOWN_CODE)), _col("a", "ru"))], _num(0))
+            v, r = _based(state, items_v, items_r)
+            default = self.cte(
+                _select(*self.truth_row("o", v, r, self.zeros()))
+                .from_(_table(base, "o"), copy=False)
+                .join(
+                    _table(summarised, "a"),
+                    on=_eq(_col("a", "rid"), _col("o", "rid")),
+                    join_type="left",
+                    copy=False,
+                )
+            )
+            held = [
+                exp.Not(this=exp.Is(this=_col("i", "item"), expression=exp.Null())),
+                *(
+                    [_eq(_col("i", "state"), exp.Literal.string(PRESENT_STATE))]
+                    if items_state is not None
+                    else []
+                ),
+                *([present] if present is not None else []),
+            ]
+            select = (
+                _select(*self.pair_row("i", _col("i", "item"), *true_row))
+                .from_(_table(unnested, "i"), copy=False)
+                .join(_table(base, "o"), on=_eq(_col("o", "rid"), _col("i", "rid")), copy=False)
+                .where(_and(*held), copy=False)
+                .distinct(copy=False)
+            )
+            pairs = self.cte(select)
+        self.memo[key] = default
+        self.memo[(*key, "pairs")] = pairs
+        return default, pairs
+
+    def routed(
+        self, table: str, ups: Path, target: str, default: str, pairs: str
+    ) -> tuple[str, str]:
+        """A default and its pairs on ``target`` read from ``table`` through up steps: the
+        default UNKNOWN (``NO_PARENT``) where they reach no row, which has no pair then."""
+        if not ups:
+            assert table == target
+            return default, pairs
+        lookup = self.lookup(table, ups)
+        select = _select(
+            *self.pair_row(
+                "l", _col("p", "cls"), _col("p", "v"), _col("p", "r"), self.words_of("p")
+            )
+        )
+        select = select.from_(_table(lookup, "l"), copy=False).join(
+            _table(pairs, "p"), on=_eq(_col("p", "rid"), _col("l", "target")), copy=False
+        )
+        return self.through(table, ups, target, default), self.cte(select)
+
+    def kids(self, relationship: str, relation: str, drop: int, *, paired: bool) -> str:
+        """Each child's parent (``aid``), itself (``cid``), its category when ``paired``, its
+        answer and whether it is kept (``k``, §6.5 step 3)."""
+        link = self.release.relationship(relationship)
+        assert link is not None
+        up = self.lookup(link.fields.child_table, (Step(relationship, "up"),))
+        kept = exp.Not(
+            this=_and(
+                _eq(_col("w", "v"), _num(UNKNOWN_CODE)),
+                _eq(
+                    exp.Paren(
+                        this=exp.BitwiseAnd(
+                            this=_col("w", "r"), expression=_num(_ALL_REASONS ^ drop)
+                        )
+                    ),
+                    _num(0),
+                ),
+            )
+        )
+        columns: list[Expression] = [_as(_col("u", "target"), "aid"), _as(_col("w", "rid"), "cid")]
+        if paired:
+            columns.append(_as(_col("w", "cls"), "cls"))
+        columns += [_as(_col("w", "v"), "v"), _as(_col("w", "r"), "r")]
+        columns += [_as(word, f"m{at}") for at, word in enumerate(self.words_of("w"))]
+        columns.append(_as(kept, "k"))
+        select = _select(*columns).from_(_table(relation, "w"), copy=False)
+        select = select.join(
+            _table(up, "u"), on=_eq(_col("u", "rid"), _col("w", "rid")), copy=False
+        )
+        select = select.where(
+            exp.Not(this=exp.Is(this=_col("u", "target"), expression=exp.Null())), copy=False
+        )
+        return self.cte(select)
+
+    def tallied(self, totals: Mapping[str, Expression]) -> list[Expression]:
+        """A question's children's counts and ORs, as ``child_stats`` names them, from their
+        tallies (``tallies``): an OR holds a bit where its tally is above 0."""
+
+        def ored(prefix: str, bits: Sequence[tuple[int, int]]) -> Expression:
+            return _bits(
+                *(
+                    _case(
+                        [
+                            (
+                                exp.GT(this=totals[f"{prefix}_{i}"].copy(), expression=_num(0)),
+                                _num(b),
+                            )
+                        ],
+                        _num(0),
+                    )
+                    for i, b in bits
+                )
+            )
+
+        found: list[Expression] = [
+            _as(totals["t"].copy(), "t"),
+            _as(totals["f"].copy(), "f"),
+            _as(totals["u"].copy(), "u"),
+            _as(ored("ru", list(enumerate(REASON_BIT.values()))), "ru"),
+        ]
+        for at in range(self.words):
+            bits = [
+                (index, 1 << (index % MARK_BITS))
+                for index in range(len(self.marks))
+                if index // MARK_BITS == at
+            ]
+            found += [_as(ored(f"m{kind}", bits), f"m{kind}{at}") for kind in "tfuda"]
+        return found
+
+    def scope_values(self, coverage: Coverage, column: str, kind: PhysicalType) -> str | None:
+        """Z(p): the values a coverage's tables list for each parent row in a scope column, in
+        whole tuples (``listing``), where they are stored as the column's categories are, else
+        ``None``: a value of another type is no category's (``key_part``)."""
+        select, holders, _ = self.listed_by(coverage)
+        alias, holder, name = dict(zip(coverage.scope_columns, holders, strict=True))[column]
+        if self.physical(holder, name) != kind:
+            return None
+        value = _col(alias, cast(str, self.slot(holder, name)))
+        select = select.select(_as(_col("p", "rid"), "rid"), _as(value, "cls"), copy=False)
+        select = select.where(self.whole(holders), copy=False).distinct(copy=False)
+        return self.cte(select)
+
+    def membership_step(
+        self, node: RExists, shape: Template, last: bool, default: str, pairs: str
+    ) -> tuple[str, str]:
+        """One step's default and pairs on its parent table (D381): its children's defaults
+        tallied per parent, and per parent and category the tallies of its children's pairs less
+        those of their defaults, so that a category's tallies are the default's plus its own
+        (never an OR subtracted, m2); each parent's classes those of its children's pairs and,
+        where X is a scope column of the last step, the values its coverage lists for it (Z),
+        closed for them, the default closed only where a group covers every value (M1); the
+        answers are §6.5's of those tallies, a pair kept where its answer is not the default's.
+        Every step reads its record filter first, on its own child rows (§6.5, step 1), as the
+        evaluator and ``exists`` do."""
+        coverage = self.coverage[node.step.rel]
+        child, parent = coverage.child_table, coverage.parent_table
+        if coverage.record_filter:
+            filtered = self.record_filter(coverage)
+            default = self.combine("all", [default, filtered], child)
+            pairs = self.pruned(self.filtered_pairs(pairs, filtered), default)
+        drop = 0 if last else _DROP[node.lift or "strict"]
+        kids = self.kids(node.step.rel, default, drop, paired=False)
+        paired = self.kids(node.step.rel, pairs, drop, paired=True)
+        own = self.tallies("x", False)
+        names = [name for name, _ in own]
+
+        def count(condition: Expression) -> Expression:
+            return exp.Filter(this=exp.Count(this=exp.Star()), expression=exp.Where(this=condition))
+
+        by_parent = self.cte(
+            _select(_as(_col("x", "aid"), "aid"), *(_as(count(c), name) for name, c in own))
+            .from_(_table(kids, "x"), copy=False)
+            .group_by(_col("x", "aid"), copy=False)
+        )
+        theirs = self.tallies("d", False)
+        deltas = self.cte(
+            _select(
+                _as(_col("x", "aid"), "aid"),
+                _as(_col("x", "cls"), "cls"),
+                *(
+                    _as(exp.Paren(this=exp.Sub(this=count(mine), expression=count(other))), name)
+                    for (name, mine), (_, other) in zip(own, theirs, strict=True)
+                ),
+            )
+            .from_(_table(paired, "x"), copy=False)
+            .join(_table(kids, "d"), on=_eq(_col("d", "cid"), _col("x", "cid")), copy=False)
+            .group_by(_col("x", "aid"), _col("x", "cls"), copy=False)
+        )
+        scoped = last and shape.scoped
+        listed = None
+        if scoped:
+            listed = self.scope_values(coverage, shape.column, self.class_kind(shape))
+        classes: exp.Query = _select(
+            _as(_col("e", "aid"), "rid"), _as(_col("e", "cls"), "cls")
+        ).from_(_table(deltas, "e"), copy=False)
+        if listed is not None:
+            classes = exp.Union(
+                this=classes,
+                expression=_select(_col("z", "rid"), _col("z", "cls")).from_(
+                    _table(listed, "z"), copy=False
+                ),
+                distinct=True,
+            )
+        keyed = self.cte(
+            _select(exp.Star()).from_(
+                exp.Subquery(this=classes, alias=exp.TableAlias(this=_id("y"))), copy=False
+            )
+        )
+        default_stats = self.cte(
+            _select(
+                _as(_col("t", "aid"), "aid"),
+                *self.tallied({name: _col("t", name) for name in names}),
+            ).from_(_table(by_parent, "t"), copy=False)
+        )
+        pair_stats = _select(
+            _as(_col("k", "rid"), "aid"),
+            _as(_col("k", "cls"), "cls"),
+            *self.tallied(
+                {
+                    name: exp.Paren(
+                        this=exp.Add(this=_zero(_col("t", name)), expression=_zero(_col("e", name)))
+                    )
+                    for name in names
+                }
+            ),
+        ).from_(_table(keyed, "k"), copy=False)
+        pair_stats = pair_stats.join(
+            _table(by_parent, "t"),
+            on=_eq(_col("t", "aid"), _col("k", "rid")),
+            join_type="left",
+            copy=False,
+        ).join(
+            _table(deltas, "e"),
+            on=_and(
+                _eq(_col("e", "aid"), _col("k", "rid")), _eq(_col("e", "cls"), _col("k", "cls"))
+            ),
+            join_type="left",
+            copy=False,
+        )
+        pair_stats_name = self.cte(pair_stats)
+        by_class = False
+        if scoped:
+            every_of = self.listing(coverage, [], {})
+            every = _zero(_col("l", "every"), exp.false())
+            default_closed = self.cte(
+                _select(
+                    _as(_col("n", "rid"), "rid"),
+                    _as(every, "cl"),
+                    _as(_num(REASON_BIT[Reason.NOT_COVERED]), "crs"),
+                    _as(exp.false(), "rs"),
+                )
+                .from_(_table(self.base(parent).name, "n"), copy=False)
+                .join(
+                    _table(every_of, "l"),
+                    on=_eq(_col("l", "rid"), _col("n", "rid")),
+                    join_type="left",
+                    copy=False,
+                )
+            )
+            pair_closed_select = _select(
+                _as(_col("k", "rid"), "rid"),
+                _as(_col("k", "cls"), "cls"),
+            ).from_(_table(keyed, "k"), copy=False)
+            pair_closed_select = pair_closed_select.join(
+                _table(every_of, "l"),
+                on=_eq(_col("l", "rid"), _col("k", "rid")),
+                join_type="left",
+                copy=False,
+            )
+            if listed is not None:
+                inside: Expression = exp.Not(
+                    this=exp.Is(this=_col("z", "rid"), expression=exp.Null())
+                )
+                pair_closed_select = pair_closed_select.join(
+                    _table(listed, "z"),
+                    on=_and(
+                        _eq(_col("z", "rid"), _col("k", "rid")),
+                        _eq(_col("z", "cls"), _col("k", "cls")),
+                    ),
+                    join_type="left",
+                    copy=False,
+                )
+            else:
+                inside = exp.false()
+            several = exp.true() if len(coverage.scope_columns) > 1 else exp.false()
+            pair_closed_select = pair_closed_select.select(
+                _as(exp.Or(this=every.copy(), expression=inside.copy()), "cl"),
+                _as(_num(REASON_BIT[Reason.NOT_COVERED]), "crs"),
+                _as(_and(exp.Not(this=every.copy()), inside.copy(), several), "rs"),
+                copy=False,
+            )
+            pair_closed = self.cte(pair_closed_select)
+            by_class = True
+        else:
+            default_closed = pair_closed = self.closedness(coverage, "some", {})
+        terms = _Terms(self, coverage)
+        branches, fallback = _membership_answer(terms, last)
+        rows = _col("n", "rid")
+        answered = self.answer(
+            _table(self.base(parent).name, "n"),
+            rows,
+            _answered(branches, fallback),
+            [
+                (default_stats, "s", "aid", rows),
+                (self.scope(coverage), "sc", "rid", rows),
+                (default_closed, "cl", "rid", rows),
+            ],
+        )
+        v, r, m = _answered(*_membership_answer(_Terms(self, coverage), last))
+        pair_answers = _select(
+            _as(_col("s", "aid"), "rid"),
+            _as(_col("s", "cls"), "cls"),
+            _as(v, "v"),
+            _as(r, "r"),
+            *(_as(word, f"m{at}") for at, word in enumerate(m)),
+        ).from_(_table(pair_stats_name, "s"), copy=False)
+        pair_answers = pair_answers.join(
+            _table(self.scope(coverage), "sc"),
+            on=_eq(_col("sc", "rid"), _col("s", "aid")),
+            join_type="left",
+            copy=False,
+        ).join(
+            _table(pair_closed, "cl"),
+            on=_and(
+                _eq(_col("cl", "rid"), _col("s", "aid")),
+                *([_eq(_col("cl", "cls"), _col("s", "cls"))] if by_class else []),
+            ),
+            join_type="left",
+            copy=False,
+        )
+        return answered, self.pruned(self.cte(pair_answers), answered)
+
+    def filtered_pairs(self, pairs: str, filtered: str) -> str:
+        """Pairs under a record filter (§6.5, step 1): ``all`` of each pair's answer and its
+        row's filter (§6.3)."""
+        p, f = _col("p", "v"), _col("f", "v")
+        v = _fn("least", p, f)
+        unknown = _num(UNKNOWN_CODE)
+        r = _case(
+            [
+                (
+                    _eq(v.copy(), unknown.copy()),
+                    _bits(
+                        _case([(_eq(p.copy(), unknown.copy()), _col("p", "r"))], _num(0)),
+                        _case([(_eq(f.copy(), unknown.copy()), _col("f", "r"))], _num(0)),
+                    ),
+                )
+            ],
+            _num(0),
+        )
+        words = [
+            _bits(
+                _case([(_eq(p.copy(), v.copy()), _col("p", f"m{at}"))], _num(0)),
+                _case([(_eq(f.copy(), v.copy()), _col("f", f"m{at}"))], _num(0)),
+            )
+            for at in range(self.words)
+        ]
+        select = _select(*self.pair_row("p", _col("p", "cls"), v, r, words))
+        select = select.from_(_table(pairs, "p"), copy=False).join(
+            _table(filtered, "f"), on=_eq(_col("f", "rid"), _col("p", "rid")), copy=False
+        )
+        return self.cte(select)
+
+    def pruned(self, pairs: str, default: str) -> str:
+        """The pairs whose answer is not their row's default, in code, reasons or flags (m3)."""
+        same = _and(
+            _eq(_col("p", "v"), _col("d", "v")),
+            _eq(_col("p", "r"), _col("d", "r")),
+            *(_eq(_col("p", f"m{at}"), _col("d", f"m{at}")) for at in range(self.words)),
+        )
+        select = _select(exp.Column(this=exp.Star(), table=_id("p"))).from_(
+            _table(pairs, "p"), copy=False
+        )
+        select = select.join(
+            _table(default, "d"), on=_eq(_col("d", "rid"), _col("p", "rid")), copy=False
+        )
+        return self.cte(select.where(exp.Not(this=same), copy=False))
+
+    def class_kind(self, shape: Template) -> PhysicalType:
+        """How a category of X is stored: a list's items as text, else as X is."""
+        kind = self.physical(shape.table, shape.column)
+        return "string" if kind == "strings" else kind
+
+    def membership_listing(self, member: str, variable: ResolvedVariable) -> str:
+        """The categories listed over a cohort's members (``memberships.listing``): the fixed
+        ones, each with its place (``rk``), and, but for a filtered column, the classes of the
+        members' pairs that are not among them, placed after them; ``MAX_CATEGORIES`` + 1 at
+        most, in no order, which the listing does not depend on: where at most
+        ``MAX_CATEGORIES`` are listed every one is kept, and past it the listing is ``over``
+        whichever are kept, and nothing is counted (D381). The server orders them, the others in
+        UTF-16 order."""
+        key = ("membership listing", member, canonical(variable_form(variable)))
+        found = self.memo.get(key)
+        if found is not None:
+            return found
+        _, pairs = self.memberships(variable)
+        kind = self.class_kind(template(variable))
+        declared = fixed(variable)
+        parts: list[exp.Select] = []
+        if declared:
+            bound = _bindable(kind, declared)
+            assert len(bound) == len(declared), "a column's categories are of its type"
+            parts.append(
+                _select(
+                    _as(_fn("unnest", self.parameter(bound)), "cls"),
+                    _as(_fn("unnest", self.parameter(list(range(len(declared))))), "rk"),
+                )
+            )
+        if not closed_listing(variable):
+            conditions: list[Expression] = [_eq(_col("c", "v"), _num(TRUE_CODE))]
+            if declared:
+                conditions.append(exp.Not(this=self.member(kind, _col("p", "cls"), declared)))
+            others = (
+                _select(_as(_col("p", "cls"), "cls"), _as(_num(len(declared)), "rk"))
+                .from_(_table(pairs, "p"), copy=False)
+                .join(_table(member, "c"), on=_eq(_col("c", "rid"), _col("p", "rid")), copy=False)
+                .where(_and(*conditions), copy=False)
+                .distinct(copy=False)
+            )
+            parts.append(others)
+        assert parts, "a filtered column has allowed values"
+        union: exp.Query = parts[0]
+        for part in parts[1:]:
+            union = exp.Union(this=union, expression=part, distinct=False)
+        select = (
+            _select(_col("l", "cls"), _col("l", "rk"))
+            .from_(exp.Subquery(this=union, alias=exp.TableAlias(this=_id("l"))), copy=False)
+            .limit(_num(MAX_CATEGORIES + 1), copy=False)
+        )
+        found = self.memo[key] = self.cte(select)
+        return found
+
+    def membership_units(self, member: str, variable: ResolvedVariable) -> tuple[str, str]:
+        """Each member's unit over the categories listed (``memberships.membership_units``;
+        ``rid``, ``x`` and the flag words), and the members' listed pairs: a unit is known where a
+        listed pair is, or where it has fewer listed pairs than categories are listed (or none is
+        listed) and its default is known; else excluded under its listed pairs' reasons and,
+        where it has fewer, its default's; its flags theirs alike (M2, m2)."""
+        key = ("membership units", member, canonical(variable_form(variable)))
+        found = self.memo.get(key)
+        if found is not None:
+            return found, self.memo[(*key, "pairs")]
+        default, pairs = self.memberships(variable)
+        listing = self.membership_listing(member, variable)
+        listed_pairs = self.cte(
+            _select(
+                *self.pair_row(
+                    "p", _col("p", "cls"), _col("p", "v"), _col("p", "r"), self.words_of("p")
+                )
+            )
+            .from_(_table(pairs, "p"), copy=False)
+            .join(_table(member, "c"), on=_eq(_col("c", "rid"), _col("p", "rid")), copy=False)
+            .join(_table(listing, "l"), on=_eq(_col("l", "cls"), _col("p", "cls")), copy=False)
+            .where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+        )
+        counted = self.cte(
+            _select(_as(exp.Count(this=exp.Star()), "nl")).from_(_table(listing, "l"), copy=False)
+        )
+        per_unit = self.cte(
+            _select(
+                _as(_col("q", "rid"), "rid"),
+                _as(exp.Count(this=exp.Star()), "np"),
+                _as(
+                    _fn("bool_or", exp.NEQ(this=_col("q", "v"), expression=_num(UNKNOWN_CODE))),
+                    "pk",
+                ),
+                _as(_fn("bit_or", _col("q", "r")), "pr"),
+                *(_as(_fn("bit_or", word), f"m{at}") for at, word in enumerate(self.words_of("q"))),
+            )
+            .from_(_table(listed_pairs, "q"), copy=False)
+            .group_by(_col("q", "rid"), copy=False)
+        )
+        nl = _col("n", "nl")
+        unpaired = exp.Paren(
+            this=exp.Or(
+                this=_eq(nl, _num(0)),
+                expression=exp.LT(this=_zero(_col("a", "np")), expression=nl.copy()),
+            )
+        )
+        known = exp.Paren(
+            this=exp.Or(
+                this=_zero(_col("a", "pk"), exp.false()),
+                expression=_and(
+                    unpaired.copy(), exp.NEQ(this=_col("d", "v"), expression=_num(UNKNOWN_CODE))
+                ),
+            )
+        )
+        x = _case(
+            [(known, _num(0))],
+            _bits(_zero(_col("a", "pr")), _case([(unpaired.copy(), _col("d", "r"))], _num(0))),
+        )
+        words = [
+            _bits(
+                _zero(_col("a", f"m{at}")), _case([(unpaired.copy(), _col("d", f"m{at}"))], _num(0))
+            )
+            for at in range(self.words)
+        ]
+        units = (
+            _select(
+                _as(_col("c", "rid"), "rid"),
+                _as(x, "x"),
+                *(_as(word, f"m{at}") for at, word in enumerate(words)),
+            )
+            .from_(_table(member, "c"), copy=False)
+            .join(_table(default, "d"), on=_eq(_col("d", "rid"), _col("c", "rid")), copy=False)
+            .join(
+                _table(per_unit, "a"),
+                on=_eq(_col("a", "rid"), _col("c", "rid")),
+                join_type="left",
+                copy=False,
+            )
+            .join(_table(counted, "n"), join_type="cross", copy=False)
+            .where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+        )
+        found = self.memo[key] = self.cte(units)
+        self.memo[(*key, "pairs")] = listed_pairs
+        return found, listed_pairs
+
+    def membership_rows(self, member: str, variable: ResolvedVariable) -> exp.Query:
+        """One cohort's rows of a variable's memberships (``CompiledMaterialised``): its units
+        known (``_KNOWN_ROWS``) and excluded by their reasons (``_EXCLUDED_ROWS``), the
+        categories listed (``_LISTED_ROWS``: ``v`` the category, ``r`` its place), the members'
+        defaults (``_DEFAULT_ROWS``: ``r`` the code, ``x`` the reasons, and the words) and, per
+        listed category, their listed pairs' answers (``_PAIR_ROWS``) and those pairs' defaults
+        (``_DISPLACED_ROWS``), each grouped by code, reasons and words and counted, so that a
+        category's units are the defaults' less its displaced ones and plus its pairs (D381)."""
+        shape = template(variable)
+        default, _ = self.memberships(variable)
+        units, listed_pairs = self.membership_units(member, variable)
+        listing = self.membership_listing(member, variable)
+        stand_in = self.default_value(shape.table, shape.column)
+        count = exp.Count(this=exp.Star())
+
+        def ored(alias: str) -> list[Expression]:
+            return [
+                _as(_zero(_fn("bit_or", word)), f"m{at}")
+                for at, word in enumerate(self.words_of(alias))
+            ]
+
+        def row(
+            tag: int,
+            r: Expression,
+            v: Expression,
+            x: Expression,
+            n: Expression,
+            m: list[Expression],
+        ) -> exp.Select:
+            return _select(
+                _as(_num(tag), "t"), _as(r, "r"), _as(v, "v"), _as(x, "x"), _as(n, "n"), *m
+            )
+
+        excluded = (
+            row(_EXCLUDED_ROWS, _num(0), stand_in.copy(), _col("u", "x"), count.copy(), ored("u"))
+            .from_(_table(units, "u"), copy=False)
+            .where(exp.NEQ(this=_col("u", "x"), expression=_num(0)), copy=False)
+            .group_by(_col("u", "x"), copy=False)
+        )
+        known = (
+            row(_KNOWN_ROWS, _num(0), stand_in.copy(), _num(0), count.copy(), ored("u"))
+            .from_(_table(units, "u"), copy=False)
+            .where(_eq(_col("u", "x"), _num(0)), copy=False)
+            .group_by(_col("u", "x"), copy=False)
+        )
+        listed = row(
+            _LISTED_ROWS,
+            _col("l", "rk"),
+            _col("l", "cls"),
+            _num(0),
+            _num(1),
+            [_as(word, f"m{at}") for at, word in enumerate(self.zeros())],
+        ).from_(_table(listing, "l"), copy=False)
+        keyed = [_col("d", "v"), _col("d", "r"), *self.words_of("d")]
+        defaults = (
+            row(
+                _DEFAULT_ROWS,
+                _col("d", "v"),
+                stand_in.copy(),
+                _col("d", "r"),
+                count.copy(),
+                [_as(word, f"m{at}") for at, word in enumerate(self.words_of("d"))],
+            )
+            .from_(_table(member, "c"), copy=False)
+            .join(_table(default, "d"), on=_eq(_col("d", "rid"), _col("c", "rid")), copy=False)
+            .where(_eq(_col("c", "v"), _num(TRUE_CODE)), copy=False)
+            .group_by(*keyed, copy=False)
+        )
+        answered = (
+            row(
+                _PAIR_ROWS,
+                _col("p", "v"),
+                _col("p", "cls"),
+                _col("p", "r"),
+                count.copy(),
+                [_as(word, f"m{at}") for at, word in enumerate(self.words_of("p"))],
+            )
+            .from_(_table(listed_pairs, "p"), copy=False)
+            .group_by(
+                _col("p", "cls"), _col("p", "v"), _col("p", "r"), *self.words_of("p"), copy=False
+            )
+        )
+        displaced = (
+            row(
+                _DISPLACED_ROWS,
+                _col("d", "v"),
+                _col("p", "cls"),
+                _col("d", "r"),
+                count.copy(),
+                [_as(word, f"m{at}") for at, word in enumerate(self.words_of("d"))],
+            )
+            .from_(_table(listed_pairs, "p"), copy=False)
+            .join(_table(default, "d"), on=_eq(_col("d", "rid"), _col("p", "rid")), copy=False)
+            .group_by(_col("p", "cls"), *[k.copy() for k in keyed], copy=False)
+        )
+        union: exp.Query = excluded
+        for part in (known, listed, defaults, answered, displaced):
+            union = exp.Union(this=union, expression=part, distinct=False)
+        return union
+
     # --- Nodes ---------------------------------------------------------------------------------
 
     def node(self, node: RClause, table: str) -> str:
@@ -2994,26 +3871,18 @@ class _Compiler:
         found = self.memo[key] = self.cte(select)
         return found
 
-    def listing(
-        self,
-        coverage: Coverage,
-        columns: Sequence[str],
-        admitted: Mapping[str, frozenset[KeyPart]],
-    ) -> str:
-        """What a coverage table lists for each parent row it lists (§5.6): ``tuples``, whether
-        it lists some whole scope tuple; ``every``, whether a group covers every scope value; and
-        ``within``, the distinct tuples of ``columns`` it lists within ``admitted``. A listing
-        row whose scope cell is not PRESENT (or holds a list) lists no whole tuple, as the
-        evaluator reads it, so under ``every`` the parent is not closed by it alone. The gate
-        refuses such a cell (``COVERAGE_NULL``), so no published release holds one; releases
-        built in memory can, and the differential tests hold the two readings together."""
+    def listed_by(
+        self, coverage: Coverage
+    ) -> tuple[exp.Select, list[tuple[str, str, str]], Expression]:
+        """A coverage's tables joined to each parent row they list (``p``): the select, each
+        scope column of the child with the alias and column that hold it, and whether a group
+        covers every scope value (§5.6)."""
         descriptor = coverage.descriptor
         assert descriptor is not None
         parents = descriptor.fields.parents
         table = coverage.parent_table
         base = self.base(table).name
         scope_holders: list[tuple[str, str, str]]
-        """Each scope column of the child, with the alias and column holding it."""
         if isinstance(parents, DirectCoverage):
             holder = parents.table
             select = _select().from_(_table(base, "p"), copy=False)
@@ -3064,7 +3933,12 @@ class _Compiler:
             covers = groups.covers_all_column
             if covers is not None and self.physical(groups.table, covers) == "bool":
                 every = _zero(_col("g", cast(str, self.slot(groups.table, covers))), exp.false())
-        whole = _and(
+        return select, scope_holders, every
+
+    def whole(self, scope_holders: Sequence[tuple[str, str, str]]) -> Expression:
+        """Whether a listing row lists a whole scope tuple: every scope cell holds a value, and
+        none a list, as the evaluator reads it (``listing``)."""
+        return _and(
             *(
                 exp.false()
                 if self.physical(holder, name) == "strings"
@@ -3077,6 +3951,22 @@ class _Compiler:
                 for alias, holder, name in scope_holders
             )
         )
+
+    def listing(
+        self,
+        coverage: Coverage,
+        columns: Sequence[str],
+        admitted: Mapping[str, frozenset[KeyPart]],
+    ) -> str:
+        """What a coverage table lists for each parent row it lists (§5.6): ``tuples``, whether
+        it lists some whole scope tuple; ``every``, whether a group covers every scope value; and
+        ``within``, the distinct tuples of ``columns`` it lists within ``admitted``. A listing
+        row whose scope cell is not PRESENT (or holds a list) lists no whole tuple, as the
+        evaluator reads it, so under ``every`` the parent is not closed by it alone. The gate
+        refuses such a cell (``COVERAGE_NULL``), so no published release holds one; releases
+        built in memory can, and the differential tests hold the two readings together."""
+        select, scope_holders, every = self.listed_by(coverage)
+        whole = self.whole(scope_holders)
         by_column = dict(zip(coverage.scope_columns, scope_holders, strict=True))
         if columns:
             inside: list[Expression] = []
@@ -3551,6 +4441,32 @@ class _Terms:
         """An answer that relies on closedness: ``marks``, and the coverage's flags."""
         words = tuple(_bits(marks[at], self.covm[at]) for at in range(self.words))
         return _Answer(_num(code), _num(0), words)
+
+
+def _membership_answer(
+    terms: "_Terms", final: bool
+) -> tuple[list[tuple[Expression, _Answer]], _Answer]:
+    """§6.5's answer of a memberships' step (D381): ``some`` with ``min_count`` 1, as ``exists``
+    gives it; its ``where`` holds no condition but the next step, so a child is kept exactly
+    where some child has conditions that are TRUE (``met``), and none is UNKNOWN."""
+    t, u = terms.t, terms.u
+    branches: list[tuple[Expression, _Answer]] = [
+        terms.out_of_scope,
+        (exp.GTE(this=t.copy(), expression=_num(1)), _Answer(_num(TRUE_CODE), _num(0), terms.mt)),
+        (
+            exp.GTE(
+                this=exp.Paren(this=exp.Add(this=t.copy(), expression=u.copy())), expression=_num(1)
+            ),
+            terms.unknown(terms.ru),
+        ),
+    ]
+    if final:
+        branches.append((terms.closed, terms.closed_as(FALSE_CODE, terms.ma)))
+        return branches, terms.unknown(_num(0))
+    met = exp.GT(this=terms.nk.copy(), expression=_num(0))
+    branches.append((_and(terms.closed.copy(), met), terms.closed_as(FALSE_CODE, terms.ma)))
+    not_met = _case([(met.copy(), _num(0))], _num(REASON_BIT[Reason.NOT_COVERED]))
+    return branches, terms.unknown(not_met)
 
 
 # --- Helpers ----------------------------------------------------------------------------------

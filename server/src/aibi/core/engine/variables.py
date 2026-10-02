@@ -45,6 +45,9 @@ it with its reasons (``UnitValue``):
   ``NOT_ASSESSED`` or ``NO_INFORMATION`` by the cell's state, or ``NO_PARENT`` for a lookup that
   reaches no row; a row's exclusion excludes the row, never its unit.
 
+- **Memberships** (``each``, D380) are no value per unit but an answer per category, which
+  ``memberships`` gives; ``evaluate_variable`` does not read them.
+
 Values are Python's, in the stored types the SQL compiler reads (``store.tables.physical``):
 a ``number`` or ``time_offset`` as a double, an ``integer`` as an integer, a ``category`` as its
 string, a ``boolean`` as a bool, and a question's TRUE or FALSE as a bool. A double's ``-0.0`` is
@@ -152,22 +155,57 @@ class RowCounts:
 
 
 @dataclass(frozen=True)
+class Membership:
+    """One listed category of a variable's memberships over a cohort's units (D380): the units
+    for which its question is TRUE, FALSE and UNKNOWN, the UNKNOWN ones under each reason (every
+    reason listed, zeros included; a unit counts under each of its reasons), and the flags its
+    units' answers carry."""
+
+    category: Value
+    true: int
+    false: int
+    unknown: int
+    unknown_by_reason: Mapping[ExclusionReason, int]
+    marks: frozenset[Mark]
+
+
+@dataclass(frozen=True)
+class Memberships:
+    """A variable's memberships over a cohort's units (D380): each listed category in order
+    (``categories``), and the units known for some listed category (``known``); ``over`` when
+    more than ``MAX_CATEGORIES`` are listed, and then nothing is counted (``categories`` empty,
+    ``known`` 0)."""
+
+    categories: tuple[Membership, ...]
+    known: int
+    over: bool = False
+
+
+@dataclass(frozen=True)
 class Materialised:
     """A variable over one cohort's units (``materialise``): each value and the units that have
     it, the units excluded, under each reason (every reason listed, zeros included; a unit
     counts under each of its reasons) and once each, and their flags together; for a count of
     rows, ``values`` holds the pooled units by the number of rows each reached, and ``rows`` the
-    rows themselves (``None`` for every other variable)."""
+    rows themselves (``None`` for every other variable). For memberships (D380), ``values`` is
+    empty and ``memberships`` holds each listed category; ``excluded_units`` and ``excluded``
+    count the units unknown for every listed category, under the reasons of their answers, and
+    ``marks`` are the flags of every member's answers, both as ``memberships.membership_units``
+    gives them."""
 
     values: Mapping[Value, int]
     excluded_units: int
     excluded: Mapping[ExclusionReason, int]
     marks: frozenset[Mark]
     rows: RowCounts | None = None
+    memberships: Memberships | None = None
 
     @property
     def n(self) -> int:
-        """The units that have a value: for a count of rows, the units pooled."""
+        """The units that have a value: for a count of rows, the units pooled; for memberships,
+        the units known for some listed category."""
+        if self.memberships is not None:
+            return self.memberships.known
         return sum(self.values.values())
 
 
@@ -303,6 +341,8 @@ class _Reader:
 
     def unit(self, row: int) -> UnitValue:
         variable = self.variable
+        if variable.kind == "memberships":
+            raise ValueError("memberships are answered per category (memberships.evaluate)")
         if variable.kind == "question":
             assert variable.question is not None
             found = self.evaluator.truth(variable.question, variable.unit, row)
@@ -384,6 +424,8 @@ def _truth(found: TruthValue) -> UnitValue:
 __all__ = [
     "Joint",
     "Materialised",
+    "Membership",
+    "Memberships",
     "RowCounts",
     "UnitValue",
     "Value",
