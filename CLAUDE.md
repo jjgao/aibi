@@ -12,8 +12,9 @@ Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work ord
 package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
 analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
 `core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases
-held in memory and evaluates them by the rules of §6; nothing stores releases or answers tool
-calls yet (M1, M2).
+held in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs,
+raw snapshots, typed tables, manifests, the app DB, pins, the sweep and erasure. Nothing imports
+files or answers tool calls yet (M1, M2).
 
 ## Non-negotiables
 
