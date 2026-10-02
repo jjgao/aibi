@@ -68,9 +68,17 @@ strict = ["src/aibi/core"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "-m",
+    "not million",
+]
 xfail_strict = true
 markers = [
+    "million: a thread-count determinism test over a million rows (SPEC §9.3, D372); run with -m million",
     "databases: needs a Postgres or MySQL server, named by AIBI_TEST_POSTGRES_URL or AIBI_TEST_MYSQL_URL",
 ]
 filterwarnings = [

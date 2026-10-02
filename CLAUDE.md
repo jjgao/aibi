@@ -86,6 +86,10 @@ codes each covariate by its variable, `views` refuses what it cannot model, and 
 runs the model on members listed as a pack's inputs are, refusing what only the data show.
 From M3.3f, a covariate may be a predicate, listed as a question of its clause
 (`canonical.predicate_variable`), with the other lift's changes counted (`cox.lifted`).
+From M3.4, `tests/core/determinism/` holds the thread-count determinism tests (§9.3, D372): an
+orchard of a million trees, built once per module, and every tool whose answer DuckDB's queries
+make, compared across `query_threads`; they carry the `million` marker, which `addopts` deselects,
+and CI runs them in a job of their own.
 
 ## Non-negotiables
 
@@ -151,7 +155,11 @@ uv run pyright
 uv run lint-imports      # core must not import packs; the service layers no web framework
 uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
+uv run pytest tests/core/determinism -m million  # a million rows: about 5 minutes and 4 GB
 ```
+
+`addopts` deselects the `million` tests, so without `-m million` that directory selects nothing
+(pytest exits 5).
 
 Run a server and operate it (see `server/aibi.example.toml`):
 

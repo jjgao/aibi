@@ -34,7 +34,8 @@ closed, so an unknown key is refused, and every problem is reported at once with
   slowest one, or a tool call's body, may average, which with its length sets its deadline (D266,
   D278).
 - ``[queries]``: the limits of the workers that run queries (D293): ``query_seconds``,
-  ``query_memory``, ``query_workers`` and ``query_threads``.
+  ``query_memory``, ``query_workers`` and ``query_threads``. DuckDB's memory grows with its
+  threads and with a document's predicates, so ``query_memory`` should grow with them (D373).
 - ``[log]``: how long the derivation log keeps the issuances of counts,
   ``keep_count_issuances_days`` (30 by default), and of results, ``keep_result_issuances_days``
   (365 by default; each at most ``MAX_KEEP_DAYS``, 0 keeping them until an operator prunes), and

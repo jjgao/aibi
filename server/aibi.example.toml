@@ -52,6 +52,10 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # query_memory = 2147483648 # the memory a worker may hold; DuckDB has half of it
 # query_workers = 2         # workers that run at once; a query waits query_seconds for one
 # query_threads = 1         # DuckDB's threads in a worker
+# DuckDB's memory grows with its threads and a document's predicates: sixteen predicates over a
+# million units and their related rows needed 4 GiB at one thread and more than 4 GiB at four
+# (D373).
+# A run past query_memory is refused, never approximated.
 
 [log]
 # keep_count_issuances_days = 30  # the issuances of counts are pruned after this; 0 keeps them
