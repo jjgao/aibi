@@ -26,6 +26,7 @@ from aibi.core.schema.document import (
 from aibi.core.schema.export import SCHEMAS
 from aibi.core.schema.jsonio import escape_token
 from aibi.core.schema.limits import (
+    MAX_COHORT_REFERENCES,
     MAX_COHORTS,
     MAX_COLUMNS,
     MAX_DATASETS,
@@ -367,6 +368,32 @@ def test_cohort_references() -> None:
         ("LEAF_NOT_ALLOWED", "/cohorts/e/all/0/where/0"),
         ("LEAF_NOT_ALLOWED", "/cohorts/e/all/0/where/1/not"),
     ]
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_a_cohort_has_at_most_256_cohort_leaves(extra: int) -> None:
+    """§7.1: each inlines the cohort it names, so they are counted per cohort as written,
+    wherever they are; one more than 256 is refused at the cohort's all."""
+    reference = {"kind": "cohort", "cohort": "a"}
+    clauses = [{"any": [reference] * MAX_COHORT_REFERENCES}, *[{"not": reference}] * extra]
+    document = {
+        "aibi": "1",
+        "dataset": "d",
+        "unit": "t",
+        "cohorts": {
+            "a": {"all": []},
+            "c": {"all": clauses},
+            "e": {"all": [reference] * MAX_COHORT_REFERENCES},
+        },
+    }
+    found = load(document).refusals
+    if not extra:
+        assert found == []
+        return
+    [refusal] = found
+    assert (refusal.code, refusal.path) == ("LIMIT_EXCEEDED", "/cohorts/c/all")
+    assert refusal.limit is not None
+    assert (refusal.limit.name, refusal.limit.max) == ("cohort_references", 256)
 
 
 def test_views() -> None:

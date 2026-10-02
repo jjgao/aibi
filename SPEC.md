@@ -1,6 +1,6 @@
 # aibi — Specification
 
-**Status:** Draft v0.8.1 · 2026-09-24
+**Status:** Draft v0.8.2 · 2026-09-24
 **Scope:** product goals, principles, data model, query semantics, result contract, analysis
 registry, domain packs, tool and operator surfaces, security, architecture and milestones. The
 text is normative where it says MUST, MUST NOT or SHOULD (RFC 2119); everything else is
@@ -325,7 +325,11 @@ CurationStatus = {
   descriptor's `parents` field when it is `proposed`: that is reported only through the flag
   `COVERAGE_PROPOSED`, which depends on the data (§6.3, §6.6). The set of fields is determined
   statically, so `validate_document` reports the same `UNCONFIRMED_SEMANTICS` caveats as
-  evaluation.
+  evaluation. A field is read when it has a value that resolution or evaluation uses (a
+  column's `datatype`, `permissible_values` and `missing_codes`, a relationship's key columns,
+  the unit's `primary_key`, a coverage's `record_filter` and `parent_scope`), and also when its
+  absence changes the answer: a numeric column's `units` and a coverage's `parents`, which are
+  then `undeclared`.
 - `extensions` is how packs add domain fields (e.g. the oncology pack's `reference_genome` on a
   dataset). The core stores and validates them but never interprets them.
 
@@ -419,7 +423,14 @@ table is complete, and over what scope:
   filter, or a NOT_APPLICABLE cell in a filtered column, is a structural error (§13.2); queries
   are evaluated against it as in §6.5, step 1.
 - `parent_scope` names which parents the table is about (e.g. tumour samples, not blood
-  normals). It is evaluated as in §6.5, step 2.
+  normals). It is evaluated as in §6.5, step 2. In v1 the engine evaluates parent scopes made of
+  `value` leaves on the parent row or rows it looks up, and combinators. A scope that asks a
+  question (an `exists` or `covered` leaf, or a `value` leaf below the parent table) is refused as
+  `NOT_SUPPORTED`, and one that does not resolve against the release with its cause's code, both
+  when the release is checked and when a document asks about the relationship (D207).
+- The grouped form lists a parent when an assignment row names it and the group table has that
+  row's group; its scope tuples are the group's, and it lists the parent for every tuple when one
+  of its groups is marked as covering every scope value.
 - Coverage, assignment and group tables have role `coverage`, MUST NOT contain nulls in the
   columns named here, and are not part of the table graph (§6.1). D16's scale targets count data
   tables only.
@@ -517,13 +528,17 @@ edges, from child to parent.
   (parent to children) is an existence question (§6.5).
 - `via` is an array of steps from the current row (the unit, or the row a `where` is evaluated
   on).
-- An **implicit path**, from the current row to a referenced table, is a sequence of steps that
-  visits no table twice. If exactly one exists, it is used. If none exists, the reference is
-  refused. If several exist, the document is refused, listing them, unless `via` names one.
-  There is no shortest-path or other silent choice.
+- An **implicit path**, from the current row to a referenced table, is a sequence of at most 16
+  steps (as many as a `via` may have, §14) that visits no table twice. If exactly one exists, it
+  is used. If none exists, the reference is refused: `NO_PATH` when no relationships join the
+  two tables, `LIMIT_EXCEEDED` (`path_steps`) when every path that visits no table twice is
+  longer. If several exist, the document is refused, listing them (64 at most, then saying that
+  there are more), unless `via` names one. There is no shortest-path or other silent choice.
 - An **explicit path** (`via`) may revisit a table, e.g. samples → patient → samples for *the
   other samples of the same patient*. `exclude_self: true` on an `exists` leaves out the row the
-  path started from; it is allowed only when the path's first down step enters that row's table.
+  path started from; it is allowed only when the path's first down step enters that row's table,
+  and not in a `where` that a path's trailing lookups serve, whose questions canonicalisation
+  asks from the row before the lookups (§7.6, step 5; D211).
 - **One question per down step.** Canonicalisation (§7.6) writes every existence question as a
   chain of `exists` leaves with one down step each: a multi-step `exists` becomes the `exists`
   for its first down step, whose `where` holds the `exists` for the rest of the path, and a
@@ -603,21 +618,27 @@ to `values` and `range`, each with `negate` (§7.6).
 - On a multi-valued reference (a column below the current table, or a list column), `negate`
   applies per row or item, inside the quantifier: *some mutation whose gene is not TP53*. A
   clause-level `not` around the leaf negates the quantified answer: *no TP53 mutation*.
-- **Constants** have the column's type: numbers for numeric columns (integers for integer
-  columns; numbers beyond ±(2^53 − 1) are written as decimal strings, §5.1), strings for
-  categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with an explicit offset for
-  datetimes (compared in UTC), numbers in the column's units for time offsets. Anything else is
-  refused.
+- **Constants** have the column's type: numbers for numeric columns (64-bit integers for
+  integer columns; numbers beyond ±(2^53 − 1) are written as decimal strings, §5.1, and for
+  number and time-offset columns stand for the nearest double, as the column's values do, D203),
+  strings for categories and strings, booleans, `YYYY-MM-DD` for dates, RFC 3339 with an explicit
+  offset for datetimes (compared in UTC, to the microsecond at most, as datetimes are stored),
+  and numbers in the predicate's units for time offsets (see Units). Anything else is refused.
 - **Ranges** apply to numbers, dates, datetimes, time offsets and ordered categories (by their
-  listed order); they are refused on strings, booleans and unordered categories.
+  listed order); they are refused on strings, booleans and unordered categories. A PRESENT value
+  outside an ordered category's listed values has no place in their order: a range over it is
+  UNKNOWN (`NO_INFORMATION`), while it is simply not a member of any `values`.
 - **Units.** A numeric predicate carries `units`: by default the column's units, or the
   concept's units for a concept reference. Constants in other units are converted at evaluation,
   using pinned UCUM conversion factors, and refused when no conversion exists; the canonical
-  form keeps the units as written. Readbacks always state the units. A numeric column without
-  declared units raises `UNCONFIRMED_SEMANTICS`.
+  form keeps the units as written. A constant is converted by one multiplication of doubles, by
+  the exact factor rounded to a double, so that the SQL engine computes the same comparison.
+  Readbacks always state the units. A numeric column without declared units raises
+  `UNCONFIRMED_SEMANTICS`.
 - **Categories.** If the column's permissible values are declared, a constant outside them is
   refused, and the refusal lists them.
-- **Lists.** A list cell that is not PRESENT takes its base result from the table above. A
+- **Lists.** A list cell that is not PRESENT takes its base result from the table above,
+  whatever `negate` and `match` say: `negate` applies to items, and there are none. A
   PRESENT list is evaluated item by item, each item with its own state: with `match: "any"`
   (default) the result is TRUE if any item is TRUE, otherwise UNKNOWN if any item is UNKNOWN,
   otherwise FALSE (an empty list is FALSE); with `match: "all"` it is FALSE if any item is FALSE,
@@ -641,7 +662,10 @@ For each `r`:
    value is missing is decided only where `W_C` decides it alone. Filtered columns may be
    mentioned in `W_C` only in top-level conjuncts of the form `values` without `negate` whose
    values lie within the allowed values; any other mention is refused. The readback states the
-   filter.
+   filter. A column is *mentioned* by a `value` leaf on the child row itself (no `via`),
+   anywhere in `W_C` outside nested questions; a leaf reached through a lookup, or inside a
+   nested question, is about another row. These rules read `W_C` in canonical form, after
+   step 8 of §7.6 removes duplicates: `{"any": [X, X]}` is `X`.
 2. **Parent scope.** If ρ's coverage has a `parent_scope` and it is FALSE for `r`, the answer is
    UNKNOWN (`OUT_OF_SCOPE`) and the steps below do not apply. If it is UNKNOWN for `r`, `r` counts
    as in scope, but coverage `all` does not close it (step 4).
@@ -692,10 +716,12 @@ For each `r`:
 UNKNOWN (`OUT_OF_SCOPE`) if the parent scope is FALSE; TRUE if `r` is closed for the given scope
 values (step 4, read as for `some` with *S* the scope columns given); UNKNOWN (`NO_INFORMATION`)
 if the coverage is undeclared; UNKNOWN (the scope clause's reasons) if the parent scope is
-UNKNOWN; otherwise FALSE. Its TRUE and FALSE carry `SCOPE_PARTIAL` and `COVERAGE_PROPOSED` as
-step 7 gives them to a FALSE from `some`. Each earlier down step, from the last to the first,
-applies steps 2–4 to its own relationship and drops children as in step 3; it gives UNKNOWN
-(`NOT_COVERED`) if no child remains. Otherwise, under `strict`, it gives the answer and flags of
+UNKNOWN; otherwise FALSE. Its TRUE carries `SCOPE_PARTIAL` when its closedness was restricted to
+the listed tuples, and its TRUE and FALSE carry `COVERAGE_PROPOSED` when ρ's coverage is
+`proposed`: both rely on ρ's coverage. Each earlier down step, from the last to the first,
+applies steps 2–4 to its own relationship and drops children as in step 3; if no child remains,
+it gives UNKNOWN (`NOT_COVERED`), with the closedness reason and the flags that steps 5 and 7
+give an UNKNOWN. Otherwise, under `strict`, it gives the answer and flags of
 `every` over the remaining children (steps 5 and 7). Under `assessed`, it gives TRUE if some
 remaining child is TRUE and `r` is closed, FALSE if `r` is closed and every remaining child is
 FALSE, and otherwise UNKNOWN (with the children's reasons and the closedness reason); TRUE
@@ -741,10 +767,12 @@ Every cohort result reports, over the unit table:
 - `unknown_by_leaf`: for each top-level clause of the canonical cohort (each member of its
   top-level `all`), keyed by that clause's hash (`leaf:<sha256>`, §7.6), the units whose cohort
   result is UNKNOWN and for which that clause is UNKNOWN, every clause listed (zeros included;
-  counts can overlap). The map from the leaves of the document as written (a pack leaf counts as
-  one) to these keys is kept outside the digest (§8.1);
-- `lift_differs`: the units whose truth value would change if every `lift` in the canonical
-  cohort were flipped at once; when it is above zero, the result carries `LIFT_DIFFERS`.
+  counts can overlap). The map from the cohort's leaves as written (a pack leaf and a `cohort`
+  leaf count as one each; a referenced cohort's own leaves are in its map) to these keys is kept
+  outside the digest (§8.1);
+- `lift_differs`: the units whose truth value (TRUE, FALSE or UNKNOWN, not its reasons) would
+  change if every `lift` in the canonical cohort were flipped at once; when it is above zero, the
+  result carries `LIFT_DIFFERS`.
 
 A cohort raises `SCOPE_PARTIAL` or `COVERAGE_PROPOSED` if the cohort-level truth value of any
 unit carries that flag.
@@ -769,7 +797,7 @@ for copy number*), subject to §8.4.
   "packs": { "onco": ">=1.2,<2" },               // PEP 440 specifiers; exact versions are recorded (§7.6)
   "params": { "min_grade": 3 },                  // optional; exact "$name" substitution, as in cbio-lab
   "dataset": "trial_xyz",                        // "trial_xyz", "trial_xyz@3", "trial_xyz@sha256:<hex>" or "trial_xyz@draft"
-  "unit": "participants",                        // a keyed table, or a table concept such as "core:person" (§7.5)
+  "unit": "participants",                        // a keyed table of the table graph, or a table concept such as "core:person" (§7.5)
   "cohorts": {
     "<name>": {
       "all": [ Clause ],                         // [] = every row of the unit table
@@ -815,10 +843,16 @@ for copy number*), subject to §8.4.
   16,384 characters. A document built in code holds only values that JSON text carries
   unchanged; the limits on size, nesting and paths apply to its JSON text, as written and after
   substitution, and are checked when it is loaded. Size limits are in §14.
-- **Caps**, applied to the canonical form (§7.6): depth 8, counted as the number of clause
-  objects on the longest chain from a member of a cohort's top-level `all` to a leaf, both
-  included, through combinators and `where`; 64 leaves per cohort, counting the leaves inside
-  every `where`; 6 cohorts; 8 views per document.
+- **Caps**, applied to the canonical form (§7.6), after duplicates are removed and with the
+  clauses of referenced cohorts inlined: depth 8, counted as the number of clause objects on the
+  longest chain from a member of a cohort's top-level `all` to a leaf, both included, through
+  combinators and `where`; 64 leaves per cohort, counting the leaves inside every `where` and
+  each empty `all` or `any` as one; 6 cohorts; 8 views per document. Each down step of a path
+  is a question of its own (§6.1): a value three steps below the unit is four clause objects
+  deep and four leaves. A cohort past a cap is refused (`LIMIT_EXCEEDED`, `clause_depth` or
+  `leaves_per_cohort`) at its `all`. A cohort as written has at most 256 `cohort` leaves, each
+  inlining the cohort it names (`cohort_references`, refused at its `all` when the document is
+  loaded).
 - **Notes** are plain text, never compiled and never interpreted (A6). `drafted_by` is recorded
   as the client's claim.
 - **Translation.** Documents in other formats (cbio-lab's first) are translated by pack document
@@ -832,7 +866,7 @@ for copy number*), subject to §8.4.
 | `value` | `{kind: "value", column: "<table>.<column>" \| "<concept>", values? \| range? \| op? + value?, negate?, units?, match?, quantifier?, lift?, via?}` | A value predicate (§6.4) on a column of the current table or any table reachable from it (§6.1) |
 | `exists` | `{kind: "exists", table, where?: [Clause], quantifier?, min_count?, lift?, via?, exclude_self?}` | An existence question (§6.5); `where` clauses are ANDed and evaluated per row of `table`. The path MUST have at least one down step, and a path that ends with an up step needs a non-empty `where` (canonicalisation moves those lookups into it, §7.6) |
 | `covered` | `{kind: "covered", table, scope?: {<child scope column>: [values]}, lift?, via?}` | Coverage as a predicate (§6.5); `scope` keys MUST be scope columns of the relationship's coverage. The path MUST have at least one down step and end with one |
-| `ids` | `{kind: "ids", ids: ["<dataset>:<key>" \| {"dataset": "<id>", "key": [<values in key order>]}, …]}` | An explicit list of unit keys. Not allowed inside any `where`; refused on datasets with `allow_row_ids: false` (§8.4) |
+| `ids` | `{kind: "ids", ids: ["<dataset>:<key>" \| {"dataset": "<id>", "key": [<values in key order>]}, …]}` | An explicit list of unit keys, each typed against the unit's key columns; the text form is for a key of one column. Not allowed inside any `where`; refused on datasets with `allow_row_ids: false` (§8.4) |
 | `cohort` | `{kind: "cohort", cohort: "<name>"}` | Another cohort of the same document, with the same unit and dataset(s). Not allowed inside any `where`; cycles are refused. `{"all": [{"kind": "cohort", "cohort": "base"}, {"not": X}]}` is the correct *rest of the base* under three-valued logic, which is why references exist |
 
 A `values` list has at least one member, and a `range` at least one bound and at most one lower
@@ -1910,20 +1944,22 @@ flags and counts.
   constant, 10,000 per note and 64 per identifier or name (also inside a compound reference,
   which has at most 256 characters, or 1,108 for a relationship or coverage id with 16 key
   columns); 16,384 characters per JSON Pointer to a value, and 67,108,864 (64 Mi) for the
-  pointers to all of a document's values together, both also after substitution; 16 steps per path;
-  16 columns per unit key or scope; 256 clauses per list; 256 parameters; 64 datasets per cohort; 16
-  packs; and 1,000 refusals returned. A structured unit key costs several JSON values, so long `ids`
-  lists can reach the value limit before the list limit. A descriptor has the same limits on its
-  size (in bytes and JSON values), nesting and paths, and 200 characters per name, 4,096 per label,
-  key or other string, 10,000 per text, 16 columns per key or relationship, 10,000 members per list,
-  value map, missing-code map or curation map, and 64 per other list or map (extension members per
-  pack, metadata, event codes, record filter columns, requirements, methods, caveats). A
-  descriptor's `parent_scope` is a clause, so its constants have a document's limits. Imports have
-  size and decompression-ratio limits. Every tool call has a wall-clock limit that covers the
-  analysis stage, enforced by running queries and analyses in worker processes that can be killed;
-  each worker has a DuckDB memory limit. Categorical levels per analysis (at most 150) and
-  resampling replicates are capped. Clients of every router are rate-limited, and the number of open
-  proposals is capped. Every refusal names the limit it hit (§8.6).
+  pointers to all of a document's values together, both also after substitution; 16 steps per path,
+  and 100,000 steps of search for an implicit one (`path_search`, which then asks for a `via`);
+  16 columns per unit key or scope; 256 clauses per list; 256 `cohort` leaves per cohort (§7.1);
+  256 parameters; 64 datasets per cohort; 16 packs; and 1,000 refusals returned. A structured unit
+  key costs several JSON values, so long `ids` lists can reach the value limit before the list
+  limit. A descriptor has the same limits on its size (in bytes and JSON values), nesting and
+  paths, and 200 characters per name, 4,096 per label, key or other string, 10,000 per text, 16
+  columns per key or relationship, 10,000 members per list, value map, missing-code map or
+  curation map, and 64 per other list or map (extension members per pack, metadata, event codes,
+  record filter columns, requirements, methods, caveats). A descriptor's `parent_scope` is a
+  clause, so its constants have a document's limits. Imports have size and decompression-ratio
+  limits. Every tool call has a wall-clock limit that covers the analysis stage, enforced by
+  running queries and analyses in worker processes that can be killed; each worker has a DuckDB
+  memory limit. Categorical levels per analysis (at most 150) and resampling replicates are
+  capped. Clients of every router are rate-limited, and the number of open proposals is capped.
+  Every refusal names the limit it hit (§8.6).
 - **Disclosure.** §8.4, including its limits.
 
 ---
@@ -2169,11 +2205,26 @@ that revise or refine earlier ones say so.
 | D200 | Result invariants on construction (M0) | Result envelopes and cohort counts check their own contract: per-position arrays, `n` + `excluded_units` = `n_true`, caveats' `affects` resolve in the digested parts; `NOT_ESTIMABLE`, `LIFT_DIFFERS` and `DRAFT_RELEASE` are carried exactly when their conditions hold, and `SUPPRESSED`, `UNKNOWN_EXCLUDED` (whenever `n_unknown` is not 0, a suppressed one included), `INVALID_EXCLUDED`, `COHORTS_OVERLAP` and `CONFOUNDED_WITH_DATASET` whenever theirs do (`SUPPRESSED` also covers pooling and merging, which leave no `null`); and these rules of the disclosure pass, which need no data, hold: nothing suppressed without a `min_cell_count`, no shown count or count of a shown breakdown from 1 to *k* − 1, no linked set that shows its one suppressed member through a non-zero other, variables included, and with `n_true` shown `n` and `excluded_units` shown or suppressed together; no cohort count whose size shows a complement from 1 to *k* − 1 beside a non-zero numerator; a cohort count's size (a result envelope states none, so its accounting waits for its size in M3) accounts for its counts as the pass leaves them (each suppressed one counts at least one unit, one suppressed beside two zeros is from 1 to *k* − 1, two suppressed beside a shown count are small or one small and the smallest non-zero other, and with *k* = 2 three suppressed are one each); `analysed.n` is at least each variable's `n` and at most their sum, so no variable excludes fewer units; `lift_differs` is at most the size, and a suppressed one needs a size of at least 1. Cohort counts state their `min_cell_count` so that these can be checked. Until M3 types `values`, proportions there are checked for their `not_estimable` maps only. Outputs are checked when built, nested outputs and `model_copy` with `update` included; `model_construct` bypasses validation, and a dump then refuses anything that is not a JSON value JSON text carries unchanged, held in outputs and in containers of Python's own types, an enumeration member counting as the data of its `str`, `int` or `float` mixin, which must be its value, and no two keys of an object written as the same text | Agents can rely on the contract of any output the server returns |
 | D201 | Pack API names (M0) | The importer hook is `import_source` (`import` is a keyword); ontology validators are keyed by system, each system registered by one pack; leaf kinds, translator formats, analyses and predicates are `<pack id>.<name>`; concepts are `<pack id>:…`, each once; extension schemas are for release descriptor kinds only; a pack's analyses cite only declared caveat codes; versions are PEP 440 in normal form; the registry keeps a snapshot of what it was given, and hands out only copies of its concepts, schemas and analysis entries; extension schemas are JSON Schema objects holding only JSON values, read as Python's own types (a boolean schema is refused); ontology system names are Unicode text; every problem of every pack is reported at once; `requires_core` bounds the core version from below; an unknown pack in a lookup is refused alike everywhere | Fixed names let the registry refuse conflicts when packs are loaded, not when they are used |
 | D202 | Statistic references (M0) | The pointer of a `stat:` reference is written in URI fragment form, percent-encoded from UTF-8 with upper-case hex, and a floor is at least 2; any other spelling is refused | A reference must survive being pasted into a URL and be compared as a string, and a floor of 1 suppresses nothing |
+| D203 | Unit conversion in doubles (M2.1) | A numeric constant in other units than its column's is converted by one multiplication of doubles, by the exact UCUM factor rounded to a double; an integer written as a decimal string is the nearest double for a number or time-offset column, and the canonical form writes that double | The reference evaluator and the SQL engine must agree on every comparison, and SQL computes in doubles |
+| D204 | States of lists and ordered categories (M2.1) | A list cell that is not PRESENT takes its base result whatever `negate` and `match` say; a range over an ordered category is UNKNOWN (`NO_INFORMATION`) for a value outside its listed values, which is not a member of any `values`; datetime constants have at most microsecond precision | `negate` applies to items, an unlisted value has no place in the order, and datetimes are stored to the microsecond |
+| D205 | Mentions of filtered and scope columns (M2.1) | A column is mentioned by a `value` leaf on the child row itself (no `via`), anywhere in `W_C` outside nested questions; the rules read `W_C` after step 8 of §7.6 removes duplicates, so `{"any": [X, X]}` is the top-level conjunct `X` | A lookup or a nested question is about another row, whose own coverage applies; a document and its canonical form are accepted or refused alike, and evaluation reads the canonical form |
+| D206 | Grouped coverage and `covered` flags (M2.1) | The grouped form lists a parent when an assignment row names it and the group table has its group, and for every tuple when one of its groups covers every scope value; `covered` carries `SCOPE_PARTIAL` only on a TRUE whose closedness was restricted to listed tuples | A FALSE from `covered` says the parent was not assessed for what was asked, which no tuple restricts |
+| D207 | Parent scopes in v1 (M2.1) | The engine evaluates parent scopes of `value` leaves on the parent row or rows it looks up, and combinators; a parent scope that asks a question (an `exists` or `covered` leaf, or a `value` leaf below the parent table) is refused as `NOT_SUPPORTED` at that leaf when the release is checked, and one that does not resolve against the release is refused with its cause's code; a document asking about the relationship gets the same refusal at its leaf | Every example needs no more; nested questions in scopes need their own closedness rules |
+| D208 | `lift_differs` and fields read (M2.1) | `lift_differs` compares truth values, not reasons; the fields read for `UNCONFIRMED_SEMANTICS` are those with a value that resolution or evaluation uses (those of a parent scope's leaves, of record-filtered columns and of the unit's key columns for `ids` included), and a numeric column's `units` and a coverage's `parents` when absent | Flipping a lift can change reasons without changing membership; an absent field that changes the answer is as undeclared as a declared one |
+| D209 | Units and unit keys (M2.1) | The unit is a keyed table of the table graph, never a coverage table (`INVALID_UNIT`); unit keys are typed against its key columns, which need a declared datatype (`UNDECLARED_DATATYPE`), and the text form `"<dataset>:<key>"` is for a key of one column (`INVALID_KEY`). In the text form a number key is written as JSON writes a number (so `10`, `10.0` and `1e1` are one key) and an integer key in decimal | A key of several columns has no one text form, and a key's text is read one way only |
+| D210 | Implicit path search (M2.1) | An implicit path has at most 16 steps. Its search follows only the relationships on some simple path between the two tables (those of the block an edge joining them would be in) and takes at most 100,000 steps; past that the reference is refused (`LIMIT_EXCEEDED`, `path_search`), even with a path found, and asks for a `via` | Dense table graphs have factorially many simple paths, and a search that stopped cannot tell one path from several |
+| D211 | `exclude_self` under trailing lookups (M2.1) | `exclude_self` is refused (`EXCLUDE_SELF_NOT_ALLOWED`) on an `exists` in a `where` that a path's trailing lookups serve, through combinators | Canonicalisation asks such a question from the row before the lookups, so the row it leaves out would be another, and its canonical form would not resolve again |
+| D212 | Caps on the canonical form (M2.1) | A cohort's depth and leaves are measured on its canonical form after step 8 of §7.6 removes duplicates and the steps before it apply again, a referenced cohort's clauses inlined, each down step of a path a question, and every node without children a leaf (an empty `all` or `any` included); that form is what resolution returns and evaluation walks. Each leaf as written maps to the top-level clauses its own part of the form became part of: a duplicate's leaves through the nodes they pair with in the clause kept, and a `cohort` leaf to every clause of its expansion. A cohort as written has at most 256 `cohort` leaves (`cohort_references`), checked when the document is loaded | Evaluation's cost grows with the canonical form, not the written one, and a form without leaves would otherwise be bounded by its depth alone; resolution inlines every reference before duplicates are removed, so its cost grows with the references written, which a 2 MiB document could otherwise hold tens of thousands of; and each written leaf resolves its own path, so a path search is done once per release and pair of tables, and copies of an expensive leaf cost one search |
 
 ---
 
 ## Appendix B. Change log
 
+- **v0.8.2** — Choices the reference evaluator settles (D203–D212): unit conversion and big
+  integers in doubles; lists that are not PRESENT, unlisted values of ordered categories and
+  datetime precision; what a mention is; grouped listings and `covered` flags; parent scopes in
+  v1; `lift_differs` and the fields read; units and unit keys; implicit paths and their search;
+  `exclude_self` under trailing lookups; caps on the canonical form and on `cohort` leaves.
 - **v0.8.1** — Encodings settled by the M0 document, descriptor and result schemas (D188–D202):
   parsing rules for text, numbers and nesting; verbatim notes and parameter values; bounds on
   substitution and on the refusals returned; id lengths and re-import by occurrence; the static

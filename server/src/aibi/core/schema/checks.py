@@ -18,8 +18,9 @@ from aibi.core.schema.document import (
     walk,
 )
 from aibi.core.schema.jsonio import pointer
+from aibi.core.schema.limits import COHORT_REFERENCES, MAX_COHORT_REFERENCES
 from aibi.core.schema.output import data, text
-from aibi.core.schema.refusals import Refusal, RefusalCode
+from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 
 Path = list[str | int]
 _ARTICLE = {"ids": "An ids", "cohort": "A cohort"}
@@ -171,6 +172,7 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                     ],
                 )
             )
+        cohort_leaves = 0
         for clause, path, inside in walk(list(cohort.all), [*cohort_path, "all"]):
             if inside and isinstance(clause, IdsLeaf | CohortLeaf):
                 refusals.append(
@@ -183,6 +185,7 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                     )
                 )
             if isinstance(clause, CohortLeaf):
+                cohort_leaves += 1
                 target = document.cohorts.get(clause.cohort)
                 if target is None:
                     refusals.append(
@@ -208,6 +211,18 @@ def check_document(document: Document, unknown: Unknown | None = None) -> list[R
                             ],
                         )
                     )
+        if cohort_leaves > MAX_COHORT_REFERENCES:
+            refusals.append(
+                Refusal(
+                    code=RefusalCode.LIMIT_EXCEEDED,
+                    path=pointer([*cohort_path, "all"]),
+                    message=[
+                        text(f"The cohort has {cohort_leaves} cohort leaves, and at most "),
+                        text(f"{MAX_COHORT_REFERENCES} may be: each inlines the cohort it names"),
+                    ],
+                    limit=Limit(name=COHORT_REFERENCES, max=MAX_COHORT_REFERENCES),
+                )
+            )
 
     refusals.extend(_cycles(references))
 
