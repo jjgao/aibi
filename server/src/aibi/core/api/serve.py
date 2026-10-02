@@ -173,7 +173,7 @@ def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
     previous = os.umask(0o077)
     try:
         try:
-            store = Store(config.storage.data, log=config.log.limits())
+            store = Store(config.storage.data, log=config.log.limits(), cache=config.cache.limits())
         except StoreLockedError:
             err.write("aibi-server: another server has the store open\n")
             return 1
@@ -181,6 +181,7 @@ def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
             err.write(f"aibi-server: {error}\n")
             return 1
         try:
+            store.results.purge(config.disclosure.min_cell_count_floor)
             if workers_of(config) is None:
                 err.write(f"aibi-server: {NO_WORKERS}\n")
             registry = PackRegistry((), core_version=aibi.__version__)

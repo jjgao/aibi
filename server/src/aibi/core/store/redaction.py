@@ -1658,12 +1658,19 @@ def _issuances(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
     return changed
 
 
+def _result_cache(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
+    """Empty the result cache (D375): it is evictable, so a result that held the person, or
+    whose cohorts' derivations erasure took, is never given again, whatever it read."""
+    return db.execute("DELETE FROM result_cache").rowcount
+
+
 REDACTORS: dict[str, Redactor] = {
     "audit": _audit,
     "proposals": _proposals,
     "catalog": _catalog,
     "derivations": _derivations,
     "issuances": _issuances,
+    "result_cache": _result_cache,
 }
 
 

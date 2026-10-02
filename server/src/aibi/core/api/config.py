@@ -36,6 +36,7 @@ closed, so an unknown key is refused, and every problem is reported at once with
 - ``[queries]``: the limits of the workers that run queries (D293): ``query_seconds``,
   ``query_memory``, ``query_workers`` and ``query_threads``. DuckDB's memory grows with its
   threads and with a document's predicates, so ``query_memory`` should grow with them (D373).
+- ``[cache]``: ``result_bytes``, the most the result cache may take (D375); 0 caches none.
 - ``[log]``: how long the derivation log keeps the issuances of counts,
   ``keep_count_issuances_days`` (30 by default), and of results, ``keep_result_issuances_days``
   (365 by default; each at most ``MAX_KEEP_DAYS``, 0 keeping them until an operator prunes), and
@@ -85,6 +86,7 @@ from aibi.core.schema.limits import (
     MAX_KEEP_DAYS,
     MIN_LOG_BYTES,
     MIN_QUERY_MEMORY,
+    CacheLimits,
     ImportLimits,
     LogLimits,
     QueryLimits,
@@ -93,6 +95,7 @@ from aibi.core.schema.limits import (
 _DEFAULT_LIMITS = ImportLimits()
 _DEFAULT_QUERIES = QueryLimits()
 _DEFAULT_LOG = LogLimits()
+_DEFAULT_CACHE = CacheLimits()
 WORKER_THREADS = 40
 """The worker threads that the reads, the operations and the parsing of bodies share: anyio's
 default limiter, which the server leaves as it is."""
@@ -299,6 +302,16 @@ class Log(_Config):
         )
 
 
+class Cache(_Config):
+    """How large the result cache grows (D375): ``CacheLimits``, with its defaults; 0 caches no
+    result."""
+
+    result_bytes: Annotated[StrictInt, Field(ge=0)] = _DEFAULT_CACHE.result_bytes
+
+    def limits(self) -> CacheLimits:
+        return CacheLimits(result_bytes=self.result_bytes)
+
+
 class Disclosure(_Config):
     min_cell_count_floor: Annotated[StrictInt, Field(ge=2)] | None = None
 
@@ -344,6 +357,7 @@ class ServerConfig(_Config):
     imports: Imports = Imports()
     queries: Queries = Queries()
     log: Log = Log()
+    cache: Cache = Cache()
     disclosure: Disclosure = Disclosure()
     databases: dict[Identifier, DatabaseConnection] = Field(
         default_factory=dict[str, DatabaseConnection]

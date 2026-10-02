@@ -351,6 +351,19 @@ class LogLimits:
             raise ValueError(f"log_bytes is at least {MIN_LOG_BYTES}, not {self.log_bytes}")
 
 
+@dataclass(frozen=True)
+class CacheLimits:
+    """How large the result cache may grow (SPEC §8.1, §14; D375): ``result_bytes``, counting
+    the pages each result's rows can take, least recently used evicted first; 0 caches none. A
+    result larger than a quarter of it is not cached, so that one never empties the cache."""
+
+    result_bytes: int = 1 << 30
+
+    def __post_init__(self) -> None:
+        if self.result_bytes < 0:
+            raise ValueError(f"result_bytes is at least 0, not {self.result_bytes}")
+
+
 MIN_LOG_BYTES = 1 << 20
 """The least ``log_bytes``: room for a few documents at their limits."""
 MAX_KEEP_DAYS = 36500
@@ -518,6 +531,7 @@ __all__ = [
     "TOOL_CALLS",
     "TOOL_SECONDS",
     "VIEWS",
+    "CacheLimits",
     "ImportLimits",
     "LimitName",
     "LogLimits",

@@ -25,8 +25,10 @@ from aibi.core.api.connections import GuardedProtocol
 from aibi.core.api.serve import WithoutSecrets, main, run, services_of, uvicorn_config
 from aibi.core.engine import worker
 from aibi.core.operator.auth import TOKEN_RE, hash_token, new_token
+from aibi.core.schema.limits import CacheLimits
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.store.appdb import LOG_PAGE_BYTES
+from aibi.core.store.cache import ResultCache
 from aibi.core.store.store import APP_DB, Store, StoreLockedError
 
 Write = Callable[..., Path]
@@ -503,3 +505,24 @@ def test_the_check_refuses_a_period_the_log_could_not_count_back(write_config: W
     code, _, err = run_main("check", "--config", str(write_config(text)))
     assert code == 2
     assert "log.keep_count_issuances_days" in err
+
+
+def test_the_server_bounds_the_result_cache_as_configured_and_purges_under_its_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``[cache] result_bytes`` reaches the store, 0 included, and the rows cached under a
+    lower floor than ``[disclosure] min_cell_count_floor`` are purged when it starts (D375)."""
+    seen: dict[str, Any] = {}
+    purge = ResultCache.purge
+
+    def purged(self: ResultCache, floor: int | None) -> int:
+        seen["limits"], seen["floor"] = self.limits, floor
+        return purge(self, floor)
+
+    monkeypatch.setattr(ResultCache, "purge", purged)
+    monkeypatch.setattr(serve.uvicorn, "Server", _Stopped)
+    written = config_of(tmp_path).model_dump(mode="json")
+    written |= {"cache": {"result_bytes": 0}, "disclosure": {"min_cell_count_floor": 7}}
+    config = ServerConfig.model_validate(written, context={BASE: tmp_path})
+    assert run(config, stderr=io.StringIO()) == 0
+    assert seen == {"limits": CacheLimits(result_bytes=0), "floor": 7}
