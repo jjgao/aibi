@@ -21,7 +21,8 @@ from aibi.core.schema import loading
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.document import Document
 from aibi.core.schema.limits import MAX_DOCUMENT_BYTES
-from aibi.core.schema.loading import _paused, load_descriptor, load_document
+from aibi.core.schema.loading import _paused, load_descriptor, load_document, load_request
+from aibi.core.schema.operator import ImportRequest
 
 DOCUMENT = {"aibi": "1", "dataset": "d", "unit": "t", "cohorts": {"c": {"all": []}}}
 TABLE = {
@@ -43,6 +44,8 @@ LOADS: dict[str, Callable[[], object]] = {
     "descriptor": lambda: load_descriptor(json.dumps(TABLE)),
     "wrong descriptor": lambda: load_descriptor(json.dumps({**TABLE, "version": None})),
     "unparseable descriptor": lambda: load_descriptor("[1,"),
+    "request": lambda: load_request(b'{"source": {"path": "/x"}}', ImportRequest),
+    "wrong request": lambda: load_request(b'{"source": 5, "x": null}', ImportRequest),
 }
 
 

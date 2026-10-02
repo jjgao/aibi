@@ -64,7 +64,13 @@ from aibi.core.schema.limits import (
 )
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.params import Position, Substitution, substitute
-from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
+from aibi.core.schema.refusals import (
+    Limit,
+    Refusal,
+    RefusalCode,
+    blank_secrets,
+    finish_refusals,
+)
 
 _KEY_LABEL = "[key]"
 """Pydantic's location element for a problem with a dict key rather than its value."""
@@ -975,6 +981,13 @@ def _refusal(details: ErrorDetails, root: object, tokens: Position, at: str | No
         if isinstance(kind, str):
             message = [text("Unknown leaf kind "), data(kind)]
         alternatives = [text(name) for name in PARENT_SCOPE_KINDS]
+    elif (
+        code is RefusalCode.UNKNOWN_KIND
+        and root is not Document
+        and _discriminated(resolved.metadata)
+    ):
+        # A request's union (an edit's op, an import's source) lists its own members.
+        alternatives = [text(tag) for tag in _tags(resolved.annotation)]
     elif code is RefusalCode.UNKNOWN_KIND:
         alternatives = [text(kind) for kind in CORE_KINDS_TEXT.replace(" or", ",").split(", ")]
         alternatives.append(text("<pack id>.<name> for a pack leaf"))
@@ -998,6 +1011,61 @@ def _refusal(details: ErrorDetails, root: object, tokens: Position, at: str | No
         alternatives=alternatives,
         limit=limit,
     )
+
+
+# --- Requests --------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RequestResult[M: BaseModel]:
+    """A validated request, or the refusals that stop it, with paths into the body as written."""
+
+    value: M | None
+    refusals: list[Refusal]
+
+
+def load_request[M: BaseModel](source: bytes, model: type[M]) -> RequestResult[M]:
+    """Parse and validate a request body, an operator's or a tool's (SPEC §11.2, D260): the rules
+    and limits of documents first (§7.1: UTF-8, no duplicate keys, no non-finite numbers or lone
+    surrogates, nesting, values and pointers bounded), then ``model``. Refusals are returned as
+    ``finish_refusals`` orders them, and quote nothing of the body: errors are read without their
+    inputs, and their messages are the server's own text; a member name of a token's or a
+    handle's shape is blanked in their paths and messages (``blank_secrets``, D265)."""
+    found = _loaded_request(source, model)
+    if found.value is not None:
+        return found
+    return RequestResult(None, [blank_secrets(refusal) for refusal in found.refusals])
+
+
+def _loaded_request[M: BaseModel](source: bytes, model: type[M]) -> RequestResult[M]:
+    try:
+        value = parse_json(source)
+    except JsonError as problem:
+        limit = Limit(name=problem.limit[0], max=problem.limit[1]) if problem.limit else None
+        refusal = Refusal(
+            code=RefusalCode(problem.code),
+            path=problem.pointer,
+            message=[text(problem.message)],
+            limit=limit,
+        )
+        return RequestResult(None, [refusal])
+    if not isinstance(value, dict):
+        refusal = Refusal(
+            code=RefusalCode.WRONG_TYPE, path="", message=[text("A request body is an object")]
+        )
+        return RequestResult(None, [refusal])
+    return _paused(_validated_request, value, model)
+
+
+def _validated_request[M: BaseModel](value: JsonValue, model: type[M]) -> RequestResult[M]:
+    try:
+        return RequestResult(model.model_validate(value), [])
+    except ValidationError as error:
+        found = [
+            refusal_from_error(details, model)
+            for details in error.errors(include_url=False, include_input=False)
+        ]
+        return RequestResult(None, finish_refusals(found))
 
 
 # --- Descriptors -----------------------------------------------------------------------------
