@@ -9,7 +9,8 @@ the same PR or don't make the change.
 ## Status
 
 Milestone M0 (SPEC.md §15) is in progress; the roadmap issue lists the work order. The server
-package skeleton, tooling and CI exist; the schemas and everything after them do not yet.
+package skeleton, tooling and CI exist, and `core/schema/` holds the identifier and
+analysis-document models; descriptors, results and everything after them do not yet.
 
 ## Non-negotiables
 
@@ -54,6 +55,7 @@ server/tests/core/        # must pass with no pack registered
 server/tests/packs/onco/
 web/
 fixtures/
+schemas/                  # generated JSON Schemas, checked in
 ```
 
 ## Tooling (from M0)
@@ -67,6 +69,9 @@ uv run lint-imports      # core must not import packs
 uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
 ```
+
+After changing a model in `core/schema/`, regenerate the checked-in JSON Schemas with
+`uv run python -m aibi.core.schema.export ../schemas`; a test fails while they are stale.
 
 Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
 OpenAPI schema, not written by hand.

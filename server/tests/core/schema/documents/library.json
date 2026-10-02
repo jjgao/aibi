@@ -1,0 +1,69 @@
+{
+  "aibi": "1",
+  "packs": {
+    "testpack": ">=1.2,<2"
+  },
+  "dataset": "lending",
+  "unit": "members",
+  "cohorts": {
+    "late_readers": {
+      "all": [
+        {
+          "kind": "value",
+          "column": "returns.days_late",
+          "range": {
+            "gt": 14
+          },
+          "quantifier": [
+            "some",
+            "some"
+          ],
+          "lift": "assessed",
+          "via": [
+            {
+              "rel": "rel:loans.member_id",
+              "dir": "down"
+            },
+            {
+              "rel": "rel:returns.loan_id",
+              "dir": "down"
+            }
+          ]
+        },
+        {
+          "known": {
+            "kind": "covered",
+            "table": "returns",
+            "scope": {
+              "branch": [
+                "central"
+              ]
+            }
+          }
+        },
+        {
+          "unknown": {
+            "kind": "testpack.flag",
+            "q": "fines: UNPAID"
+          }
+        },
+        {
+          "any": [
+            {
+              "kind": "ids",
+              "ids": [
+                "lending:M1",
+                {
+                  "dataset": "lending",
+                  "key": [
+                    "M2"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
