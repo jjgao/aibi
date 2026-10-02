@@ -81,6 +81,9 @@ levels), and `coxph.separated` decides each column estimated, `separation` or `z
 it and fits the finite part, `coxph.separated_hazards` testing it (`reference/cone.R`). From M3.3e-1,
 `core/analyses/cox.py` is `survival.cox`'s model of cohorts and covariates from each member's cells
 (complete cases, coding, both fits, labels and values), held to R (`reference/survcox.R`).
+From M3.3e-2, `survival.cox` is registered (`cox.ENTRY`, `CoxParams`): `cox.covariate_of`
+codes each covariate by its variable, `views` refuses what it cannot model, and `cox.analyse`
+runs the model on members listed as a pack's inputs are, refusing what only the data show.
 
 ## Non-negotiables
 

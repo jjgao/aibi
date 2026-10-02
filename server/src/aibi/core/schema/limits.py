@@ -92,6 +92,9 @@ D348)."""
 MAX_CURVE_STEPS = 2_000
 """Steps of one cohort's curve that a survival view reports without a grid (the limit
 ``curve_steps``, D348): a curve has a step wherever a unit's follow-up ends."""
+MAX_STRATA = 100
+"""Levels of a ``survival.cox`` view's stratum among its complete cases (the limit ``strata``,
+D363)."""
 MAX_PARAMS = 256
 MAX_REFUSALS = 1_000
 """Refusals returned for one document; one more says that the rest were left out."""
@@ -144,6 +147,10 @@ RESULT_CHARACTERS = "result_characters"
 LANDMARKS = "landmarks"
 GRID_TIMES = "grid_times"
 CURVE_STEPS = "curve_steps"
+COX_PARAMETERS = "cox_parameters"
+"""Columns a ``survival.cox`` view's covariates code to (D363, D368)."""
+STRATA = "strata"
+"""Levels of a ``survival.cox`` view's stratum among its complete cases (D363, D368)."""
 PARAMETERS = "parameters"
 REFUSALS = "refusals"
 POINTER_CHARACTERS = "pointer_characters"
@@ -397,6 +404,7 @@ __all__ = [
     "COHORT_REFERENCES",
     "CONCURRENT_IMPORTS",
     "CONSTANT_CHARACTERS",
+    "COX_PARAMETERS",
     "CURVE_STEPS",
     "DATASETS",
     "DECODED_BYTES",
@@ -457,6 +465,7 @@ __all__ = [
     "MAX_REFUSALS",
     "MAX_RESULT_CHARACTERS",
     "MAX_RESULT_VALUES",
+    "MAX_STRATA",
     "MAX_STRING",
     "MAX_SUMMARY_SEGMENTS",
     "MAX_TEXT",
@@ -499,6 +508,7 @@ __all__ = [
     "RESULT_CHARACTERS",
     "RESULT_VALUES",
     "SCOPE_COLUMNS",
+    "STRATA",
     "STRING_CHARACTERS",
     "SUBSTITUTED_BYTES",
     "TABLE_COLUMNS",

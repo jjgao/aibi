@@ -20,9 +20,10 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from aibi.core.analyses import columns, distribution, existence, members, packs, survival
+from aibi.core.analyses import columns, cox, distribution, existence, members, packs, survival
 from aibi.core.analyses.charts import (
     columns_charts,
+    cox_chart,
     distribution_charts,
     existence_chart,
     survival_chart,
@@ -31,6 +32,7 @@ from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.readback import readback
 from aibi.core.schema.analyses import (
     ColumnsValues,
+    CoxValues,
     DistributionValues,
     ExistenceValues,
     SurvivalValues,
@@ -83,6 +85,7 @@ Outcome = (
     | members.Outcome
     | columns.Outcome
     | survival.Outcome
+    | cox.Outcome
     | packs.Outcome
 )
 """An analysis's digested parts and caveats, as the core's analyses and packs' give them."""
@@ -102,6 +105,8 @@ def charts(outcome: Outcome, labels: list[str]) -> list[dict[str, JsonValue]]:
         return columns_charts(outcome.values, labels)
     if isinstance(outcome.values, SurvivalValues):
         return [survival_chart(outcome.values, labels)]
+    if isinstance(outcome.values, CoxValues):
+        return [cox_chart(outcome.values, labels)]
     return []
 
 

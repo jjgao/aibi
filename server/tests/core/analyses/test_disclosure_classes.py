@@ -40,6 +40,7 @@ VIEWS: Mapping[str, dict[str, Any]] = {
     "compare.columns": {"cohorts": ["old", "young"], "params": {"columns": [TIER]}},
     "summary.members": {"cohorts": ["old"], "params": {}},
     "survival.km": {"cohorts": ["old", "young"], "params": {}},
+    "survival.cox": {"cohorts": ["old", "young"], "params": {"covariates": [TIER]}},
     PACKED: {"cohorts": ["old"], "params": {"columns": {"measure": [TIER]}}},
 }
 """A view of each analysis the registry holds, over the shop."""
@@ -148,7 +149,7 @@ def expected(analysis: str, setting: str) -> RefusalCode | None:
 def test_every_core_analysis_states_its_class_and_a_refused_one_says_why() -> None:
     assert set(CORE) == DISCLOSED | REFUSED
     assert {"compare.existence", "summary.distribution", "compare.columns"} == DISCLOSED
-    assert {"summary.members", "survival.km"} == REFUSED
+    assert {"summary.members", "survival.km", "survival.cox"} == REFUSED
     for analysis in CORE.values():
         assert (analysis.disclosure is DisclosureClass.REFUSED) == bool(analysis.because)
     with pytest.raises(ValueError, match="says why"):

@@ -1081,6 +1081,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
         "compare.existence",
         "summary.distribution",
         "summary.members",
+        "survival.cox",
         "survival.km",
     ]
     assert found.applicable is None
@@ -1092,6 +1093,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
         ("compare.existence", "available"),
         ("summary.distribution", "available_with_caveats"),
         ("summary.members", "available"),
+        ("survival.cox", "unavailable"),
         ("survival.km", "unavailable"),
     ]
     assert found.release is not None
@@ -1111,6 +1113,7 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
         "compare.existence",
         "summary.distribution",
         "summary.members",
+        "survival.cox",
         "survival.km",
     ]
 

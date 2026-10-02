@@ -13,6 +13,7 @@ import pytest
 from pydantic import JsonValue
 
 import aibi
+from aibi.core.analyses import views
 from aibi.core.catalog import cohorts
 from aibi.core.catalog.cohorts import (
     ANSWER_SECONDS,
@@ -275,19 +276,20 @@ def test_a_withdrawn_release_s_ids_resolve_to_withdrawn(world: World, orchard: O
 
 
 def test_validate_document_reads_back_and_marks_ids_not_yet_issued(
-    world: World, orchard: Orchard
+    world: World, orchard: Orchard, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(views, "LATER", {"summary.later": "M9"})
     world.publish("orchard", orchard())
     catalog = catalog_of(world)
     written = document(
         {"tall": [{"kind": "value", "column": "trees.height_m", "range": {"gte": "$h"}}]},
         params={"h": 5, "unused": 1},
-        views=[{"analysis": "survival.cox", "cohorts": ["tall"]}],
+        views=[{"analysis": "summary.later", "cohorts": ["tall"]}],
     )
     found = validated(catalog, {"document": written})
     [deferred] = found.refusals
     assert (deferred.code, deferred.path) == (RefusalCode.NOT_SUPPORTED, "/views/0/analysis")
-    assert "M3.3e-2" in json.dumps(deferred.model_dump(mode="json")["message"])
+    assert "M9" in json.dumps(deferred.model_dump(mode="json")["message"])
     assert not found.valid
     [check] = found.cohorts
     assert check.status == "not_issued"

@@ -4,8 +4,8 @@ The registry holds the core's analyses, each an entry (a descriptor of kind ``an
 parameters' model and its implementation, and the analyses of the installed packs, each an entry
 and a ``run``. Analyses are reachable only through it: a view names one by id, and no other code
 path computes a result. The core's are ``compare.existence`` (D319), ``summary.distribution``
-(D328), ``summary.members`` (D331), ``compare.columns`` (D336) and ``survival.km`` (D348);
-``survival.cox`` follows in M3.3e-2 (D346, D354, D358, D362).
+(D328), ``summary.members`` (D331), ``compare.columns`` (D336), ``survival.km`` (D348) and
+``survival.cox`` (D366).
 
 A pack's analysis is registered, listed and matched for applicability like the core's, and run
 from M3.2d on the inputs its ``requires`` name, materialised (``analyses.packs``, D341–D343): its
@@ -15,10 +15,11 @@ columns and aggregates, and from M3.3 its endpoints' rows (D352).
 states it (``CoreAnalysis.disclosure``; every pack's analysis is ``refused``, ``disclosure_of``):
 a ``disclosed`` one runs under a disclosure setting and the pass applies to what it shows; a
 ``refused`` one's output is nothing the pass can protect (a list of units, D332; what a pack
-computes, D344; survival curves, D351), so under any setting a view of it is refused in phase 2
-and it is ``unavailable``, ``missing`` naming ``min_cell_count``. An analysis that lists or hands
-each member's values in the keys' order (``lists_keys``: ``summary.members`` and every pack's) is
-also refused, and ``unavailable`` naming ``allow_row_ids``, where the dataset allows no row ids.
+computes, D344; survival curves and Cox models, D351), so under any setting a view of it is
+refused in phase 2 and it is ``unavailable``, ``missing`` naming ``min_cell_count``. An analysis
+that lists or hands each member's values in the keys' order (``lists_keys``: ``summary.members``
+and every pack's) is also refused, and ``unavailable`` naming ``allow_row_ids``, where the dataset
+allows no row ids.
 
 **Applicability** (§9.4) matches an entry's ``requires`` against a release's descriptors, for a
 unit table or, with none named, for each keyed table of the release in turn, the best status
@@ -51,7 +52,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from aibi.core.analyses import columns, distribution, existence, members, survival
+from aibi.core.analyses import columns, cox, distribution, existence, members, survival
 from aibi.core.engine.resolve import (
     UNCONFIRMED,
     DescriptorCopies,
@@ -61,6 +62,7 @@ from aibi.core.engine.resolve import (
 )
 from aibi.core.schema.analyses import (
     ColumnsParams,
+    CoxParams,
     DistributionParams,
     ExistenceParams,
     MembersParams,
@@ -136,6 +138,13 @@ CORE: Mapping[str, CoreAnalysis] = {
         because="a curve's values can give the censorings between its event times, which no "
         "rule yet protects (D351)",
     ),
+    cox.ENTRY.id: CoreAnalysis(
+        cox.ENTRY,
+        CoxParams,
+        DisclosureClass.REFUSED,
+        because="a Cox model's hazard ratios and tests are functions of the risk sets at every "
+        "event time, as a curve's values are, which no rule yet protects (D351)",
+    ),
 }
 """The core's analyses, by id: ``compare.existence`` is disclosed by D320,
 ``summary.distribution`` by D329 and ``compare.columns`` by D337."""
@@ -146,11 +155,10 @@ PACK_BECAUSE = (
 )
 """Why a pack's analysis is refused under a disclosure setting."""
 
-LATER: Mapping[str, str] = {
-    "survival.cox": "M3.3e-2",
-}
-"""The core's analyses of §9.5 that a later slice of M3 implements, and the slice (D315, D317,
-D324, D346): a view of one is ``NOT_SUPPORTED``, not an unknown analysis."""
+LATER: Mapping[str, str] = {}
+"""The core's analyses of §9.5 that a later slice implements, and the slice (D315, D317, D324,
+D346): a view of one is ``NOT_SUPPORTED``, not an unknown analysis. Since M3.3e-2 none is
+(D366)."""
 
 CATEGORIES_UNDER_K = frozenset({columns.ANALYSIS_ID})
 """The analyses that show only numbers' units under a disclosure setting (D337), and so compare

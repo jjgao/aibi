@@ -46,6 +46,12 @@ its members' keys from the ``offset``-th, each its values in key order as they a
 canonical form's order (§7.6, step 8), and whether more follow. It lists no key under a disclosure
 setting (D332).
 
+``survival.cox`` (D366) takes an ``endpoint``, ``covariates``, zero to ``MAX_VARIABLES``
+variables, a ``stratum``, a variable or none, and ``level``. Its values, per position: the events
+among its complete cases and each covariate's, the stratum's and the endpoint's counts; for the
+view, the model's terms (``CoxTerm``), each covariate's joint test and the test of proportional
+hazards (D365).
+
 A view of a **pack's analysis** (``PackParams``, D341) takes ``columns``, the variables each of its
 entry's ``column`` requirements takes, by role, and ``options``, which its entry's ``params``
 schema checks. Its values are what the pack's ``run`` gives, checked against the entry's
@@ -643,6 +649,26 @@ class SurvivalValues(Output):
     view: SurvivalView
 
 
+# --- survival.cox (D366) ----------------------------------------------------------------------
+
+
+class CoxParams(DocModel):
+    """``survival.cox``'s parameters (D366)."""
+
+    endpoint: EndpointId | None = None
+    """The endpoint (§5.8); without one, the one usable endpoint on the unit table (D347)."""
+    covariates: Annotated[list[Variable], Field(max_length=MAX_VARIABLES), LimitName(VARIABLES)] = (
+        Field(default_factory=list[Variable])
+    )
+    """The covariates, variables (§9.2) one value per unit, in the order the terms give them;
+    none by default. M3.3f adds predicates, ``{"predicate": <clause>}``, told from a variable by
+    its members, so that neither how a variable is written nor its canonical form changes."""
+    stratum: Variable | None = None
+    """The variable whose levels stratify the model; none by default."""
+    level: Annotated[Level, Field(le=MAX_LEVEL)] = 0.95
+    """The level of every interval, at most ``MAX_LEVEL``."""
+
+
 MAX_COX_TERMS = MAX_COHORTS - 1 + 2 * MAX_VARIABLES
 """The most terms a ``survival.cox`` view has: a cohort term per position but the reference,
 and its covariates' terms, at most ``MAX_VARIABLES`` parameters and a term with no level for
@@ -796,6 +822,7 @@ __all__ = [
     "BINS_OF_A_RANGE",
     "EXCLUDE",
     "EXISTENCE_AGGREGATES",
+    "MAX_COX_TERMS",
     "NUMERIC_AGGREGATES",
     "Aggregate",
     "CategoryComparison",
@@ -809,8 +836,15 @@ __all__ = [
     "ColumnsPosition",
     "ColumnsValues",
     "ColumnsView",
+    "CovariateTest",
+    "CoxParams",
+    "CoxPosition",
+    "CoxTerm",
+    "CoxValues",
+    "CoxView",
     "Curve",
     "CurveStep",
+    "Direction",
     "DistributionParams",
     "DistributionPosition",
     "DistributionValues",
@@ -828,6 +862,7 @@ __all__ = [
     "MembersParams",
     "MembersPosition",
     "MembersValues",
+    "ModelTest",
     "NoViewValues",
     "NumberComparison",
     "NumberDistribution",

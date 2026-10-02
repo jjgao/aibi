@@ -31,6 +31,12 @@ has no row, so under a disclosure setting a number's chart has none.
 steps from 1 at time 0, its pointwise interval as a band where the curve's steps have both
 bounds, one line per cohort in view order; a step whose value is not estimable has no row, and a
 cohort with no units none.
+
+``survival.cox`` has one chart (D369): each term's hazard ratio as a point where it is shown and
+its Wald interval as a rule where both bounds are, on a log scale, a row per term in the terms'
+order, labelled ``cohort <name>`` for a cohort's term and ``covariate <j>`` for a covariate's, with
+``: <level> vs <baseline>`` for a level, each quoted as a JSON string, so that no label is
+another's; the rows are in the terms' order, a term with a point but no rule among them.
 """
 
 import json
@@ -42,6 +48,8 @@ from pydantic import JsonValue
 from aibi.core.schema.analyses import (
     CategoryDistribution,
     ColumnsValues,
+    CoxTerm,
+    CoxValues,
     DistributionValues,
     ExistenceValues,
     HistogramBin,
@@ -360,6 +368,75 @@ def survival_chart(values: SurvivalValues, labels: Sequence[str]) -> dict[str, J
     }
 
 
+def _term_label(term: CoxTerm, labels: Sequence[str]) -> str:
+    """A term's row label (module docstring): its cohort's name, or its covariate's index and
+    level against baseline, each quoted."""
+    if term.position is not None:
+        return f"cohort {labels[term.position]}"
+    found = f"covariate {term.covariate}"
+    if term.level is not None and term.baseline is not None:
+        level = json.dumps(term.level.data, ensure_ascii=False)
+        baseline = json.dumps(term.baseline.data, ensure_ascii=False)
+        found += f": {level} vs {baseline}"
+    return found
+
+
+def cox_chart(values: CoxValues, labels: Sequence[str]) -> dict[str, JsonValue]:
+    """The chart of ``survival.cox``'s values, its cohorts labelled by name (module
+    docstring)."""
+    points: list[JsonValue] = []
+    rules: list[JsonValue] = []
+    order: list[JsonValue] = []
+    for index, term in enumerate(values.view.terms):
+        label = _term_label(term, labels)
+        row: dict[str, JsonValue] = {"index": index, "term": label}
+        bounded = term.ci.low is not None and term.ci.high is not None
+        if term.estimate is not None:
+            points.append({**row, "estimate": term.estimate})
+        if bounded:
+            rules.append({**row, "low": term.ci.low, "high": term.ci.high})
+        if term.estimate is not None or bounded:
+            order.append(label)
+    term_row: dict[str, JsonValue] = {
+        "field": "term",
+        "type": "nominal",
+        "sort": None,
+        "scale": {"domain": order},
+        "title": "Term",
+    }
+    scale: dict[str, JsonValue] = {"type": "log"}
+    return {
+        "description": (
+            "Each term's hazard ratio where it is shown, with its Wald interval where both "
+            "bounds are, on a log scale"
+        ),
+        "layer": [
+            {
+                "data": {"values": rules},
+                "mark": {"type": "rule"},
+                "encoding": {
+                    "y": term_row,
+                    "x": {"field": "low", "type": "quantitative", "scale": scale},
+                    "x2": {"field": "high"},
+                },
+            },
+            {
+                "data": {"values": points},
+                "mark": {"type": "point"},
+                "encoding": {
+                    "y": term_row,
+                    "x": {
+                        "field": "estimate",
+                        "type": "quantitative",
+                        "title": "Hazard ratio",
+                        "scale": scale,
+                    },
+                },
+            },
+        ],
+    }
+
+
 def _interval(one: HistogramBin) -> str:
     """A bin's interval as text: ``[`` or ``(`` by whether it holds its low edge, ``-∞`` for none,
     and ``]`` or ``)`` likewise at its high edge, ``∞`` for none."""
@@ -375,4 +452,10 @@ def _edge(value: float) -> str:
     return json.dumps(value)
 
 
-__all__ = ["columns_charts", "distribution_charts", "existence_chart", "survival_chart"]
+__all__ = [
+    "columns_charts",
+    "cox_chart",
+    "distribution_charts",
+    "existence_chart",
+    "survival_chart",
+]
