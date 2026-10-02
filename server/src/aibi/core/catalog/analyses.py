@@ -34,10 +34,24 @@ crossing or its materialisation, ``{"queries": [{"statements", "parameters"}, �
 cohort the views name, of its cohort id, with its SQL, so that ``explain`` resolves every id a
 result names. They are recorded in one transaction, only while ``ANSWER_SECONDS`` of the deadline
 are left, and not at all after a withdrawal, an erasure of a dataset the document names recorded
-meanwhile, or with the log full, as ``count_cohort``'s are (D300). Results are not cached in this
-slice (D318): every issuance's values are its own.
+meanwhile, or with the log full, as ``count_cohort``'s are (D300).
+
+**The result cache** (§8.1, D376): after the views are checked, each view whose result may be
+cached (``_cacheable``: not ``summary.members`` or a pack's analysis, which list or hand their
+members' values, D333, D353, and none over a draft) and whose result the store's cache holds,
+filled by this engine with these packs' versions, is a hit: it leaves every plan, so no query of
+it runs and its cohorts are counted only if another view names them, and its envelope is rendered
+from the cached content for this call (``results.render``), naming as ``values_from`` the
+issuance that filled it; a call whose views all hit runs no worker. The other views fill the
+cache. Both happen in the transaction that records the call's issuances (``then``): each cohort a
+hit names must be recorded and not erased, and its filler must still be one of its result's
+issuances whose SQL ran (``SourceGoneError``), else the call runs once more without the cache,
+as a first run of the document would (``_StaleHit``); a row evicted meanwhile is still a hit,
+its content in hand. A catalogue with ``cache`` off neither gives nor fills it.
 """
 
+import logging
+import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import cast
@@ -46,8 +60,8 @@ from pydantic import JsonValue
 
 from aibi.core.analyses import columns, cox, distribution, members, packs, survival
 from aibi.core.analyses.existence import CohortAt, compare
-from aibi.core.analyses.registry import withheld
-from aibi.core.analyses.results import Outcome, envelope, issued_packs
+from aibi.core.analyses.registry import disclosure_of, withheld
+from aibi.core.analyses.results import Digested, Outcome, digested, issued_packs, render
 from aibi.core.analyses.views import CheckedView
 from aibi.core.catalog.cohorts import (
     ANSWER_SECONDS,
@@ -102,14 +116,18 @@ from aibi.core.schema.loading import refusal_as_written
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 from aibi.core.schema.results import CohortCount
+from aibi.core.store.cache import Cached
 from aibi.core.store.derivations import (
     ErasedMeanwhileError,
     Issue,
     LogFullError,
     NotAdmittedError,
+    SourceGoneError,
     WithdrawnReleaseError,
 )
 from aibi.core.store.tables import TableSource
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _no_workers() -> ToolRefused:
@@ -317,14 +335,26 @@ def _too_many(view: CheckedView, column: int) -> ToolRefused:
     )
 
 
+class _StaleHit(Exception):  # noqa: N818 - not an error: the call runs again without the cache
+    """A hit whose source or cohorts the log no longer holds as they were found (D376)."""
+
+
 def _issue(
-    catalog: Catalog, issues: Sequence[Issue], deadline: Deadline | None, erasures: int
+    catalog: Catalog,
+    issues: Sequence[Issue],
+    deadline: Deadline | None,
+    erasures: int,
+    then: Callable[[sqlite3.Connection, list[str]], None] | None = None,
 ) -> list[str]:
     def admit() -> bool:
         return deadline is None or time.monotonic() < deadline.at - ANSWER_SECONDS
 
     try:
-        return catalog.store.derivations.issue_all(issues, admit=admit, erasures_after=erasures)
+        return catalog.store.derivations.issue_all(
+            issues, admit=admit, erasures_after=erasures, then=then
+        )
+    except SourceGoneError:
+        raise _StaleHit from None
     except WithdrawnReleaseError:
         raise ToolRefused([withdrawn([])]) from None
     except ErasedMeanwhileError:
@@ -336,7 +366,47 @@ def _issue(
 
 
 def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
-    """Each view of a document run, disclosed and issued (module docstring)."""
+    """Each view of a document run, disclosed and issued (module docstring); a call one of whose
+    hits the log no longer holds as it was found runs once more without the cache (D376)."""
+    try:
+        return _analysed(catalog, request, cached=catalog.cache)
+    except _StaleHit:
+        return _analysed(catalog, request, cached=False)
+
+
+def _cacheable(view: CheckedView) -> bool:
+    """Whether a view's result is given from the cache and fills it (D376): not one that lists
+    or hands each member's values (``summary.members`` and a pack's analysis, whose keys would
+    outlive their unit's erasure, D333, D353), nor one any of whose cohorts reads a draft
+    (§8.1, D30)."""
+    return not disclosure_of(view.analysis)[1] and all(
+        cohort.release.label != "draft" for cohort in view.cohorts
+    )
+
+
+def _hits(
+    catalog: Catalog, views: Sequence[CheckedView]
+) -> tuple[dict[int, tuple[Cached, Digested]], set[str]]:
+    """The views whose results the cache holds, by position, each with its row and its content
+    read back; and the results whose rows do not read back as their view's content (D374),
+    which are misses, logged by their kind alone, and whose rows the call's fill replaces."""
+    found: dict[int, tuple[Cached, Digested]] = {}
+    unread: set[str] = set()
+    for index, view in enumerate(views):
+        if not _cacheable(view):
+            continue
+        row = catalog.store.results.lookup(view.identity.id, ENGINE, issued_packs(view))
+        if row is None:
+            continue
+        try:
+            found[index] = (row, Digested.read(view, row.content))
+        except ValueError:
+            LOGGER.error("result cache: a cached content did not read back for its view")
+            unread.add(view.identity.id)
+    return found, unread
+
+
+def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> AnalysisResults:
     workers = catalog.workers
     if workers is None:
         raise _no_workers()
@@ -364,8 +434,10 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             for view in views:
                 if withheld(view.analysis, view.disclosure):
                     raise ValueError("a view refused for disclosure is never run (§8.4, D353)")
+            hits, unread = _hits(catalog, views) if cached else ({}, set[str]())
+            missing = [view for index, view in enumerate(views) if index not in hits]
             cohorts: dict[str, CanonicalCohort] = {}
-            for view in views:
+            for view in missing:
                 for cohort in view.cohorts:
                     cohorts.setdefault(cohort.computation_id, cohort)
             crossings: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
@@ -377,7 +449,7 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
             listed: list[ResolvedCohort] = []
             handed: dict[tuple[tuple[str, ...], tuple[str, ...]], int] = {}
             inputs: list[tuple[list[ResolvedCohort], list[ResolvedVariable]]] = []
-            for view in views:
+            for view in missing:
                 if isinstance(view.params, PackParams | SurvivalParams | CoxParams):
                     key = _inputs_key(view)
                     if key not in handed:
@@ -409,26 +481,39 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                     )
             manifests = sorted({cohort.release.manifest for cohort in cohorts.values()})
             sources = {manifest: store.sources(manifest) for manifest in manifests}
-            ran_views = _run(
-                [cohort.resolved for cohort in cohorts.values()],
-                asked,
-                read,
-                sources,
-                workers,
-                deadline,
-                _widest(views),
-                listed,
-                shared_asked,
-                inputs,
-                _first_readers(views, handed),
+            ran_views = (
+                _run(
+                    [cohort.resolved for cohort in cohorts.values()],
+                    asked,
+                    read,
+                    sources,
+                    workers,
+                    deadline,
+                    _widest(missing),
+                    listed,
+                    shared_asked,
+                    inputs,
+                    _first_readers(missing, handed),
+                )
+                if missing
+                else None
             )
-            by_id = dict(zip(cohorts, ran_views.counted, strict=True))
+            by_id = {} if ran_views is None else dict(zip(cohorts, ran_views.counted, strict=True))
             written = dict(request.document)
             params = dict(found.loaded.params_used)
-            outcomes: list[Outcome] = []
+            outcomes: list[Outcome | None] = []
             issues: list[Issue] = []
             in_order: dict[int, list[Listed]] = {}
-            for view in views:
+            for index, view in enumerate(views):
+                if index in hits:
+                    outcomes.append(None)
+                    issues.append(
+                        _result_issue(
+                            view, None, written, params, values_from=hits[index][0].issuance
+                        )
+                    )
+                    continue
+                assert ran_views is not None
                 positions = [
                     CohortAt(cohort, by_id[cohort.computation_id].accounting)
                     for cohort in view.cohorts
@@ -620,22 +705,54 @@ def run_analysis(catalog: Catalog, request: RunAnalysis) -> AnalysisResults:
                     tool="run_analysis",
                 )
                 issues.append(issue)
-            issued = _issue(catalog, issues, deadline, erasures)
+            contents = {
+                index: digested(view, outcome)
+                for index, (view, outcome) in enumerate(zip(views, outcomes, strict=True))
+                if outcome is not None
+            }
+            filled = {
+                index: content.content()
+                for index, content in contents.items()
+                if cached and _cacheable(views[index])
+            }
+
+            def then(db: sqlite3.Connection, identifiers: list[str]) -> None:
+                for index in hits:
+                    for cohort in views[index].cohorts:
+                        kept = db.execute(
+                            "SELECT hashed IS NOT NULL FROM derivations WHERE id = ?",
+                            (cohort.id,),
+                        ).fetchone()
+                        if kept is None or not kept[0]:
+                            raise _StaleHit
+                    store.results.touch(db, views[index].identity.id)
+                for result in sorted(unread):
+                    store.results.drop(db, result)
+                for index, content in filled.items():
+                    store.results.fill(
+                        db,
+                        result=views[index].identity.id,
+                        issuance=identifiers[index],
+                        content=content,
+                    )
+
+            issued = _issue(catalog, issues, deadline, erasures, then)
         except ToolRefused as refused:
             substituted = found.loaded.positions
             raise ToolRefused(
                 [refusal_as_written(refusal, substituted) for refusal in refused.refusals]
             ) from None
     results = [
-        envelope(
+        render(
             view,
-            outcome,
+            hits[index][1] if index in hits else contents[index],
             issuance=issuance,
+            values_from=hits[index][0].issuance if index in hits else issuance,
             written=written,
             params=params,
             engine=ENGINE,
         )
-        for view, outcome, issuance in zip(views, outcomes, issued[: len(views)], strict=True)
+        for index, (view, issuance) in enumerate(zip(views, issued[: len(views)], strict=True))
     ]
     return AnalysisResults(results=results, params=parameters(found.loaded))
 
@@ -970,8 +1087,15 @@ def _expanded(
 
 
 def _result_issue(
-    view: CheckedView, sql: JsonValue, written: dict[str, JsonValue], params: dict[str, JsonValue]
+    view: CheckedView,
+    sql: JsonValue | None,
+    written: dict[str, JsonValue],
+    params: dict[str, JsonValue],
+    *,
+    values_from: str | None = None,
 ) -> Issue:
+    """The issuance of a view's result: with the SQL it ran, or, for a hit, none and the
+    issuance whose SQL gave its values (D289, D376)."""
     return Issue(
         derivation=view.identity.id,
         kind="result",
@@ -983,6 +1107,7 @@ def _result_issue(
         sql=sql,
         engine=ENGINE,
         packs=cast(JsonValue, issued_packs(view)),
+        values_from=values_from,
     )
 
 

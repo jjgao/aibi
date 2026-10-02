@@ -331,6 +331,9 @@ class Catalog:
     workers: Workers | None = field(default=None, repr=False)
     """The query workers that ``count_cohort`` runs a document's queries in (§14, D293); a
     catalogue without them counts nothing."""
+    cache: bool = True
+    """Whether ``run_analysis`` gives and fills the store's result cache (§8.1, D376); off only
+    where each call must run its queries (the thread-count determinism tests, D372)."""
 
     @property
     def analyses(self) -> Analyses:

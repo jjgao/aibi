@@ -53,6 +53,7 @@ from aibi.core.store.derivations import (
     LogFullError,
     NotAdmittedError,
     Pruning,
+    SourceGoneError,
     Ulids,
     WithdrawnReleaseError,
     new_issuance_id,
@@ -237,8 +238,9 @@ def test_a_cache_hit_names_the_issuance_whose_sql_produced_its_values(
         )
     other, other_written = _cohort(store, imported, [])
     for source in (hit, first):
-        with pytest.raises(ValueError, match="same derivation"):
+        with pytest.raises(ValueError, match="same derivation") as raised:
             _issue(store, other if source == first else cohort, other_written, values_from=source)
+        assert not isinstance(raised.value, SourceGoneError)
     assert store.derivations.issuances(other.id) == []
 
 
@@ -3417,6 +3419,41 @@ def _issues(cohort: CanonicalCohort, written: JsonValue, count: int) -> list[Iss
         )
         for _ in range(count)
     ]
+
+
+def test_a_hit_whose_source_is_gone_is_refused_as_such_and_nothing_is_recorded(
+    store: Store, imported: str
+) -> None:
+    """A source pruned since the hit was found, which a caller answers by running again
+    (D376), apart from one of another derivation, which is a mistake (``ValueError``)."""
+    cohort, written = _cohort(store, imported, [AGE])
+    first = _issue(store, cohort, written)
+    assert store.derivations.prune(store.now()) == 1
+    [issue] = _issues(cohort, written, 1)
+    with pytest.raises(SourceGoneError, match="no longer in the log"):
+        store.derivations.issue_all([replace(issue, sql=None, values_from=first)])
+    assert _count(store, "issuances") == 0
+
+
+def test_a_call_s_then_runs_in_its_transaction_before_it_is_admitted(
+    store: Store, imported: str
+) -> None:
+    """So what ``then`` writes is kept exactly when the call is answered (D376)."""
+    cohort, written = _cohort(store, imported, [AGE])
+    order: list[str] = []
+
+    def then(db: Any, identifiers: list[str]) -> None:
+        assert db.in_transaction
+        order.append("then")
+
+    def admit() -> bool:
+        order.append("admit")
+        return False
+
+    with pytest.raises(NotAdmittedError):
+        store.derivations.issue_all(_issues(cohort, written, 1), admit=admit, then=then)
+    assert order == ["then", "admit"]
+    assert _count(store, "issuances") == 0
 
 
 def _count(store: Store, table: str) -> int:

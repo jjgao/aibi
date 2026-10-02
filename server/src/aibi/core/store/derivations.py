@@ -291,6 +291,11 @@ class LogFullError(ValueError):
         self.log_bytes = log_bytes
 
 
+class SourceGoneError(ValueError):
+    """A hit names an issuance the log no longer holds: pruned or erased since it was found
+    (D289, D376). One that is of another derivation, or a hit itself, is a ``ValueError``."""
+
+
 class ErasedMeanwhileError(ValueError):
     """An erasure of a dataset the issuances name was recorded after the mark they were
     canonicalised under: erasure is one pass over what the log holds when it runs, so recording
@@ -471,6 +476,7 @@ class DerivationLog:
         *,
         admit: Callable[[], bool] | None = None,
         erasures_after: int | None = None,
+        then: Callable[[sqlite3.Connection, list[str]], None] | None = None,
     ) -> list[str]:
         """Record issuances, and their derivations that are new, in one transaction; their ids,
         in order, drawn in it with their times. A cache hit gives no SQL and names the issuance
@@ -480,8 +486,11 @@ class DerivationLog:
         ``log_bytes`` (``LogFullError``); and when ``admit``, asked last, says no, nothing is
         recorded (``NotAdmittedError``). Given ``erasures_after``, the ``erasure_mark`` taken
         before the issuances were canonicalised, an erasure of a dataset they name recorded
-        since refuses them all (``ErasedMeanwhileError``, D290). It prunes nothing: the log's
-        thread does."""
+        since refuses them all (``ErasedMeanwhileError``, D290). A hit whose source is gone
+        (pruned, or erased) is ``SourceGoneError``. ``then``, given the ids, runs in the
+        transaction after they are recorded and before ``admit`` is asked, so that what it
+        writes (the result cache's fills and hits, D376) is kept exactly when they are. It
+        prunes nothing: the log's thread does."""
         for issue in issues:
             if (issue.sql is None) != (issue.values_from is not None):
                 raise ValueError("a cache hit names where its values came from, and has no SQL")
@@ -494,6 +503,8 @@ class DerivationLog:
             used = int(db.execute("SELECT bytes FROM log_usage").fetchone()[0])
             if used > self.limits.log_bytes:
                 raise LogFullError(self.limits.log_bytes)
+            if then is not None:
+                then(db, identifiers)
             if admit is not None and not admit():
                 raise NotAdmittedError("the call these issuances belong to is not answered")
         return identifiers
@@ -506,10 +517,12 @@ class DerivationLog:
         _live(db, [row[0] for row in recorded])
         if issue.values_from is not None:
             source = db.execute(
-                "SELECT derivation FROM issuances WHERE id = ? AND values_from = id",
+                "SELECT derivation, values_from = id FROM issuances WHERE id = ?",
                 (issue.values_from,),
             ).fetchone()
-            if source is None or source[0] != issue.derivation:
+            if source is None:
+                raise SourceGoneError("the issuance values_from names is no longer in the log")
+            if source[0] != issue.derivation or not source[1]:
                 raise ValueError(
                     "values_from names an issuance of the same derivation whose SQL ran"
                 )
@@ -818,6 +831,7 @@ __all__ = [
     "LogFullError",
     "NotAdmittedError",
     "Pruning",
+    "SourceGoneError",
     "Tool",
     "Ulids",
     "WithdrawnReleaseError",

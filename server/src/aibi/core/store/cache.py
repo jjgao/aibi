@@ -151,6 +151,13 @@ class ResultCache:
             raise RuntimeError("a cached result is marked used in the transaction of its hit")
         db.execute("UPDATE result_cache SET used = ? WHERE result = ?", (self._used(db), result))
 
+    def drop(self, db: sqlite3.Connection, result: str) -> None:
+        """Remove ``result``'s row in the caller's transaction ``db``: one whose content no
+        longer reads back for its view, which that call's fill then replaces (D376)."""
+        if not db.in_transaction:
+            raise RuntimeError("a cached result is dropped in the transaction of its call")
+        db.execute("DELETE FROM result_cache WHERE result = ?", (result,))
+
     def usage(self) -> int:
         """The bytes the cached results take, as ``result_bytes`` counts them."""
         with self.db.lock:
