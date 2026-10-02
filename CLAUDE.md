@@ -204,6 +204,10 @@ OpenAPI schema, not written by hand.
   open decisions) into the PR description, then implement.
 - After a PR is written, review it and fix what the review finds, for at least two rounds,
   before asking for review.
+- Subagents are defined in `.claude/agents/`, each with its model: `cold-reviewer` (Opus) for
+  every cold review of a plan or code; `fixer` (Sonnet) for applying settled decisions, restacks
+  and gates; `surveyor` (Sonnet) for read-only surveys. Don't override their `model` per call.
+  The main thread checks every result before anything is pushed.
 - Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
   parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
   parent's branch is deleted), replay only the child's own commits onto `main` with
