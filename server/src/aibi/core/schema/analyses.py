@@ -52,6 +52,7 @@ schema checks. Its values are what the pack's ``run`` gives, checked against the
 ``returns`` schema (D343).
 """
 
+from enum import StrEnum
 from itertools import pairwise
 from typing import Annotated, Literal, Self, cast
 
@@ -106,10 +107,14 @@ from aibi.core.schema.numbers import (
     HypothesisTest,
     Interval,
     Level,
+    NotEstimableReason,
     Number,
+    Position,
+    Probability,
     Proportion,
 )
-from aibi.core.schema.output import COMPUTED, Count, Data, Finite, Output
+from aibi.core.schema.output import COMPUTED, LAX, Count, Data, Finite, Output
+from aibi.core.schema.results import AnalysedCounts
 
 MAX_LEVEL = 1 - 1e-9
 """The highest level of an interval of the core's analyses: the normal quantile of a level within
@@ -636,6 +641,115 @@ class SurvivalValues(Output):
 
     positions: Annotated[list[SurvivalPosition], Field(min_length=1, max_length=MAX_COHORTS)]
     view: SurvivalView
+
+
+MAX_COX_TERMS = MAX_COHORTS - 1 + 2 * MAX_VARIABLES
+"""The most terms a ``survival.cox`` view has: a cohort term per position but the reference,
+and its covariates' terms, at most ``MAX_VARIABLES`` parameters and a term with no level for
+each covariate that has one level among the complete cases (D365)."""
+
+
+class Direction(StrEnum):
+    """Where a separated term's hazard ratio runs (D360, D365): to infinity or to zero."""
+
+    INFINITY = "infinity"
+    ZERO = "zero"
+
+
+class CoxTerm(Estimable):
+    """A term of ``survival.cox``'s model (D365): a cohort (``position``, versus the reference)
+    or a covariate (``covariate``, its index in the parameters; for a categorical or boolean one,
+    ``level`` against ``baseline``, as data), its hazard ratio, Wald interval and Wald p-value,
+    and, where the likelihood sends it to infinity or zero exactly, ``direction``."""
+
+    kind: Literal["cohort", "covariate"]
+    position: Position | None = None
+    covariate: Annotated[StrictInt, Field(ge=0, lt=MAX_VARIABLES)] | None = None
+    level: Data | None = None
+    baseline: Data | None = None
+    estimate: Number
+    ci: Interval
+    p: Annotated[Probability | None, COMPUTED]
+    direction: Annotated[Direction, LAX] | None = None
+
+    @model_validator(mode="after")
+    def _check_term(self) -> Self:
+        if self.kind == "cohort":
+            if self.position is None or self.covariate is not None:
+                raise PydanticCustomError("cox_term", "A cohort term names a position alone")
+            if self.level is not None or self.baseline is not None:
+                raise PydanticCustomError("cox_term", "A cohort term has no level")
+        else:
+            if self.covariate is None or self.position is not None:
+                raise PydanticCustomError("cox_term", "A covariate term names a covariate alone")
+            if (self.level is None) != (self.baseline is None):
+                raise PydanticCustomError("cox_term", "A level is given against its baseline")
+        if self.direction is not None and self.reasons().get("/estimate") != (
+            NotEstimableReason.SEPARATION
+        ):
+            raise PydanticCustomError("cox_term", "Only a separated term has a direction")
+        return self
+
+
+class ModelTest(Estimable):
+    """A test of ``survival.cox``'s model (D365): ``method`` as the entry names it, and the
+    indices in ``view.terms`` of the terms it tested, in order, none where it was not
+    computed."""
+
+    method: Identifier
+    terms: Annotated[list[Annotated[StrictInt, Field(ge=0)]], Field(max_length=MAX_COX_TERMS)]
+    statistic: Annotated[Finite | None, COMPUTED] = None
+    df: Annotated[StrictInt, Field(ge=1, le=MAX_COX_TERMS)] | None = None
+    p: Annotated[Probability | None, COMPUTED]
+
+    @model_validator(mode="after")
+    def _check_model_test(self) -> Self:
+        if self.terms != sorted(set(self.terms)):
+            raise PydanticCustomError("model_test", "A test's terms are distinct, in order")
+        if self.p is not None and not self.terms:
+            raise PydanticCustomError("model_test", "A computed test tested some term")
+        if self.p is not None and self.df != len(self.terms):
+            raise PydanticCustomError("model_test", "A test's degrees of freedom are its terms")
+        if self.p is None and self.terms:
+            raise PydanticCustomError("model_test", "A test that was not computed tested none")
+        return self
+
+
+class CovariateTest(Estimable):
+    """The joint Wald test of a covariate with two or more parameters (D365): ``covariate``, its
+    index in the parameters, its statistic, degrees of freedom and p-value."""
+
+    covariate: Annotated[StrictInt, Field(ge=0, lt=MAX_VARIABLES)]
+    statistic: Annotated[Finite | None, COMPUTED] = None
+    df: Annotated[StrictInt, Field(ge=2, le=MAX_VARIABLES)]
+    p: Annotated[Probability | None, COMPUTED]
+
+
+class CoxPosition(Output):
+    """``survival.cox`` at one position (D365): the events among its complete cases, and per
+    covariate, then the stratum, then the endpoint, in that order, the units for which it has a
+    value, each counted over every member."""
+
+    events: Count
+    variables: Annotated[list[AnalysedCounts], Field(min_length=1, max_length=MAX_VARIABLES + 2)]
+
+
+class CoxView(Output):
+    """``survival.cox`` across the view (D365): its terms (the cohort terms in view order, then
+    each covariate's in parameter order, a categorical one's levels in its order), each
+    covariate's joint test where it has two or more parameters, and the test of proportional
+    hazards of the estimated terms."""
+
+    terms: Annotated[list[CoxTerm], Field(max_length=MAX_COX_TERMS)]
+    covariate_tests: Annotated[list[CovariateTest], Field(max_length=MAX_VARIABLES)]
+    proportional_hazards: ModelTest
+
+
+class CoxValues(Output):
+    """``survival.cox``'s ``values`` (§8.1): ``positions`` in view order, and ``view``."""
+
+    positions: Annotated[list[CoxPosition], Field(min_length=1, max_length=MAX_COHORTS)]
+    view: CoxView
 
 
 # --- A pack's analysis (D341) -------------------------------------------------------------------

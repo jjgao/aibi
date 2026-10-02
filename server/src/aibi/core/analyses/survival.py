@@ -520,7 +520,7 @@ def _not_computed(
     )
 
 
-def _writable(*numbers: float | None) -> bool:
+def writable(*numbers: float | None) -> bool:
     """Whether a test's statistic and p-value are numbers an output holds (§8.2): each finite
     and within ±(2^53 − 1). A statistic beyond that comes only of a variance too small for it,
     and the test is ``zero_variance``, as with a variance of 0 (D348)."""
@@ -542,7 +542,7 @@ def _log_rank(
     table = timetoevent.risk_table([rows[position].subjects for position in with_units], ends=ends)
     found = timetoevent.log_rank(table, len(with_units), ends)
     used = [with_units[group] for group in found.used]
-    if not _writable(found.statistic, found.p):
+    if not writable(found.statistic, found.p):
         return _not_computed("log_rank", with_units, _ZERO_VARIANCE), with_units
     return (
         HypothesisTest(
@@ -553,7 +553,7 @@ def _log_rank(
 
 
 @dataclass(frozen=True)
-class _Fit:
+class CohortFit:
     """The Cox fit of the view (module docstring): the positions with events, in view order,
     each one's ``coxfit.Standing``, the positions fitted, and the fit with each fitted position's
     term, or none where the reference is the only one fitted."""
@@ -567,7 +567,9 @@ class _Fit:
     counting: bool
 
 
-def _cox(rows: Sequence[Rows], reference: int, ends: float | None) -> _Fit | NotEstimableReason:
+def cohort_fit(
+    rows: Sequence[Rows], reference: int, ends: float | None
+) -> CohortFit | NotEstimableReason:
     """The Cox fit, or why it has no value at all: a reference with no units or no events, or
     no other cohort with events."""
     if not rows[reference].subjects:
@@ -588,7 +590,7 @@ def _cox(rows: Sequence[Rows], reference: int, ends: float | None) -> _Fit | Not
     if len(fitted) > 1:
         fit = coxfit.fit(table, fitted, used.index(reference), watch, counting=counting)
     others = [used[group] for group in fitted if used[group] != reference]
-    return _Fit(
+    return CohortFit(
         positions=used,
         standing={used[group]: one for group, one in enumerate(standing)},
         fitted=[used[group] for group in fitted],
@@ -607,14 +609,17 @@ _UNFITTED: Mapping[coxfit.Standing, NotEstimableReason] = {
 """Why a cohort with events that is not fitted has no hazard ratio (D356)."""
 
 
-def _hazard_ratio(
+def hazard_ratio(
     rows: Sequence[Rows],
-    fitted: _Fit | NotEstimableReason,
+    fitted: CohortFit | NotEstimableReason,
     position: int,
     reference: int,
     level: float,
     overlap: bool,
 ) -> EffectSize:
+    """``position``'s hazard ratio versus ``reference`` from the cohorts' fit (D355, D356): its
+    Wald interval at ``level``, or why it has none, each bound beyond 2^53 − 1 or that rounds to
+    0 ``separation`` alone."""
     interval = Interval(method="wald", level=level, low=None, high=None)
 
     def missing(reason: NotEstimableReason) -> EffectSize:
@@ -666,13 +671,14 @@ def _hazard_ratio(
     )
 
 
-def _proportional_hazards(
+def cohort_test(
     rows: Sequence[Rows],
-    fitted: _Fit | NotEstimableReason,
+    fitted: CohortFit | NotEstimableReason,
     reference: int,
     overlap: bool,
     ends: float | None,
 ) -> HypothesisTest:
+    """The test of proportional hazards of the cohorts' fit (D357), or why it has none."""
     method = "grambsch_therneau"
     if overlap:
         return _not_computed(method, [], _OVERLAP)
@@ -695,7 +701,7 @@ def _proportional_hazards(
         fit,
         timetoevent.Watch(ends),
     )
-    if found is None or not _writable(found.statistic, found.p):
+    if found is None or not writable(found.statistic, found.p):
         return _not_computed(method, fitted.positions, _ZERO_VARIANCE)
     return HypothesisTest(
         method=method,
@@ -819,7 +825,7 @@ def survive(
     if len(rows) > 1:
         test, _ = _log_rank(rows, overlap, ends)
         _deadline(ends)
-        fitted = _NO_UNITS if overlap else _cox(rows, reference, ends)
+        fitted = _NO_UNITS if overlap else cohort_fit(rows, reference, ends)
         replicates = _Replicates(rows, computation, ends)
         medians = [position.median for position in at_positions]
         effects: list[EffectSize] = []
@@ -831,12 +837,12 @@ def survive(
                     rows, medians, position, reference, params.level, overlap, replicates
                 )
             )
-            effects.append(_hazard_ratio(rows, fitted, position, reference, params.level, overlap))
+            effects.append(hazard_ratio(rows, fitted, position, reference, params.level, overlap))
         _deadline(ends)
-        hazards = _proportional_hazards(rows, fitted, reference, overlap, ends)
+        hazards = cohort_test(rows, fitted, reference, overlap, ends)
         view = SurvivalView(test=test, effects=effects, proportional_hazards=hazards)
         violated = hazards.p is not None and hazards.p < PH_LEVEL
-        if isinstance(fitted, _Fit) and fitted.terms:
+        if isinstance(fitted, CohortFit) and fitted.terms:
             events = sum(rows[position].events for position in fitted.fitted)
             small_terms = events < EVENTS_PER_TERM * len(fitted.terms)
     values = SurvivalValues(positions=at_positions, view=view)
@@ -1008,13 +1014,18 @@ __all__ = [
     "PH_LEVEL",
     "VERSION",
     "Cells",
+    "CohortFit",
     "Outcome",
     "Rows",
     "TooLarge",
     "TooManySteps",
+    "cohort_fit",
+    "cohort_test",
     "endpoint_cells",
     "endpoint_rows",
+    "hazard_ratio",
     "seed",
     "survive",
     "view_readback",
+    "writable",
 ]

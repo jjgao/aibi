@@ -78,7 +78,9 @@ held to R (`reference/cox.R`), which `survival.km` 1.1.0 shows as hazard ratios.
 held to R (`reference/coxph.R`). From M3.3d, `core/analyses/cone.py` is the likelihood's recession
 cone in exact integers (the pairs' span by components, an exact column-generation simplex, the
 levels), and `coxph.separated` decides each column estimated, `separation` or `zero_variance` by
-it and fits the finite part, `coxph.separated_hazards` testing it (`reference/cone.R`).
+it and fits the finite part, `coxph.separated_hazards` testing it (`reference/cone.R`). From M3.3e-1,
+`core/analyses/cox.py` is `survival.cox`'s model of cohorts and covariates from each member's cells
+(complete cases, coding, both fits, labels and values), held to R (`reference/survcox.R`).
 
 ## Non-negotiables
 
