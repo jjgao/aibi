@@ -374,32 +374,32 @@ def test_a_delimiter_change_that_gives_other_columns_is_a_re_import(
     assert (refusal.code, refusal.path) == ("COLUMNS_CHANGED", "/draft/members/fields/source/parse")
 
 
-def test_a_table_a_pack_reshaped_is_not_rebuilt_in_a_draft(store: Store, imported: str) -> None:
+def test_a_table_a_pack_imported_is_rebuilt_in_a_draft(store: Store, imported: str) -> None:
+    """The core rebuilds every table from its raw snapshot, a pack's too (D386, which removes
+    D245's refusal): a table with no absent values is not the importer's to freeze."""
     opened = open_session(store, "lib", ADA)
     reshaped = {"kind": "pack", "name": "loans", "original_name": "Loans"}
-    [refusal] = change_refusals(
-        store,
-        opened,
-        {"op": "set", "descriptor": "loans", "pointer": "/fields/source", "value": reshaped},
-        {
-            "op": "set",
-            "descriptor": "loans.days",
-            "pointer": "/fields/missing_codes",
-            "value": {"-1": "UNKNOWN"},
-        },
-    )
-    assert (refusal.code, refusal.path) == ("NOT_SUPPORTED", "/draft/loans")
-    relabelled = change(
+    changed = change(
         store,
         "lib",
         opened.handle,
         opened.draft,
         request(
-            {"op": "set", "descriptor": "loans", "pointer": "/fields/source", "value": reshaped}
+            {"op": "set", "descriptor": "loans", "pointer": "/fields/source", "value": reshaped},
+            {
+                "op": "set",
+                "descriptor": "loans.days",
+                "pointer": "/fields/missing_codes",
+                "value": {"3": "UNKNOWN"},
+            },
         ),
         ADA,
     )
-    assert store.resolve("lib", "draft").manifest == relabelled
+    before = store.manifest(opened.draft).table("loans")
+    after = store.manifest(changed).table("loans")
+    assert before is not None
+    assert after is not None
+    assert before.hash != after.hash
 
 
 def test_versions_count_per_release_not_per_change(store: Store, imported: str) -> None:

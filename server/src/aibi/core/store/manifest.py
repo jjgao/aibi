@@ -9,7 +9,9 @@ A release is a manifest: its dataset and its blobs by role and hash. Format 1:
   "descriptors": "<hex>",          // the definitional descriptors, sorted by id
   "sources": [{"name": "<source>", "kind": "text" | "rows", "hash": "<hex>"}],
   "tables": [{"id": "<table>", "hash": "<hex>", "source": "<source>",
-              "columns": [{"id": "<column>", "name": "<original name>"}]}],
+              "columns": [{"id": "<column>", "name": "<original name>"}],
+              "reshaped": {"column": "<column>", "dropped": 0, "digest": "<hex>"}}],
+                                   // "reshaped" only for a table a pack unpivoted (D386)
   "statistics": "<hex>",           // optional: computed when the release is built (§5.2)
   "tombstones": "<hex>",           // optional: removed inferred fields (§12.3)
   "report": "<hex>"                // optional: the import report (D231)
@@ -28,7 +30,15 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from aibi.core.schema.descriptors import String
-from aibi.core.schema.ids import HEX64, SHA256_RE, ColumnId, DatasetId, Identifier, TableId
+from aibi.core.schema.ids import (
+    HEX64,
+    MAX_SAFE_INTEGER,
+    SHA256_RE,
+    ColumnId,
+    DatasetId,
+    Identifier,
+    TableId,
+)
 from aibi.core.schema.jsonio import canonical
 
 Hex = Annotated[str, StringConstraints(pattern=rf"^{HEX64}$")]
@@ -51,11 +61,29 @@ class SourceColumn(_Model):
     """The column's name in the source, as it was read."""
 
 
+class Declared(_Model):
+    """What a pack's importer declared it dropped as absent from a table it unpivoted (D386):
+    the value column, the count of absent cells and their ``cell_digest``. Kept with the table so
+    that the gate checks the coverage against it at a change too, not only at import, whenever
+    what that check reads has changed (``checked``)."""
+
+    column: ColumnId
+    dropped: Annotated[int, Field(ge=0, le=MAX_SAFE_INTEGER)]
+    digest: Hex
+    checked: Hex | None = None
+    """The digest of what the gate's check of the coverage against this declaration read, when
+    it last passed (``gate.declaration_inputs``): a build whose inputs give the same digest has
+    the same outcome, so a change that touches none of them does not check again."""
+
+
 class TableEntry(_Model):
     id: TableId
     hash: Hex
     source: Identifier
     columns: tuple[SourceColumn, ...]
+    reshaped: Declared | None = None
+    """For a table a pack unpivoted, what it declared (D386); absent from other tables'
+    entries, so their manifests are unchanged."""
 
     @model_validator(mode="after")
     def _distinct(self) -> Self:

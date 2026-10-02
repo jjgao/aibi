@@ -85,7 +85,7 @@ from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.schema.refusals import Limit, RefusalCode
 from aibi.core.schema.release import check_release
 from aibi.core.store.appdb import Session, StoredProposal
-from aibi.core.store.build import read_report
+from aibi.core.store.build import importers_own, read_report
 from aibi.core.store.edits import EditRefused, holds, propose
 from aibi.core.store.store import Store, StoreRefused
 from aibi.core.store.writes import (
@@ -175,7 +175,11 @@ def propose_descriptor(
         applied = propose(descriptors, tombstones, stored)
         proposed = versions(descriptors, applied.descriptors, tombstones)
         only = changed(descriptors, proposed)
-        for refusals in (check_release(proposed), check_writes(proposed, registry, only=only)):
+        for refusals in (
+            check_release(proposed),
+            importers_own(descriptors, proposed),
+            check_writes(proposed, registry, only=only),
+        ):
             if refusals:
                 raise EditRefused(by_id(refusals, proposed, "descriptors"))
     with store.db.transaction() as db:
