@@ -1269,16 +1269,18 @@ class Noting:
 def test_under_a_setting_a_pack_s_notes_are_in_fixed_words_counted_as_disclosed_and_rowless(
     world: World, orchard: Orchard
 ) -> None:
+    """A pack writes only the notes an importer writes (D385), and under a setting they are in
+    the core's words, without rows, their counts suppressed."""
     written = [
         ImportNote(
-            kind="dropped",
+            kind="not_proposed",
             subject="harvests.kg",
-            message=[text("Dropped: its evidence said 3 of 7 rows parse")],
+            message=[text("Not proposed: its evidence said 3 of 7 rows parse")],
             count=3,
             rows=(1, 2),
         ),
         ImportNote(
-            kind="gap",
+            kind="skipped_source",
             subject="harvests.kg",
             message=[text("Rows the coding misses")],
             count=2,
@@ -1297,18 +1299,19 @@ def test_under_a_setting_a_pack_s_notes_are_in_fixed_words_counted_as_disclosed_
     column = _column(world, world.catalog(floor=2), dataset="orchard", column="harvests.kg")
     assert column.statistics.states.UNKNOWN.count == 2
     raw = {note.kind: note for note in _queue(world, dataset="orchard").queue.notes}
-    assert [s.model_dump() for s in raw["dropped"].message] == [
-        {"text": "Dropped: its evidence said 3 of 7 rows parse"}
+    assert [s.model_dump() for s in raw["not_proposed"].message] == [
+        {"text": "Not proposed: its evidence said 3 of 7 rows parse"}
     ]
-    assert (raw["dropped"].count, raw["dropped"].rows) == (3, [1, 2])
+    assert (raw["not_proposed"].count, raw["not_proposed"].rows) == (3, [1, 2])
     assert raw["renamed"].rows == [5, 6]
     found = _queue(world, world.catalog(floor=2), dataset="orchard")
     shown = {note.kind: note for note in found.queue.notes}
-    for kind in ("dropped", "gap", "renamed"):
+    for kind in ("not_proposed", "skipped_source", "renamed"):
         assert [s.model_dump() for s in shown[kind].message] == [{"text": NOTE_TEXT[kind]}]
         assert shown[kind].rows == []
-    assert (shown["dropped"].count, shown["gap"].count, shown["renamed"].count) == (None,) * 3
-    assert shown["gap"].not_estimable == {"/count": "suppressed"}
+    counts = (shown["not_proposed"].count, shown["skipped_source"].count, shown["renamed"].count)
+    assert counts == (None,) * 3
+    assert shown["skipped_source"].not_estimable == {"/count": "suppressed"}
     assert shown["renamed"].reference is None
     assert "SUPPRESSED" in _codes(found)
 

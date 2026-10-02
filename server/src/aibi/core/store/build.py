@@ -1,7 +1,9 @@
 """Building releases: raw snapshots and descriptors to typed tables and a manifest (SPEC §12.2).
 
 ``import_release`` builds every table from new raw snapshots, laid out by the importer: for each
-table, its source and the id and source name of each source column. ``change_release`` builds a
+table, its source and the id and source name of each source column. Every source is read by a
+table, since a raw snapshot no table reads would be kept as a blob that no typed row, and so no
+erasure's hold check, sees (D385). ``change_release`` builds a
 release from a base one and new descriptors (a draft change): it reuses the raw snapshots and
 layouts, rebuilds a table only when a field that affects its parsing changed (its parse
 settings, or a column's ``datatype``, ``missing_codes``, ``list_syntax``, ``derived`` or
@@ -126,6 +128,9 @@ def import_release(
         if layout.source not in sources:
             raise ValueError(f"table {table} is laid out on no source: {layout.source}")
     _refuse_if(refusals)
+    unread = sorted(set(sources) - {layout.source for layout in layouts.values()})
+    if unread:
+        raise ValueError(f"no table reads the source {unread[0]}")
     entries: list[SourceEntry] = []
     for name, source in sorted(sources.items()):
         try:

@@ -19,7 +19,7 @@ workbooks and Parquet (read in a worker process that can be killed), the importe
 database snapshots of named connections (`databases.py`, read in that worker by `snapshot.py`:
 SQLite with `sqlite3`, DuckDB files, Postgres and MySQL through DuckDB's bundled scanners),
 `import_dataset`, which publishes a dataset's first release through the gate for the core's importer
-or a pack's, and `reimport_dataset`, which carries curation forward with tombstones. The release
+or a pack's (a pack's result checked by `checks.py`, D385), and `reimport_dataset`, which carries curation forward with tombstones. The release
 lifecycle is the store's (M1): per-dataset operation slots, curation sessions with handles, edits
 checked by the gate and the pack checks on every change, the proposal queue, curation proposers and
 the curation queue. `core/api/` holds the HTTP application (M1): its configuration, one request
