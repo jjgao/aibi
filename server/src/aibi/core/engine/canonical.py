@@ -238,20 +238,26 @@ def canonicalise(
     labels: Mapping[str, Label],
     registry: PackRegistry | None = None,
     floor: int | None = None,
+    floors: Mapping[str, int | None] | None = None,
     positions: Mapping[Position, str] | None = None,
 ) -> Canonicalisation:
     """Canonicalise a loaded document's cohorts (phase 1) against its releases.
 
     ``releases`` maps each dataset reference as written to its release, ``labels`` each release's
     manifest hash to its label (``"draft"`` for a session's draft), ``registry`` holds the
-    installed packs, ``floor`` is the deployment's ``min_cell_count`` floor, and ``positions``
-    are the loader's, so that pointers lead into the document as written."""
+    installed packs, ``floor`` is the deployment's ``min_cell_count`` floor, ``floors`` a floor
+    of a release's own by manifest hash (a draft's: its latest published release's setting, so
+    that a session cannot lower it before it publishes, D275, D300), and ``positions`` are the
+    loader's, so that pointers lead into the document as written."""
     given = positions or {}
     resolution = resolve(written, releases, given, registry=registry)
     refusals = list(resolution.refusals)
     cohorts: dict[str, CanonicalCohort] = {}
+    own = floors or {}
     for name, resolved in resolution.cohorts.items():
-        found = _cohort(name, resolved, labels, registry, floor, given)
+        manifest = resolved.release.manifest
+        least = _effective(floor, own.get(manifest))
+        found = _cohort(name, resolved, labels, registry, least, given)
         if isinstance(found, Refusal):
             refusals.append(found)
         else:

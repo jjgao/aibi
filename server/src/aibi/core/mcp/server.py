@@ -36,7 +36,7 @@ output is the tool result's structured content, and the same JSON its text; a re
 error (``isError``) whose structured content is ``{"refusals": […]}``, blanked of token and
 handle shapes (D265). No handler raises: the SDK would quote an exception's message. The read-only
 tools are idempotent; ``propose_descriptor`` is not, since a proposal accepted or rejected meanwhile
-is made again.
+is made again, and neither is ``count_cohort``, which records a new issuance every time (D300).
 
 **Resources** (D279): every descriptor is a resource, ``aibi://dataset/<id>@<n | sha256:hex |
 draft>/<descriptor id>``, ``aibi://concept/<id>``, ``aibi://analysis/<id>@<version>`` (none until

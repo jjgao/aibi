@@ -33,7 +33,11 @@ CLI, say) cannot open it and sweep what this one pinned. A crash releases the pi
 pin is added under the store's lock before its blob is written, and the sweep holds that lock
 from reading the pins to its last deletion, so a sweep never deletes a blob an operation is about
 to reference. Releasing a pin sweeps only when a blob it freed is referenced by nothing live,
-so the end of a query on a live release costs no scan of the blobs.
+so the end of a query on a live release costs no scan of the blobs. A tool call's pin
+(``pin(background=True)``) is released without waiting on the store's lock, and what its
+release frees is swept, and the redactions it held off run, with the vacuum after them, in a
+housekeeping thread of the store's, never in the call's thread (D300); ``housekept`` waits for
+that thread.
 
 **Loading** a release verifies every table blob against its hash, as the manifest and the
 descriptors are verified when read.
@@ -47,12 +51,14 @@ the WAL is checkpointed. The vacuum is recorded as due in the redaction's own tr
 cleared only once a vacuum and the checkpoint after it finished (D223): while a reader keeps the
 checkpoint from finishing, or a vacuum or a checkpoint fails (a full disk), the redaction counts
 as pending, and both are retried when the store opens and, at most once a second
-(``CHECKPOINT_RETRY``), when a pin is released, so a long reader does not make every query wait
-on it. A vacuum that finished is not run again for a checkpoint retried in the same process.
+(``CHECKPOINT_RETRY``), when a pin is released (a tool call's in the housekeeping thread), so a
+long reader does not make every query wait on it. A vacuum that finished is not run again for a
+checkpoint retried in the same process.
 """
 
 import fcntl
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -71,6 +77,7 @@ from pydantic import JsonValue
 from aibi.core.engine.data import Release
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
+from aibi.core.schema.limits import LogLimits
 from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
@@ -79,6 +86,7 @@ from aibi.core.store.appdb import AppDB, Label
 from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
 from aibi.core.store.derivations import (
+    OPEN_BATCHES,
     DerivationLog,
     DerivationRecord,
     IssuanceRecord,
@@ -92,6 +100,7 @@ from aibi.core.store.tombstones import Tombstone
 
 APP_DB = "app.db"
 LOCK = "lock"
+_log = logging.getLogger(__name__)
 CHECKPOINT_RETRY = 1.0
 """Seconds between retries of a checkpoint that a reader kept from finishing."""
 
@@ -140,17 +149,21 @@ class Resolution:
 
 
 class Pin:
-    """Blobs an operation or a query holds until it commits, fails or finishes (§12.2)."""
+    """Blobs an operation or a query holds until it commits, fails or finishes (§12.2). A tool
+    call's pin, made with ``background``, leaves what its release frees to the store's
+    housekeeping thread (``Store.pin``)."""
 
-    def __init__(self, store: "Store") -> None:
+    def __init__(self, store: "Store", *, background: bool = False) -> None:
         self._store = store
+        self._background = background
+        self._guard = threading.Lock()
         self._held: Counter[str] = Counter()
         self._released = False
 
     def add(self, digest: str) -> None:
         """Pin a blob, before it is written or read."""
         checked(digest)
-        with self._store.lock:
+        with self._store.lock, self._guard:
             if self._released:
                 raise RuntimeError("this pin was released")
             self._store.pinned[digest] += 1
@@ -169,18 +182,21 @@ class Pin:
             return found
 
     def release(self) -> None:
+        if self._background:
+            with self._guard:
+                if self._released:
+                    return
+                self._released = True
+                held, self._held = self._held, Counter()
+            self._store.release_later(held)
+            return
         with self._store.lock:
-            if self._released:
-                return
-            self._released = True
-            freed: list[str] = []
-            for digest, count in self._held.items():
-                self._store.pinned[digest] -= count
-                if self._store.pinned[digest] <= 0:
-                    del self._store.pinned[digest]
-                    freed.append(digest)
-            self._held.clear()
-            self._store.released(freed)
+            with self._guard:
+                if self._released:
+                    return
+                self._released = True
+                held, self._held = self._held, Counter()
+            self._store.released(self._store.unpin(held))
 
     def __enter__(self) -> Self:
         return self
@@ -201,8 +217,13 @@ def _now() -> datetime:
 class Store:
     """The blobs under ``root``/blobs and the app DB at ``root``/app.db."""
 
-    def __init__(self, root: Path, *, clock: Callable[[], datetime] = _now) -> None:
-        """Opens the store; ``StoreLockedError`` if another process has it open."""
+    def __init__(
+        self, root: Path, *, clock: Callable[[], datetime] = _now, log: LogLimits | None = None
+    ) -> None:
+        """Opens the store; ``StoreLockedError`` if another process has it open. ``log`` is how
+        long the derivation log keeps ``count_cohort``'s issuances and how large it grows
+        (D300): up to ``OPEN_BATCHES`` batches of the expired ones are pruned now, and the log's
+        thread prunes the rest, and what expires later, until the store closes."""
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self.clock = clock
@@ -213,7 +234,7 @@ class Store:
             self.blobs.clean()
             self.db = db = AppDB(root / APP_DB)
             self.lock: threading.RLock = self.db.lock
-            self.derivations = DerivationLog(self.db, self.now)
+            self.derivations = DerivationLog(self.db, self.now, limits=log)
             self.pinned: Counter[str] = Counter()
             self._manifests: dict[str, Manifest] = {}
             self._descriptors: dict[str, tuple[Descriptor, ...]] = {}
@@ -222,9 +243,16 @@ class Store:
             self._checkpoint_due = True
             self._checkpoint_tried: float | None = None
             self._vacuumed = False
+            self._housekeeping = threading.Condition()
+            self._releases: list[tuple[Counter[str], list[str]]] = []
+            self._housekeeper: threading.Thread | None = None
+            self._housekeeping_busy = False
+            self._closing = False
             # This process holds no pin yet: what a crash left pinned is swept now.
             self.sweep()
             self.run_pending_redactions()
+            opened = self.derivations.prune_expired(batches=OPEN_BATCHES)
+            self.derivations.start_pruning(first=None if opened.finished else 0.0)
         except BaseException:
             if db is not None:
                 db.close()
@@ -232,6 +260,15 @@ class Store:
             raise
 
     def close(self) -> None:
+        """Close the store, once its housekeeping thread has ended the batch under way; what it
+        had still to do is done when the store next opens, as after a crash."""
+        with self._housekeeping:
+            self._closing = True
+            self._housekeeping.notify_all()
+            housekeeper = self._housekeeper
+        if housekeeper is not None:
+            housekeeper.join()
+        self.derivations.stop_pruning()
         self.db.close()
         os.close(self._lock_file)  # closing the file releases its flock
 
@@ -285,8 +322,12 @@ class Store:
             found[entry.id] = TableSource(str(path), frozenset(parquet.names(path)))
         return found
 
-    def pin(self) -> Pin:
-        return Pin(self)
+    def pin(self, *, background: bool = False) -> Pin:
+        """A pin; ``background`` for a tool call's, whose release never waits on the store's
+        lock nor sweeps nor runs a redaction or a vacuum in the call's thread (D300): it drops
+        its blobs' pins at once when the lock is free, and hands them, or what they freed, to
+        the store's housekeeping thread (``release_later``)."""
+        return Pin(self, background=background)
 
     def import_release(
         self,
@@ -571,6 +612,70 @@ class Store:
                 self._manifests.pop("sha256:" + digest, None)
                 self._descriptors.pop("sha256:" + digest, None)
             return deleted
+
+    def unpin(self, held: Counter[str]) -> list[str]:
+        """Drop the pins ``held`` counts, under the store's lock; the blobs no pin holds any
+        more."""
+        freed: list[str] = []
+        with self.lock:
+            for digest, count in held.items():
+                self.pinned[digest] -= count
+                if self.pinned[digest] <= 0:
+                    del self.pinned[digest]
+                    freed.append(digest)
+        return freed
+
+    def release_later(self, held: Counter[str]) -> None:
+        """Release the pins ``held`` counts for a tool call (D300): at once if the store's lock
+        is free, and in the housekeeping thread otherwise, which then sweeps and runs waiting
+        redactions, and the vacuum after them (``released``), so that the call never waits on
+        them. Holding a pin a little longer only keeps its blobs and holds off a redaction."""
+        freed: list[str] = []
+        if self.lock.acquire(blocking=False):
+            try:
+                freed, held = self.unpin(held), Counter()
+            finally:
+                self.lock.release()
+        with self._housekeeping:
+            if self._closing:
+                return
+            self._releases.append((held, freed))
+            if self._housekeeper is None:
+                self._housekeeper = threading.Thread(
+                    target=self._housekeep, name="aibi-store-housekeeping", daemon=True
+                )
+                self._housekeeper.start()
+            self._housekeeping.notify_all()
+
+    def housekept(self, timeout: float | None = None) -> bool:
+        """Wait until the housekeeping thread has done what released pins handed it, or the
+        store is closing; whether it had within ``timeout`` seconds."""
+        with self._housekeeping:
+            return self._housekeeping.wait_for(
+                lambda: not self._housekeeping_busy and (not self._releases or self._closing),
+                timeout,
+            )
+
+    def _housekeep(self) -> None:
+        while True:
+            with self._housekeeping:
+                self._housekeeping.wait_for(lambda: self._releases or self._closing)
+                if self._closing:
+                    return
+                batch, self._releases = self._releases, []
+                self._housekeeping_busy = True
+            try:
+                with self.lock:
+                    freed = [
+                        digest for held, done in batch for digest in (*done, *self.unpin(held))
+                    ]
+                    self.released(freed)
+            except Exception as error:  # the thread must outlive one failed sweep or redaction
+                _log.warning("housekeeping after released pins failed: %s", type(error).__name__)
+            finally:
+                with self._housekeeping:
+                    self._housekeeping_busy = False
+                    self._housekeeping.notify_all()
 
     def released(self, freed: Collection[str]) -> None:
         """After pins are released, ``freed`` being the blobs no pin holds any more: sweep if

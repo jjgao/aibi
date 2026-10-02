@@ -31,6 +31,8 @@ ROUTES = [
     ("POST", "/operator/datasets/{dataset}/session/take-over"),
     ("POST", "/operator/datasets/{dataset}/uploads"),
     ("POST", "/operator/datasets/{dataset}/withdraw"),
+    ("POST", "/operator/log/issuance"),
+    ("POST", "/operator/log/prune"),
 ]
 
 

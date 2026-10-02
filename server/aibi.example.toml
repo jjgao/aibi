@@ -52,6 +52,11 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # query_workers = 2         # workers that run at once; a query waits query_seconds for one
 # query_threads = 1         # DuckDB's threads in a worker
 
+[log]
+# keep_count_issuances_days = 30  # count_cohort's issuances are pruned after this; 0 keeps them
+#                                 # (at most 36500 days)
+# log_bytes = 8589934592          # what pruning the derivation log can free; past it counts are refused
+
 [disclosure]
 # min_cell_count_floor = 5
 

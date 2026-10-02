@@ -67,8 +67,10 @@ from aibi.core.schema.operator import (
     DraftChanged,
     ErasedOut,
     ImportPublished,
+    LoggedIssuance,
     ProposalsRejected,
     ProposersRan,
+    Pruned,
     Rejected,
     SessionEnded,
     SessionOpened,
@@ -297,6 +299,18 @@ def _parser() -> _Parser:
     whose.add_argument("--proposer", help="agent:<name>, model:<identifier> or importer:<name>@<v>")
     whose.add_argument("--kind", choices=("agent", "model", "importer"))
 
+    issuance = commands.add_parser(
+        "issuance", help="an issuance of the derivation log, with its document and parameters"
+    )
+    issuance.add_argument("issuance", help="iss: and a ULID")
+    prune = commands.add_parser(
+        "prune", help="prune count_cohort's issuances from the derivation log"
+    )
+    prune.add_argument(
+        "--before",
+        help="an RFC 3339 time with its offset; the configured period ([log]) by default",
+    )
+
     session = commands.add_parser("session", help="curation sessions").add_subparsers(
         dest="action", required=True, parser_class=_Parser
     )
@@ -393,6 +407,8 @@ class _Run:
             "proposers": self.proposers,
             "reject": self.reject,
             "reject-all": self.reject_all,
+            "issuance": self.issuance,
+            "prune": self.prune,
         }
         handlers[command]()
         return DONE
@@ -477,6 +493,14 @@ class _Run:
             self.args.dataset, proposer=self.args.proposer, kind=self.args.kind
         )
         self.answer(rejected, _rejected_all)
+
+    # --- The derivation log ---
+
+    def issuance(self) -> None:
+        self.answer(self.client.issuance(self.args.issuance), _issuance)
+
+    def prune(self) -> None:
+        self.answer(self.client.prune(before=self.args.before), _pruned)
 
     # --- Sessions ---
 
@@ -734,6 +758,21 @@ def _rejected_all(rejected: ProposalsRejected) -> list[str]:
     return [
         f"Rejected {rejected.rejected} open proposals of {escaped(rejected.dataset)}; kept "
         f"{rejected.kept} that the open draft accepted and holds"
+    ]
+
+
+def _issuance(logged: LoggedIssuance) -> list[str]:
+    source = "" if logged.values_from == logged.id else f", its values from {logged.values_from}"
+    return [
+        f"{logged.id} of {logged.derivation}, by {logged.tool} at {logged.at}{source}:",
+        json_text(logged.model_dump(mode="json", include={"document", "params", "sql"})),
+    ]
+
+
+def _pruned(pruned: Pruned) -> list[str]:
+    return [
+        f"Pruned {pruned.pruned} count_cohort issuances recorded before {pruned.before}; the log "
+        f"holds {pruned.log_bytes} bytes"
     ]
 
 

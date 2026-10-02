@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import socket
+import sqlite3
 import sys
 import threading
 import time
@@ -22,9 +23,11 @@ from aibi.core.api import logs, serve
 from aibi.core.api.config import BASE, ServerConfig
 from aibi.core.api.connections import GuardedProtocol
 from aibi.core.api.serve import WithoutSecrets, main, run, services_of, uvicorn_config
+from aibi.core.engine import worker
 from aibi.core.operator.auth import TOKEN_RE, hash_token, new_token
 from aibi.core.schema.pack_api import PackRegistry
-from aibi.core.store.store import Store, StoreLockedError
+from aibi.core.store.appdb import LOG_PAGE_BYTES
+from aibi.core.store.store import APP_DB, Store, StoreLockedError
 
 Write = Callable[..., Path]
 HASH = "sha256:" + "b" * 64
@@ -307,7 +310,7 @@ def test_a_real_server_s_access_log_holds_no_secret_from_a_path(
 def test_the_server_runs_under_umask_077(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[int] = []
 
-    def locked(path: Path) -> Store:
+    def locked(path: Path, **given: Any) -> Store:
         mask = os.umask(0o077)
         os.umask(mask)
         seen.append(mask)
@@ -332,6 +335,27 @@ def test_the_server_refuses_to_run_while_another_process_has_the_store(tmp_path:
     after = os.umask(0o022)
     os.umask(after)
     assert after == before
+
+
+def test_the_server_refuses_to_run_on_an_app_db_of_another_page_size_with_its_message(
+    tmp_path: Path,
+) -> None:
+    """The derivation log's accounting charges pages of ``LOG_PAGE_BYTES`` bytes, so ``serve``
+    exits with 1 and the store's message on an app DB of another page size, and no traceback
+    (D300)."""
+    config = config_of(tmp_path)
+    config.storage.data.mkdir(parents=True)
+    made = sqlite3.connect(config.storage.data / APP_DB)
+    made.execute("PRAGMA page_size = 8192")
+    made.execute("PRAGMA journal_mode = WAL")
+    made.execute("CREATE TABLE kept (x)")
+    made.close()
+    err = io.StringIO()
+    assert run(config, stderr=err) == 1
+    assert err.getvalue() == (
+        f"aibi-server: The app DB's pages are of 8192 bytes; the derivation log's accounting "
+        f"needs {LOG_PAGE_BYTES} (D300): rebuild it with that page size\n"
+    )
 
 
 def test_the_services_are_the_configuration_s(tmp_path: Path) -> None:
@@ -415,3 +439,51 @@ def test_a_configuration_is_required_and_its_problems_are_listed(write_config: W
 @pytest.mark.usefixtures("tmp_path")
 def test_serve_needs_a_configuration() -> None:
     assert run_main("serve")[0] == 2
+
+
+def test_a_system_without_proc_serves_without_query_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No worker's memory could be watched, so none runs: ``count_cohort`` refuses as
+    ``NOT_SUPPORTED`` and the rest is served (D293, D300)."""
+    config = config_of(tmp_path)
+    assert serve.workers_of(config) is not None
+    monkeypatch.setattr(worker, "_resident", lambda pid: None)
+    assert serve.workers_of(config) is None
+
+
+class _Stopped:
+    """uvicorn's server, stopped as soon as it runs."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    def run(self) -> None:
+        return None
+
+
+def test_check_and_serve_say_that_count_cohort_is_disabled_without_query_workers(
+    write_config: Write, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'
+    path = write_config(text)
+    code, out, _ = run_main("check", "--config", str(path))
+    assert (code, serve.NO_WORKERS in out) == (0, False)
+    assert "query workers: 2; query seconds: 25" in out
+    monkeypatch.setattr(worker, "_resident", lambda pid: None)
+    code, out, _ = run_main("check", "--config", str(path))
+    assert (code, f"query workers: none; {serve.NO_WORKERS}\n" in out) == (0, True)
+    monkeypatch.setattr(serve.uvicorn, "Server", _Stopped)
+    err = io.StringIO()
+    assert run(config_of(tmp_path), stderr=err) == 0
+    assert err.getvalue() == f"aibi-server: {serve.NO_WORKERS}\n"
+
+
+def test_the_check_refuses_a_period_the_log_could_not_count_back(write_config: Write) -> None:
+    text = (
+        f'[curator]\ntoken_hash = "{HASH}"\n[storage]\ndata = "data"\nimports = ["imports"]\n'
+        "[log]\nkeep_count_issuances_days = 36501\n"
+    )
+    code, _, err = run_main("check", "--config", str(write_config(text)))
+    assert code == 2
+    assert "log.keep_count_issuances_days" in err

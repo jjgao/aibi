@@ -10,11 +10,14 @@ carry, each code once, affecting ``/population``:
   flag, the message naming the relationships;
 - ``UNCONFIRMED_SEMANTICS`` for the fields read whose status is not confirmed (§5.1), listed;
 - ``LIFT_DIFFERS`` when ``lift_differs`` is above zero, with the count;
+- ``NOT_ESTIMABLE`` when the unit table has no rows, and so the size no estimate (D297);
 - ``DRAFT_RELEASE`` over a curation session's draft;
 - the codes the packs' caveat rules raised, with their declared severities.
 
-The disclosure pass (§8.4) applies to these before the count is returned and its digest taken;
-messages are rendered text, outside the digest, and follow the pass too.
+The disclosure pass (§8.4, ``suppression.disclosed``) applies to these before the count is
+returned and its digest taken; messages are rendered text, outside the digest, and those that
+quote counts are written again for the counts the pass shows. ``static_caveats`` are the
+caveats that need no data, which ``validate_document`` reports (§11.1).
 """
 
 from collections.abc import Mapping
@@ -104,21 +107,60 @@ def _caveat(code: CaveatCode, *message: Segment) -> Caveat:
     )
 
 
+def unknown_message(n_unknown: int | None) -> list[Segment]:
+    """``UNKNOWN_EXCLUDED``'s message, with the count as the disclosure pass leaves it (§8.4); a
+    suppressed one may be 0 in a small unit table, so the message does not say whether any unit is
+    unknown (D297)."""
+    if n_unknown is None:
+        return [
+            text("Units that could not be evaluated, if any, are not in the cohort; their "),
+            text("number is suppressed by the disclosure settings"),
+        ]
+    return [text(f"{n_unknown} units could not be evaluated and are not in the cohort")]
+
+
+def lift_message(lift_differs: int | None) -> list[Segment]:
+    """``LIFT_DIFFERS``'s message, with the count as the disclosure pass leaves it (§8.4); a
+    suppressed one may be 0 beside a suppressed count, so the message does not say whether the
+    other lift rule changes any unit (D297)."""
+    if lift_differs is None:
+        return [
+            text("Whether the other lift rule would change the answer for any units, and for "),
+            text("how many, is suppressed by the disclosure settings"),
+        ]
+    return [
+        text(f"The other lift rule would change the answer for {lift_differs} "),
+        text("units"),
+    ]
+
+
 def _caveats(cohort: CanonicalCohort, result: Tally) -> list[Caveat]:
     found: list[Caveat] = []
     if result.n_unknown:
-        found.append(
-            _caveat(
-                CaveatCode.UNKNOWN_EXCLUDED,
-                text(f"{result.n_unknown} units could not be evaluated and are not in the cohort"),
-            )
-        )
+        found.append(_caveat(CaveatCode.UNKNOWN_EXCLUDED, *unknown_message(result.n_unknown)))
     for flag, code in _FLAGS.items():
         relationships = sorted({mark.relationship for mark in result.marks if mark.flag is flag})
         if relationships:
             found.append(
                 _caveat(code, text(_FLAG_TEXT[flag]), *[data(rel) for rel in relationships])
             )
+    if result.lift_differs:
+        found.append(_caveat(CaveatCode.LIFT_DIFFERS, *lift_message(result.lift_differs)))
+    if not result.n_true + result.n_false + result.n_unknown:
+        found.append(
+            _caveat(
+                CaveatCode.NOT_ESTIMABLE,
+                text("The unit table has no rows, so the cohort's size is not estimable"),
+            )
+        )
+    return [*found, *static_caveats(cohort)]
+
+
+def static_caveats(cohort: CanonicalCohort) -> list[Caveat]:
+    """The caveats of a cohort's count that need no data (§11.1, ``validate_document``):
+    ``UNCONFIRMED_SEMANTICS`` for the fields read, ``DRAFT_RELEASE`` over a draft, and the codes
+    the packs' caveat rules raised, sorted."""
+    found: list[Caveat] = []
     unconfirmed = cohort.resolved.unconfirmed
     if unconfirmed:
         found.append(
@@ -126,14 +168,6 @@ def _caveats(cohort: CanonicalCohort, result: Tally) -> list[Caveat]:
                 CaveatCode.UNCONFIRMED_SEMANTICS,
                 text("These fields were read but are not confirmed: "),
                 *_fields(unconfirmed),
-            )
-        )
-    if result.lift_differs:
-        found.append(
-            _caveat(
-                CaveatCode.LIFT_DIFFERS,
-                text(f"The other lift rule would change the answer for {result.lift_differs} "),
-                text("units"),
             )
         )
     if cohort.release.status == "draft":
@@ -153,7 +187,7 @@ def _caveats(cohort: CanonicalCohort, result: Tally) -> list[Caveat]:
         )
         for ruled in cohort.caveats
     )
-    return found
+    return sort_caveats(found)
 
 
 def _fields(fields: tuple[FieldRead, ...]) -> list[Segment]:
@@ -165,4 +199,11 @@ def _fields(fields: tuple[FieldRead, ...]) -> list[Segment]:
     return segments
 
 
-__all__ = ["CountParts", "Tally", "count_parts"]
+__all__ = [
+    "CountParts",
+    "Tally",
+    "count_parts",
+    "lift_message",
+    "static_caveats",
+    "unknown_message",
+]

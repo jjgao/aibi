@@ -193,6 +193,10 @@ QUERY_WORKERS = "query_workers"
 ``query_seconds`` (D293)."""
 QUERY_ANSWER_BYTES = "query_answer_bytes"
 """Bytes of the rows a query worker answers with (D293)."""
+LOG_BYTES = "log_bytes"
+"""Bytes the derivation log may take in the app DB, counting all that pruning can free (its texts,
+and its derivations and issuances with their rows); a call that would record past it is refused
+until the log is pruned (D300)."""
 TOOL_CALLS = "tool_calls"
 """Tool calls that run at once in a server; a call that gets no place within ``tool_seconds`` is
 refused (D278)."""
@@ -264,6 +268,30 @@ class QueryLimits:
 
 
 @dataclass(frozen=True)
+class LogLimits:
+    """How long the derivation log keeps ``count_cohort``'s issuances, and how large it may grow
+    (SPEC §12.2, §14, D300): ``keep_count_issuances_days`` (``None`` keeps them until an
+    operator prunes) and ``log_bytes``."""
+
+    keep_count_issuances_days: int | None = 30
+    log_bytes: int = 8 << 30
+
+    def __post_init__(self) -> None:
+        days = self.keep_count_issuances_days
+        if days is not None and not 1 <= days <= MAX_KEEP_DAYS:
+            raise ValueError(f"keep_count_issuances_days is from 1 to {MAX_KEEP_DAYS}, not {days}")
+        if self.log_bytes < MIN_LOG_BYTES:
+            raise ValueError(f"log_bytes is at least {MIN_LOG_BYTES}, not {self.log_bytes}")
+
+
+MIN_LOG_BYTES = 1 << 20
+"""The least ``log_bytes``: room for a few documents at their limits."""
+MAX_KEEP_DAYS = 36500
+"""The most ``keep_count_issuances_days``: a century, whose start the store's clock can still
+write."""
+
+
+@dataclass(frozen=True)
 class LimitName:
     """Annotation metadata naming the limit that a length constraint enforces."""
 
@@ -324,6 +352,7 @@ __all__ = [
     "KEY_COLUMNS",
     "LEAVES",
     "LIST_MEMBERS",
+    "LOG_BYTES",
     "MAX_AGENT_PROPOSALS",
     "MAX_BODY_BYTES",
     "MAX_CHANGE_EDITS",
@@ -338,6 +367,7 @@ __all__ = [
     "MAX_DOCUMENT_BYTES",
     "MAX_ENTRIES",
     "MAX_IDENTIFIER",
+    "MAX_KEEP_DAYS",
     "MAX_LEAVES",
     "MAX_LIST",
     "MAX_NAME",
@@ -359,6 +389,7 @@ __all__ = [
     "MAX_VALUES",
     "MAX_VIEWS",
     "MEMBER_BYTES",
+    "MIN_LOG_BYTES",
     "MIN_QUERY_MEMORY",
     "NAME_CHARACTERS",
     "NESTING_DEPTH",
@@ -399,6 +430,7 @@ __all__ = [
     "VIEWS",
     "ImportLimits",
     "LimitName",
+    "LogLimits",
     "QueryLimits",
     "map_cap",
 ]

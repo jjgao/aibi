@@ -5,7 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from aibi.core.store.appdb import MIGRATIONS, AppDB
+from aibi.core.store.appdb import (
+    LOG_DERIVATION_BYTES,
+    LOG_ISSUANCE_BYTES,
+    LOG_PAGE_BYTES,
+    LOG_RELEASE_FACTOR,
+    LOG_TEXT_BYTES,
+    MIGRATIONS,
+    AppDB,
+    PageSizeError,
+    stored_bytes,
+    stored_sql,
+)
 
 M1 = "sha256:" + "1" * 64
 M2 = "sha256:" + "2" * 64
@@ -30,6 +41,7 @@ def test_a_new_database_is_migrated_to_the_latest_version(db: AppDB, tmp_path: P
         for name in ("journal_mode", "foreign_keys", "secure_delete")
     ]
     assert modes == ["wal", 1, 1]
+    assert db.connection.execute("PRAGMA page_size").fetchone()[0] == LOG_PAGE_BYTES
     db.close()
     again = AppDB(tmp_path / "app.db")  # migrating again changes nothing
     assert again.version == len(MIGRATIONS)
@@ -41,6 +53,31 @@ def test_a_database_newer_than_the_server_is_refused(tmp_path: Path) -> None:
     sqlite3.connect(path).execute(f"PRAGMA user_version = {len(MIGRATIONS) + 1}")
     with pytest.raises(RuntimeError, match="newer"):
         AppDB(path)
+
+
+@pytest.mark.parametrize("size", [1024, 8192, LOG_PAGE_BYTES])
+def test_a_database_of_another_page_size_than_the_log_charges_is_refused(
+    tmp_path: Path, size: int
+) -> None:
+    """``PRAGMA page_size`` changes only a database not yet written, and the derivation log's
+    accounting charges pages of ``LOG_PAGE_BYTES`` bytes (D300)."""
+    path = tmp_path / "app.db"
+    made = sqlite3.connect(path)
+    made.execute(f"PRAGMA page_size = {size}")
+    made.execute("PRAGMA journal_mode = WAL")
+    made.execute("CREATE TABLE kept (x)")
+    made.close()
+    if size != LOG_PAGE_BYTES:
+        with pytest.raises(PageSizeError, match=f"of {size} bytes"):
+            AppDB(path)
+        found = sqlite3.connect(path)
+        assert found.execute("PRAGMA user_version").fetchone()[0] == 0
+        found.close()
+        return
+    opened = AppDB(path)
+    assert opened.version == len(MIGRATIONS)
+    assert opened.connection.execute("PRAGMA page_size").fetchone()[0] == LOG_PAGE_BYTES
+    opened.close()
 
 
 @pytest.mark.parametrize(
@@ -179,3 +216,66 @@ def test_an_open_session_changes_its_draft_and_handle_and_a_proposal_is_redacted
     assert curated.is_draft_state("lib", M2)
     assert not curated.is_draft_state("other", M2)
     assert [p.status for p in curated.proposals("lib", status=None)] == ["rejected", "accepted"]
+
+
+def test_migration_5_moves_each_issuance_s_texts_into_the_log_s_texts_once(
+    tmp_path: Path,
+) -> None:
+    """Issuances written under migration 4 hold their texts; migration 5 stores each once, by
+    its digest, and the log reads them back as they were; a derivation no issuance names goes,
+    as pruning would take it, and the log's size counts every row that is left (D300)."""
+    path = tmp_path / "app.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+    raw.execute("PRAGMA foreign_keys = ON")
+    for script in MIGRATIONS[:4]:
+        raw.executescript(script)
+    raw.execute("PRAGMA user_version = 4")
+    derivation = "drv:" + "a" * 64
+    releases = '[{"dataset":"lib","manifest":"' + M1 + '"}]'
+    raw.execute("INSERT INTO manifests VALUES (?, 'lib', ?, NULL)", (M1, AT))
+    raw.execute(
+        "INSERT INTO derivations VALUES (?, 'cohort', '{\"cohort\":{}}', ?, ?)",
+        (derivation, releases, AT),
+    )
+    raw.execute("INSERT INTO derivation_releases VALUES (?, 'lib', ?)", (derivation, M1))
+    unnamed = "drv:" + "b" * 64
+    raw.execute(
+        "INSERT INTO derivations VALUES (?, 'cohort', '{\"cohort\":{}}', ?, ?)",
+        (unnamed, releases, AT),
+    )
+    raw.execute("INSERT INTO derivation_releases VALUES (?, 'lib', ?)", (unnamed, M1))
+    for identifier in ("iss:" + "0" * 25 + "1", "iss:" + "0" * 25 + "2"):
+        raw.execute(
+            "INSERT INTO issuances VALUES (?, ?, 'count_cohort', '{\"notes\":\"n\"}', '{\"h\":5}',"
+            " '[\"SELECT 1\"]', ?, 'aibi 0.0.1', '{}', ?)",
+            (identifier, derivation, identifier, AT),
+        )
+    raw.close()
+    migrated = AppDB(path)
+    assert migrated.version == len(MIGRATIONS)
+    texts = migrated.connection.execute("SELECT text FROM log_texts ORDER BY text").fetchall()
+    assert texts == [('["SELECT 1"]',), ('{"document":{"notes":"n"},"params":{"h":5}}',)]
+    used = migrated.connection.execute("SELECT bytes FROM log_usage").fetchone()[0]
+    assert used == (
+        sum(stored_bytes(len(text.encode()) + 80) + LOG_TEXT_BYTES for (text,) in texts)
+        + stored_bytes(len('{"cohort":{}}') + len(releases) + 112)
+        + LOG_RELEASE_FACTOR * len(releases)
+        + LOG_DERIVATION_BYTES
+        + 2 * (len("{}") + LOG_ISSUANCE_BYTES)
+    )
+    left = migrated.connection.execute("SELECT id FROM derivations").fetchall()
+    assert left == [(derivation,)]
+    shared = migrated.connection.execute("SELECT DISTINCT request FROM issuances").fetchall()
+    assert len(shared) == 1
+
+
+def test_the_log_charges_rows_of_every_size_as_sqlite_stores_them(tmp_path: Path) -> None:
+    """``stored_sql`` and ``stored_bytes`` agree on every payload around a leaf's local limit
+    and an overflow page's size, and the app DB has the page size they count in (D300)."""
+    db = AppDB(tmp_path / "app.db")
+    assert db.connection.execute("PRAGMA page_size").fetchone()[0] == LOG_PAGE_BYTES
+    payloads = {*range(0, 20_000, 97), *range(4_000, 4_200), *range(8_100, 8_300)}
+    for payload in sorted(payloads):
+        found = db.connection.execute(f"SELECT {stored_sql(str(payload))}").fetchone()[0]
+        assert found == stored_bytes(payload) >= payload
+    db.close()

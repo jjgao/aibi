@@ -817,3 +817,14 @@ def test_the_cli_talks_to_a_real_server_over_tcp(
     assert any("/api/health" in record for record in records)
     for secret in (server.token, handle, "token="):
         assert not any(secret in record for record in records), secret
+
+
+def test_the_cli_prunes_the_log_and_says_what_an_unknown_issuance_is(
+    server: Server, make_cli: Any, tmp_path: Path
+) -> None:
+    run = make_cli(server, tmp_path / "ada")
+    pruned = done(run("prune", "--before", "2026-01-01T00:00:00Z")).out
+    assert "Pruned 0 count_cohort issuances recorded before 2026-01-01T00:00:00.000000Z" in pruned
+    unknown = run("issuance", "iss:" + "0" * 26)
+    assert unknown.code == 1
+    assert "NOT_FOUND" in unknown.out + unknown.err

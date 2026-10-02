@@ -1,0 +1,27 @@
+{
+  "$id": "tool.validate-document.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "document": {
+      "additionalProperties": {
+        "x-aibi-output-json": true
+      },
+      "title": "Document",
+      "type": "object"
+    },
+    "format": {
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+      "title": "Format",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document"
+  ],
+  "title": "ValidateDocument",
+  "type": "object"
+}

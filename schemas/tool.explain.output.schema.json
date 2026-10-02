@@ -1,0 +1,242 @@
+{
+  "$defs": {
+    "DerivationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "cohort",
+            "result"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "object": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Object",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "releases": {
+          "items": {
+            "$ref": "#/$defs/ReleaseRef"
+          },
+          "title": "Releases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "releases"
+      ],
+      "title": "DerivationRecord",
+      "type": "object"
+    },
+    "IssuanceRecord": {
+      "additionalProperties": false,
+      "description": "What ``explain`` gives of an issuance: never the request, the document as written and\nthe parameters, which may hold another client's other cohorts, notes and names, and which\nthe operator router alone serves (D302).",
+      "properties": {
+        "at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+          "title": "At",
+          "type": "string"
+        },
+        "derivation": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Derivation",
+          "type": "string"
+        },
+        "engine": {
+          "pattern": "^aibi [0-9A-Za-z.+!_-]{1,64}$",
+          "title": "Engine",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "packs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Packs",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "sql": {
+          "$ref": "#/$defs/OutputJson",
+          "x-aibi-data": true
+        },
+        "tool": {
+          "enum": [
+            "count_cohort",
+            "run_analysis"
+          ],
+          "title": "Tool",
+          "type": "string"
+        },
+        "values_from": {
+          "pattern": "^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "title": "Values From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "derivation",
+        "tool",
+        "values_from",
+        "engine",
+        "packs",
+        "at"
+      ],
+      "title": "IssuanceRecord",
+      "type": "object"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "ReleaseRef": {
+      "additionalProperties": false,
+      "description": "A release an output drew on. The label is recorded beside the manifest, never hashed.",
+      "else": {
+        "properties": {
+          "label": {
+            "type": "integer"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "draft"
+          }
+        }
+      },
+      "properties": {
+        "dataset": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "label",
+        "manifest",
+        "status"
+      ],
+      "then": {
+        "properties": {
+          "label": {
+            "const": "draft"
+          }
+        }
+      },
+      "title": "ReleaseRef",
+      "type": "object"
+    }
+  },
+  "$id": "tool.explain.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What ``explain`` gives (§7.6, §11.1, §12.2; D302).",
+  "properties": {
+    "derivation": {
+      "$ref": "#/$defs/DerivationRecord"
+    },
+    "id": {
+      "pattern": "(?:^drv:[0-9a-f]{64}$)|(?:^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$)",
+      "title": "Id",
+      "type": "string"
+    },
+    "issuance": {
+      "$ref": "#/$defs/IssuanceRecord"
+    },
+    "status": {
+      "enum": [
+        "issued",
+        "not_issued",
+        "unknown",
+        "withdrawn",
+        "discarded",
+        "unknown_release",
+        "erased"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "status"
+  ],
+  "title": "Explanation",
+  "type": "object"
+}

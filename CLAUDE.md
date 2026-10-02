@@ -38,8 +38,11 @@ is the derivation log, which `Store.explain` reads. `core/engine/sql.py` compile
 to SQLGlot trees over the release's table blobs, three-valued with reasons and flags;
 `core/engine/worker.py` runs a document's queries in a child process that can be killed, the only
 process that loads DuckDB (`core/engine/duck.py`); `core/engine/queries.py` joins them for a caller, and
-`Store.outline` and `Store.sources` give what they read. Readbacks and the query tools come next
-(M2), and database snapshots and the read-only catalogue page (M1).
+`Store.outline` and `Store.sources` give what they read. `core/engine/readback.py` renders
+readbacks from templates, `core/engine/suppression.py` runs the disclosure pass over cohort counts,
+`core/schema/digests.py` hashes and digests (outputs check their own), and `core/catalog/cohorts.py`
+holds the query tools' service functions (`validate_document`, `count_cohort`, `explain`), served
+beside the catalogue's. Database snapshots and the read-only catalogue page (M1) come next.
 
 ## Non-negotiables
 

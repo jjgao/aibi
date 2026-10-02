@@ -340,6 +340,193 @@
       "title": "Caveat",
       "type": "object"
     },
+    "CohortCount": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "releases": {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "draft"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "issuance": {
+                "properties": {
+                  "cache_hit": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "size": {
+                "properties": {
+                  "denominator": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "population": {
+                "properties": {
+                  "n_false": {
+                    "type": "null"
+                  },
+                  "n_true": {
+                    "type": "null"
+                  },
+                  "n_unknown": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
+      "properties": {
+        "caveats": {
+          "allOf": [
+            {
+              "items": {
+                "not": {
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "COHORTS_OVERLAP",
+                        "CONFOUNDED_WITH_DATASET",
+                        "INVALID_EXCLUDED"
+                      ]
+                    }
+                  }
+                },
+                "properties": {
+                  "affects": {
+                    "const": [
+                      "/population"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "items": {
+            "$ref": "#/$defs/Caveat"
+          },
+          "title": "Caveats",
+          "type": "array"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "disclosure": {
+          "$ref": "#/$defs/Disclosure"
+        },
+        "id": {
+          "pattern": "^drv:[0-9a-f]{64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "issuance": {
+          "$ref": "#/$defs/Issuance"
+        },
+        "population": {
+          "$ref": "#/$defs/Population"
+        },
+        "readback": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Readback",
+          "type": "array"
+        },
+        "releases": {
+          "items": {
+            "$ref": "#/$defs/ReleaseRef"
+          },
+          "minItems": 1,
+          "title": "Releases",
+          "type": "array"
+        },
+        "size": {
+          "$ref": "#/$defs/Proportion",
+          "allOf": [
+            {
+              "not": {
+                "required": [
+                  "excluded"
+                ]
+              },
+              "properties": {
+                "denominator_definition": {
+                  "const": {
+                    "counts": "unit_table",
+                    "position": null,
+                    "predicate": null
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "digest",
+        "population",
+        "size",
+        "disclosure",
+        "readback",
+        "caveats",
+        "releases",
+        "issuance"
+      ],
+      "title": "CohortCount",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1).",
+      "properties": {
+        "data": {
+          "maxLength": 10000,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
     "DataSegment": {
       "additionalProperties": false,
       "properties": {
@@ -531,6 +718,42 @@
       "title": "Issuance",
       "type": "object"
     },
+    "NamedCount": {
+      "additionalProperties": false,
+      "properties": {
+        "cohort": {
+          "$ref": "#/$defs/Data"
+        },
+        "count": {
+          "$ref": "#/$defs/CohortCount"
+        },
+        "leaves": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)*$": {
+              "items": {
+                "pattern": "^leaf:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Leaves",
+          "type": "object",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "cohort",
+        "count",
+        "leaves"
+      ],
+      "title": "NamedCount",
+      "type": "object"
+    },
     "NotEstimableReason": {
       "enum": [
         "no_units",
@@ -548,6 +771,62 @@
       ],
       "title": "NotEstimableReason",
       "type": "string"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "Parameters": {
+      "additionalProperties": false,
+      "description": "The parameters the document used, echoed (outside every digest), and those it declared\nbut did not use (§7.1).",
+      "properties": {
+        "unused": {
+          "items": {
+            "$ref": "#/$defs/Data"
+          },
+          "title": "Unused",
+          "type": "array"
+        },
+        "used": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Used",
+          "type": "object",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "used",
+        "unused"
+      ],
+      "title": "Parameters",
+      "type": "object"
     },
     "Population": {
       "additionalProperties": false,
@@ -1640,176 +1919,64 @@
       ],
       "title": "TextSegment",
       "type": "object"
+    },
+    "UncheckedView": {
+      "additionalProperties": false,
+      "description": "A view of the document: syntax-checked only until M3 (§15, D284).",
+      "properties": {
+        "analysis": {
+          "$ref": "#/$defs/Data"
+        },
+        "position": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "status": {
+          "const": "unchecked",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "position",
+        "analysis",
+        "status"
+      ],
+      "title": "UncheckedView",
+      "type": "object"
     }
   },
-  "$id": "cohort-count.schema.json",
+  "$id": "tool.count-cohort.output.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "releases": {
-            "contains": {
-              "properties": {
-                "status": {
-                  "const": "draft"
-                }
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "issuance": {
-            "properties": {
-              "cache_hit": {
-                "const": false
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "size": {
-            "properties": {
-              "denominator": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "population": {
-            "properties": {
-              "n_false": {
-                "type": "null"
-              },
-              "n_true": {
-                "type": "null"
-              },
-              "n_unknown": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      }
-    }
-  ],
-  "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
+  "description": "What ``count_cohort`` gives (§8.1, D300): each cohort's count, by name.",
   "properties": {
-    "caveats": {
-      "allOf": [
-        {
-          "items": {
-            "not": {
-              "properties": {
-                "code": {
-                  "enum": [
-                    "COHORTS_OVERLAP",
-                    "CONFOUNDED_WITH_DATASET",
-                    "INVALID_EXCLUDED"
-                  ]
-                }
-              }
-            },
-            "properties": {
-              "affects": {
-                "const": [
-                  "/population"
-                ]
-              }
-            }
-          }
-        }
-      ],
+    "counts": {
       "items": {
-        "$ref": "#/$defs/Caveat"
-      },
-      "title": "Caveats",
-      "type": "array"
-    },
-    "digest": {
-      "pattern": "^sha256:[0-9a-f]{64}$",
-      "title": "Digest",
-      "type": "string"
-    },
-    "disclosure": {
-      "$ref": "#/$defs/Disclosure"
-    },
-    "id": {
-      "pattern": "^drv:[0-9a-f]{64}$",
-      "title": "Id",
-      "type": "string"
-    },
-    "issuance": {
-      "$ref": "#/$defs/Issuance"
-    },
-    "population": {
-      "$ref": "#/$defs/Population"
-    },
-    "readback": {
-      "items": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/TextSegment"
-          },
-          {
-            "$ref": "#/$defs/DataSegment"
-          }
-        ]
-      },
-      "title": "Readback",
-      "type": "array"
-    },
-    "releases": {
-      "items": {
-        "$ref": "#/$defs/ReleaseRef"
+        "$ref": "#/$defs/NamedCount"
       },
       "minItems": 1,
-      "title": "Releases",
+      "title": "Counts",
       "type": "array"
     },
-    "size": {
-      "$ref": "#/$defs/Proportion",
-      "allOf": [
-        {
-          "not": {
-            "required": [
-              "excluded"
-            ]
-          },
-          "properties": {
-            "denominator_definition": {
-              "const": {
-                "counts": "unit_table",
-                "position": null,
-                "predicate": null
-              }
-            }
-          }
-        }
-      ]
+    "params": {
+      "$ref": "#/$defs/Parameters"
+    },
+    "views": {
+      "items": {
+        "$ref": "#/$defs/UncheckedView"
+      },
+      "title": "Views",
+      "type": "array"
     }
   },
   "required": [
-    "id",
-    "digest",
-    "population",
-    "size",
-    "disclosure",
-    "readback",
-    "caveats",
-    "releases",
-    "issuance"
+    "counts",
+    "views",
+    "params"
   ],
-  "title": "CohortCount",
+  "title": "CohortCounts",
   "type": "object"
 }

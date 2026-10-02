@@ -30,8 +30,10 @@ from aibi.core.schema.operator import (
     DraftChanged,
     ErasedOut,
     ImportPublished,
+    LoggedIssuance,
     ProposalsRejected,
     ProposersRan,
+    Pruned,
     Refusals,
     Rejected,
     SessionEnded,
@@ -246,6 +248,15 @@ class OperatorClient:
         if kind is not None:
             body["kind"] = kind
         return self._post(self._dataset(dataset, "proposals", "reject"), body, ProposalsRejected)
+
+    # --- The derivation log ---
+
+    def issuance(self, issuance: str) -> Answer[LoggedIssuance]:
+        return self._post("/operator/log/issuance", {"id": issuance}, LoggedIssuance)
+
+    def prune(self, *, before: str | None = None) -> Answer[Pruned]:
+        body: dict[str, JsonValue] = {} if before is None else {"before": before}
+        return self._post("/operator/log/prune", body, Pruned)
 
     # --- Sessions ---
 

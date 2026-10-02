@@ -5,9 +5,11 @@ does. Request protection checks every operator request's curator token and opera
 records the attribution in its scope; the router's own dependency (``require_operator``) refuses a
 request without it, so the router fails closed wherever it is mounted.
 
-**Reads** are ``GET``: the CSRF token, the datasets, one dataset, its curation queue and one
-descriptor of a release or of the draft. They change no release, label, session, proposal or
-audit entry; the store's housekeeping when a pin is released may still run, as for any read. A
+**Reads** are ``GET``: the CSRF token, the datasets, one dataset, its curation queue, one
+descriptor of a release or of the draft, and one issuance of the derivation log with its request,
+the document as written and the parameters used, which ``explain`` never gives a client (D302).
+They change no release, label, session, proposal or audit entry; the store's housekeeping when a
+pin is released may still run, as for any read. A
 dataset's state names its open session, never the session's handle. A dataset with no label is
 ``UNKNOWN_DATASET`` on every route that names one, but an upload and an import, which make it;
 the route checks this once it has read the body and taken its place, so that a body refused,
@@ -15,9 +17,10 @@ or one place too many, is answered as on any dataset.
 
 **Changes** are ``POST``: uploads, imports and re-imports, withdrawals, erasures, running the
 curation proposers, rejecting a proposal or every open proposal of one proposer or kind of proposer
-(D277), and opening, changing, publishing, discarding and taking over a session (accepting a
-proposal is an ``accept`` edit, D248). Each is one synchronous request whose service call runs in a
-worker thread, which a dropped connection does not cancel. A body is a JSON object (``{}`` when
+(D277), pruning the derivation log's ``count_cohort`` issuances (D300), and opening, changing,
+publishing, discarding and taking over a session (accepting a proposal is an ``accept`` edit,
+D248). Each is one synchronous request whose service call runs in a worker thread, which a
+dropped connection does not cancel. A body is a JSON object (``{}`` when
 empty), received within the deadlines of an upload (below, its length at most ``max_body_bytes``
 when it declares none) and read by ``load_request`` in a worker thread, so that parsing a large body
 never holds up the event loop, and never by the framework; a body refused, or one whose stored text
@@ -45,14 +48,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import anyio
 import anyio.from_thread
 import anyio.to_thread
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as PathParameter
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from starlette.responses import Response
 
 from aibi.core.bodies import Deadlines, declared_length
@@ -81,11 +84,15 @@ from aibi.core.schema.operator import (
     EraseRequest,
     ImportPublished,
     ImportRequest,
+    IssuanceRequest,
     LabelState,
+    LoggedIssuance,
     OpenSession,
     PathSource,
     ProposalsRejected,
     ProposersRan,
+    Pruned,
+    PruneRequest,
     Refusals,
     Rejected,
     RejectProposals,
@@ -104,6 +111,7 @@ from aibi.core.schema.output import Output
 from aibi.core.schema.pack_api import ConfinedPath, ImportNote, ImportOptions, PackRegistry
 from aibi.core.schema.refusals import Limit, RefusalCode
 from aibi.core.store import sessions
+from aibi.core.store.derivations import utc
 from aibi.core.store.erasure import erase
 from aibi.core.store.proposals import (
     ProposersRun,
@@ -522,6 +530,57 @@ def operator_router(services: Services) -> APIRouter:
         if isinstance(body, Response):
             return body
         return _json(await run_known(dataset, partial(rejecting, dataset, body, by)))
+
+    # --- The derivation log --------------------------------------------------------------
+
+    def logged(request: IssuanceRequest) -> LoggedIssuance:
+        found = store.derivations.issuance(request.id)
+        if found is None:
+            raise StoreRefused(RefusalCode.NOT_FOUND, "The log holds no issuance of that id")
+        return LoggedIssuance(
+            id=found.id,
+            derivation=found.derivation,
+            tool=found.tool,
+            document=found.written,
+            params=found.params,
+            sql=found.sql,
+            values_from=found.values_from,
+            engine=found.engine,
+            packs=cast(dict[str, JsonValue], found.packs),
+            at=found.at,
+        )
+
+    @router.post("/log/issuance", response_model=LoggedIssuance)
+    async def issuance(request: Request) -> Response:
+        body = await _body(services, request, IssuanceRequest)
+        if isinstance(body, Response):
+            return body
+        return _json(await run(partial(logged, body)))
+
+    def pruning(request: PruneRequest) -> Pruned:
+        log = store.derivations
+        before = log.expired() if request.before is None else request.before
+        if before is None:
+            raise StoreRefused(
+                RefusalCode.MISSING_MEMBER,
+                "The configuration keeps count_cohort's issuances until an operator prunes: "
+                "give before, the time to prune before",
+            )
+        try:
+            cutoff = utc(before)
+        except ValueError:
+            raise StoreRefused(
+                RefusalCode.INVALID_VALUE, "before is an RFC 3339 time with its offset"
+            ) from None
+        pruned = log.prune(cutoff)
+        return Pruned(pruned=pruned, before=cutoff, log_bytes=log.usage())
+
+    @router.post("/log/prune", response_model=Pruned)
+    async def prune(request: Request) -> Response:
+        body = await _body(services, request, PruneRequest)
+        if isinstance(body, Response):
+            return body
+        return _json(await run(partial(pruning, body)))
 
     # --- Sessions ------------------------------------------------------------------------
 

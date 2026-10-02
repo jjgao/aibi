@@ -368,6 +368,36 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "size": {
+                "properties": {
+                  "denominator": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "population": {
+                "properties": {
+                  "n_false": {
+                    "type": "null"
+                  },
+                  "n_true": {
+                    "type": "null"
+                  },
+                  "n_unknown": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
         }
       ],
       "description": "A cohort's count, as ``count_cohort`` returns it (SPEC §8.1).",
@@ -454,9 +484,6 @@
                 ]
               },
               "properties": {
-                "denominator": {
-                  "type": "integer"
-                },
                 "denominator_definition": {
                   "const": {
                     "counts": "unit_table",

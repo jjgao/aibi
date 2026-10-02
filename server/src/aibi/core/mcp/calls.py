@@ -12,7 +12,10 @@ own reading of the body included (``ends``): one that gets no place within it is
 ``LIMIT_EXCEEDED`` naming ``client_tool_calls`` or ``tool_calls``, and one that gets a place but
 has not ended by then is answered ``LIMIT_EXCEEDED`` naming ``tool_seconds``, its thread, which
 cannot be stopped, finishing in the background with its place (all 503 over HTTP). A call
-answered before its thread began gives its place back at once, and its function never runs.
+answered before its thread began gives its place back at once, and its function never runs. The
+thread runs with the call's deadline in ``catalog.service.DEADLINE``, so that what it starts
+(a query worker's run, D301) ends by it and what it records it records only while it can still
+be answered (D300).
 
 A call's body is received within its deadlines (``bodies.Deadlines``, ``Calls.deadlines``): the
 public body's idle time, ``body_idle_seconds`` (``[server] tool_body_idle_seconds``, 10 s by
@@ -27,6 +30,7 @@ exception's message may hold what the request held.
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import Literal, Protocol, cast
@@ -36,7 +40,7 @@ import anyio.from_thread
 import anyio.to_thread
 
 from aibi.core.bodies import Deadlines
-from aibi.core.catalog.service import Catalog
+from aibi.core.catalog.service import Catalog, Deadline, within
 from aibi.core.catalog.tools import Tool, call
 from aibi.core.schema.limits import (
     CLIENT_TOOL_CALLS,
@@ -241,10 +245,14 @@ class Calls:
         place = await self._place(self.client_key(client), ends)
         if isinstance(place, list):
             return place
+        # The thread learns the call's deadline on its own clock (D301).
+        deadline = Deadline(time.monotonic() + max(0.0, ends - anyio.current_time()), self.seconds)
         try:
             with anyio.fail_after(max(0.0, ends - anyio.current_time())):
                 found = await anyio.to_thread.run_sync(
-                    partial(place.run, function), abandon_on_cancel=True, limiter=threads
+                    partial(place.run, partial(within, deadline, function)),
+                    abandon_on_cancel=True,
+                    limiter=threads,
                 )
         except TimeoutError:
             return _limit(TOOL_SECONDS, seconds, f"The call did not end within {seconds} seconds")

@@ -1,9 +1,11 @@
 """The store (SPEC §12.2, §12.3, D221): labels and their statuses, resolution, withdrawal, pins
-and the sweep that deletes what no live release references."""
+and the sweep that deletes what no live release references, and tool calls' pins, whose release
+the store's housekeeping thread finishes (D300)."""
 
 import contextlib
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, 
 
 from aibi.core.store.blobs import CorruptBlobError, MissingBlobError
 from aibi.core.store.manifest import hex_of
+from aibi.core.store.redaction import Terms
 from aibi.core.store.sources import SourceValue
 from aibi.core.store.store import Pin, Store, StoreLockedError, StoreRefused
 
@@ -162,6 +165,66 @@ def test_releasing_a_pin_sweeps_only_when_it_freed_what_nothing_live_references(
     assert hex_of(unpublished) in sweeps[0]
 
 
+def test_a_tool_call_s_pin_leaves_the_sweep_the_redaction_and_its_vacuum_to_housekeeping(
+    store: Store, imported: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool call's release drops its pins at once and never sweeps, redacts or vacuums in the
+    call's thread, so that the call answers in time; the store's housekeeping thread does it
+    (D300)."""
+    vacuumed: list[str] = []
+    vacuum = store.db.vacuum
+
+    def recorded() -> None:
+        vacuumed.append(threading.current_thread().name)
+        vacuum()
+
+    monkeypatch.setattr(store.db, "vacuum", recorded)
+    query = store.pin(background=True)
+    query.manifest(imported)
+    store.withdraw("lib", 1, "operator:ada")
+    with store.db.transaction() as db:
+        request = store.request_redaction(db, "lib", Terms(["nobody"]), [imported])
+    assert store.run_pending_redactions() == 0
+    query.release()
+    assert store.pinned == {}
+    assert threading.current_thread().name not in vacuumed
+    assert store.housekept(30)
+    assert vacuumed == ["aibi-store-housekeeping"]
+    assert store.redacted([request])
+    assert store.blobs.digests() == [hex_of(imported)]
+
+
+def test_a_tool_call_s_pin_released_while_the_store_is_busy_is_dropped_by_housekeeping(
+    store: Store, imported: str
+) -> None:
+    """The call never waits on the store's lock: its pins stay counted, which only keeps their
+    blobs, until the housekeeping thread takes the lock (D300)."""
+    query = store.pin(background=True)
+    query.manifest(imported)
+    pinned = dict(store.pinned)
+    held, done = threading.Event(), threading.Event()
+
+    def busy() -> None:
+        with store.lock:
+            held.set()
+            done.wait(30)
+
+    thread = threading.Thread(target=busy)
+    thread.start()
+    try:
+        assert held.wait(30)
+        releasing = threading.Thread(target=query.release)
+        releasing.start()
+        releasing.join(5)
+        assert not releasing.is_alive()
+        assert store.pinned == pinned
+    finally:
+        done.set()
+        thread.join(30)
+    assert store.housekept(30)
+    assert store.pinned == {}
+
+
 def test_a_second_process_cannot_open_the_store(tmp_path: Path) -> None:
     """Opening sweeps, so a second writer would delete what the first has pinned (D221)."""
     first = Store(tmp_path / "data")
@@ -257,10 +320,11 @@ class _Store(RuleBasedStateMachine):
             assert label.withdrawn
 
     @precondition(lambda self: self.store.labels("lib"))
-    @rule(data=st.data())
-    def pin(self, data: st.DataObject) -> None:
+    @rule(data=st.data(), background=st.booleans())
+    def pin(self, data: st.DataObject, background: bool) -> None:
+        """A query's pin, a tool call's among them, whose release housekeeping finishes."""
         label = data.draw(st.sampled_from(self.store.labels("lib")))
-        pin = self.store.pin()
+        pin = self.store.pin(background=background)
         try:
             pin.manifest(label.manifest)
         except Exception:

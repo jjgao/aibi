@@ -21,6 +21,7 @@ from typing import cast
 from pydantic import JsonValue, TypeAdapter
 
 from aibi.core.schema.catalog import TOOL_MODELS
+from aibi.core.schema.cohorts import DOCUMENT_MARK
 from aibi.core.schema.curation import ChangeRequest, CurationQueue, ProposalInput
 from aibi.core.schema.descriptors import DESCRIPTOR_JSON_MARK, DescModel, Descriptor
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
@@ -308,9 +309,40 @@ def curation_queue_schema() -> JsonObject:
     return _output_schema(CurationQueue, "curation-queue.schema.json")
 
 
+WRITTEN_TEXT = 'An analysis document as written, "$name" parameter references allowed (SPEC §7.1)'
+
+
+def _documents(schema: JsonObject) -> JsonObject:
+    """A request's ``document`` members as the schema of a document as written, whose
+    definitions join the request's (§11.1, D299)."""
+    if DOCUMENT_MARK not in json.dumps(schema):
+        return schema
+    written = document_as_written_schema()
+    definitions = cast(JsonObject, written["$defs"])
+    root = {key: value for key, value in written.items() if key not in ("$schema", "$id", "$defs")}
+
+    def replaced(node: JsonValue) -> JsonValue:
+        if isinstance(node, list):
+            return [replaced(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        if node.get(DOCUMENT_MARK) is True:
+            return {**root, "description": WRITTEN_TEXT}
+        return {key: replaced(value) for key, value in node.items()}
+
+    found = cast(JsonObject, replaced(schema))
+    own = cast(JsonObject, found.setdefault("$defs", {}))
+    for name, definition in definitions.items():
+        if own.get(name, definition) != definition:
+            raise ValueError(f"a request and a document both define {name}")
+        own[name] = definition
+    return found
+
+
 def request_schema(request: object, schema_id: str) -> JsonObject:
-    """A tool's request schema, as the MCP server and the HTTP API give it (§11.1)."""
-    return _request_schema(request, schema_id)
+    """A tool's request schema, as the MCP server and the HTTP API give it (§11.1): a document
+    it takes is described as a document as written."""
+    return _documents(_request_schema(request, schema_id))
 
 
 def output_schema(output: object, schema_id: str) -> JsonObject:

@@ -1,0 +1,17 @@
+{
+  "$id": "tool.explain.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "(?:^drv:[0-9a-f]{64}$)|(?:^iss:[0-7][0-9A-HJKMNP-TV-Z]{25}$)",
+      "title": "Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "Explain",
+  "type": "object"
+}
