@@ -45,6 +45,7 @@ from pydantic import (
     JsonValue,
     StrictBool,
     StrictInt,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
@@ -1061,6 +1062,23 @@ def parse_stat_reference(reference: str) -> StatReference:
     return parsed
 
 
+def _stat_reference(value: str) -> str:
+    try:
+        parse_stat_reference(value)
+    except ValueError:
+        raise problem("stat_reference", "Not a statistic reference in its one spelling") from None
+    return value
+
+
+StatRef = Annotated[
+    str,
+    AfterValidator(_stat_reference),
+    WithJsonSchema({"type": "string", "pattern": STAT_REFERENCE_RE.pattern, **DATA_MARK}),
+]
+"""A release-scoped reference to a catalogue statistic (§8.1, D272); its pointer's tokens can
+be values from data, so it is data (A6)."""
+
+
 __all__ = [
     "STAT_REFERENCE_RE",
     "Analysed",
@@ -1080,6 +1098,7 @@ __all__ = [
     "ReleaseRef",
     "ResultEnvelope",
     "Source",
+    "StatRef",
     "StatReference",
     "Values",
     "parse_stat_reference",

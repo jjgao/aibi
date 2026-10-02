@@ -21,9 +21,10 @@ labels, manifest hashes, descriptor ids, pointers and proposal ids the store wri
 lifecycle entries (imports, publishes, sessions, withdrawals, rejections, D252), nor an erasure's
 own entry, which holds its table, its mode and counts only.
 
-Each redactor redacts one table of the app DB, for one dataset. M1 has the audit trail and the
-proposal queue; later milestones register theirs (saved documents, cached results, issuances
-and derivations) with ``register``.
+Each redactor redacts one table of the app DB, for one dataset. M1 has the audit trail, the
+proposal queue and the catalogue index, whose entry for the dataset is deleted; later
+milestones register theirs (saved documents, cached results, issuances and derivations) with
+``register``.
 """
 
 import json
@@ -194,7 +195,14 @@ def _proposals(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
     return changed
 
 
-REDACTORS: dict[str, Redactor] = {"audit": _audit, "proposals": _proposals}
+def _catalog(db: sqlite3.Connection, dataset: str, terms: Terms) -> int:
+    """The catalogue index holds no cell values (D273), but it is derived from releases an
+    erasure withdraws: its entry for the dataset goes, and is built again from the latest
+    release when the catalogue is next read."""
+    return db.execute("DELETE FROM catalog WHERE dataset = ?", (dataset,)).rowcount
+
+
+REDACTORS: dict[str, Redactor] = {"audit": _audit, "proposals": _proposals, "catalog": _catalog}
 
 
 def register(table: str, redactor: Redactor) -> None:

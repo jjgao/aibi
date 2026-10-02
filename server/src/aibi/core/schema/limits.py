@@ -120,6 +120,12 @@ DECODED_BYTES = "decoded_bytes"
 
 OPEN_PROPOSALS = "open_proposals"
 """Open proposals of one dataset (SPEC §14, D248)."""
+AGENT_PROPOSALS = "agent_proposals"
+"""Open proposals of one dataset by agents, whom the public tools let propose without a token
+(D277)."""
+CLIENT_PROPOSALS = "client_proposals"
+"""Open proposals of one dataset that agents made from one client, keyed as the rates key it
+(D277)."""
 PROPOSAL_BYTES = "proposal_bytes"
 """Bytes of one proposal's value, in RFC 8785 form (D248)."""
 CHANGE_EDITS = "change_edits"
@@ -131,6 +137,12 @@ QUEUE_BYTES = "queue_bytes"
 EXTENSION_STEPS = "extension_steps"
 """Steps of evaluating one extension object against its pack's schema (D247)."""
 MAX_OPEN_PROPOSALS = 10_000
+MAX_AGENT_PROPOSALS = MAX_OPEN_PROPOSALS // 2
+"""Agents' share of ``MAX_OPEN_PROPOSALS``: the rest stays for the importers' and the models'
+proposals, however many an agent makes (D277)."""
+MAX_CLIENT_PROPOSALS = MAX_AGENT_PROPOSALS // 10
+"""One client's share of ``MAX_AGENT_PROPOSALS``, so that ten clients at least are needed to use
+the agents' share up (D277)."""
 MAX_PROPOSAL_BYTES = 64 * 1024
 """Bytes of a proposed value in RFC 8785 form, so that ``MAX_OPEN_PROPOSALS`` bounds the queue's
 size too; less than a field can hold (a ``permissible_values`` list of ``MAX_LIST`` entries), which
@@ -153,10 +165,24 @@ TOKEN_FAILURES = "token_failures"
 CONCURRENT_IMPORTS = "concurrent_imports"
 """Uploads, imports, re-imports and erasures that run at once in the server (D266)."""
 UPLOAD_IDLE_SECONDS = "upload_idle_seconds"
-"""Seconds an upload may send nothing before it is refused, freeing its place (D266)."""
+"""Seconds an upload, or any request's body (a JSON body, a tool call's), may send nothing before
+it is refused, freeing its place (D266, D278)."""
 UPLOAD_SECONDS = "upload_seconds"
-"""Seconds an upload may take in all: ``upload_idle_seconds``, and its length at the slowest rate
-the server accepts (D266)."""
+"""Seconds an upload, or any request's body, may take in all: ``upload_idle_seconds``, and its
+length at the slowest rate the server accepts (D266, D278)."""
+TOOL_SECONDS = "tool_seconds"
+"""Seconds a tool call may take, waiting for its place included (D278)."""
+TOOL_CALLS = "tool_calls"
+"""Tool calls that run at once in a server; a call that gets no place within ``tool_seconds`` is
+refused (D278)."""
+CLIENT_TOOL_CALLS = "client_tool_calls"
+"""Tool calls that one client runs at once, its share of ``tool_calls``; a call that gets no
+place within ``tool_seconds`` is refused (D278)."""
+TOOL_BODY_IDLE_SECONDS = "tool_body_idle_seconds"
+"""Seconds a tool call's body, which comes with no token, may send nothing before it is refused
+(D278)."""
+PROPOSAL_REQUESTS = "proposal_requests"
+"""``propose_descriptor`` calls a client makes, per minute (D277)."""
 MAX_BODY_BYTES = 8 * 1024 * 1024
 """The default ``request_bytes``: enough for a change that puts a descriptor at its limits, or
 several smaller ones; the document's value limit bounds a body too (D260)."""
@@ -221,6 +247,7 @@ def _entries(value: object) -> int:
 
 
 __all__ = [
+    "AGENT_PROPOSALS",
     "ALL_POINTER_CHARACTERS",
     "API_REQUESTS",
     "ARCHIVE_BYTES",
@@ -229,6 +256,8 @@ __all__ = [
     "CHANGE_EDITS",
     "CLAUSES",
     "CLAUSE_DEPTH",
+    "CLIENT_PROPOSALS",
+    "CLIENT_TOOL_CALLS",
     "COHORTS",
     "COHORT_REFERENCES",
     "CONCURRENT_IMPORTS",
@@ -247,10 +276,12 @@ __all__ = [
     "KEY_COLUMNS",
     "LEAVES",
     "LIST_MEMBERS",
+    "MAX_AGENT_PROPOSALS",
     "MAX_BODY_BYTES",
     "MAX_CHANGE_EDITS",
     "MAX_CLAUSES",
     "MAX_CLAUSE_DEPTH",
+    "MAX_CLIENT_PROPOSALS",
     "MAX_COHORTS",
     "MAX_COHORT_REFERENCES",
     "MAX_COLUMNS",
@@ -288,6 +319,7 @@ __all__ = [
     "PATH_STEPS",
     "POINTER_CHARACTERS",
     "PROPOSAL_BYTES",
+    "PROPOSAL_REQUESTS",
     "QUEUE_BYTES",
     "QUEUE_ITEMS",
     "RATIO_FLOOR",
@@ -303,6 +335,9 @@ __all__ = [
     "TABLE_COLUMNS",
     "TEXT_CHARACTERS",
     "TOKEN_FAILURES",
+    "TOOL_BODY_IDLE_SECONDS",
+    "TOOL_CALLS",
+    "TOOL_SECONDS",
     "VIEWS",
     "ImportLimits",
     "LimitName",

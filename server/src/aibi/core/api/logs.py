@@ -16,9 +16,13 @@ closed:
   anew: an exception's message may quote a request.
 
 ``install`` puts the filter on the loggers that write lines of requests (``uvicorn.access``,
-``uvicorn.error``, ``aibi`` and every ``aibi`` logger that logs), which covers what they log
-wherever it goes; ``logging_config`` adds it to the handlers of the logging configuration the
-server runs with, which covers what any logger's records propagate to them.
+``uvicorn.error``, ``aibi`` and every ``aibi`` logger that logs), on the root logger, and on the
+MCP SDK's loggers (``MCP_LOGGERS``), since the SDK logs what fails its validation, a message's
+values included, and does so on the root logger itself (D278): a filter on a logger covers the
+records made on it, wherever they go. ``logging_config`` adds it to the handlers of the logging
+configuration the server runs with, and gives the root logger that configuration's default
+handler, so that a record of any logger, the SDK's or another library's, reaches a filtered
+handler rather than Python's last resort or a handler ``logging.basicConfig`` would add.
 """
 
 import logging
@@ -27,8 +31,18 @@ from typing import Any
 from aibi.core.operator.auth import blank_path
 from aibi.core.schema.refusals import SECRET_BLANK
 
-LOGGERS = ("uvicorn.access", "uvicorn.error", "aibi", "aibi.core.api.protection")
-"""The loggers the filter is put on: uvicorn's, and the server's own."""
+MCP_LOGGERS = (
+    "mcp",
+    "mcp.server.lowlevel.server",
+    "mcp.server.streamable_http",
+    "mcp.server.streamable_http_manager",
+    "mcp.server.transport_security",
+    "mcp.shared.session",
+)
+"""The MCP SDK's loggers on the server's paths."""
+LOGGERS = ("", "uvicorn.access", "uvicorn.error", "aibi", "aibi.core.api.protection", *MCP_LOGGERS)
+"""The loggers the filter is put on: the root logger, uvicorn's, the server's own and the MCP
+SDK's."""
 FILTER = "without_secrets"
 """The filter's name in a logging configuration."""
 
@@ -104,21 +118,34 @@ def install() -> None:
 
 def logging_config(base: dict[str, Any]) -> dict[str, Any]:
     """``base``, a ``logging.config.dictConfig`` configuration such as uvicorn's, with
-    ``WithoutSecrets`` on every handler, and the ``aibi`` loggers writing to its default handler
-    rather than to Python's last resort."""
+    ``WithoutSecrets`` on every handler, and the ``aibi`` loggers and the root logger writing to
+    its default handler rather than to Python's last resort."""
     handlers: dict[str, dict[str, Any]] = {
         name: {**handler, "filters": [*handler.get("filters", []), FILTER]}
         for name, handler in base.get("handlers", {}).items()
     }
     loggers: dict[str, Any] = dict(base.get("loggers", {}))
+    root: dict[str, Any] = dict(base.get("root", {}))
     if "default" in handlers:
         loggers["aibi"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
-    return {
+        root = {"level": "WARNING", **root, "handlers": ["default"]}
+    configured = {
         **base,
         "filters": {**base.get("filters", {}), FILTER: {"()": WithoutSecrets}},
         "handlers": handlers,
         "loggers": loggers,
     }
+    if root:
+        configured["root"] = root
+    return configured
 
 
-__all__ = ["FILTER", "LOGGERS", "WithoutSecrets", "blank_words", "install", "logging_config"]
+__all__ = [
+    "FILTER",
+    "LOGGERS",
+    "MCP_LOGGERS",
+    "WithoutSecrets",
+    "blank_words",
+    "install",
+    "logging_config",
+]

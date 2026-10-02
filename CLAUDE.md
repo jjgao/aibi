@@ -25,7 +25,13 @@ protection middleware in front of every router and mount (Host and Origin allow-
 unless configured, rate limits, body limits, security headers), refusals as the one error shape,
 and `aibi-server`. `core/operator/` holds the operator surface (M1): the operator router behind the
 curator token, operator names and CSRF tokens, and `aibi`, the operator CLI, which talks to it over
-HTTP only. Tool calls, the MCP transport and database snapshots come next (M1, M2).
+HTTP only. `core/store/statistics.py` counts each release's catalogue statistics when it is
+built; `core/catalog/` holds the catalogue (M1): their disclosure and `stat:` references, the
+catalogue index in the app DB, and the service functions of the public tools (`search_catalog`,
+`describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`) and of the
+descriptor resources. `core/mcp/` serves them over the official MCP SDK at `/mcp`, stateless, and
+`core/api/tools.py` at `POST /api/tools/<name>`. Database snapshots and the read-only catalogue
+page come next (M1), then M2.
 
 ## Non-negotiables
 

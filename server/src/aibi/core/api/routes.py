@@ -1,5 +1,5 @@
-"""The public API's own routes (SPEC §11.1). The tools arrive with #12; until then the API has a
-health check, which request protection guards like every other route."""
+"""The public API's own routes (SPEC §11.1): a health check, which request protection guards like
+every other route. The tools are ``api.tools``'s."""
 
 from fastapi import APIRouter
 from starlette.responses import Response

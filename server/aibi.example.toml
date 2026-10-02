@@ -23,11 +23,14 @@ port = 8000
 # request_head_seconds = 10        # a connection with no request under way this long is closed
 # send_seconds = 30                # a client that takes less than 1 KiB/s of its answers over
 #                                  # this long is cut off
+# tool_body_idle_seconds = 10      # a tool call's body (no token) that sends nothing this long
+#                                  # is refused
 
 # [server.rates]
 # operator = { per_minute = 600, burst = 50 }
 # api = { per_minute = 3000, burst = 200 }
 # token_failures = { per_minute = 10, burst = 10 }
+# proposals = { per_minute = 30, burst = 10 }   # propose_descriptor calls a client makes
 
 [curator]
 # Replace with the hash `aibi-server new-token` prints; no token hashes to this one.

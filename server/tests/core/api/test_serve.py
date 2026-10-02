@@ -211,11 +211,21 @@ def test_the_filter_is_on_every_logger_that_writes_requests_and_every_handler() 
         "level": "INFO",
         "propagate": False,
     }
+    assert configured["root"] == {"level": "WARNING", "handlers": ["default"]}
     assert "filters" not in uvicorn.config.LOGGING_CONFIG
+    assert {"", "mcp", "mcp.server.lowlevel.server"} <= set(logs.LOGGERS)
 
 
 @pytest.mark.parametrize(
-    "name", ["uvicorn.error", "uvicorn.access", "aibi", "aibi.core.api.protection"]
+    "name",
+    [
+        "uvicorn.error",
+        "uvicorn.access",
+        "aibi",
+        "aibi.core.api.protection",
+        "",
+        "mcp.server.streamable_http",
+    ],
 )
 def test_a_record_of_uvicorn_s_or_the_server_s_loggers_is_blanked_before_any_handler(
     name: str,

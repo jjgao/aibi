@@ -44,6 +44,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from aibi.core.schema.descriptors import By
 from aibi.core.schema.refusals import (
+    BIDI_FORMATTING,
     SECRET_BLANK,
     SECRET_DECODINGS,
     SECRET_RE,
@@ -62,11 +63,6 @@ SECRET_ANYWHERE = re.compile(SECRET_RE.pattern.encode("ascii"))
 DECODINGS = SECRET_DECODINGS
 """How many times a URL is percent-decoded when a secret is looked for in it: a server decodes a
 path once, and a proxy or a log may once more."""
-BIDI_FORMATTING = frozenset(
-    chr(point) for point in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))
-)
-"""The bidi formatting characters: the Arabic letter mark, the marks, the embeddings and
-overrides, and the isolates."""
 TOKEN_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 OPERATOR_HEADER = "aibi-operator"
 CSRF_HEADER = "aibi-csrf"

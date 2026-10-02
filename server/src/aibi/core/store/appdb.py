@@ -1,6 +1,7 @@
 """The app DB (SPEC §12.2, §12.3): release labels and statuses, curation sessions, the audit
-trail, the proposal queue and what erasures have still to do (redactions waiting on pins, and
-upload areas still to delete), in SQLite. Later milestones add tables by adding migrations.
+trail, the proposal queue, the catalogue index (D273) and what erasures have still to do
+(redactions waiting on pins, and upload areas still to delete), in SQLite. Later milestones
+add tables by adding migrations.
 
 The server process is its only writer (§11.2); a connection is shared behind a lock, and every
 change runs in one transaction. The database runs in WAL mode with foreign keys on, full
@@ -158,6 +159,15 @@ MIGRATIONS: tuple[str, ...] = (
         WHEN OLD.status != 'open' OR NEW.status NOT IN ('accepted', 'rejected')
             OR NEW.decided_at IS NULL OR NEW.decided_by IS NULL
         BEGIN SELECT RAISE(ABORT, 'a proposal is decided once'); END;
+    """,
+    # 3: M1 (#12)
+    """
+    CREATE TABLE catalog (
+        dataset TEXT PRIMARY KEY,
+        basis TEXT NOT NULL,
+        entry TEXT NOT NULL
+    ) STRICT;
+    ALTER TABLE proposals ADD COLUMN client TEXT;
     """,
 )
 
@@ -462,11 +472,14 @@ class AppDB:
         evidence: str | None,
         at: str,
         remove: bool = False,
+        client: str | None = None,
     ) -> int:
+        """Record an open proposal; ``client`` is the key of the client an agent's came from
+        (D277)."""
         cursor = db.execute(
             "INSERT INTO proposals"
-            " (dataset, release, descriptor, pointer, value, proposer, evidence, at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " (dataset, release, descriptor, pointer, value, proposer, evidence, at, client)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 dataset,
                 release,
@@ -476,6 +489,7 @@ class AppDB:
                 proposer,
                 evidence,
                 at,
+                client,
             ),
         )
         assert cursor.lastrowid is not None
@@ -517,13 +531,47 @@ class AppDB:
             "UPDATE proposals SET release = ? WHERE id = ? AND status = 'open'", (release, proposal)
         )
 
-    def open_proposals(self, db: sqlite3.Connection, dataset: str, *, after: int = 0) -> int:
-        """How many open proposals the dataset has whose id is above ``after``."""
-        found = db.execute(
-            "SELECT count(*) FROM proposals WHERE dataset = ? AND status = 'open' AND id > ?",
-            (dataset, after),
-        ).fetchone()
-        return int(found[0])
+    def open_proposals(
+        self,
+        db: sqlite3.Connection,
+        dataset: str,
+        *,
+        after: int = 0,
+        kind: str | None = None,
+        client: str | None = None,
+    ) -> int:
+        """How many open proposals the dataset has whose id is above ``after``; with ``kind``,
+        only those whose proposer is ``<kind>:…``, and with ``client``, only those that came from
+        that client (D277)."""
+        query = "SELECT count(*) FROM proposals WHERE dataset = ? AND status = 'open' AND id > ?"
+        parameters: list[object] = [dataset, after]
+        if kind is not None:
+            query += " AND substr(proposer, 1, ?) = ?"
+            parameters.extend((len(kind) + 1, kind + ":"))
+        if client is not None:
+            query += " AND client = ?"
+            parameters.append(client)
+        return int(db.execute(query, parameters).fetchone()[0])
+
+    def open_ids(
+        self,
+        db: sqlite3.Connection,
+        dataset: str,
+        *,
+        kind: str | None = None,
+        proposer: str | None = None,
+    ) -> list[int]:
+        """The ids of the dataset's open proposals, by id: every one, those whose proposer is
+        ``<kind>:…``, or those of ``proposer``."""
+        query = "SELECT id FROM proposals WHERE dataset = ? AND status = 'open'"
+        parameters: list[object] = [dataset]
+        if kind is not None:
+            query += " AND substr(proposer, 1, ?) = ?"
+            parameters.extend((len(kind) + 1, kind + ":"))
+        if proposer is not None:
+            query += " AND proposer = ?"
+            parameters.append(proposer)
+        return [int(row[0]) for row in db.execute(query + " ORDER BY id", parameters)]
 
     def proposals(
         self,

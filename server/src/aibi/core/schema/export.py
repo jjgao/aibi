@@ -13,11 +13,14 @@ dataset); the loader refuses the others.
 
 import json
 import sys
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
+from aibi.core.schema.catalog import TOOL_MODELS
 from aibi.core.schema.curation import ChangeRequest, CurationQueue, ProposalInput
 from aibi.core.schema.descriptors import DESCRIPTOR_JSON_MARK, DescModel, Descriptor
 from aibi.core.schema.document import DOCUMENT_JSON_MARK, Document
@@ -214,6 +217,14 @@ def descriptor_schema() -> JsonObject:
     return {"$schema": SCHEMA_DIALECT, "$id": "descriptor.schema.json", **schema}
 
 
+def _no_default(member: JsonValue) -> JsonValue:
+    """A computed member's ``null`` means not estimable, so it is never its default: an absent
+    optional member is omitted (§8.1)."""
+    if isinstance(member, dict) and member.get("default", 0) is None:
+        return {key: value for key, value in member.items() if key != "default"}
+    return member
+
+
 def _optional_without_null(node: JsonValue) -> JsonValue:
     """Outputs omit an absent optional member rather than writing ``null`` (SPEC §8.1), so the
     ``null`` Pydantic allows for optional members goes; required members, and computed ones
@@ -227,7 +238,7 @@ def _optional_without_null(node: JsonValue) -> JsonValue:
     required = result.get("required", [])
     if isinstance(properties, dict) and isinstance(required, list):
         result["properties"] = {
-            name: member
+            name: _no_default(member)
             if name in required or (isinstance(member, dict) and member.get(COMPUTED_MARK))
             else _without_null(member)
             for name, member in properties.items()
@@ -297,6 +308,29 @@ def curation_queue_schema() -> JsonObject:
     return _output_schema(CurationQueue, "curation-queue.schema.json")
 
 
+def request_schema(request: object, schema_id: str) -> JsonObject:
+    """A tool's request schema, as the MCP server and the HTTP API give it (§11.1)."""
+    return _request_schema(request, schema_id)
+
+
+def output_schema(output: object, schema_id: str) -> JsonObject:
+    """A tool's output schema, as the MCP server and the HTTP API give it (§11.1)."""
+    return _output_schema(output, schema_id)
+
+
+def _tool_schemas() -> dict[str, Callable[[], JsonObject]]:
+    found: dict[str, Callable[[], JsonObject]] = {}
+    for name, (request, output) in TOOL_MODELS.items():
+        stem = name.replace("_", "-")
+        found[f"tool.{stem}.request.schema.json"] = partial(
+            request_schema, request, f"tool.{stem}.request.schema.json"
+        )
+        found[f"tool.{stem}.output.schema.json"] = partial(
+            output_schema, output, f"tool.{stem}.output.schema.json"
+        )
+    return found
+
+
 SCHEMAS = {
     "document.schema.json": document_schema,
     "document.as-written.schema.json": document_as_written_schema,
@@ -308,6 +342,7 @@ SCHEMAS = {
     "change-request.schema.json": change_request_schema,
     "proposal.schema.json": proposal_schema,
     "curation-queue.schema.json": curation_queue_schema,
+    **_tool_schemas(),
 }
 OUTPUT_SCHEMAS = (
     "result.schema.json",
@@ -315,6 +350,7 @@ OUTPUT_SCHEMAS = (
     "refusal.schema.json",
     "pack-manifest.schema.json",
     "curation-queue.schema.json",
+    *(name for name in SCHEMAS if name.startswith("tool.") and ".output." in name),
 )
 
 

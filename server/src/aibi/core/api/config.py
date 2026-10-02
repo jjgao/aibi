@@ -20,16 +20,19 @@ closed, so an unknown key is refused, and every problem is reported at once with
   ``max_connections_per_client``, fewer (a quarter of them by default),
   ``request_head_seconds``, how long a connection may go without a request under way, and
   ``send_seconds``, how long a client may take too little of the answers waiting for it (D254,
-  ``api.connections``); and ``[server.rates]``, the requests a client may make per minute, in
-  bursts (D259).
+  ``api.connections``); ``tool_body_idle_seconds``, how long the body of a tool call at ``/mcp``
+  or ``/api/tools``, which takes no token, may send nothing (D278); and ``[server.rates]``, the
+  requests a client may make per minute, in bursts (D259), and its ``propose_descriptor`` calls
+  (``proposals``, D277).
 - ``[curator] token_hash``: ``sha256:<hex>`` of the curator token, never the token (D261).
 - ``[storage]``: ``data``, the store's directory, which holds the upload area (D234), and
   ``imports``, the import directories (D232).
 - ``[imports]``: the limits of every import (D233), the server's and never a request's;
   ``concurrent``, how many uploads, imports, re-imports and erasures run at once, at most
-  ``MAX_CONCURRENT_IMPORTS``; ``upload_idle_seconds``, how long an upload may send nothing before
-  it is refused; and ``upload_min_bytes_per_second``, the slowest an upload may average, which
-  with its length sets its deadline (D266).
+  ``MAX_CONCURRENT_IMPORTS``; ``upload_idle_seconds``, how long an upload, or an operator
+  request's body, may send nothing before it is refused; and ``upload_min_bytes_per_second``, the
+  slowest one, or a tool call's body, may average, which with its length sets its deadline (D266,
+  D278).
 - ``[disclosure] min_cell_count_floor``: the deployment's floor for *k* (§8.4), 2 or more.
 - ``[databases.<identifier>]``: named connections, by shape only until database snapshots use
   them (#13): a SQLite or DuckDB file inside an import directory, or for Postgres and MySQL the
@@ -153,6 +156,8 @@ class Rates(_Config):
     operator: Rate = Rate(per_minute=600, burst=50)
     api: Rate = Rate(per_minute=3000, burst=200)
     token_failures: Rate = Rate(per_minute=10, burst=10)
+    proposals: Rate = Rate(per_minute=30, burst=10)
+    """``propose_descriptor`` calls, over either transport (D277)."""
 
 
 class ServerSection(_Config):
@@ -169,6 +174,8 @@ class ServerSection(_Config):
     """A quarter of ``max_connections``, at least 1, when not given."""
     request_head_seconds: PositiveInt = 10
     send_seconds: PositiveInt = 30
+    tool_body_idle_seconds: PositiveInt = 10
+    """How long a tool call's body, which comes with no token, may send nothing (D278)."""
     rates: Rates = Rates()
 
     @model_validator(mode="after")

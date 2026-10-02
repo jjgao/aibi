@@ -1,0 +1,894 @@
+{
+  "$defs": {
+    "Caveat": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNKNOWN_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "INVALID_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SCOPE_PARTIAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COVERAGE_PROPOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNCONFIRMED_SEMANTICS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNMAPPED_COMPARISON"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "TIME_ORIGIN_MISMATCH"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "block"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "CONFOUNDED_WITH_DATASET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COHORTS_OVERLAP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SMALL_N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "PH_VIOLATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "DRAFT_RELEASE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SUPPRESSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "NOT_ESTIMABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "LIFT_DIFFERS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "POOLED_ACROSS_DATASETS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        }
+      ],
+      "description": "``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.",
+      "properties": {
+        "affects": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$"
+            },
+            {
+              "enum": [
+                "UNKNOWN_EXCLUDED",
+                "INVALID_EXCLUDED",
+                "SCOPE_PARTIAL",
+                "COVERAGE_PROPOSED",
+                "UNCONFIRMED_SEMANTICS",
+                "UNMAPPED_COMPARISON",
+                "TIME_ORIGIN_MISMATCH",
+                "CONFOUNDED_WITH_DATASET",
+                "COHORTS_OVERLAP",
+                "SMALL_N",
+                "PH_VIOLATED",
+                "DRAFT_RELEASE",
+                "SUPPRESSED",
+                "NOT_ESTIMABLE",
+                "LIFT_DIFFERS",
+                "POOLED_ACROSS_DATASETS"
+              ]
+            }
+          ],
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "affects"
+      ],
+      "title": "Caveat",
+      "type": "object"
+    },
+    "CurationQueue": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Dataset",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/QueueField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "label": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Label",
+          "type": "integer"
+        },
+        "notes": {
+          "items": {
+            "$ref": "#/$defs/QueueNote"
+          },
+          "title": "Notes",
+          "type": "array"
+        },
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/QueueProposal"
+          },
+          "title": "Proposals",
+          "type": "array"
+        },
+        "release": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Release",
+          "type": "string"
+        },
+        "truncated": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Truncated",
+          "type": "integer"
+        },
+        "undeclared": {
+          "items": {
+            "$ref": "#/$defs/QueueUndeclared"
+          },
+          "title": "Undeclared",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset",
+        "release",
+        "label",
+        "fields",
+        "undeclared",
+        "proposals",
+        "notes",
+        "truncated"
+      ],
+      "title": "CurationQueue",
+      "type": "object"
+    },
+    "DataSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "maxLength": 200,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "truncated": {
+          "const": true,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataSegment",
+      "type": "object"
+    },
+    "DisclosureOut": {
+      "additionalProperties": false,
+      "description": "The effective disclosure setting: the largest of the floor and the dataset's (§8.4).",
+      "properties": {
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "required": [
+        "min_cell_count"
+      ],
+      "title": "DisclosureOut",
+      "type": "object"
+    },
+    "NotEstimableReason": {
+      "enum": [
+        "no_units",
+        "no_events",
+        "zero_denominator",
+        "zero_variance",
+        "not_reached",
+        "beyond_follow_up",
+        "separation",
+        "not_converged",
+        "degenerate_table",
+        "overlapping_cohorts",
+        "confounded_with_dataset",
+        "suppressed"
+      ],
+      "title": "NotEstimableReason",
+      "type": "string"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "QueueField": {
+      "additionalProperties": false,
+      "description": "A curated field whose status is ``imported_default`` or ``proposed``.",
+      "properties": {
+        "at": {
+          "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+          "title": "At",
+          "type": "string"
+        },
+        "by": {
+          "pattern": "^(?:(?:operator|agent):[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,200}|model:[a-z][a-z0-9_]{0,63}|importer:[A-Za-z0-9_.-]{1,200}@[A-Za-z0-9_.+-]{1,200})$",
+          "title": "By",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "kind": {
+          "enum": [
+            "dataset",
+            "table",
+            "column",
+            "relationship",
+            "coverage",
+            "endpoint"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "pointer": {
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "imported_default",
+            "proposed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/OutputJson",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "descriptor",
+        "kind",
+        "pointer",
+        "status",
+        "by",
+        "at",
+        "value"
+      ],
+      "title": "QueueField",
+      "type": "object"
+    },
+    "QueueNote": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A note of the import report (D231): counts and row references, never cell values.\n\nThe ``curation_queue`` tool gives each count its reference, and a count the disclosure\nsettings suppress is ``null``, its reason in ``not_estimable``, and lists no rows (D277); the\noperator's queue gives the counts as they are, without references.",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count",
+          "x-aibi-computed": true
+        },
+        "kind": {
+          "enum": [
+            "skipped_source",
+            "renamed",
+            "not_proposed",
+            "dropped",
+            "unparsed",
+            "gap",
+            "reimported"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "rows": {
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "QueueNote",
+      "type": "object"
+    },
+    "QueueProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_in_draft": {
+          "title": "Accepted In Draft",
+          "type": "boolean"
+        },
+        "at": {
+          "pattern": "^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
+          "title": "At",
+          "type": "string"
+        },
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Id",
+          "type": "integer"
+        },
+        "pointer": {
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string"
+        },
+        "proposer": {
+          "pattern": "^(?:(?:operator|agent):[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,200}|model:[a-z][a-z0-9_]{0,63}|importer:[A-Za-z0-9_.-]{1,200}@[A-Za-z0-9_.+-]{1,200})$",
+          "title": "Proposer",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "release": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Release",
+          "type": "string"
+        },
+        "remove": {
+          "title": "Remove",
+          "type": "boolean"
+        },
+        "stale": {
+          "title": "Stale",
+          "type": "boolean"
+        },
+        "value": {
+          "$ref": "#/$defs/OutputJson",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "id",
+        "descriptor",
+        "pointer",
+        "value",
+        "remove",
+        "proposer",
+        "at",
+        "release",
+        "stale",
+        "accepted_in_draft"
+      ],
+      "title": "QueueProposal",
+      "type": "object"
+    },
+    "QueueUndeclared": {
+      "additionalProperties": false,
+      "description": "A field nobody declared: a table's ``role``, ``primary_key`` or ``grain``, a column's\n``datatype``, the ``units`` of a number or time offset, a coverage's ``parents``, or a\nrelationship without coverage (the coverage's id, at the pointer ``\"\"``).",
+      "properties": {
+        "descriptor": {
+          "maxLength": 1109,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}(?:\\.[a-z][a-z0-9_]{0,63})?|(?:rel|cov):[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})$",
+          "title": "Descriptor",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "dataset",
+            "table",
+            "column",
+            "relationship",
+            "coverage",
+            "endpoint"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "pointer": {
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+          "title": "Pointer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "descriptor",
+        "kind",
+        "pointer"
+      ],
+      "title": "QueueUndeclared",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    }
+  },
+  "$id": "tool.curation-queue.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The curation queue as a tool gives it: disclosed, every count with its reference\n(D277).",
+  "properties": {
+    "caveats": {
+      "items": {
+        "$ref": "#/$defs/Caveat"
+      },
+      "title": "Caveats",
+      "type": "array"
+    },
+    "disclosure": {
+      "$ref": "#/$defs/DisclosureOut"
+    },
+    "queue": {
+      "$ref": "#/$defs/CurationQueue"
+    }
+  },
+  "required": [
+    "queue",
+    "disclosure",
+    "caveats"
+  ],
+  "title": "QueueOut",
+  "type": "object"
+}

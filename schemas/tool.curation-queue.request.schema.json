@@ -1,0 +1,27 @@
+{
+  "$id": "tool.curation-queue.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "release": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "title": "Release",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "dataset"
+  ],
+  "title": "QueueRequest",
+  "type": "object"
+}

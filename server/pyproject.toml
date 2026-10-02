@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.141",
     "httpx>=0.28",
     "jsonschema>=4.23",
+    "mcp>=1.30,<2",
     "packaging>=24",
     "pyarrow>=20",
     "pydantic>=2.11",
@@ -94,6 +95,7 @@ source_modules = [
     "aibi.core.store",
     "aibi.core.importers",
     "aibi.core.engine",
+    "aibi.core.catalog",
 ]
 forbidden_modules = [
     "aibi.core.api",
@@ -103,6 +105,18 @@ forbidden_modules = [
     "uvicorn",
     "httpx",
     "anyio",
+]
+
+[[tool.importlinter.contracts]]
+name = "Operator operations are never tools (SPEC §11.2, A4, D278)"
+type = "forbidden"
+source_modules = ["aibi.core.catalog", "aibi.core.mcp"]
+forbidden_modules = [
+    "aibi.core.operator",
+    "aibi.core.importers",
+    "aibi.core.store.sessions",
+    "aibi.core.store.erasure",
+    "aibi.core.api",
 ]
 
 [[tool.importlinter.contracts]]

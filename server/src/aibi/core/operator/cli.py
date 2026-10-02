@@ -67,6 +67,7 @@ from aibi.core.schema.operator import (
     DraftChanged,
     ErasedOut,
     ImportPublished,
+    ProposalsRejected,
     ProposersRan,
     Rejected,
     SessionEnded,
@@ -286,6 +287,15 @@ def _parser() -> _Parser:
     reject = commands.add_parser("reject", help="reject a proposal")
     reject.add_argument("dataset")
     reject.add_argument("proposal", type=int)
+    reject_all = commands.add_parser(
+        "reject-all",
+        help="reject every open proposal of one proposer, or of every proposer of a kind, but "
+        "those the open draft accepted and holds",
+    )
+    reject_all.add_argument("dataset")
+    whose = reject_all.add_mutually_exclusive_group(required=True)
+    whose.add_argument("--proposer", help="agent:<name>, model:<identifier> or importer:<name>@<v>")
+    whose.add_argument("--kind", choices=("agent", "model", "importer"))
 
     session = commands.add_parser("session", help="curation sessions").add_subparsers(
         dest="action", required=True, parser_class=_Parser
@@ -382,6 +392,7 @@ class _Run:
             "erase": self.erase,
             "proposers": self.proposers,
             "reject": self.reject,
+            "reject-all": self.reject_all,
         }
         handlers[command]()
         return DONE
@@ -460,6 +471,12 @@ class _Run:
 
     def reject(self) -> None:
         self.answer(self.client.reject(self.args.dataset, self.args.proposal), _rejected)
+
+    def reject_all(self) -> None:
+        rejected = self.client.reject_all(
+            self.args.dataset, proposer=self.args.proposer, kind=self.args.kind
+        )
+        self.answer(rejected, _rejected_all)
 
     # --- Sessions ---
 
@@ -711,6 +728,13 @@ def _proposers(ran: ProposersRan) -> list[str]:
 
 def _rejected(rejected: Rejected) -> list[str]:
     return [f"Rejected proposal {rejected.proposal} of {escaped(rejected.dataset)}"]
+
+
+def _rejected_all(rejected: ProposalsRejected) -> list[str]:
+    return [
+        f"Rejected {rejected.rejected} open proposals of {escaped(rejected.dataset)}; kept "
+        f"{rejected.kept} that the open draft accepted and holds"
+    ]
 
 
 def _opened(opened: SessionOpened, *, show_handle: bool) -> list[str]:

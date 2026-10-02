@@ -273,7 +273,6 @@ class Store:
         base: str,
         descriptors: Sequence[Descriptor],
         *,
-        statistics: str | None = None,
         tombstones: Iterable[Tombstone] | None = None,
         gate_mode: Mode | None = "change",
     ) -> Built:
@@ -287,7 +286,6 @@ class Store:
             self.descriptors(base),
             descriptors,
             holder=pin,
-            statistics=statistics,
             tombstones=None if tombstones is None else self._tombstones_blob(pin, tombstones),
             keep_tombstones=tombstones is None,
             gate_mode=gate_mode,

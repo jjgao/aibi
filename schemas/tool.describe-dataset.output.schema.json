@@ -1,0 +1,925 @@
+{
+  "$defs": {
+    "ApplicableAnalysis": {
+      "additionalProperties": false,
+      "description": "An analysis's applicability (§9.4); the list is empty until the registry exists (M3).",
+      "properties": {
+        "analysis": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Analysis",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "available_with_caveats"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "analysis",
+        "status"
+      ],
+      "title": "ApplicableAnalysis",
+      "type": "object"
+    },
+    "Caveat": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNKNOWN_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "INVALID_EXCLUDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SCOPE_PARTIAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COVERAGE_PROPOSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNCONFIRMED_SEMANTICS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "UNMAPPED_COMPARISON"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "TIME_ORIGIN_MISMATCH"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "block"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "CONFOUNDED_WITH_DATASET"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "COHORTS_OVERLAP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SMALL_N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "PH_VIOLATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "DRAFT_RELEASE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "warn"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "SUPPRESSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "NOT_ESTIMABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "LIFT_DIFFERS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "POOLED_ACROSS_DATASETS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "const": "info"
+              }
+            }
+          }
+        }
+      ],
+      "description": "``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.",
+      "properties": {
+        "affects": {
+          "items": {
+            "maxLength": 16384,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}\\.[A-Z][A-Z0-9_]{0,63}$"
+            },
+            {
+              "enum": [
+                "UNKNOWN_EXCLUDED",
+                "INVALID_EXCLUDED",
+                "SCOPE_PARTIAL",
+                "COVERAGE_PROPOSED",
+                "UNCONFIRMED_SEMANTICS",
+                "UNMAPPED_COMPARISON",
+                "TIME_ORIGIN_MISMATCH",
+                "CONFOUNDED_WITH_DATASET",
+                "COHORTS_OVERLAP",
+                "SMALL_N",
+                "PH_VIOLATED",
+                "DRAFT_RELEASE",
+                "SUPPRESSED",
+                "NOT_ESTIMABLE",
+                "LIFT_DIFFERS",
+                "POOLED_ACROSS_DATASETS"
+              ]
+            }
+          ],
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^(?:[a-z][a-z0-9_]{0,63}\\.)?[A-Z][A-Z0-9_]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/DataSegment"
+              }
+            ]
+          },
+          "title": "Message",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "affects"
+      ],
+      "title": "Caveat",
+      "type": "object"
+    },
+    "ColumnBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "datatype": {
+          "enum": [
+            "number",
+            "integer",
+            "string",
+            "boolean",
+            "category",
+            "list<category>",
+            "date",
+            "datetime",
+            "time_offset"
+          ],
+          "title": "Datatype",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 129,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "identifier": {
+          "title": "Identifier",
+          "type": "boolean"
+        },
+        "label": {
+          "$ref": "#/$defs/Data"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "identifier"
+      ],
+      "title": "ColumnBrief",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1).",
+      "properties": {
+        "data": {
+          "maxLength": 10000,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
+    "DataSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "maxLength": 200,
+          "title": "Data",
+          "type": "string",
+          "x-aibi-data": true
+        },
+        "truncated": {
+          "const": true,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataSegment",
+      "type": "object"
+    },
+    "DisclosureOut": {
+      "additionalProperties": false,
+      "description": "The effective disclosure setting: the largest of the floor and the dataset's (§8.4).",
+      "properties": {
+        "min_cell_count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Cell Count"
+        }
+      },
+      "required": [
+        "min_cell_count"
+      ],
+      "title": "DisclosureOut",
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "cardinality": {
+          "enum": [
+            "many-to-one",
+            "one-to-one"
+          ],
+          "title": "Cardinality",
+          "type": "string"
+        },
+        "child": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Child",
+          "type": "string"
+        },
+        "parent": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Parent",
+          "type": "string"
+        },
+        "relationship": {
+          "maxLength": 1108,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*$",
+          "title": "Relationship",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relationship",
+        "child",
+        "parent",
+        "cardinality"
+      ],
+      "title": "GraphEdge",
+      "type": "object"
+    },
+    "NotEstimableReason": {
+      "enum": [
+        "no_units",
+        "no_events",
+        "zero_denominator",
+        "zero_variance",
+        "not_reached",
+        "beyond_follow_up",
+        "separation",
+        "not_converged",
+        "degenerate_table",
+        "overlapping_cohorts",
+        "confounded_with_dataset",
+        "suppressed"
+      ],
+      "title": "NotEstimableReason",
+      "type": "string"
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    },
+    "ReleaseOut": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "draft",
+              "type": "string"
+            }
+          ],
+          "title": "Label"
+        },
+        "manifest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "published",
+            "draft"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "manifest",
+        "status"
+      ],
+      "title": "ReleaseOut",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "StatCount": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A catalogue statistic's count: ``null`` when suppressed (§8.4), with its reference.",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count",
+          "x-aibi-computed": true
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
+        }
+      },
+      "required": [
+        "count",
+        "reference"
+      ],
+      "title": "StatCount",
+      "type": "object"
+    },
+    "TableGraph": {
+      "additionalProperties": false,
+      "description": "The tables other than coverage tables, and the relationships between them (§6.1).",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "tables": {
+          "items": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tables",
+        "edges"
+      ],
+      "title": "TableGraph",
+      "type": "object"
+    },
+    "TableOut": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/ColumnBrief"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "descriptor": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Descriptor",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "rows": {
+          "$ref": "#/$defs/StatCount"
+        }
+      },
+      "required": [
+        "descriptor",
+        "rows",
+        "columns"
+      ],
+      "title": "TableOut",
+      "type": "object"
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    }
+  },
+  "$id": "tool.describe-dataset.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "applicable_analyses": {
+      "items": {
+        "$ref": "#/$defs/ApplicableAnalysis"
+      },
+      "title": "Applicable Analyses",
+      "type": "array"
+    },
+    "caveats": {
+      "items": {
+        "$ref": "#/$defs/Caveat"
+      },
+      "title": "Caveats",
+      "type": "array"
+    },
+    "columns_next": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Columns Next",
+      "type": "integer"
+    },
+    "columns_total": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Columns Total",
+      "type": "integer"
+    },
+    "coverage": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/OutputJson"
+        },
+        "type": "object",
+        "x-aibi-data": true
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "descriptor": {
+      "additionalProperties": {
+        "$ref": "#/$defs/OutputJson"
+      },
+      "title": "Descriptor",
+      "type": "object",
+      "x-aibi-data": true
+    },
+    "disclosure": {
+      "$ref": "#/$defs/DisclosureOut"
+    },
+    "endpoints": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/OutputJson"
+        },
+        "type": "object",
+        "x-aibi-data": true
+      },
+      "title": "Endpoints",
+      "type": "array"
+    },
+    "graph": {
+      "$ref": "#/$defs/TableGraph"
+    },
+    "relationships": {
+      "items": {
+        "additionalProperties": {
+          "$ref": "#/$defs/OutputJson"
+        },
+        "type": "object",
+        "x-aibi-data": true
+      },
+      "title": "Relationships",
+      "type": "array"
+    },
+    "release": {
+      "$ref": "#/$defs/ReleaseOut"
+    },
+    "tables": {
+      "items": {
+        "$ref": "#/$defs/TableOut"
+      },
+      "title": "Tables",
+      "type": "array"
+    }
+  },
+  "required": [
+    "dataset",
+    "release",
+    "disclosure",
+    "descriptor",
+    "tables",
+    "relationships",
+    "coverage",
+    "endpoints",
+    "graph",
+    "applicable_analyses",
+    "caveats",
+    "columns_total"
+  ],
+  "title": "DatasetDescription",
+  "type": "object"
+}

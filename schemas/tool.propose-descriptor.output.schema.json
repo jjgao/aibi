@@ -1,0 +1,48 @@
+{
+  "$id": "tool.propose-descriptor.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "by": {
+      "pattern": "^(?:(?:operator|agent):[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,200}|model:[a-z][a-z0-9_]{0,63}|importer:[A-Za-z0-9_.-]{1,200}@[A-Za-z0-9_.+-]{1,200})$",
+      "title": "By",
+      "type": "string",
+      "x-aibi-data": true
+    },
+    "dataset": {
+      "maxLength": 64,
+      "not": {
+        "pattern": "__"
+      },
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "label": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "title": "Label",
+      "type": "integer"
+    },
+    "proposal": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "title": "Proposal",
+      "type": "integer"
+    },
+    "release": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Release",
+      "type": "string"
+    }
+  },
+  "required": [
+    "dataset",
+    "proposal",
+    "release",
+    "label",
+    "by"
+  ],
+  "title": "Proposed",
+  "type": "object"
+}

@@ -21,6 +21,24 @@
       "title": "DataSegment",
       "type": "object"
     },
+    "NotEstimableReason": {
+      "enum": [
+        "no_units",
+        "no_events",
+        "zero_denominator",
+        "zero_variance",
+        "not_reached",
+        "beyond_follow_up",
+        "separation",
+        "not_converged",
+        "degenerate_table",
+        "overlapping_cohorts",
+        "confounded_with_dataset",
+        "suppressed"
+      ],
+      "title": "NotEstimableReason",
+      "type": "string"
+    },
     "OutputJson": {
       "anyOf": [
         {
@@ -124,13 +142,82 @@
     },
     "QueueNote": {
       "additionalProperties": false,
-      "description": "A note of the import report (D231): counts and row references, never cell values.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          },
+          "then": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "not_estimable": {
+                "required": [
+                  "/count"
+                ]
+              }
+            },
+            "required": [
+              "not_estimable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "count"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "not_estimable": {
+              "propertyNames": {
+                "enum": [
+                  "/count"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "A note of the import report (D231): counts and row references, never cell values.\n\nThe ``curation_queue`` tool gives each count its reference, and a count the disclosure\nsettings suppress is ``null``, its reason in ``not_estimable``, and lists no rows (D277); the\noperator's queue gives the counts as they are, without references.",
       "properties": {
         "count": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "title": "Count",
-          "type": "integer"
+          "x-aibi-computed": true
         },
         "kind": {
           "enum": [
@@ -158,6 +245,27 @@
           },
           "title": "Message",
           "type": "array"
+        },
+        "not_estimable": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^(?:/(?:[^~/]|~[01])*)+$": {
+              "$ref": "#/$defs/NotEstimableReason"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "x-aibi-data": true
+          },
+          "title": "Not Estimable",
+          "type": "object"
+        },
+        "reference": {
+          "pattern": "^stat:(sha256:[0-9a-f]{64})/(dataset|[a-z][a-z0-9_]{0,63}|[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}|rel:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|cov:[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}(?:\\+[a-z][a-z0-9_]{0,63})*|ep:[a-z][a-z0-9_]{0,63})((?:/[^/?#]*)*)(?:\\?floor=([1-9][0-9]{0,15}))?$",
+          "title": "Reference",
+          "type": "string",
+          "x-aibi-data": true
         },
         "rows": {
           "items": {
