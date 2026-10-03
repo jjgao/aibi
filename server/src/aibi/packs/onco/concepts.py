@@ -100,19 +100,24 @@ MUTATION_CLASSES = PermissibleValues(
         _value("De_novo_Start_OutOfFrame", "De novo start, out of frame"),
         _value("Silent", "Silent", _so("SO:0001819", "synonymous_variant")),
         _value("Intron", "Intron", _so("SO:0001627", "intron_variant", "broader")),
-        _value("3'UTR", "3' UTR", _so("SO:0001624", "3_prime_UTR_variant")),
+        _value("3'UTR", "3' UTR", _so("SO:0001624", "3_prime_UTR_variant", "broader")),
         _value("3'Flank", "3' flank", _so("SO:0001632", "downstream_gene_variant")),
-        _value("5'UTR", "5' UTR", _so("SO:0001623", "5_prime_UTR_variant")),
+        _value("5'UTR", "5' UTR", _so("SO:0001623", "5_prime_UTR_variant", "broader")),
         _value("5'Flank", "5' flank", _so("SO:0001631", "upstream_gene_variant")),
         _value("IGR", "Intergenic", _so("SO:0001628", "intergenic_variant", "broader")),
         _value(
-            # Broader, and not exact: vcf2maf also puts the generic ``exon_variant`` here,
-            # which is not under ``non_coding_transcript_variant``.
+            # Broader, and not exact: MAF's RNA is mature non-coding RNA, so it leaves out the
+            # introns of non-coding transcripts (``non_coding_transcript_intron_variant``), which
+            # are Intron.
             "RNA",
             "Non-coding RNA",
             _so("SO:0001619", "non_coding_transcript_variant", "broader"),
         ),
-        _value("Splice_Region", "Splice region", _so("SO:0001630", "splice_region_variant")),
+        _value(
+            "Splice_Region",
+            "Splice region",
+            _so("SO:0001630", "splice_region_variant", "related"),
+        ),
         _value("Fusion", "Fusion", _so("SO:0001565", "gene_fusion")),
         _value("Unknown", "Unknown"),
     ]
@@ -120,11 +125,22 @@ MUTATION_CLASSES = PermissibleValues(
 """cBioPortal's ``VARIANT_CLASSIFICATION_VALUES``: the MAF specification's twelve classes, the
 eight cBioPortal skips by default, ``Splice_Region``, ``Fusion`` and ``Unknown``.
 
-The classes are disjoint (a call has one), so a citation's ``relation`` must not make one class
-a part of another: ``exact`` only where no other class cites a term below it. ``Intron`` and
-``IGR`` are ``broader`` (``intron_variant`` includes the splice sites and ``intergenic_variant``
-the flanks), and ``Splice_Site`` is ``related`` (MAF's class includes
-exonic bases near a splice site, which SO calls ``splice_region_variant``)."""
+The classes are disjoint (a call has one), so a citation's ``relation`` is judged against what
+the class holds, by the MAF specification's definition of it, or vcf2maf's for a class only
+vcf2maf defines:
+
+- ``exact`` only where the term holds the class's calls and no other class's, and shares no
+  descendant with another class's term (SO is a graph, so two terms can share one);
+- ``broader`` where the term holds all of the class's calls and more: ``Intron`` (``intron_variant``
+  includes the splice sites), ``IGR`` (``intergenic_variant`` includes the flanks), ``3'UTR`` and
+  ``5'UTR`` (a UTR's introns are ``Intron`` in MAF) and ``RNA`` (its non-coding introns are
+  ``Intron``);
+- ``related`` otherwise: ``Splice_Site`` (MAF's class includes exonic bases near a splice site,
+  which SO calls ``splice_region_variant``) and ``Splice_Region`` (vcf2maf puts in it the donor's
+  fifth base, which SO calls a splice site, and the polypyrimidine tract).
+
+``tests/packs/onco/test_contract.py`` holds each citation to this, against the terms below each
+cited term in ``so.obo`` and what vcf2maf and MAF put in each class."""
 
 CNA_LEVELS = PermissibleValues(
     values=[

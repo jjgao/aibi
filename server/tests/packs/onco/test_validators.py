@@ -12,7 +12,8 @@ grammar, written here from the plan, never from the validators' code.
 - **Exactness:** anything but an exact ``str``, a subclass included, is refused before anything
   of it is read.
 - **The harness:** each of these is shown to find a disagreement, with a validator that is wrong
-  where the sweep and the property must look, so that none can pass for want of looking.
+  where the sweep and the property must look, so that none can pass for want of looking; the
+  property's body is the helper the harness calls.
 """
 
 import re
@@ -235,6 +236,15 @@ def test_the_property_draws_lone_surrogates_and_accepted_codes(validators: Valid
         assert validate(find(CODES, validate, settings=quick)), system
 
 
+def _disagreeing_system(validators: Validators, code: str) -> str | None:
+    """The first system whose validator and oracle differ on ``code``, or ``None``: the property's
+    whole body, which its harness below calls as well."""
+    for system, validate in validators.items():
+        if _disagrees(validate, system, code):
+            return system
+    return None
+
+
 @settings(
     max_examples=3_000,
     database=None,
@@ -242,8 +252,7 @@ def test_the_property_draws_lone_surrogates_and_accepted_codes(validators: Valid
 )
 @given(CODES)
 def test_any_text_gives_what_the_oracle_gives(validators: Validators, code: str) -> None:
-    for system, validate in validators.items():
-        assert not _disagrees(validate, system, code), system
+    assert _disagreeing_system(validators, code) is None
 
 
 # --- The harness finds a disagreement ----------------------------------------------------------
@@ -283,6 +292,26 @@ def test_the_property_finds_a_wrong_validator(system: str) -> None:
     for wrong in wrongs:
         found = find(CODES, partial(_disagrees, wrong, system), settings=quick)
         assert _disagrees(wrong, system, found)
+
+
+@pytest.mark.parametrize("point", [0x41, 0xD800, 0x10FFFF])
+@pytest.mark.parametrize("system", sorted(ORACLES))
+def test_the_propertys_body_finds_a_validator_wrong_at_one_interior_code_point(
+    system: str, point: int
+) -> None:
+    """The oracle's own validators agree everywhere; one made wrong at the one interior code
+    ``special`` is named by the body the property runs, and at no other code."""
+    right: Validators = {
+        name: partial(lambda oracle, code: oracle.fullmatch(code) is not None, oracle)
+        for name, oracle in ORACLES.items()
+    }
+    before, after = INTERIOR[system].split("{}")
+    special = before + chr(point) + after
+    wrong = {**right, system: _wrong_at(ORACLES[system], INTERIOR[system], point)}
+    assert _disagreeing_system(right, special) is None
+    assert _disagreeing_system(wrong, special) == system
+    for other in ("", before, special + "0"):
+        assert _disagreeing_system(wrong, other) is None, other
 
 
 # --- Named cases: the plan's choices ------------------------------------------------------------
@@ -406,15 +435,20 @@ def test_a_text_past_the_forms_length_is_refused_before_it_is_copied(
 ) -> None:
     """The length is checked first: no slice, scan or copy of a huge text is made."""
     texts = [start + "0" * 10_000_000 for start in LONG[system]]
+    was_tracing = tracemalloc.is_tracing()
     for text in texts:
-        tracemalloc.start()
+        if not was_tracing:
+            tracemalloc.start()
         try:
+            tracemalloc.reset_peak()
+            before, _ = tracemalloc.get_traced_memory()
             accepted = validators[system](text)
             _, peak = tracemalloc.get_traced_memory()
         finally:
-            tracemalloc.stop()
+            if not was_tracing:
+                tracemalloc.stop()
         assert accepted is False
-        assert peak < 100_000, (system, text[:12], peak)
+        assert peak - before < 100_000, (system, text[:12], peak - before)
 
 
 # --- Exactness ----------------------------------------------------------------------------------
