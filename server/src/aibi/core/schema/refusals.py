@@ -11,12 +11,13 @@ sits (``holds_token_of``), which only the token itself matches.
 """
 
 import hashlib
+import heapq
 import hmac
 import re
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import Field
 
@@ -313,21 +314,101 @@ def sort_refusals(refusals: list[Refusal]) -> list[Refusal]:
     return sorted(refusals, key=lambda refusal: (refusal.path or "", refusal.code))
 
 
+LEFT_OUT = "{} more refusals were left out"
+"""The message of the refusal that ends a finished list cut at ``MAX_REFUSALS`` (§8.6)."""
+_LEFT_OUT_RE = re.compile(r"([0-9]+) more refusals were left out")
+
+
+def left_out(count: int) -> Refusal:
+    """The refusal that ends a finished list of which ``count`` more refusals were left out."""
+    return Refusal(
+        code=RefusalCode.LIMIT_EXCEEDED,
+        path=None,
+        message=[text(LEFT_OUT.format(count))],
+        limit=Limit(name=REFUSALS, max=MAX_REFUSALS),
+    )
+
+
+def _left_out(refusal: Refusal) -> int | None:
+    """How many refusals an earlier finish left out, if ``refusal`` is the one that says so:
+    only the core names a limit (a pack's refusal never does), and only ``left_out`` names
+    this one."""
+    limit = refusal.limit
+    if (
+        refusal.code != RefusalCode.LIMIT_EXCEEDED
+        or refusal.path is not None
+        or limit is None
+        or limit.name != REFUSALS
+        or len(refusal.message) != 1
+        or isinstance(refusal.message[0], DataSegment)
+    ):
+        return None
+    found = _LEFT_OUT_RE.fullmatch(refusal.message[0].text)
+    return None if found is None else int(found[1])
+
+
 def finish_refusals(refusals: list[Refusal]) -> list[Refusal]:
     """Refusals as they are returned (§8.6): the first of each (path, code), sorted, and at most
-    ``MAX_REFUSALS``, then one that says how many more were found."""
+    ``MAX_REFUSALS``, then one that says how many more were found. A list finished before (its
+    paths rewritten, or joined with others) is finished again alike: the count its last refusal
+    gives is added to this one's, so that one refusal, last, says how many were left out: exactly
+    for one finished list finished again, and for lists joined the sum of theirs and of the
+    refusals left out of the join, which counts twice a refusal that one list left out and
+    another holds (shown or left out): an upper bound, exact when no list holds a refusal
+    another left out."""
     kept: dict[tuple[str | None, str], Refusal] = {}
+    earlier = 0
     for refusal in refusals:
+        count = _left_out(refusal)
+        if count is not None:
+            earlier += count
+            continue
         kept.setdefault((refusal.path, str(refusal.code)), refusal)
     ordered = sort_refusals(list(kept.values()))
-    if len(ordered) <= MAX_REFUSALS:
+    more = earlier + max(len(ordered) - MAX_REFUSALS, 0)
+    if not more:
         return ordered
-    return [
-        *ordered[:MAX_REFUSALS],
-        Refusal(
-            code=RefusalCode.LIMIT_EXCEEDED,
-            path=None,
-            message=[text(f"{len(ordered) - MAX_REFUSALS} more refusals were left out")],
-            limit=Limit(name=REFUSALS, max=MAX_REFUSALS),
-        ),
+    return [*ordered[:MAX_REFUSALS], left_out(more)]
+
+
+type Record = tuple[str | None, str, Callable[..., Refusal], tuple[Any, ...]]
+"""A refusal found and not yet built (``finish_lazy``): its pointer, its code, and the function
+that builds it, called with the code, the pointer and the arguments that follow."""
+
+
+def said(code: str, at: str | None, *parts: str) -> Refusal:
+    """The refusal whose message is ``parts``, text and data in turn, from text: a builder for
+    a ``Record``."""
+    message = [
+        text(part) if position % 2 == 0 else data(part) for position, part in enumerate(parts)
     ]
+    return Refusal(code=code, path=at, message=message)
+
+
+def built(record: Record) -> Refusal:
+    """The refusal a record stands for."""
+    at, code, build, arguments = record
+    return build(code, at, *arguments)
+
+
+def finish_lazy(records: Iterable[Record]) -> list[Refusal]:
+    """``finish_refusals`` of the refusals ``records`` stand for, in the same order, building
+    only those it returns: the first of each (pointer, code), the ``MAX_REFUSALS`` first by
+    (pointer, code) in a stable order, then one that says how many more were found. So a write
+    that names a million refused references builds a thousand refusals, not a million."""
+    kept: dict[tuple[str | None, str], Record] = {}
+    for record in records:
+        kept.setdefault((record[0], record[1]), record)
+    order: list[Record] = (
+        heapq.nsmallest(MAX_REFUSALS, kept.values(), key=_record_order)
+        if len(kept) > MAX_REFUSALS
+        else sorted(kept.values(), key=_record_order)
+    )
+    found = [built(record) for record in order]
+    if len(kept) > MAX_REFUSALS:
+        found.append(left_out(len(kept) - MAX_REFUSALS))
+    return found
+
+
+def _record_order(record: Record) -> tuple[str, str]:
+    return (record[0] or "", record[1])
