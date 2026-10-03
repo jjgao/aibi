@@ -1,15 +1,18 @@
 """``aibi-server``: run the server, check its configuration, and make curator tokens (SPEC §11.2,
 §14, D253, D254, D261, D268).
 
-- ``serve`` reads the configuration (``--config`` or ``AIBI_CONFIG``), sets the umask to 077 (the
-  data files hold datasets, and only the server's user needs them), opens the store, which refuses
-  while another process has it open (D221) or its app DB has pages of another size than the
-  derivation log charges (D300), exiting with 1 and a message, and prunes the derivation log's
-  expired ``count_cohort`` issuances (``[log]``, D300), and runs uvicorn until it is stopped.
-- ``check`` reads the configuration and prints what it resolves to: the bind, the hosts and
-  origins allowed, the directories and the limits, and that ``count_cohort`` is disabled on a
-  system without the query workers' ``/proc`` (which ``serve`` writes to standard error too);
-  never the token's hash.
+- ``serve`` reads the configuration (``--config`` or ``AIBI_CONFIG``), installs the packs it
+  names (``api.packs``, D389), exiting with 2 and every problem if any module fails, sets the
+  umask to 077 (the data files hold datasets, and only the server's user needs them), opens the
+  store, which refuses while another process has it open (D221) or its app DB has pages of
+  another size than the derivation log charges (D300), exiting with 1 and a message, and prunes
+  the derivation log's expired ``count_cohort`` issuances (``[log]``, D300), and runs uvicorn
+  until it is stopped.
+- ``check`` reads the configuration, installs its packs as ``serve`` does, and prints what it
+  resolves to: the bind, the hosts and origins allowed, the directories and the limits, that
+  ``count_cohort`` is disabled on a system without the query workers' ``/proc`` (which ``serve``
+  writes to standard error too), and the installed packs (which ``serve`` writes to standard
+  error); never the token's hash.
 - ``new-token`` makes a curator token and prints it, once, with the hash the configuration holds.
 - ``hash-token`` reads a token from standard input, or a prompt that does not echo on a terminal,
   and prints its hash; a token is never an argument.
@@ -21,8 +24,13 @@ its concurrency limit, its h11 protocol guarded by a deadline for each request's
 on each client's connections (``api.connections``), and TLS when configured. Its logs leave
 query strings out and blank anything of a token's or a handle's shape, as written or
 percent-decoded (``api.logs``), so that nothing a client puts in a URL or a body by mistake, a
-token say, reaches a log. Until packs are loaded by configuration (M4), the server registers
-none.
+token say, reaches a log.
+
+The packs are installed before ``run`` sets the umask, so that a module's own umask at import is
+undone, and before the store is opened, so that a failed start takes no lock. A passed
+``KeyboardInterrupt`` exits with 130 ("interrupted") and a passed ``MemoryError`` with 1, each
+with a line of the core's and no traceback (D389). ``services_of`` and ``tools_of`` are given
+that one registry.
 """
 
 import argparse
@@ -40,7 +48,7 @@ import uvicorn.config
 from starlette.types import ASGIApp
 
 import aibi
-from aibi.core.api import logs
+from aibi.core.api import logs, packs
 from aibi.core.api.app import create_app
 from aibi.core.api.config import ConfigError, ServerConfig, load_config
 from aibi.core.api.connections import guarded_protocol
@@ -165,11 +173,15 @@ def uvicorn_config(
     return built
 
 
-def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
-    """Serve until stopped; 1 if another process has the store open, or its app DB has pages
-    of another size than the derivation log's accounting charges (``PageSizeError``, D300),
-    whose message is written to standard error."""
+def run(
+    config: ServerConfig, *, registry: PackRegistry | None = None, stderr: TextIO | None = None
+) -> int:
+    """Serve until stopped, with the packs of ``registry`` (``packs.registry_of``; none if
+    ``None``); 1 if another process has the store open, or its app DB has pages of another size
+    than the derivation log's accounting charges (``PageSizeError``, D300), whose message is
+    written to standard error."""
     err = sys.stderr if stderr is None else stderr
+    installed = PackRegistry((), core_version=aibi.__version__) if registry is None else registry
     previous = os.umask(0o077)
     try:
         try:
@@ -184,11 +196,10 @@ def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
             store.results.purge(config.disclosure.min_cell_count_floor)
             if workers_of(config) is None:
                 err.write(f"aibi-server: {NO_WORKERS}\n")
-            registry = PackRegistry((), core_version=aibi.__version__)
             app = create_app(
                 Policy.of(config),
-                services_of(config, store, registry),
-                tools=tools_of(config, store, registry),
+                services_of(config, store, installed),
+                tools=tools_of(config, store, installed),
             )
             logging_config = logs.logging_config(copy.deepcopy(uvicorn.config.LOGGING_CONFIG))
             uvicorn.Server(uvicorn_config(config, app, logging_config=logging_config)).run()
@@ -199,8 +210,14 @@ def run(config: ServerConfig, *, stderr: TextIO | None = None) -> int:
         os.umask(previous)
 
 
-def check(config: ServerConfig) -> list[str]:
-    """What the configuration resolves to, without the token's hash."""
+def installed_packs(registry: PackRegistry) -> list[str]:
+    """The installed packs, as ``check`` prints them and ``serve`` writes them."""
+    return [f"pack: {line}" for line in packs.listing(registry)] or ["packs: none"]
+
+
+def check(config: ServerConfig, registry: PackRegistry | None = None) -> list[str]:
+    """What the configuration resolves to, without the token's hash, and with ``registry`` the
+    packs installed."""
     server = config.server
     policy = Policy.of(config, csrf_key=bytes(32))
     lines = [
@@ -251,6 +268,8 @@ def check(config: ServerConfig) -> list[str]:
         for name, found in config.databases.items()
     ]
     lines += [f"model card: {card.id}" for card in config.models]
+    if registry is not None:
+        lines += installed_packs(registry)
     return lines
 
 
@@ -311,10 +330,21 @@ def main(
         err.write("aibi-server: the configuration is refused:\n")
         err.writelines(f"  {problem}\n" for problem in error.problems)
         return 2
+    try:
+        registry = packs.registry_of(config, err)
+    except KeyboardInterrupt:
+        err.write("aibi-server: interrupted\n")
+        return 130
+    except MemoryError:
+        err.write("aibi-server: out of memory while loading packs\n")
+        return 1
+    if registry is None:
+        return 2
     if args.command == "check":
-        out.writelines(line + "\n" for line in check(config))
+        out.writelines(line + "\n" for line in check(config, registry))
         return 0
-    return run(config, stderr=err)
+    err.writelines(f"aibi-server: {line}\n" for line in installed_packs(registry))
+    return run(config, registry=registry, stderr=err)
 
 
 __all__ = [
@@ -323,6 +353,7 @@ __all__ = [
     "Proposals",
     "WithoutSecrets",
     "check",
+    "installed_packs",
     "main",
     "run",
     "services_of",

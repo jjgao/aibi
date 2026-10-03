@@ -120,6 +120,10 @@ inside a guard per member (`schema/guards.PASSED`), and its hook objects by iden
 again (D387). From M4.0c-1b-i, it hands out handles (`schema/guards.Hook`), and every call of a
 pack's code is `hook.call(lambda h: COPIER(...))`, one copier of `schema/copiers.COPIERS`, with
 views per call or per pack in an operation (`resolve.Operation`), held by `test_pack_calls` (D388).
+From M4.0c-2, `core/api/packs.py` installs the packs `[packs] modules` names (D389): each module
+imported and its `PACK` read in a guard of its own, quietly (warnings counted, logs filtered,
+a record a handler cannot write one line of the core's, `logs.Quiet`), DuckDB refused by a
+`sys.meta_path` finder, and one registry labelled by module, any failure exiting with 2.
 
 ## Non-negotiables
 
