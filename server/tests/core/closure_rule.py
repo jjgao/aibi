@@ -283,6 +283,11 @@ READS: dict[tuple[str, str, str], str] = {
         "reads that a model a pack built holds no private members, before it is validated again; "
         "nothing is made from it"
     ),
+    ("core/api/packs.py", "_read_pack", "vars"): (
+        "reads the namespace of a module a pack's code imported, only when the module is exactly a "
+        "ModuleType, so that no code of the module's runs; only its PACK is read from it, which "
+        "must be exactly a Pack, and no model, no output and no server text is made from it"
+    ),
     ("core/schema/guards.py", "<module>", "vars"): (
         "reads the built-in exceptions' names, from the module builtins: no output, no object of "
         "a pack's"
@@ -352,7 +357,13 @@ NAMED: dict[tuple[str, str], str] = {
 """The functions that read an attribute by a name that is not a constant (``getattr(x, name)``),
 by file and enclosing function, each with why."""
 
-IMPORTS: dict[tuple[str, str], str] = {}
+IMPORTS: dict[tuple[str, str], str] = {
+    ("core/api/packs.py", "_imported"): (
+        "imports the module the operator's configuration names, which the configuration's "
+        "validator has held to ASCII dotted names, not under aibi.core, so that the name is "
+        "never the output module's and never comes from data (D404)"
+    ),
+}
 """The functions that import a module by a name they are given (``importlib.import_module``), by
 file and enclosing function, each with why: a name from data would reach the output module."""
 
