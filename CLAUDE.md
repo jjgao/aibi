@@ -38,15 +38,17 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   result envelopes, charts, disclosure of predicate counts, and the analyses: `compare.existence`,
   `summary.distribution`, `summary.members`, `compare.columns`, `survival.km`, `survival.cox` and a
   pack's analyses (`packs.py`). Their statistical methods (`stats.py`, `timetoevent.py`, `coxfit.py`,
-  `coxph.py`, `cone.py`, `ieee.py`) are held to R.
+  `coxph.py`, `cone.py`, `cox.py`) are held to R, with `ieee.py` doing their arithmetic as C does.
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.
 
 Disclosure under *k* (§8.4) is per analysis and per form: `registry.CoreAnalysis` states the class and
-`withheld_forms` the forms withheld under any *k*. Row counts and category memberships (`count:
-"rows"`, `each: "category"`) have their own rules (`disclosure.membership_shown`, D383, D384); read
-`core/analyses/disclosure.py` and `distribution.py` before touching either.
+`withheld_forms` the forms withheld under any *k*. Row counts (`count: "rows"`) are withheld under
+any *k* (D379: `registry.withheld_form`, `views._withheld_form`). Category memberships (`each:
+"category"`) are disclosed under *k* only on a list or one open down step from the unit (D383, D384:
+`disclosure.membership_shown`, `resolve.open_path`, `resolve.GATE_CHECKS`), and are otherwise
+withheld (`distribution.withheld_under_k`). Read those before touching either.
 
 ## Non-negotiables
 
@@ -118,26 +120,16 @@ uv run pytest tests/core/determinism -m million  # a million rows: about 5 minut
 `addopts` deselects the `million` tests, so without `-m million` that directory selects nothing
 (pytest exits 5).
 
-Keep command output out of the context. For a green check, run quietly and read only the end:
-`uv run pytest -q --tb=short 2>&1 | tail -n 30`, and `uv run ruff check --quiet .`. When a run fails,
-rerun just the failing test (`uv run pytest path::test -x --tb=short`) rather than the suite, and
-never `cat` a log or a large file: grep it or read the lines you need. Run a long or noisy job
-(the `million` tests, a full-suite survey) in a subagent, or in the background to a file in the
-scratchpad, and read its tail.
-
-Run a server and operate it (see `server/aibi.example.toml`):
-
-```bash
-uv run aibi-server new-token                        # a curator token, and the hash to configure
-uv run aibi-server serve --config aibi.toml
-AIBI_TOKEN=… AIBI_OPERATOR="Your Name" uv run aibi status
-```
-
-After changing a model in `core/schema/`, regenerate the checked-in JSON Schemas with
-`uv run python -m aibi.core.schema.export ../schemas`; a test fails while they are stale.
-
-Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
-OpenAPI schema, not written by hand.
+Keep command output out of the context. Run each gate above quietly and read only the end, keeping
+pytest's exit status (a pipe to `tail` would hide it):
+`set -o pipefail; uv run pytest -q --tb=short tests/core 2>&1 | tail -n 30`, and
+`uv run ruff check --quiet .`. The full `uv run pytest` takes long enough to run in the
+background, to a file in the scratchpad (`… > $SCRATCH/pytest.log 2>&1`), whose tail you then read;
+`tail` writes nothing until the command ends, so a pipe into it loses everything if the command
+is killed. When a run fails, rerun just the failing test (`uv run pytest path::test -x --tb=short`,
+with `-m million` for a determinism test, which `addopts` otherwise deselects even by node id)
+rather than the suite, and never `cat` a log or a large file: grep it or read the lines you need.
+Run a noisy job (the `million` tests, a survey) in a subagent, or in the background to a file.
 
 ## Working on issues
 
@@ -154,12 +146,12 @@ OpenAPI schema, not written by hand.
   (and, for the reviewer and the surveyor, "edit nothing tracked") holds by instruction. The
   main thread therefore records `git ls-remote origin refs/heads/<branch>` before delegating,
   checks it is unchanged and reviews every result before anything is pushed.
-- Session hygiene (autonomous runs): one issue per session, and pass file paths and the SPEC
-  sections in the prompt so they are read once. Pick the model and effort at the start; changing
-  either mid-session breaks the prompt cache. Check `/context` in a fresh session and turn off
-  connectors the work doesn't use (Slack, Docs and the like). Don't paste a file or a log into the
-  conversation twice. Before a long break, `/compact` while the cache is warm (it expires after an
-  hour); between issues, `/rename` then `/clear`.
+- Session hygiene: one issue per session. In a delegation prompt, name the files and the SPEC
+  sections the subagent should read, so they are read once; don't paste a file or a log into the
+  conversation twice. For the operator who starts the session (the agent can't do these): pick the
+  model and effort before the first turn, since changing either mid-session breaks the prompt
+  cache; check `/context` in a fresh session and turn off connectors the work doesn't use; before
+  a long break `/compact` while the cache is warm; between issues `/rename`, then `/clear`.
 - Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
   parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
   parent's branch is deleted), replay only the child's own commits onto `main` with
