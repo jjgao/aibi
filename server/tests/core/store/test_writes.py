@@ -173,7 +173,11 @@ def test_a_failed_ontology_system_disables_only_itself_and_blames_only_its_pack(
         ({"$dynamicRef": "https://example.org/schema.json"}, "not local"),
         (
             {"properties": {"mark": {"$schema": "http://json-schema.org/draft-04/schema#"}}},
-            "a subschema declares a dialect",
+            r"a subschema declares a \$schema, which v1 does not use",
+        ),
+        (
+            {"properties": {"mark": {"$schema": "https://json-schema.org/draft/2020-12/schema"}}},
+            r"a subschema declares a \$schema, which v1 does not use",
         ),
         ({"$ref": "#"}, "refers to itself"),
         (
@@ -196,7 +200,7 @@ def test_a_failed_ontology_system_disables_only_itself_and_blames_only_its_pack(
                     "x": {"$id": "https://example.org/x", "properties": {"a": {"$ref": "#/y"}}}
                 }
             },
-            "resolves to nothing",
+            r"a subschema declares an \$id, which v1 does not use",
         ),
         ({"properties": {"mark": {"type": "string", "pattern": "^(a+)+$"}}}, "pattern"),
         ({"patternProperties": {"^m": {"type": "string"}}}, "patternProperties"),
@@ -212,7 +216,11 @@ def test_a_failed_ontology_system_disables_only_itself_and_blames_only_its_pack(
                 "properties": {"a": {"$ref": "#/x"}},
                 "x": {"$schema": "http://json-schema.org/draft-04/schema#", "type": "string"},
             },
-            "a subschema declares a dialect",
+            r"a subschema declares a \$schema, which v1 does not use",
+        ),
+        (
+            {"properties": {"a": {"$ref": "#/x"}}, "x": {"$id": "https://example.org/x"}},
+            r"a subschema declares an \$id, which v1 does not use",
         ),
         ({"properties": {"a": {"$ref": "#/x"}}, "x": {"$ref": "#/nope"}}, "resolves to nothing"),
         ({"properties": {"a": {"$ref": "#/x"}}, "x": [1]}, "not a schema"),

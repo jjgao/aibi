@@ -11,6 +11,7 @@ name = "aibi"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "attrs" },
     { name = "duckdb" },
     { name = "duckdb-extension-mysql-scanner" },
     { name = "duckdb-extension-postgres-scanner" },
@@ -38,6 +39,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "attrs", specifier = ">=22.2" },
     { name = "duckdb", specifier = ">=1.5.5,<1.6" },
     { name = "duckdb-extension-mysql-scanner", specifier = "==1.5.5" },
     { name = "duckdb-extension-postgres-scanner", specifier = "==1.5.5" },
