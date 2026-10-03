@@ -121,10 +121,12 @@ def test_the_profiles_are_sorted_whatever_the_order_they_were_declared_in(
         assert found == {"onco.profiles": tuple(ordered)}
 
 
+@pytest.mark.parametrize("stable_id", ["study_mutations", *PROFILES])
 def test_a_stable_id_without_a_meta_is_no_profile(
-    registry: PackRegistry, extended: Extended
+    registry: PackRegistry, extended: Extended, stable_id: str
 ) -> None:
-    table = extended(build.table("t", key=["k"]), {"stable_id": "study_mutations"})
+    """Even a stable id that spells a profile's pair: only ``meta`` names a table's profile."""
+    table = extended(build.table("t", key=["k"]), {"stable_id": stable_id})
     descriptors = [extended(build.dataset(packs=["onco"]), {"reference_genome": "hg19"})]
     descriptors += [table, build.column("t.k", "string")]
     assert _facets(registry, descriptors) == {"onco.reference_genome": ("hg19",)}
