@@ -429,26 +429,58 @@ LONG = {
 """Where each form's text begins, in the texts below that are 10 million characters long."""
 
 
+def _growth(check: Callable[[str], bool], text: str) -> tuple[bool, int]:
+    """Whether ``check`` accepts ``text``, and by how much memory it grew above where it began.
+
+    Tracing is started for the call if it is not on, and left as it was found."""
+    was_tracing = tracemalloc.is_tracing()
+    if not was_tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        before, _ = tracemalloc.get_traced_memory()
+        accepted = check(text)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not was_tracing:
+            tracemalloc.stop()
+    return accepted, peak - before
+
+
 @pytest.mark.parametrize("system", sorted(LONG))
 def test_a_text_past_the_forms_length_is_refused_before_it_is_copied(
     validators: Validators, system: str
 ) -> None:
     """The length is checked first: no slice, scan or copy of a huge text is made."""
-    texts = [start + "0" * 10_000_000 for start in LONG[system]]
-    was_tracing = tracemalloc.is_tracing()
-    for text in texts:
-        if not was_tracing:
-            tracemalloc.start()
-        try:
-            tracemalloc.reset_peak()
-            before, _ = tracemalloc.get_traced_memory()
-            accepted = validators[system](text)
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            if not was_tracing:
-                tracemalloc.stop()
+    for start in LONG[system]:
+        text = start + "0" * 10_000_000
+        accepted, grown = _growth(validators[system], text)
         assert accepted is False
-        assert peak - before < 100_000, (system, text[:12], peak - before)
+        assert grown < 100_000, (system, text[:12], grown)
+
+
+def test_the_growth_is_measured_from_where_the_call_began() -> None:
+    """With tracing already on, an earlier peak and what is held at the start are not the call's:
+    two megabytes allocated and freed, and one kept, leave a call that allocates nothing at 0."""
+    was_tracing = tracemalloc.is_tracing()
+    if not was_tracing:
+        tracemalloc.start()
+    try:
+        freed = bytearray(2_000_000)
+        del freed
+        kept = bytearray(1_000_000)
+        accepted, grown = _growth(lambda text: text == "", "")
+        assert tracemalloc.is_tracing()
+        assert accepted is True
+        assert 0 <= grown < 100_000
+        assert len(kept) == 1_000_000
+        accepted, grown = _growth(lambda text: len(bytearray(2_000_000)) > len(text), "")
+        assert accepted is True
+        assert grown >= 1_000_000
+    finally:
+        if not was_tracing:
+            tracemalloc.stop()
+    assert tracemalloc.is_tracing() is was_tracing
 
 
 # --- Exactness ----------------------------------------------------------------------------------

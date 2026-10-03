@@ -4,12 +4,16 @@ its extension schemas' members. Concept ids are added, never renamed or removed,
 any of this is made here on purpose, with a pack version bump; a golden that fails is the point.
 
 The citations were checked against the Sequence Ontology's ``so.obo`` (data-version 2026-08-07):
-each code names the term given and none is obsolete. Each relation is held to what the classes
-contain (``_violations``): the terms below each cited term in ``so.obo`` (``DOWN``, and the
-``SO_IS_A`` edges it is held to), and the terms ``vcf2maf.pl`` and MAF put in each class
-(``VCF2MAF``, ``MAF_FACTS``, with ``FALLBACKS`` for vcf2maf's generic calls). That is a check of
-what is written down here, no more complete than those lists: a fact about a class that none of
-them states is not found. NCIt could not be reached, so no value cites it.
+each code names the term given and none is obsolete. No mutation class cites ``exact`` or
+``narrower`` (a class is the most severe of a call's consequences, not the set of a term's calls),
+and each other relation is held to what vcf2maf files in each class (``_violations``): a ``broader``
+citation holds every term vcf2maf puts in the class (``VCF2MAF``, with ``FALLBACKS`` for its generic
+calls) at or under the cited term (``DOWN``, and the ``SO_IS_A`` edges it is held to), and a
+``related`` one is shown not broader by a term vcf2maf puts in the class outside the cited one. That
+is a check of what is written down here, no more complete than those lists: a fact about a class
+that none of them states is not found. ``derive_contract.py``, which is not run in CI, derives
+``SO_IS_A``, ``DOWN`` and ``VCF2MAF`` again from ``so.obo`` and ``vcf2maf.pl``. NCIt could not be
+reached, so no value cites it.
 """
 
 from types import ModuleType
@@ -114,26 +118,25 @@ labels the pack gives them."""
 CITED = {
     "Frame_Shift_Del": ("SO:0001589", "frameshift_variant", "broader"),
     "Frame_Shift_Ins": ("SO:0001589", "frameshift_variant", "broader"),
-    "In_Frame_Del": ("SO:0001822", "inframe_deletion", "exact"),
-    "In_Frame_Ins": ("SO:0001821", "inframe_insertion", "exact"),
-    "Missense_Mutation": ("SO:0001583", "missense_variant", "exact"),
-    "Nonsense_Mutation": ("SO:0001587", "stop_gained", "exact"),
+    "In_Frame_Del": ("SO:0001822", "inframe_deletion", "broader"),
+    "In_Frame_Ins": ("SO:0001821", "inframe_insertion", "broader"),
+    "Missense_Mutation": ("SO:0001583", "missense_variant", "broader"),
+    "Nonsense_Mutation": ("SO:0001587", "stop_gained", "broader"),
     "Splice_Site": ("SO:0001629", "splice_site_variant", "related"),
-    "Translation_Start_Site": ("SO:0002012", "start_lost", "exact"),
-    "Nonstop_Mutation": ("SO:0001578", "stop_lost", "exact"),
-    "Silent": ("SO:0001819", "synonymous_variant", "exact"),
+    "Translation_Start_Site": ("SO:0001582", "initiator_codon_variant", "broader"),
+    "Nonstop_Mutation": ("SO:0001578", "stop_lost", "broader"),
+    "Silent": ("SO:0001819", "synonymous_variant", "broader"),
     "Intron": ("SO:0001627", "intron_variant", "broader"),
     "3'UTR": ("SO:0001624", "3_prime_UTR_variant", "broader"),
-    "3'Flank": ("SO:0001632", "downstream_gene_variant", "exact"),
+    "3'Flank": ("SO:0001632", "downstream_gene_variant", "broader"),
     "5'UTR": ("SO:0001623", "5_prime_UTR_variant", "broader"),
-    "5'Flank": ("SO:0001631", "upstream_gene_variant", "exact"),
+    "5'Flank": ("SO:0001631", "upstream_gene_variant", "broader"),
     "IGR": ("SO:0001628", "intergenic_variant", "broader"),
     "RNA": ("SO:0001619", "non_coding_transcript_variant", "broader"),
     "Splice_Region": ("SO:0001630", "splice_region_variant", "related"),
-    "Fusion": ("SO:0001565", "gene_fusion", "exact"),
 }
-"""The SO term each mutation class cites; the others (``Targeted_Region``, the two de novo
-starts and ``Unknown``) cite none."""
+"""The SO term each mutation class cites, 18 of them; the others (``Targeted_Region``, the two de
+novo starts, ``Fusion`` and ``Unknown``) cite none."""
 
 SO_IS_A = {
     "SO:0000001": ("SO:0000110",),  # region
@@ -145,7 +148,6 @@ SO_IS_A = {
     "SO:0001536": ("SO:0001060",),  # functional_effect_variant
     "SO:0001537": ("SO:0001060",),  # structural_variant
     "SO:0001564": ("SO:0001878",),  # gene_variant
-    "SO:0001565": ("SO:0001564", "SO:0001882"),  # gene_fusion
     "SO:0001566": ("SO:0001878",),  # regulatory_region_variant
     "SO:0001567": ("SO:0001590", "SO:0001819"),  # stop_retained_variant
     "SO:0001568": ("SO:0001576",),  # splicing_variant
@@ -201,7 +203,6 @@ SO_IS_A = {
     "SO:0001878": ("SO:0001537",),  # feature_variant
     "SO:0001879": ("SO:0001537",),  # feature_ablation
     "SO:0001880": ("SO:0001537",),  # feature_amplification
-    "SO:0001882": ("SO:0001537",),  # feature_fusion
     "SO:0001889": ("SO:0001880",),  # transcript_amplification
     "SO:0001893": ("SO:0001879",),  # transcript_ablation
     "SO:0001906": ("SO:0001878",),  # feature_truncation
@@ -234,8 +235,6 @@ SO_IS_A = {
     "SO:0002074": ("SO:0001628",),  # intergenic_1kb_variant
     "SO:0002083": ("SO:0001632",),  # 2KB_downstream_variant
     "SO:0002084": ("SO:0001630",),  # exonic_splice_region_variant
-    "SO:0002085": ("SO:0001565",),  # unidirectional_gene_fusion
-    "SO:0002086": ("SO:0001565",),  # bidirectional_gene_fusion
     "SO:0002088": ("SO:0001619", "SO:0001630"),  # non_coding_transcript_splice_region_variant
     "SO:0002089": ("SO:0001624",),  # 3_prime_UTR_exon_variant
     "SO:0002090": ("SO:0001624", "SO:0001969"),  # 3_prime_UTR_intron_variant
@@ -260,15 +259,13 @@ SO_IS_A = {
     "SO:0002388": ("SO:0002386",),  # 5_prime_UTR_uORF_stop_codon_gain_variant
     "SO:0002389": ("SO:0002386",),  # 5_prime_UTR_uORF_stop_codon_loss_variant
     "SO:0002398": ("SO:0002008",),  # selenocysteine_gain
-    "SO:0002399": ("SO:0002085",),  # inframe_unidirectional_gene_fusion
-    "SO:0002400": ("SO:0002085",),  # frameshift_unidirectional_gene_fusion
     "SO:0002401": ("SO:0001628",),  # upstream_intergenic_fusion
     "SO:0002402": ("SO:0001628",),  # downstream_intergenic_fusion
     "SO:0005836": ("SO:0000831",),  # regulatory_region
 }
 """The ``is_a`` edges, in ``so.obo`` (data-version 2026-08-07), of each term below and of all its
 ancestors: each term's parents. The terms are the ones the pack cites, their descendants (``DOWN``),
-and the ones a class holds (``VCF2MAF``, ``MAF_FACTS``)."""
+and the ones a class holds (``VCF2MAF``)."""
 
 DOWN = {
     "SO:0001589": (  # frameshift_variant
@@ -311,7 +308,10 @@ DOWN = {
         "SO:0002327",  # splice_acceptor_variant_NMD_triggering
         "SO:0002328",  # splice_acceptor_variant_NMD_escaping
     ),
-    "SO:0002012": (),  # start_lost
+    "SO:0001582": (  # initiator_codon_variant
+        "SO:0002012",  # start_lost
+        "SO:0002019",  # start_retained_variant
+    ),
     "SO:0001578": (),  # stop_lost
     "SO:0001819": (  # synonymous_variant
         "SO:0001567",  # stop_retained_variant
@@ -387,12 +387,6 @@ DOWN = {
         "SO:0002084",  # exonic_splice_region_variant
         "SO:0002088",  # non_coding_transcript_splice_region_variant
         "SO:0002170",  # splice_donor_region_variant
-    ),
-    "SO:0001565": (  # gene_fusion
-        "SO:0002085",  # unidirectional_gene_fusion
-        "SO:0002086",  # bidirectional_gene_fusion
-        "SO:0002399",  # inframe_unidirectional_gene_fusion
-        "SO:0002400",  # frameshift_unidirectional_gene_fusion
     ),
 }
 """Each cited term's descendants, all the way down, in ``so.obo`` (data-version 2026-08-07): a term
@@ -493,24 +487,12 @@ VCF2MAF = {
 vcf2maf maps nothing to (``Targeted_Region`` is what is left over, and ``Unknown``, the two de novo
 starts and ``Fusion`` have no row) holds nothing here."""
 
-MAF_FACTS = {
-    ("Intron", "SO:0002090"): "MAF's Intron is any variant between exons, so a 3' UTR intron is "
-    "Intron, not 3'UTR; vcf2maf agrees, since VEP calls it intron_variant, and names no SO term",
-    ("Intron", "SO:0002091"): "The same for a 5' UTR intron: Intron, not 5'UTR",
-    ("Intron", "SO:0001970"): "MAF's RNA is mature non-coding RNA, so the intron of a non-coding "
-    "transcript is Intron, not RNA",
-    ("Fusion", "SO:0001565"): "vcf2maf has no Fusion class; cBioPortal's is a gene fusion",
-}
-"""What MAF holds in a class that ``vcf2maf.pl`` does not say, each with its reason."""
-
 FALLBACKS = {
     ("Frame_Shift_Del", "SO:0001818"): "vcf2maf's protein_altering_variant that is not in frame",
     ("Frame_Shift_Ins", "SO:0001818"): "vcf2maf's protein_altering_variant that is not in frame",
     ("In_Frame_Del", "SO:0001818"): "vcf2maf's protein_altering_variant that is in frame",
     ("In_Frame_Ins", "SO:0001818"): "vcf2maf's protein_altering_variant that is in frame",
     ("Missense_Mutation", "SO:0001580"): "VEP's generic coding_sequence_variant, taken as missense",
-    ("Translation_Start_Site", "SO:0001582"): "VEP's generic initiator_codon_variant, taken as a "
-    "lost start",
     ("Silent", "SO:0001626"): "incomplete_terminal_codon_variant, taken as silent",
     ("Silent", "SO:0001621"): "NMD_transcript_variant, taken as silent",
     ("Intron", "SO:0001889"): "transcript_amplification, which vcf2maf files as Intron",
@@ -524,10 +506,12 @@ FALLBACKS = {
     ("IGR", "SO:0000605"): "intergenic_region, which vcf2maf files as IGR",
     ("RNA", "SO:0001791"): "VEP's generic exon_variant, taken as RNA",
 }
-"""The calls vcf2maf files in a class although the class's term (``exact`` or ``broader``) does not
-hold them: its generic fallbacks, each with its reason, by ``(class, term)``. A class holds these
-and its relation is still the one judged by the rest of its calls; a pair that is not needed, or
-names a term the class does not hold, fails ``test_the_fallbacks_are_each_needed``."""
+"""The calls vcf2maf files in a class although the class's ``broader`` term does not hold them: its
+generic fallbacks, each with its reason, by ``(class, term)``. A class holds these and its relation
+is still the one judged by the rest of its calls; a pair that is not needed, or names a term the
+class does not hold, fails ``test_the_fallbacks_are_each_needed``. One exception is not here, since
+it is no term: an empty ``Consequence`` is tagged ``intergenic_variant`` (``vcf2maf.pl`` line 813),
+so ``IGR`` holds a call that carries no term at all."""
 
 CNA_LEVELS = [
     ("-2", "Deep deletion"),
@@ -688,10 +672,7 @@ def _closure_mismatches(
 
 
 def _members() -> dict[str, frozenset[str]]:
-    held = {value: set(terms) for value, terms in VCF2MAF.items()}
-    for value, term in MAF_FACTS:
-        held.setdefault(value, set()).add(term)
-    return {value: frozenset(terms) for value, terms in held.items()}
+    return {value: frozenset(terms) for value, terms in VCF2MAF.items()}
 
 
 def _violations(
@@ -700,41 +681,50 @@ def _violations(
     down: dict[str, tuple[str, ...]],
     fallbacks: set[tuple[str, str]],
 ) -> set[tuple[str, str, str]]:
-    """What a citation's relation says that the classes' contents contradict.
+    """What a citation's relation says that what vcf2maf files in the class contradicts.
 
-    A class's relation is judged against the classes' calls (``members``), by the MAF
-    specification's definition, or vcf2maf's for a class only it defines. For a class ``A`` that
-    cites ``T`` (``cited`` maps a class to its term and relation, ``down`` each term to the terms
-    under it, ``fallbacks`` the ``(class, term)`` pairs vcf2maf's generic calls are let off):
+    A mutation class cites ``broader`` or ``related`` and nothing else: it is the most severe of a
+    call's consequences, not the set of a term's calls, so no source says when a term is ``exact``
+    or ``narrower`` for it. A relation is proved from vcf2maf's filing (``members``: the terms it
+    puts in each class), and holds under the one definition the MAF specification gives. For a
+    class ``A`` that cites ``T`` (``cited`` maps a class to its term and relation, ``down`` each
+    term to the terms under it, ``fallbacks`` the ``(class, term)`` pairs vcf2maf's generic calls
+    are let off):
 
-    - ``("outside", A, m)``: ``A`` is ``exact`` or ``broader`` and holds ``m``, which is neither
-      ``T`` nor under it;
-    - ``("holds", A, B)``: ``A`` is ``exact`` and another class ``B`` holds a term at or under
-      ``T``;
-    - ``("shared", A, B)``: ``A`` is ``exact``, ``B`` cites a term ``U`` that is not ``T`` or above
-      it, and a term under ``T`` is also at or under ``U`` without ``A`` holding it: the two
-      overlap, since a term can be under several (SO is a graph, not a tree).
+    - ``("relation", A, r)``: ``r`` is neither ``broader`` nor ``related``;
+    - ``("memberless", A, T)``: ``A`` is ``broader`` and vcf2maf files no term in it, so nothing
+      shows it is within ``T``;
+    - ``("outside", A, m)``: ``A`` is ``broader`` and holds ``m``, which is neither ``T`` nor under
+      it;
+    - ``("unwitnessed", A, T)``: ``A`` is ``related`` (neither the same, nor broader, nor
+      narrower: SPEC §5.4) and holds no term outside ``T`` that is not a fallback, so as far as
+      vcf2maf shows it might be ``broader``. A term outside ``T`` is the witness that it is not;
+    - ``("disjoint", A, T)``: ``A`` is ``related`` and holds no term at or under ``T``, so it shares
+      no call with ``T``: that is a wrong code, not a ``related`` one.
 
-    A ``related`` citation claims nothing, and a ``broader`` one lets the term hold more.
+    The not-narrower half of ``related`` is not checked here: the term map cannot show it, and
+    D393 records the witnesses.
     """
     found: set[tuple[str, str, str]] = set()
     for first, (term, relation) in cited.items():
-        if relation == "related":
+        if relation not in ("broader", "related"):
+            found.add(("relation", first, relation))
             continue
         inside = {term, *down[term]}
-        for held in members.get(first, ()):
-            if held not in inside and (first, held) not in fallbacks:
-                found.add(("outside", first, held))
-        if relation != "exact":
+        outside = {
+            held
+            for held in members.get(first, ())
+            if held not in inside and (first, held) not in fallbacks
+        }
+        if relation == "related":
+            if not outside:
+                found.add(("unwitnessed", first, term))
+            if not inside & members.get(first, frozenset()):
+                found.add(("disjoint", first, term))
             continue
-        for second, others in members.items():
-            if second != first and others & inside:
-                found.add(("holds", first, second))
-        for second, (other, _) in cited.items():
-            if second == first or other == term or term in down[other]:
-                continue
-            if (set(down[term]) & {other, *down[other]}) - members.get(first, frozenset()):
-                found.add(("shared", first, second))
+        if not members.get(first):
+            found.add(("memberless", first, term))
+        found |= {("outside", first, held) for held in outside}
     return found
 
 
@@ -758,6 +748,9 @@ def test_the_descendants_and_the_is_a_edges_agree() -> None:
     assert {parent for parents in SO_IS_A.values() for parent in parents} <= set(SO_IS_A)
     assert all(term not in _ancestors(SO_IS_A, term) for term in SO_IS_A)
     assert _closure_mismatches(SO_IS_A, DOWN) == set()
+    named = set(DOWN) | {x for below in DOWN.values() for x in below}
+    named |= {x for terms in _members().values() for x in terms}
+    assert set(SO_IS_A) == named | {above for x in named for above in _ancestors(SO_IS_A, x)}
 
 
 def test_the_closures_of_a_grandparent_are_held_to_each_other() -> None:
@@ -774,137 +767,151 @@ def test_the_closures_of_a_grandparent_are_held_to_each_other() -> None:
 def test_what_a_class_holds_names_its_reasons() -> None:
     held = _members()
     assert set(VCF2MAF) <= set(held)
-    assert all(reason for reason in MAF_FACTS.values())
     assert all(reason for reason in FALLBACKS.values())
     assert all(term in held[value] for value, term in FALLBACKS)
-    assert all(term not in VCF2MAF.get(value, ()) for value, term in MAF_FACTS)
 
 
 def test_the_fallbacks_are_each_needed(registry: PackRegistry) -> None:
     """A pair of the allow-list is let off a hole that is there: with it removed, the class is
-    ``exact`` or ``broader`` and holds a term outside its own."""
+    ``broader`` and holds a term outside its own."""
     cited = _given(registry)
     held, fallbacks = _members(), set(FALLBACKS)
     for pair in FALLBACKS:
         assert _violations(cited, held, DOWN, fallbacks - {pair}) == {("outside", *pair)}, pair
 
 
-def test_no_relation_contradicts_what_the_classes_hold(registry: PackRegistry) -> None:
-    """The classes are disjoint (a call has one), so ``exact`` needs a term that holds the class's
-    calls and no other class's, and that no other class's term shares a descendant with."""
+def test_no_relation_contradicts_what_vcf2maf_files(registry: PackRegistry) -> None:
+    """Every relation is ``broader`` or ``related``: ``broader`` where every term vcf2maf files in
+    the class (bar its fallbacks) is at or under the cited term, ``related`` where one is outside
+    it."""
     cited = _given(registry)
     assert set(cited) == set(CITED)
+    assert {relation for _, relation in cited.values()} == {"broader", "related"}
     assert _violations(cited, _members(), DOWN, set(FALLBACKS)) == set()
 
 
-def _with(changes: dict[str, str]) -> dict[str, tuple[str, str]]:
-    """The pack's citations, with the relations of these classes changed."""
+def _with(changes: dict[str, str | tuple[str, str]]) -> dict[str, tuple[str, str]]:
+    """The pack's citations, with these classes changed: to a relation, or to a term and a
+    relation."""
     cited = {value: (code, relation) for value, (code, _, relation) in CITED.items()}
-    for value, relation in changes.items():
-        cited[value] = (cited[value][0], relation)
+    for value, change in changes.items():
+        cited[value] = (cited[value][0], change) if isinstance(change, str) else change
     return cited
 
 
-def test_the_check_finds_a_relation_that_the_classes_contradict() -> None:
+def test_the_check_finds_a_relation_that_what_vcf2maf_files_contradicts() -> None:
     """Each relation a review found wrong, put back with the golden's own: the check fails it."""
     held, fallbacks = _members(), set(FALLBACKS)
     cases = {
-        "Intron exact (round 1)": (
-            {"Intron": "exact"},
-            {
-                ("holds", "Intron", "Splice_Site"),
-                ("holds", "Intron", "Splice_Region"),
-                ("shared", "Intron", "Splice_Site"),
-            },
+        "Silent exact (round 3)": ({"Silent": "exact"}, {("relation", "Silent", "exact")}),
+        "Intron narrower (round 3)": (
+            {"Intron": "narrower"},
+            {("relation", "Intron", "narrower")},
         ),
-        "IGR exact (round 1)": (
-            {"IGR": "exact"},
-            {
-                ("holds", "IGR", "3'Flank"),
-                ("holds", "IGR", "5'Flank"),
-                ("shared", "IGR", "3'Flank"),
-                ("shared", "IGR", "5'Flank"),
-            },
+        "IGR narrower (round 3)": ({"IGR": "narrower"}, {("relation", "IGR", "narrower")}),
+        "Silent narrower (round 3)": (
+            {"Silent": "narrower"},
+            {("relation", "Silent", "narrower")},
         ),
+        "Splice_Site exact": ({"Splice_Site": "exact"}, {("relation", "Splice_Site", "exact")}),
         "Splice_Site broader (round 1)": (
             {"Splice_Site": "broader"},
             {("outside", "Splice_Site", "SO:0001572"), ("outside", "Splice_Site", "SO:0001893")},
         ),
-        "Splice_Site exact": (
-            {"Splice_Site": "exact"},
-            {
-                ("holds", "Splice_Site", "Splice_Region"),
-                ("outside", "Splice_Site", "SO:0001572"),
-                ("outside", "Splice_Site", "SO:0001893"),
-            },
-        ),
-        "RNA exact": (
-            {"RNA": "exact"},
-            {
-                ("holds", "RNA", "Intron"),
-                ("shared", "RNA", "Intron"),
-                ("shared", "RNA", "Splice_Region"),
-            },
-        ),
-        "Splice_Region exact (round 2)": (
-            {"Splice_Region": "exact"},
+        "Splice_Region broader": (
+            {"Splice_Region": "broader"},
             {
                 ("outside", "Splice_Region", "SO:0001787"),
                 ("outside", "Splice_Region", "SO:0002169"),
-                ("shared", "Splice_Region", "RNA"),
             },
         ),
-        "3'UTR exact (round 2)": (
-            {"3'UTR": "exact"},
-            {("holds", "3'UTR", "Intron"), ("shared", "3'UTR", "Intron")},
+        "Nonsense_Mutation related": (
+            {"Nonsense_Mutation": "related"},
+            {("unwitnessed", "Nonsense_Mutation", "SO:0001587")},
         ),
-        "5'UTR exact (round 2)": (
-            {"5'UTR": "exact"},
-            {("holds", "5'UTR", "Intron"), ("shared", "5'UTR", "Intron")},
+        "3'UTR related": ({"3'UTR": "related"}, {("unwitnessed", "3'UTR", "SO:0001624")}),
+        "5'Flank related": ({"5'Flank": "related"}, {("unwitnessed", "5'Flank", "SO:0001631")}),
+        "Silent related (its only outsiders are fallbacks)": (
+            {"Silent": "related"},
+            {("unwitnessed", "Silent", "SO:0001819")},
+        ),
+        "Splice_Region related, at missense_variant": (
+            {"Splice_Region": ("SO:0001583", "related")},
+            {("disjoint", "Splice_Region", "SO:0001583")},
+        ),
+        "Splice_Site related, at stop_gained": (
+            {"Splice_Site": ("SO:0001587", "related")},
+            {("disjoint", "Splice_Site", "SO:0001587")},
+        ),
+        "Nonsense_Mutation broader, at frameshift_variant": (
+            {"Nonsense_Mutation": ("SO:0001589", "broader")},
+            {("outside", "Nonsense_Mutation", "SO:0001587")},
+        ),
+        "Missense_Mutation broader, at stop_gained": (
+            {"Missense_Mutation": ("SO:0001587", "broader")},
+            {
+                ("outside", "Missense_Mutation", "SO:0001583"),
+                ("outside", "Missense_Mutation", "SO:0001585"),
+                ("outside", "Missense_Mutation", "SO:0002008"),
+            },
         ),
     }
     for name, (changes, expected) in cases.items():
         assert _violations(_with(changes), held, DOWN, fallbacks) == expected, name
-    first = _with({"Intron": "exact", "IGR": "exact", "Splice_Site": "broader"})
-    assert {rule for rule, _, _ in _violations(first, held, DOWN, fallbacks)} == {
-        "outside",
-        "holds",
-        "shared",
+
+
+def test_a_class_vcf2maf_files_nothing_in_cannot_be_broader() -> None:
+    """``Fusion`` has no row in ``VCF2MAF`` (vcf2maf never writes it), so a ``broader`` citation of
+    it has nothing to be judged by; and a ``related`` one has no witness and shares no call."""
+    down = {**DOWN, "SO:0001565": ()}
+    assert "Fusion" not in VCF2MAF
+    expected = {
+        "broader": {("memberless", "Fusion", "SO:0001565")},
+        "related": {("unwitnessed", "Fusion", "SO:0001565"), ("disjoint", "Fusion", "SO:0001565")},
     }
+    for relation, violations in expected.items():
+        cited = _with({"Fusion": ("SO:0001565", relation)})
+        found = _violations(cited, _members(), down, set(FALLBACKS))
+        assert found == violations, relation
 
 
 def test_the_check_reads_the_terms_below_a_term_all_the_way_down() -> None:
     """A synthetic graph, so that each rule is shown to fail on its own: ``t`` has a child ``p``
-    and a grandchild ``g``, ``u`` has the child ``g`` as well (a graph, not a tree), ``l`` is a
-    leaf under ``t``, and ``w`` is above ``t``."""
-    down = {"t": ("p", "g", "l"), "u": ("g",), "v": (), "w": ("t", "p", "g", "l"), "l": ()}
+    and a grandchild ``g``, ``l`` is a leaf under ``t``, and ``w`` is above ``t``."""
+    down = {"t": ("p", "g", "l"), "w": ("t", "p", "g", "l"), "l": ()}
 
     def violations(
-        cited: dict[str, tuple[str, str]], members: dict[str, frozenset[str]]
+        cited: dict[str, tuple[str, str]],
+        members: dict[str, frozenset[str]],
+        fallbacks: set[tuple[str, str]] | None = None,
     ) -> set[tuple[str, str, str]]:
-        return _violations(cited, members, down, set())
+        return _violations(cited, members, down, fallbacks or set())
 
-    exact = {"A": ("t", "exact"), "B": ("v", "related")}
-    assert violations(exact, {"A": frozenset({"t", "g"}), "B": frozenset({"v"})}) == set()
-    assert violations(exact, {"A": frozenset({"t"}), "B": frozenset({"g"})}) == {
-        ("holds", "A", "B")
+    broader, related = {"A": ("t", "broader")}, {"A": ("t", "related")}
+    assert violations(broader, {"A": frozenset({"t", "g"})}) == set()
+    assert violations(broader, {"A": frozenset({"g"})}) == set()
+    assert violations(broader, {"A": frozenset({"t", "x"})}) == {("outside", "A", "x")}
+    assert violations(broader, {"A": frozenset({"w"})}) == {("outside", "A", "w")}
+    assert violations(broader, {"A": frozenset({"t", "x"})}, {("A", "x")}) == set()
+    assert violations(broader, {"A": frozenset()}) == {("memberless", "A", "t")}
+    assert violations(broader, {}) == {("memberless", "A", "t")}
+    assert violations(related, {"A": frozenset({"t", "x"})}) == set()
+    assert violations(related, {"A": frozenset({"g", "w"})}) == set()
+    assert violations(related, {"A": frozenset({"t", "g", "l"})}) == {("unwitnessed", "A", "t")}
+    assert violations(related, {"A": frozenset({"x"})}) == {("disjoint", "A", "t")}
+    assert violations(related, {"A": frozenset({"w"})}) == {("disjoint", "A", "t")}
+    assert violations(related, {"A": frozenset()}) == {
+        ("unwitnessed", "A", "t"),
+        ("disjoint", "A", "t"),
     }
-    assert violations(exact, {"A": frozenset({"t", "x"}), "B": frozenset()}) == {
-        ("outside", "A", "x")
+    assert violations(related, {"A": frozenset({"t", "x"})}, {("A", "x")}) == {
+        ("unwitnessed", "A", "t")
     }
-    assert violations({"A": ("t", "broader")}, {"A": frozenset({"g"})}) == set()
-    assert violations({"A": ("t", "related")}, {"A": frozenset({"x"})}) == set()
-    shared = {"A": ("t", "exact"), "B": ("u", "broader")}
-    assert violations(shared, {"A": frozenset({"t"}), "B": frozenset({"u"})}) == {
-        ("shared", "A", "B")
-    }
-    assert violations(shared, {"A": frozenset({"t", "g"}), "B": frozenset({"u"})}) == set()
-    leaf = {"A": ("t", "exact"), "B": ("l", "related")}
-    assert violations(leaf, {"A": frozenset({"t"}), "B": frozenset()}) == {("shared", "A", "B")}
-    below = {"A": ("t", "exact"), "B": ("w", "broader")}
-    assert violations(below, {"A": frozenset({"t"}), "B": frozenset({"w"})}) == set()
-    apart = {"A": ("v", "exact"), "B": ("u", "broader")}
-    assert violations(apart, {"A": frozenset({"v"}), "B": frozenset({"u"})}) == set()
+    assert violations(related, {"A": frozenset({"g", "x", "y"})}, {("A", "x")}) == set()
+    for relation in ("exact", "narrower"):
+        assert violations({"A": ("t", relation)}, {"A": frozenset({"t"})}) == {
+            ("relation", "A", relation)
+        }
 
 
 def test_the_ontology_systems(onco: ModuleType) -> None:

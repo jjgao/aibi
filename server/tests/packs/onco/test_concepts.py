@@ -201,7 +201,7 @@ def test_each_reference_a_concept_carries_is_valid_and_canonical(registry: PackR
         for value in concept.fields.permissible_values.values
         for cited in value.concepts or ()
     ]
-    assert len(references) == 19
+    assert len(references) == 18
     for cited in references:
         validate = registry.ontology_validator(cited.system)
         assert validate is not None, cited.system
