@@ -99,3 +99,11 @@ concurrent = 2              # uploads, imports, re-imports and erasures that run
 # purpose = ["draft documents"]
 # limitations = "…"
 # configuration_digest = "sha256:…"
+
+# The packs the server installs (SPEC §10.1, D389): modules importable from the server's
+# sys.path (site-packages or PYTHONPATH; the aibi-server script does not add the working
+# directory), each defining PACK, exactly a Pack. At most 16, each once; none under aibi.core.
+# A module that fails to import, or has no pack, fails the start with every problem listed;
+# `python -c "import <module>"` shows why it failed. `aibi-server check` lists what is installed.
+# [packs]
+# modules = ["mypacks.library"]

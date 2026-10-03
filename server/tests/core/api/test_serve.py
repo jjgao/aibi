@@ -102,6 +102,22 @@ def test_the_access_log_leaves_query_strings_out() -> None:
     assert other.getMessage() == "plain ?q"
 
 
+def test_only_uvicorn_s_access_logger_keeps_five_arguments() -> None:
+    """Another logger's record of five arguments that does not format is kept as its message
+    alone, blanked, so that it formats."""
+    given = (TOKEN, "-", "x", "-", 5)
+    other = logging.LogRecord("orchard", logging.INFO, __file__, 1, f"{TOKEN} lost", given, None)
+    assert WithoutSecrets().filter(other)
+    assert other.args is None
+    assert other.getMessage() == "<secret> lost"
+    shaped = logging.LogRecord(
+        "orchard", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', given, None
+    )
+    assert WithoutSecrets().filter(shaped)
+    assert shaped.args is None
+    assert shaped.getMessage() == '<secret> - "- x HTTP/-" 5'
+
+
 TOKEN = "aibi_" + "t" * 43
 HANDLE = "ses_" + "h" * 43
 
@@ -201,6 +217,141 @@ def test_exceptions_and_stacks_are_logged_blanked() -> None:
     assert broken.getMessage() == "<secret> %s %s"
 
 
+class Unprintable:
+    """A value whose ``__str__`` raises an exception that quotes a token."""
+
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.raises = raises or RuntimeError(f"kaboom {TOKEN}")
+
+    def __str__(self) -> str:
+        raise self.raises
+
+
+def _record(name: str, msg: object, args: Any) -> logging.LogRecord:
+    return logging.LogRecord(name, logging.WARNING, __file__, 1, msg, args, None)
+
+
+def _line(record: logging.LogRecord) -> str:
+    """The line a formatter writes for a filtered record, which every such record formats to."""
+    return logging.Formatter().format(record)
+
+
+def _no_trace_of_failure(text: str) -> None:
+    assert TOKEN not in text
+    assert TOKEN[5:] not in text
+    for quoted in ("kaboom", "KeyError", "OverflowError", "ValueError", "not in range", "format"):
+        assert quoted not in text.replace("%(a)s", "").replace("%y", "").replace("%c", "")
+
+
+@pytest.mark.parametrize(
+    ("msg", "args", "expected"),
+    [
+        pytest.param(f"%(a)s {TOKEN}", ({"b": TOKEN},), "%(a)s <secret>", id="KeyError"),
+        pytest.param(f"%c {TOKEN}", (2**40,), "%c <secret>", id="OverflowError"),
+        pytest.param(f"%y {TOKEN}", (1,), "%y <secret>", id="ValueError"),
+        pytest.param(f"%s {TOKEN}", (), "%s <secret>", id="TypeError"),
+        pytest.param(f"{TOKEN} %s", (Unprintable(),), "<secret> %s", id="argument-str-raises"),
+        pytest.param(
+            f"{TOKEN} %s", (Unprintable(ValueError("kaboom")),), "<secret> %s", id="argument-value"
+        ),
+        pytest.param(Unprintable(), None, logs.FORMAT_FAILED, id="msg-str-raises"),
+        pytest.param(Unprintable(KeyError("kaboom")), (1,), logs.FORMAT_FAILED, id="msg-key"),
+        pytest.param(Unprintable(ValueError("kaboom")), None, logs.FORMAT_FAILED, id="msg-value"),
+        pytest.param(b"%y" + TOKEN.encode(), (1,), logs.FORMAT_FAILED, id="msg-bytes-not-str"),
+    ],
+)
+def test_a_record_that_cannot_be_formatted_is_kept_unformatted_or_as_a_fixed_line(
+    msg: object, args: Any, expected: str
+) -> None:
+    """Whatever formatting raises, the filter returns and the record formats, to its message
+    alone if that is a plain ``str`` and otherwise to ``FORMAT_FAILED``."""
+    record = _record("orchard", msg, args)
+    assert WithoutSecrets().filter(record)
+    assert record.args is None
+    written = _line(record)
+    assert written == expected
+    _no_trace_of_failure(written.replace(logs.FORMAT_FAILED, ""))
+
+
+class Text(str):
+    """A ``str`` whose own methods raise: not a plain ``str``."""
+
+    def split(self, *_: Any, **__: Any) -> list[str]:
+        raise RuntimeError(f"kaboom {TOKEN}")
+
+
+def test_a_message_that_is_only_a_str_subclass_is_not_kept_unformatted() -> None:
+    record = _record("orchard", Text(f"%y {TOKEN}"), (1,))
+    assert type(record.msg) is not str
+    assert WithoutSecrets().filter(record)
+    assert _line(record) == logs.FORMAT_FAILED
+
+
+@pytest.mark.parametrize(
+    ("msg", "args"),
+    [
+        pytest.param(f"%c %s %s %s {TOKEN}", (2**40, "GET", "/p", "1.1", 200), id="OverflowError"),
+        pytest.param(f"%y {TOKEN}", ("a", "GET", "/p", "1.1", 200), id="ValueError"),
+        pytest.param(f"%s {TOKEN}", ("a", "GET", "/p", "1.1", 200), id="TypeError"),
+    ],
+)
+def test_an_access_record_whose_message_does_not_format_has_its_arguments_replaced(
+    msg: str, args: tuple[object, ...]
+) -> None:
+    """The fixed arguments of ``_clean``'s failure, whichever exception formatting raised."""
+    record = _record(logs.ACCESS, msg, args)
+    assert WithoutSecrets().filter(record)
+    assert record.args == ("<secret>", "-", "<secret>", "-", 200)
+    assert isinstance(record.msg, str)
+    assert TOKEN not in record.msg
+    assert record.msg.endswith("<secret>")
+
+
+def test_an_access_record_with_arguments_or_a_message_that_do_not_print_is_a_fixed_line() -> None:
+    argument = _record(logs.ACCESS, '%s - "%s %s HTTP/%s" %d', ("a", "GET", "/p", Unprintable(), 5))
+    assert WithoutSecrets().filter(argument)
+    written = _line(argument)
+    assert written == f'a - "GET /p HTTP/{logs.FORMAT_FAILED}" 5'
+    _no_trace_of_failure(written.replace(logs.FORMAT_FAILED, ""))
+    message = _record(logs.ACCESS, Unprintable(), ("a", "GET", "/p", "1.1", 5))
+    assert WithoutSecrets().filter(message)
+    assert message.args is None
+    assert _line(message) == logs.FORMAT_FAILED
+    status = _record(
+        logs.ACCESS, '%s - "%s %s HTTP/%s" %d', ("a", "GET", "/p", "1.1", Unprintable())
+    )
+    assert WithoutSecrets().filter(status)
+    assert status.args == ("<secret>", "-", "<secret>", "-", 0)
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            lambda: _record("orchard", "%s", (Unprintable(MemoryError()),)), id="argument"
+        ),
+        pytest.param(lambda: _record("orchard", Unprintable(MemoryError()), None), id="message"),
+        pytest.param(
+            lambda: _record(
+                logs.ACCESS,
+                '%s - "%s %s HTTP/%s" %d',
+                ("a", "GET", "/p", Unprintable(MemoryError()), 5),
+            ),
+            id="access-argument",
+        ),
+        pytest.param(
+            lambda: _record(logs.ACCESS, Unprintable(MemoryError()), ("a", "GET", "/p", "1.1", 5)),
+            id="access-message",
+        ),
+    ],
+)
+def test_memory_error_from_a_value_s_str_passes_the_filter(
+    record: Callable[[], logging.LogRecord],
+) -> None:
+    with pytest.raises(MemoryError):
+        WithoutSecrets().filter(record())
+
+
 def test_the_filter_is_on_every_logger_that_writes_requests_and_every_handler() -> None:
     logs.install()
     logs.install()
@@ -211,6 +362,9 @@ def test_the_filter_is_on_every_logger_that_writes_requests_and_every_handler() 
     assert configured["filters"][logs.FILTER] == {"()": WithoutSecrets}
     assert set(configured["handlers"]) == {"default", "access"}
     assert all(handler["filters"] == [logs.FILTER] for handler in configured["handlers"].values())
+    assert all(
+        handler["class"] is logs.StreamHandler for handler in configured["handlers"].values()
+    )
     assert configured["loggers"]["aibi"] == {
         "handlers": ["default"],
         "level": "INFO",
@@ -219,6 +373,19 @@ def test_the_filter_is_on_every_logger_that_writes_requests_and_every_handler() 
     assert configured["root"] == {"level": "WARNING", "handlers": ["default"]}
     assert "filters" not in uvicorn.config.LOGGING_CONFIG
     assert {"", "mcp", "mcp.server.lowlevel.server"} <= set(logs.LOGGERS)
+
+
+def test_every_configured_handler_reports_its_errors_quietly() -> None:
+    assert logs.quiet_class("logging.StreamHandler") is logs.StreamHandler
+    assert logs.quiet_class(logs.RootHandler) is logs.RootHandler
+    made = logs.quiet_class("logging.FileHandler")
+    assert issubclass(made, logs.Quiet)
+    assert issubclass(made, logging.FileHandler)
+    with pytest.raises(ValueError, match=r"is a logging\.Handler"):
+        logs.quiet_class("logging.Formatter")
+    factory = {"handlers": {"made": {"()": "logging.StreamHandler"}}}
+    with pytest.raises(ValueError, match="names no class"):
+        logs.logging_config(factory)
 
 
 @pytest.mark.parametrize(
