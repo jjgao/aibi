@@ -8,111 +8,45 @@ the same PR or don't make the change.
 
 ## Status
 
-Milestones M1, M2 and M3 (SPEC.md §15) are in progress; the roadmap issue lists the work order. The
-server package skeleton, tooling and CI exist, and `core/schema/` holds the models of M0: identifiers,
-analysis documents, descriptors, results and cohort counts, caveats, refusals and the pack API.
-`core/engine/` holds the reference evaluator (M2.1), which resolves documents against releases held
-in memory and evaluates them by the rules of §6. `core/store/` holds the store (M1): blobs, raw
-snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure and the validation gate.
-`core/importers/` holds the file importers (M1): confinement, archives and the upload area, CSV/TSV,
-workbooks and Parquet (read in a worker process that can be killed), the importer's proposals,
-database snapshots of named connections (`databases.py`, read in that worker by `snapshot.py`:
-SQLite with `sqlite3`, DuckDB files, Postgres and MySQL through DuckDB's bundled scanners),
-`import_dataset`, which publishes a dataset's first release through the gate for the core's importer
-or a pack's, and `reimport_dataset`, which carries curation forward with tombstones. The release
-lifecycle is the store's (M1): per-dataset operation slots, curation sessions with handles, edits
-checked by the gate and the pack checks on every change, the proposal queue, curation proposers and
-the curation queue. `core/api/` holds the HTTP application (M1): its configuration, one request
-protection middleware in front of every router and mount (Host and Origin allow-lists, CORS off
-unless configured, rate limits, body limits, security headers), refusals as the one error shape,
-and `aibi-server`. `core/operator/` holds the operator surface (M1): the operator router behind the
-curator token, operator names and CSRF tokens, and `aibi`, the operator CLI, which talks to it over
-HTTP only. `core/store/statistics.py` counts each release's catalogue statistics when it is
-built; `core/catalog/` holds the catalogue (M1): their disclosure and `stat:` references, the
-catalogue index in the app DB, and the service functions of the public tools (`search_catalog`,
-`describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`) and of the
-descriptor resources. `core/mcp/` serves them over the official MCP SDK at `/mcp`, stateless, and
-`core/api/tools.py` at `POST /api/tools/<name>`. From M2, `core/engine/canonical.py` finishes
-canonicalisation (pack leaves expanded, collections sorted, caveat rules run) and gives cohort ids,
-leaf keys and a view's ids from its parts; `core/engine/ids.py` hashes, rounds and digests;
-`core/engine/counts.py` makes the digested part of a cohort count; and `core/store/derivations.py`
-is the derivation log, which `Store.explain` reads. `core/engine/sql.py` compiles canonical cohorts
-to SQLGlot trees over the release's table blobs, three-valued with reasons and flags;
-`core/engine/worker.py` runs a document's queries in a child process that can be killed, which
-loads DuckDB (`core/engine/duck.py`), as an import's worker does for a snapshot, and the server's
-process never does; `core/engine/queries.py` joins them for a caller, and
-`Store.outline` and `Store.sources` give what they read. `core/engine/readback.py` renders
-readbacks from templates, `core/engine/suppression.py` runs the disclosure pass over cohort counts,
-`core/schema/digests.py` hashes and digests (outputs check their own), and `core/catalog/cohorts.py`
-holds the query tools' service functions (`validate_document`, `count_cohort`, `explain`), served
-beside the catalogue's. `core/api/page.py` renders the read-only catalogue page (M1) at `/` and
-`/datasets/<id>` from `search_catalog`'s and `describe_dataset`'s answers, as HTML without a
-script, its text written by `core/api/markup.py`; `core/api/chrome.py` holds what the pages share,
-and every answer at their paths, a refusal included, is a page. From M3.1, `core/analyses/`
-holds the analysis registry and applicability (`registry.py`), phase 2 of canonicalisation
-(`views.py`), `compare.existence` (`existence.py`) with its methods held to R (`stats.py`, the
-fixture in `tests/core/analyses/reference/`), the disclosure of a predicate's counts in a result
-(`disclosure.py`), charts (`charts.py`) and result envelopes (`results.py`);
-`core/catalog/analyses.py` serves `run_analysis`, and the catalogue `list_analyses`. From M3.2a,
-`core/engine/variables.py` gives a view's variables (columns and aggregates) their values by the
-reference evaluator, `sql.compile_materialised` counts them by SQL, and
-`core/analyses/distribution.py` is `summary.distribution`, `core/analyses/common.py` what the
-core's descriptive analyses share. From M3.2b, `core/engine/members.py` lists a cohort's members'
-unit keys by the reference evaluator and orders them as the canonical form does,
-`sql.compile_members` lists them by SQL, and `core/analyses/members.py` is `summary.members`,
-refused under any disclosure setting. From M3.2c, `core/analyses/columns.py` is `compare.columns`,
-its tests held to R (`reference/columns.R`) and its bootstrap in `stats.py`, and a materialisation
-counts the units its cohorts share (`sql.compile_materialised(…, shared=True)`). From M3.2d,
-`core/engine/inputs.py` lists a cohort's members with each variable's value by the reference
-evaluator and orders them by key, `sql.compile_inputs` lists them by SQL, and
-`core/analyses/packs.py` runs a pack's analysis on them (refused under any disclosure setting and
-where row ids are not allowed); pack leaves in a variable's `where` are expanded. From M3.3a, a
-view's endpoint is resolved with its cohorts (`resolve.ViewEndpoint`) and its rows listed as a
-pack's inputs are; `core/analyses/survival.py` is `survival.km` (refused under any disclosure
-setting), its methods in `core/analyses/timetoevent.py` held to R (`reference/survival.R`) and
-doing their arithmetic as C does (`core/analyses/ieee.py`), and a pack's analysis is handed the
-rows of the endpoints it requires. From M3.3b, `core/analyses/coxfit.py` is the unadjusted Cox
-fit of cohorts, its separation decided on the risk sets' graph and its fit and `cox.zph`'s test
-held to R (`reference/cox.R`), which `survival.km` 1.1.0 shows as hazard ratios. From M3.3c,
-`core/analyses/coxph.py` is the Cox model of a design (covariates per unit, strata, delayed entry),
-held to R (`reference/coxph.R`). From M3.3d, `core/analyses/cone.py` is the likelihood's recession
-cone in exact integers (the pairs' span by components, an exact column-generation simplex, the
-levels), and `coxph.separated` decides each column estimated, `separation` or `zero_variance` by
-it and fits the finite part, `coxph.separated_hazards` testing it (`reference/cone.R`). From M3.3e-1,
-`core/analyses/cox.py` is `survival.cox`'s model of cohorts and covariates from each member's cells
-(complete cases, coding, both fits, labels and values), held to R (`reference/survcox.R`).
-From M3.3e-2, `survival.cox` is registered (`cox.ENTRY`, `CoxParams`): `cox.covariate_of`
-codes each covariate by its variable, `views` refuses what it cannot model, and `cox.analyse`
-runs the model on members listed as a pack's inputs are, refusing what only the data show.
-From M3.3f, a covariate may be a predicate, listed as a question of its clause
-(`canonical.predicate_variable`), with the other lift's changes counted (`cox.lifted`).
-From M3.4, `tests/core/determinism/` holds the thread-count determinism tests (§9.3, D372): an
-orchard of a million trees, built once per module, and every tool whose answer DuckDB's queries
-make, compared across `query_threads`; they carry the `million` marker, which `addopts` deselects,
-and CI runs them in a job of their own. From M3.5a, `core/analyses/results.py` gives a view's
-digested content (`digested`, a `Digested` that is written as JSON and read back through the
-analysis's values model, `CoreAnalysis.values`) apart from its rendering for an issuance
-(`render`). From M3.5b, `core/store/cache.py` is the result cache
-(`Store.results`: migration 7's tables, kept by triggers, `[cache] result_bytes`). From M3.5c,
-`run_analysis` gives a result from the cache and fills it (`_hits`, `issue_all`'s `then`), and
-`Catalog.cache` turns that off. From M3.2e-1, a variable may count rows (`count: "rows"`,
-`resolve._rows`, kind `rows`): the evaluator reads each pooled row (`UnitValue.rows`,
-`RowCounts`), `sql.compile_materialised` counts them by value and by reason, `summary.distribution`
-gives `category_rows` and `number_rows`, and `registry.CoreAnalysis.withheld_forms` withholds it
-under any *k* (`registry.withheld_form`, `views._withheld_form`). From M3.2e-2a-1, a variable's memberships
-(`each: "category"`, `resolve._memberships`, kind `memberships`) ask each category's existence
-question (`canonical.category_clause`): `core/engine/memberships.py` is the reference evaluator
-and `sql._Compiler.memberships` counts them as pairs plus default (`Materialised.memberships`,
-`membership_units`). From M3.2e-2a-2, `summary.distribution` gives them (`MembershipDistribution`,
-`distribution._memberships`, each category's key `canonical.category_key`), the evaluator's joint
-is `memberships.materialise_over`, and a bare multi-valued column is `AGGREGATE_REQUIRED` offering
-`each`. From M3.2e-2b, memberships are disclosed under *k* (`disclosure.membership_shown`, D383):
-their declared categories alone (`memberships.listing(…, declared=True)`,
-`sql.compile_materialised(…, declared=True)`, D384), each row as a question's split, no reason
-maps, `analysed` `null`; unless the column is a list or its path is one down step from the
-unit to another table, open by the gate's checks (`resolve.open_path`, `resolve.open_step`,
-`resolve.GATE_CHECKS`), they are withheld (`distribution.withheld_under_k`,
-`views._withheld_form`), and `withheld_forms` withholds only `columns/*/count`.
+Milestones M1, M2 and M3 (SPEC.md §15) are in progress; the roadmap issue lists the work order and
+`git log` what has landed. The code is the record of what exists: find a module by its package below,
+and read its docstrings and tests rather than a history of the milestones. The reference
+evaluator defines the semantics and the SQL compiler agrees with it (§13.3), and every analysis with
+a golden test is held to R where a reference fixture exists (`tests/core/analyses/reference/`).
+
+- `core/schema/`: the models of M0 (identifiers, analysis documents, descriptors, results, cohort
+  counts, caveats, refusals, the pack API) and `digests.py`, which hashes and digests.
+- `core/store/`: blobs, raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure,
+  the validation gate, the release lifecycle (operation slots, curation sessions with handles, the
+  proposal and curation queues), catalogue statistics (`statistics.py`), the derivation log
+  (`derivations.py`, read by `Store.explain`) and the result cache (`cache.py`, `Store.results`).
+- `core/importers/`: confinement, archives and the upload area, CSV/TSV, workbooks, Parquet and
+  database snapshots (read in a worker process that can be killed), `import_dataset` and
+  `reimport_dataset`.
+- `core/api/`: the HTTP application: configuration, one request-protection middleware in front of
+  every router and mount, refusals as the one error shape, `aibi-server`, `POST /api/tools/<name>`,
+  and the read-only catalogue pages (`page.py`, `markup.py`, `chrome.py`; HTML without a script).
+- `core/operator/`: the operator router behind the curator token, and `aibi`, the operator CLI,
+  which talks to it over HTTP only.
+- `core/catalog/`: the catalogue and the service functions of the public tools (`search_catalog`,
+  `describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`, `validate_document`,
+  `count_cohort`, `explain`, `list_analyses`, `run_analysis`); `core/mcp/` serves them at `/mcp`.
+- `core/engine/`: canonicalisation, ids and counts, the reference evaluator, the SQL compiler
+  (`sql.py`), the worker that runs a document's queries in a child process (the server's process
+  never loads DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).
+- `core/analyses/`: the registry and applicability, phase 2 of canonicalisation (`views.py`),
+  result envelopes, charts, disclosure of predicate counts, and the analyses: `compare.existence`,
+  `summary.distribution`, `summary.members`, `compare.columns`, `survival.km`, `survival.cox` and a
+  pack's analyses (`packs.py`). Their statistical methods (`stats.py`, `timetoevent.py`, `coxfit.py`,
+  `coxph.py`, `cone.py`, `ieee.py`) are held to R.
+- `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
+  million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
+  job of their own.
+
+Disclosure under *k* (§8.4) is per analysis and per form: `registry.CoreAnalysis` states the class and
+`withheld_forms` the forms withheld under any *k*. Row counts and category memberships (`count:
+"rows"`, `each: "category"`) have their own rules (`disclosure.membership_shown`, D383, D384); read
+`core/analyses/disclosure.py` and `distribution.py` before touching either.
 
 ## Non-negotiables
 
@@ -184,6 +118,13 @@ uv run pytest tests/core/determinism -m million  # a million rows: about 5 minut
 `addopts` deselects the `million` tests, so without `-m million` that directory selects nothing
 (pytest exits 5).
 
+Keep command output out of the context. For a green check, run quietly and read only the end:
+`uv run pytest -q --tb=short 2>&1 | tail -n 30`, and `uv run ruff check --quiet .`. When a run fails,
+rerun just the failing test (`uv run pytest path::test -x --tb=short`) rather than the suite, and
+never `cat` a log or a large file: grep it or read the lines you need. Run a long or noisy job
+(the `million` tests, a full-suite survey) in a subagent, or in the background to a file in the
+scratchpad, and read its tail.
+
 Run a server and operate it (see `server/aibi.example.toml`):
 
 ```bash
@@ -213,6 +154,12 @@ OpenAPI schema, not written by hand.
   (and, for the reviewer and the surveyor, "edit nothing tracked") holds by instruction. The
   main thread therefore records `git ls-remote origin refs/heads/<branch>` before delegating,
   checks it is unchanged and reviews every result before anything is pushed.
+- Session hygiene (autonomous runs): one issue per session, and pass file paths and the SPEC
+  sections in the prompt so they are read once. Pick the model and effort at the start; changing
+  either mid-session breaks the prompt cache. Check `/context` in a fresh session and turn off
+  connectors the work doesn't use (Slack, Docs and the like). Don't paste a file or a log into the
+  conversation twice. Before a long break, `/compact` while the cache is warm (it expires after an
+  hour); between issues, `/rename` then `/clear`.
 - Stacked PRs: when the parent gets new commits, rebase the child onto it and push. After the
   parent is squash-merged, change the child's base to `main` (GitHub retargets it only if the
   parent's branch is deleted), replay only the child's own commits onto `main` with
