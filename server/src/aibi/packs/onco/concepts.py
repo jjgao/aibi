@@ -91,7 +91,7 @@ MUTATION_CLASSES = PermissibleValues(
         _value(
             "Splice_Site",
             "Splice site",
-            _so("SO:0001629", "splice_site_variant", "broader"),
+            _so("SO:0001629", "splice_site_variant", "related"),
         ),
         _value("Translation_Start_Site", "Start lost", _so("SO:0002012", "start_lost")),
         _value("Nonstop_Mutation", "Nonstop", _so("SO:0001578", "stop_lost")),
@@ -99,13 +99,15 @@ MUTATION_CLASSES = PermissibleValues(
         _value("De_novo_Start_InFrame", "De novo start, in frame"),
         _value("De_novo_Start_OutOfFrame", "De novo start, out of frame"),
         _value("Silent", "Silent", _so("SO:0001819", "synonymous_variant")),
-        _value("Intron", "Intron", _so("SO:0001627", "intron_variant")),
+        _value("Intron", "Intron", _so("SO:0001627", "intron_variant", "broader")),
         _value("3'UTR", "3' UTR", _so("SO:0001624", "3_prime_UTR_variant")),
         _value("3'Flank", "3' flank", _so("SO:0001632", "downstream_gene_variant")),
         _value("5'UTR", "5' UTR", _so("SO:0001623", "5_prime_UTR_variant")),
         _value("5'Flank", "5' flank", _so("SO:0001631", "upstream_gene_variant")),
-        _value("IGR", "Intergenic", _so("SO:0001628", "intergenic_variant")),
+        _value("IGR", "Intergenic", _so("SO:0001628", "intergenic_variant", "broader")),
         _value(
+            # Broader, and not exact: vcf2maf also puts the generic ``exon_variant`` here,
+            # which is not under ``non_coding_transcript_variant``.
             "RNA",
             "Non-coding RNA",
             _so("SO:0001619", "non_coding_transcript_variant", "broader"),
@@ -116,7 +118,13 @@ MUTATION_CLASSES = PermissibleValues(
     ]
 )
 """cBioPortal's ``VARIANT_CLASSIFICATION_VALUES``: the MAF specification's twelve classes, the
-eight it skips by default, ``Splice_Region``, ``Fusion`` and ``Unknown``."""
+eight cBioPortal skips by default, ``Splice_Region``, ``Fusion`` and ``Unknown``.
+
+The classes are disjoint (a call has one), so a citation's ``relation`` must not make one class
+a part of another: ``exact`` only where no other class cites a term below it. ``Intron`` and
+``IGR`` are ``broader`` (``intron_variant`` includes the splice sites and ``intergenic_variant``
+the flanks), and ``Splice_Site`` is ``related`` (MAF's class includes
+exonic bases near a splice site, which SO calls ``splice_region_variant``)."""
 
 CNA_LEVELS = PermissibleValues(
     values=[

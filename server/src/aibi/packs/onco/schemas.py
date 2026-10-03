@@ -54,6 +54,31 @@ PAIRS: tuple[str, ...] = (
 """cBioPortal's ``(genetic_alteration_type, datatype)`` pairs, from ``cbioportal_common``'s
 ``alt_type_datatype_to_meta``, written ``<genetic_alteration_type>:<datatype>``."""
 
+PROFILES: tuple[str, ...] = (
+    "PROTEIN_LEVEL:LOG2-VALUE",
+    "PROTEIN_LEVEL:Z-SCORE",
+    "PROTEIN_LEVEL:CONTINUOUS",
+    "COPY_NUMBER_ALTERATION:DISCRETE",
+    "COPY_NUMBER_ALTERATION:DISCRETE_LONG",
+    "COPY_NUMBER_ALTERATION:CONTINUOUS",
+    "COPY_NUMBER_ALTERATION:LOG2-VALUE",
+    "MRNA_EXPRESSION:CONTINUOUS",
+    "MRNA_EXPRESSION:Z-SCORE",
+    "MRNA_EXPRESSION:DISCRETE",
+    "MUTATION_EXTENDED:MAF",
+    "MUTATION_UNCALLED:MAF",
+    "METHYLATION:CONTINUOUS",
+    "STRUCTURAL_VARIANT:SV",
+    "GENESET_SCORE:GSVA-SCORE",
+    "GENESET_SCORE:P-VALUE",
+    "GENERIC_ASSAY:LIMIT-VALUE",
+    "GENERIC_ASSAY:BINARY",
+    "GENERIC_ASSAY:CATEGORICAL",
+)
+"""The 19 of ``PAIRS`` that are molecular profiles: those whose meta type in ``cbioportal_common``'s
+``META_FIELD_MAP`` has a ``stable_id`` and a ``profile_name``. The others are the cancer-type,
+clinical, timeline, segment, GISTIC, MutSig and gene-panel-matrix files, which are not profiles."""
+
 GENOMES: tuple[str, ...] = ("hg19", "hg38", "mm10")
 """The reference genomes a cBioPortal study declares."""
 

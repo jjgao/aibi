@@ -11,10 +11,14 @@ grammar, written here from the plan, never from the validators' code.
   leading zeros, negative ids, whitespace).
 - **Exactness:** anything but an exact ``str``, a subclass included, is refused before anything
   of it is read.
+- **The harness:** each of these is shown to find a disagreement, with a validator that is wrong
+  where the sweep and the property must look, so that none can pass for want of looking.
 """
 
 import re
+import tracemalloc
 from collections.abc import Callable
+from functools import partial
 from typing import Any, NoReturn
 
 import pytest
@@ -136,6 +140,11 @@ def _disagreements(
     return found
 
 
+def test_every_code_point_is_swept() -> None:
+    assert len(EVERY) == 0x110000
+    assert (EVERY[0], EVERY[-1]) == (0, 0x10FFFF)
+
+
 def test_the_templates_cover_each_form_and_its_interior() -> None:
     assert set(TEMPLATES) == set(ORACLES) == set(INTERIOR)
     for system, template in INTERIOR.items():
@@ -172,6 +181,13 @@ SUPPRESSED = (
     HealthCheck.function_scoped_fixture,
 )
 """The validators fixture holds no state, and ``find`` searches on purpose."""
+
+
+def _disagrees(validate: Callable[[str], bool], system: str, code: str) -> bool:
+    """Whether ``validate`` and the oracle of ``system`` differ on ``code``."""
+    return validate(code) is not (ORACLES[system].fullmatch(code) is not None)
+
+
 SURROGATES = st.integers(0xD800, 0xDFFF).map(chr)
 """Lone surrogates, which ``st.characters()`` leaves out unless asked."""
 ANY_CHARACTER = st.one_of(
@@ -227,13 +243,65 @@ def test_the_property_draws_lone_surrogates_and_accepted_codes(validators: Valid
 @given(CODES)
 def test_any_text_gives_what_the_oracle_gives(validators: Validators, code: str) -> None:
     for system, validate in validators.items():
-        assert validate(code) is (ORACLES[system].fullmatch(code) is not None), system
+        assert not _disagrees(validate, system, code), system
+
+
+# --- The harness finds a disagreement ----------------------------------------------------------
+
+
+def _wrong_at(oracle: re.Pattern[str], template: str, point: int) -> Callable[[str], bool]:
+    """The oracle, but wrong on the one code where ``point`` stands in ``template``."""
+    before, after = template.split("{}")
+    special = before + chr(point) + after
+    return lambda code: (oracle.fullmatch(code) is not None) is not (code == special)
+
+
+@pytest.mark.parametrize("point", [0, 0xD800, 0x10FFFF])
+def test_the_sweep_of_every_code_point_finds_a_validator_wrong_at_one(point: int) -> None:
+    """One form's sweep, since each sweep takes a second: the others use the same helper."""
+    wrong = _wrong_at(ORACLES["SO"], INTERIOR["SO"], point)
+    assert _disagreements(wrong, ORACLES["SO"], INTERIOR["SO"], EVERY) == [f"U+{point:04X}"]
+
+
+@pytest.mark.parametrize("system", sorted(TEMPLATES))
+def test_the_sweep_of_each_position_finds_a_validator_wrong_at_one_in_each(system: str) -> None:
+    for template in TEMPLATES[system]:
+        for point in (0x41, 0xD800):
+            wrong = _wrong_at(ORACLES[system], template, point)
+            found = _disagreements(wrong, ORACLES[system], template, BOUNDED)
+            assert found == [f"U+{point:04X}"], template
+
+
+@pytest.mark.parametrize("system", sorted(ORACLES))
+def test_the_property_finds_a_wrong_validator(system: str) -> None:
+    quick = settings(database=None, max_examples=5_000, suppress_health_check=SUPPRESSED)
+    oracle = ORACLES[system]
+    wrongs: list[Callable[[str], bool]] = [
+        lambda code: oracle.fullmatch(code) is None,
+        lambda code: code.isdigit(),
+    ]
+    for wrong in wrongs:
+        found = find(CODES, partial(_disagrees, wrong, system), settings=quick)
+        assert _disagrees(wrong, system, found)
 
 
 # --- Named cases: the plan's choices ------------------------------------------------------------
 
+# A probe, not a test, accepted all 852 codes of OncoTree's ``ontology_mappings.txt`` (lengths 2 to
+# 16, and beyond ``A-Z0-9`` only ``-``, ``/`` and ``_``): that list is not checked in, so these
+# named cases are the shapes that matter.
 ACCEPTED = {
-    "OncoTree": ["MDS/MPN", "HCL-V", "ADRENAL_GLAND", "SOFT_TISSUE", "BRCA", "brca", "A", "A" * 32],
+    "OncoTree": [
+        "MDS/MPN",
+        "HCL-V",
+        "ADRENAL_GLAND",
+        "SOFT_TISSUE",
+        "BRCA",
+        "brca",
+        "A",
+        "A" * 16,
+        "A" * 32,
+    ],
     "HGNC": ["HGNC:11998", "11998", "HGNC:1", "1", "HGNC:1234567", "1234567"],
     "NCBIGene": ["NCBIGene:7157", "7157", "1", "1234567890", "NCBIGene:9999999999"],
     "SO": ["SO:0001583", "SO_0001583", "0001583", "SO:0000000"],
@@ -321,6 +389,32 @@ def test_long_text_is_refused(validators: Validators, system: str) -> None:
     for length in (64, 65, 4096, 1_000_000):
         assert validators[system]("1" * length) is False
         assert validators[system]("A" * length) is False
+
+
+LONG = {
+    "OncoTree": ["A", "A/"],
+    "HGNC": ["1", "HGNC:1"],
+    "NCBIGene": ["1", "NCBIGene:1"],
+    "SO": ["0", "SO:0", "SO_0"],
+}
+"""Where each form's text begins, in the texts below that are 10 million characters long."""
+
+
+@pytest.mark.parametrize("system", sorted(LONG))
+def test_a_text_past_the_forms_length_is_refused_before_it_is_copied(
+    validators: Validators, system: str
+) -> None:
+    """The length is checked first: no slice, scan or copy of a huge text is made."""
+    texts = [start + "0" * 10_000_000 for start in LONG[system]]
+    for text in texts:
+        tracemalloc.start()
+        try:
+            accepted = validators[system](text)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert accepted is False
+        assert peak < 100_000, (system, text[:12], peak)
 
 
 # --- Exactness ----------------------------------------------------------------------------------

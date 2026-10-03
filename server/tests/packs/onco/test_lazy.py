@@ -1,7 +1,9 @@
 """The pack's tests load the pack lazily (SPEC P8): ``tests/core`` holds that the core's suite
 loads no pack (``importers/test_pack.py``), and a combined run collects every test before it runs
-any. So no module here imports the pack while it is collected, in any form, and each test's
-teardown unloads it (``conftest._unload_packs``), whatever order the tests run in."""
+any. So no module here imports the pack while it is collected: the scan below finds each form it
+lists (``LOADERS`` and the import statements), and the subprocess test finds the pack loaded in
+whatever other form, and each test's teardown unloads it (``conftest._unload_packs``), whatever
+order the tests run in."""
 
 import ast
 import os
@@ -12,7 +14,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SERVER = HERE.parents[2]
 PACKAGE = "aibi.packs"
-LOADERS = frozenset({"import_module", "__import__", "find_spec", "spec_from_file_location"})
+LOADERS = frozenset(
+    {
+        "import_module",
+        "__import__",
+        "find_spec",
+        "spec_from_file_location",
+        "importorskip",
+        "run_module",
+        "run_path",
+        "exec",
+    }
+)
 """The calls that may load a module by name."""
 
 
@@ -92,6 +105,10 @@ def test_the_scan_finds_every_form() -> None:
         "@decorate(__import__('aibi.packs.onco'))\ndef f():\n    pass",
         "def f(pack: __import__('aibi.packs.onco')):\n    pass",
         "f = lambda pack=__import__('aibi.packs.onco'): pack",
+        "import pytest\npytest.importorskip('aibi.packs.onco')",
+        "import runpy\nrunpy.run_module('aibi.packs.onco')",
+        "import runpy\nrunpy.run_path(PATH)",
+        "exec('import aibi.packs.onco')",
     ]
     for form in forms:
         assert _loads_at_import(form), form
@@ -100,6 +117,7 @@ def test_the_scan_finds_every_form() -> None:
         "def f():\n    from aibi.packs.onco import PACK",
         "def f():\n    return importlib.import_module('aibi.packs.onco')",
         "f = lambda: __import__('aibi.packs.onco')",
+        "def f():\n    exec('import aibi.packs.onco')",
         "import aibi.core.schema.pack_api",
         "MODULE = 'aibi.packs.onco'",
     ]

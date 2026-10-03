@@ -5,6 +5,7 @@ and the facets in the catalogue, once a dataset that lists the pack is curated t
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import JsonValue
 
 from aibi.core.catalog import index
@@ -15,6 +16,42 @@ from aibi.core.schema.pack_api import PackRegistry
 
 Extended = Callable[[Descriptor, Mapping[str, JsonValue]], Descriptor]
 MANIFEST = "sha256:" + "0" * 64
+
+PROFILES = (
+    "PROTEIN_LEVEL:LOG2-VALUE",
+    "PROTEIN_LEVEL:Z-SCORE",
+    "PROTEIN_LEVEL:CONTINUOUS",
+    "COPY_NUMBER_ALTERATION:DISCRETE",
+    "COPY_NUMBER_ALTERATION:DISCRETE_LONG",
+    "COPY_NUMBER_ALTERATION:CONTINUOUS",
+    "COPY_NUMBER_ALTERATION:LOG2-VALUE",
+    "MRNA_EXPRESSION:CONTINUOUS",
+    "MRNA_EXPRESSION:Z-SCORE",
+    "MRNA_EXPRESSION:DISCRETE",
+    "MUTATION_EXTENDED:MAF",
+    "MUTATION_UNCALLED:MAF",
+    "METHYLATION:CONTINUOUS",
+    "STRUCTURAL_VARIANT:SV",
+    "GENESET_SCORE:GSVA-SCORE",
+    "GENESET_SCORE:P-VALUE",
+    "GENERIC_ASSAY:LIMIT-VALUE",
+    "GENERIC_ASSAY:BINARY",
+    "GENERIC_ASSAY:CATEGORICAL",
+)
+"""The pairs whose meta type has a ``stable_id`` and a ``profile_name`` in cBioPortal's
+``META_FIELD_MAP`` (``cbioportal_common.py``): the molecular profiles."""
+NOT_PROFILES = (
+    "CANCER_TYPE:CANCER_TYPE",
+    "CLINICAL:PATIENT_ATTRIBUTES",
+    "CLINICAL:SAMPLE_ATTRIBUTES",
+    "CLINICAL:TIMELINE",
+    "COPY_NUMBER_ALTERATION:SEG",
+    "GENE_PANEL_MATRIX:GENE_PANEL_MATRIX",
+    "GISTIC_GENES_AMP:Q-VALUE",
+    "GISTIC_GENES_DEL:Q-VALUE",
+    "MUTSIG:Q-VALUE",
+)
+"""The other nine of the 28 pairs: meta types with neither."""
 
 
 def _facets(
@@ -57,6 +94,40 @@ def test_the_facets_of_a_dataset_that_lists_the_pack(
         "onco.reference_genome": ("hg38",),
         "onco.type_of_cancer": ("brca",),
     }
+
+
+def test_the_28_pairs_are_the_profiles_and_the_files_that_are_not(onco: Any) -> None:
+    assert (len(PROFILES), len(NOT_PROFILES)) == (19, 9)
+    assert not set(PROFILES) & set(NOT_PROFILES)
+    assert set(PROFILES) | set(NOT_PROFILES) == set(onco.schemas.PAIRS)
+    assert len(onco.schemas.PAIRS) == 28
+
+
+@pytest.mark.parametrize("pair", [*PROFILES, *NOT_PROFILES])
+def test_each_pair_is_a_profile_or_not(
+    registry: PackRegistry, extended: Extended, pair: str
+) -> None:
+    found = _facets(registry, _release(extended, metas=[pair]))
+    assert found == ({"onco.profiles": (pair,)} if pair in PROFILES else {})
+
+
+def test_the_profiles_are_sorted_whatever_the_order_they_were_declared_in(
+    registry: PackRegistry, extended: Extended
+) -> None:
+    ordered = sorted(PROFILES)
+    assert len(ordered) == 19
+    for declared in (ordered[::-1], [*ordered[::-1], *NOT_PROFILES, *ordered]):
+        found = _facets(registry, _release(extended, metas=declared))
+        assert found == {"onco.profiles": tuple(ordered)}
+
+
+def test_a_stable_id_without_a_meta_is_no_profile(
+    registry: PackRegistry, extended: Extended
+) -> None:
+    table = extended(build.table("t", key=["k"]), {"stable_id": "study_mutations"})
+    descriptors = [extended(build.dataset(packs=["onco"]), {"reference_genome": "hg19"})]
+    descriptors += [table, build.column("t.k", "string")]
+    assert _facets(registry, descriptors) == {"onco.reference_genome": ("hg19",)}
 
 
 def test_a_dataset_that_does_not_list_the_pack_has_no_facets(
