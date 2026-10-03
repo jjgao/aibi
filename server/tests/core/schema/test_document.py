@@ -1580,6 +1580,12 @@ def test_the_nearest_names_are_a_window_in_sorted_order() -> None:
     assert nearest("a", declared) == declared[:NEAREST]
     assert nearest("z", declared) == declared[-NEAREST:]
     assert nearest("x", declared[:NEAREST]) == declared[:NEAREST]
+    held = tuple(declared)  # a registry's concept ids are a tuple, never copied (D391)
+    assert nearest("n050x", held) == held[43:59]
+    assert nearest("a", held) == held[:NEAREST]
+    assert nearest("z", held) == held[-NEAREST:]
+    short = held[:NEAREST]
+    assert nearest("x", short) is short
 
 
 def test_many_unknown_references_stay_small() -> None:

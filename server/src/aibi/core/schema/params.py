@@ -22,7 +22,7 @@ written only for the refusals returned, so that long keys above many references 
 import json
 import re
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic import JsonValue
@@ -136,8 +136,10 @@ NEAREST = 16
 name in sorted order, so that a thousand refusals do not each list every name (§7.1)."""
 
 
-def nearest(name: str, declared: list[str]) -> list[str]:
-    """Up to ``NEAREST`` of the sorted ``declared`` names, those nearest ``name`` in order."""
+def nearest(name: str, declared: Sequence[str]) -> Sequence[str]:
+    """Up to ``NEAREST`` of the sorted ``declared`` names, those nearest ``name`` in order:
+    ``declared`` itself when it has no more, never copied whole, so callers do not change what
+    it returns (§7.1; a refusal of a concept, D391)."""
     if len(declared) <= NEAREST:
         return declared
     start = min(max(bisect_left(declared, name) - NEAREST // 2, 0), len(declared) - NEAREST)

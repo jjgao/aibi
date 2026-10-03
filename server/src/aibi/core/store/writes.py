@@ -1,5 +1,5 @@
 """Checks on every descriptor write, and the versions the server sets (SPEC §5.1, §10.1, D243,
-D247).
+D247, D391).
 
 A descriptor write is an import, a re-import, a change to a draft or a proposal. Its descriptors
 are checked (``check_writes``) against the registered packs, beyond what their models and
@@ -17,7 +17,17 @@ are checked (``check_writes``) against the registered packs, beyond what their m
 - each ontology code of a system some registered pack validates (a dataset's ``data_use``, a
   column's ``concepts`` and its permissible values' ``concepts``) is one the validator accepts
   (``INVALID_VALUE``), the validator called through its handle's guard and failing closed
-  (``PACK_FAILED`` at the code, D388); a system no pack registered is not checked.
+  (``PACK_FAILED`` at the code, D388); a system no pack registered is not checked;
+- every concept a descriptor names outside ``core:`` (a ``maps_to``, a ``time_origin``, and those
+  a coverage's ``parent_scope`` names) is an installed pack's, of the sort its place needs
+  (``release.pack_concepts``: ``UNKNOWN_DESCRIPTOR`` if no installed pack registers it,
+  ``INVALID_VALUE`` for another sort, each listing the nearest ids of the sort needed), whatever
+  packs the dataset lists; with no registry none is installed, so every one is refused (D391).
+  ``core:`` concepts are ``check_release``'s, and a value map's targets and a mapping's units are
+  not checked against the concept.
+
+Every refusal is recorded and built only if it is returned (``finish_lazy``), so that a write
+naming a million refused references builds a thousand refusals.
 
 A pack's validators run on their packs' views of a release in one operation (``validated``), each
 through its handle's guard: what a validator raises refuses the release (``PACK_FAILED``), so that
@@ -29,9 +39,11 @@ publish check every descriptor against the registry they run under. A change or 
 only the descriptors it adds or changes (``changed``), for speed: one large extension value then
 costs its own writes, not every later one. The extensions of the others are still checked against
 the dataset's ``packs``, which needs no schema; what the registry decides about them (their
-schemas, the packs listed, ontology codes) is checked again when the session publishes, since a
-pack removed or upgraded since they were written would otherwise let a release hold descriptors the
-running registry refuses (D247).
+schemas, the packs listed, ontology codes, concepts) is checked again when the session publishes,
+since a pack removed or upgraded since they were written would otherwise let a release hold
+descriptors the running registry refuses (D247, D391). A change or a proposal is checked per
+descriptor, not per member: one that changes a descriptor's label is refused for a stale concept
+the same descriptor names.
 
 ``versions`` sets each descriptor's ``version`` against the release a write starts from (D243):
 its version there when nothing but ``version`` differs, curation included, and that version plus
@@ -40,12 +52,13 @@ tombstone's version plus one. Versions are counted per release, not per edit, so
 back to its base gives back the base's bytes.
 """
 
-from collections.abc import Container, Iterable, Sequence
-from typing import Literal
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from aibi.core.engine.resolve import LabelledView, Operation
+from aibi.core.schema.concepts import core_ids
 from aibi.core.schema.copiers import is_true, pack_refusals
 from aibi.core.schema.descriptors import (
     RELEASE_KINDS,
@@ -67,9 +80,18 @@ from aibi.core.schema.jsonschemas import (
     steps,
 )
 from aibi.core.schema.limits import EXTENSION_STEPS
-from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.output import data, text
 from aibi.core.schema.pack_api import JsonSchema, OntologyValidator, PackRegistry, Validator
-from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
+from aibi.core.schema.refusals import (
+    Limit,
+    Record,
+    Refusal,
+    RefusalCode,
+    finish_lazy,
+    finish_refusals,
+    said,
+)
+from aibi.core.schema.release import pack_concepts
 from aibi.core.store.tombstones import Tombstone
 
 _BY: TypeAdapter[str] = TypeAdapter(By)
@@ -103,11 +125,7 @@ def validators(registry: PackRegistry | None, packs: Iterable[str]) -> list[Hook
 
 def failed(pack: str, what: str, path: Sequence[str | int] | None = None) -> Refusal:
     """The refusal of a pack's hook that failed (D388): ``PACK_FAILED``, in the core's words."""
-    return Refusal(
-        code=RefusalCode.PACK_FAILED,
-        path=None if path is None else pointer(path),
-        message=[text(f"The {what} of the pack "), data(pack), text(" failed")],
-    )
+    return _failed(RefusalCode.PACK_FAILED, None if path is None else pointer(path), pack, what)
 
 
 def validated(
@@ -146,27 +164,27 @@ def _in_system(validate: Hook[OntologyValidator], code: str) -> bool | None:
         return None
 
 
-def _refusal(
-    code: RefusalCode,
-    path: Sequence[str | int],
-    *message: Segment | str,
-    limit: Limit | None = None,
-) -> Refusal:
-    segments = [text(part) if isinstance(part, str) else part for part in message]
-    return Refusal(code=code, path=pointer(path), message=segments, limit=limit)
-
-
-def _out_of_steps(where: Sequence[str | int], budget: int, ceiling: int) -> Refusal:
+def _out_of_steps(code: str, at: str | None, budget: int, ceiling: int) -> Refusal:
     remedy = "a smaller extension object, or a pack schema that evaluates it in fewer steps"
     if ceiling < WRITE_STEPS_MAX:
         remedy += ", or an operator's curation session, which allows more"
-    return _refusal(
-        RefusalCode.LIMIT_EXCEEDED,
-        where,
-        f"Evaluating the extension against its pack's schema takes more than its {budget} steps "
-        f"({STEPS_BASE} and {STEPS_PER_VALUE} per JSON value of the extension, at most "
-        f"{ceiling}): {remedy}",
+    return Refusal(
+        code=code,
+        path=at,
+        message=[
+            text(
+                f"Evaluating the extension against its pack's schema takes more than its {budget} "
+                f"steps ({STEPS_BASE} and {STEPS_PER_VALUE} per JSON value of the extension, at "
+                f"most {ceiling}): {remedy}"
+            )
+        ],
         limit=Limit(name=EXTENSION_STEPS, max=budget),
+    )
+
+
+def _failed(code: str, at: str | None, pack: str, what: str) -> Refusal:
+    return Refusal(
+        code=code, path=at, message=[text(f"The {what} of the pack "), data(pack), text(" failed")]
     )
 
 
@@ -207,9 +225,18 @@ def check_writes(
     object evaluated within ``steps(value, ceiling)`` steps; the extensions of the others are
     checked against the dataset's ``packs`` alone. An ontology system whose validator failed is
     not called again in this check: its later codes are refused ``PACK_FAILED`` without a call,
-    so that one failure is logged once (D388)."""
+    so that one failure is logged once (D388). The concepts those descriptors name outside
+    ``core:`` are checked against the registry's (``release.pack_concepts``, D391), a ``None``
+    registry registering none. Every refusal is built only if it is returned
+    (``finish_lazy``)."""
     registered: set[str] = set(registry.ids) if registry is not None else set()
-    found: list[Refusal] = []
+    found: list[Record] = []
+
+    def refuse(
+        code: RefusalCode, path: Sequence[str | int], build: Callable[..., Refusal], *args: Any
+    ) -> None:
+        found.append((pointer(path), code, build, args))
+
     listed = packs_of(descriptors)
     for at, descriptor in enumerate(descriptors):
         if only is not None and descriptor.id not in only:
@@ -217,13 +244,12 @@ def check_writes(
         if isinstance(descriptor, DatasetDescriptor):
             for index, pack in enumerate(listed):
                 if pack not in registered:
-                    found.append(
-                        _refusal(
-                            RefusalCode.INVALID_VALUE,
-                            (at, "fields", "packs", index),
-                            "The dataset lists a pack that is not registered: ",
-                            data(pack),
-                        )
+                    refuse(
+                        RefusalCode.INVALID_VALUE,
+                        (at, "fields", "packs", index),
+                        said,
+                        "The dataset lists a pack that is not registered: ",
+                        pack,
                     )
     checkers: dict[tuple[str, str], Checker | None] = {}
     failed_systems: set[str] = set()
@@ -233,13 +259,12 @@ def check_writes(
             where = (at, "extensions", pack)
             if registry is None or pack not in registered:
                 if pack not in listed:
-                    found.append(
-                        _refusal(
-                            RefusalCode.INVALID_EXTENSION,
-                            where,
-                            "No registered pack has the extension's pack id: ",
-                            data(pack),
-                        )
+                    refuse(
+                        RefusalCode.INVALID_EXTENSION,
+                        where,
+                        said,
+                        "No registered pack has the extension's pack id: ",
+                        pack,
                     )
                 continue
             if not checked:
@@ -252,27 +277,21 @@ def check_writes(
                 checkers[key] = None if schema is None else Checker(schema)
             checker = checkers[key]
             if checker is None:
-                found.append(
-                    _refusal(
-                        RefusalCode.INVALID_EXTENSION,
-                        where,
-                        f"The pack has no extension schema for {descriptor.kind} descriptors",
-                    )
-                )
+                message = f"The pack has no extension schema for {descriptor.kind} descriptors"
+                refuse(RefusalCode.INVALID_EXTENSION, where, said, message)
                 continue
             value: JsonValue = dict(members)
             for failure in checker.failures(value, ceiling=ceiling):
                 if failure.keyword == OUT_OF_STEPS:
-                    found.append(_out_of_steps(where, steps(value, ceiling), ceiling))
+                    budget = steps(value, ceiling)
+                    refuse(RefusalCode.LIMIT_EXCEEDED, where, _out_of_steps, budget, ceiling)
                     continue
                 message = (
                     "The pack's schema cannot evaluate the extension"
                     if failure.keyword == UNEVALUABLE
                     else f"The extension does not match its pack's schema ({failure.keyword})"
                 )
-                found.append(
-                    _refusal(RefusalCode.INVALID_EXTENSION, (*where, *failure.path), message)
-                )
+                refuse(RefusalCode.INVALID_EXTENSION, (*where, *failure.path), said, message)
         if registry is None or not checked:
             continue
         for path, system, code in _references(descriptor):
@@ -282,18 +301,20 @@ def check_writes(
             holds = None if system in failed_systems else _in_system(validate, code)
             if holds is None:
                 failed_systems.add(system)
-                found.append(failed(validate.pack, "ontology validator", (at, *path, "code")))
+                held = (at, *path, "code")
+                refuse(RefusalCode.PACK_FAILED, held, _failed, validate.pack, "ontology validator")
             elif not holds:
-                found.append(
-                    _refusal(
-                        RefusalCode.INVALID_VALUE,
-                        (at, *path, "code"),
-                        "The ontology system ",
-                        data(system),
-                        " has no such code",
-                    )
+                refuse(
+                    RefusalCode.INVALID_VALUE,
+                    (at, *path, "code"),
+                    said,
+                    "The ontology system ",
+                    system,
+                    " has no such code",
                 )
-    return finish_refusals(found)
+    sorts: Mapping[str, str] = registry.concept_sorts() if registry is not None else {}
+    ids = registry.concept_ids if registry is not None else core_ids
+    return finish_lazy([*found, *pack_concepts(descriptors, sorts, ids, only=only)])
 
 
 def _unversioned(descriptor: Descriptor) -> bytes:
