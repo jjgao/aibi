@@ -124,6 +124,8 @@ From M4.0c-2, `core/api/packs.py` installs the packs `[packs] modules` names (D3
 imported and its `PACK` read in a guard of its own, quietly (warnings counted, logs filtered,
 a record a handler cannot write one line of the core's, `logs.Quiet`), DuckDB refused by a
 `sys.meta_path` finder, and one registry labelled by module, any failure exiting with 2.
+From M4.1, `packs/onco/` is the oncology pack (D393): its concepts, the `OncoTree`, `HGNC`,
+`NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet.
 
 ## Non-negotiables
 
