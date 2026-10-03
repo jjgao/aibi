@@ -46,9 +46,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 Disclosure under *k* (§8.4) is per analysis and per form: `registry.CoreAnalysis` states the class and
 `withheld_forms` the forms withheld under any *k*. Row counts (`count: "rows"`) are withheld under
 any *k* (D379: `registry.withheld_form`, `views._withheld_form`). Category memberships (`each:
-"category"`) are disclosed under *k* only on a list or one open down step from the unit (D383, D384:
-`disclosure.membership_shown`, `resolve.open_path`, `resolve.GATE_CHECKS`), and are otherwise
-withheld (`distribution.withheld_under_k`). Read those before touching either.
+"category"`) are disclosed under *k* only on a list or one open down step from the unit to another
+table (D383, D384: `disclosure.membership_shown`, `resolve.open_path`, `resolve.open_step`,
+`resolve.GATE_CHECKS`), and are otherwise withheld (`distribution.withheld_under_k`). Read those before touching either.
 
 ## Non-negotiables
 
@@ -124,12 +124,27 @@ Keep command output out of the context. Run each gate above quietly and read onl
 pytest's exit status (a pipe to `tail` would hide it):
 `set -o pipefail; uv run pytest -q --tb=short tests/core 2>&1 | tail -n 30`, and
 `uv run ruff check --quiet .`. The full `uv run pytest` takes long enough to run in the
-background, to a file in the scratchpad (`… > $SCRATCH/pytest.log 2>&1`), whose tail you then read;
+background, to a file in the session's scratchpad directory (`… > <scratchpad>/pytest.log 2>&1`),
+whose tail you then read;
 `tail` writes nothing until the command ends, so a pipe into it loses everything if the command
 is killed. When a run fails, rerun just the failing test (`uv run pytest path::test -x --tb=short`,
 with `-m million` for a determinism test, which `addopts` otherwise deselects even by node id)
 rather than the suite, and never `cat` a log or a large file: grep it or read the lines you need.
 Run a noisy job (the `million` tests, a survey) in a subagent, or in the background to a file.
+
+Run a server and operate it (see `server/aibi.example.toml`):
+
+```bash
+uv run aibi-server new-token                        # a curator token, and the hash to configure
+uv run aibi-server serve --config aibi.toml
+AIBI_TOKEN=… AIBI_OPERATOR="Your Name" uv run aibi status
+```
+
+After changing a model in `core/schema/`, regenerate the checked-in JSON Schemas with
+`uv run python -m aibi.core.schema.export ../schemas`; a test fails while they are stale.
+
+Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
+OpenAPI schema, not written by hand.
 
 ## Working on issues
 
