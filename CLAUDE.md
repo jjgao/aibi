@@ -48,7 +48,8 @@ Disclosure under *k* (§8.4) is per analysis and per form: `registry.CoreAnalysi
 any *k* (D379: `registry.withheld_form`, `views._withheld_form`). Category memberships (`each:
 "category"`) are disclosed under *k* only on a list or one open down step from the unit to another
 table (D383, D384: `disclosure.membership_shown`, `resolve.open_path`, `resolve.open_step`,
-`resolve.GATE_CHECKS`), and are otherwise withheld (`distribution.withheld_under_k`). Read those before touching either.
+`resolve.GATE_CHECKS`), and are otherwise withheld (`distribution.withheld_under_k`). Read those
+before touching either.
 
 ## Non-negotiables
 
