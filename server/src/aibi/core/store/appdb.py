@@ -29,13 +29,24 @@ and its release while it is open (when the same proposal is made again against a
 and it is decided once: from *open* to *accepted* or *rejected*, never back (D248).
 ``proposals.value`` is the value's RFC 8785 text, ``NULL`` for a removal, and a ``pointer`` of
 ``""`` names a whole descriptor.
+
+The link registry (migration 8, D408): ``cover_links``, ``cover_scopes`` and ``cover_graph`` keep,
+by dataset, every coverage link, scope mapping and relationship or key (``store.links``) that a
+published release declared, so that an erasure still follows them once the release that declared
+them is withdrawn. A row is never removed or changed, and is written only with ``ON CONFLICT …
+DO NOTHING``, so a row once written keeps its id and a row that breaks a ``CHECK`` or ``NOT NULL``
+raises rather than being dropped (``INSERT OR IGNORE`` drops it; ``INSERT OR REPLACE`` deletes
+the row it replaces, past the triggers, and gives a new id). Their ids are table and column
+names, kept, as a withdrawn manifest's are, until M4.0e-3. ``cover_links_pending`` is the work
+list of the releases published before the registry existed, which migration 8 fills, one row per
+manifest; ``Store.record_known_links`` drains it.
 """
 
 import hashlib
 import json
 import sqlite3
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +55,7 @@ from typing import Literal
 from pydantic import JsonValue
 
 from aibi.core.schema.jsonio import canonical
+from aibi.core.store.links import Link, Scope, columns_text, link
 
 
 def text_digest(text: str) -> str:
@@ -647,6 +659,54 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE TRIGGER result_cache_uncounted AFTER DELETE ON result_cache
         BEGIN UPDATE result_cache_usage SET bytes = bytes - OLD.bytes; END;
     """,
+    # 8: M4 (#19), the erasure's link registry and its backfill queue (D408)
+    """
+    CREATE TABLE cover_links (
+        id INTEGER PRIMARY KEY,
+        dataset TEXT NOT NULL,
+        child_table TEXT NOT NULL,
+        child_columns TEXT NOT NULL CHECK (json_valid(child_columns)),
+        parent_table TEXT NOT NULL,
+        parent_columns TEXT NOT NULL CHECK (json_valid(parent_columns)),
+        UNIQUE (dataset, child_table, child_columns, parent_table, parent_columns)
+    ) STRICT;
+    CREATE TABLE cover_scopes (
+        id INTEGER PRIMARY KEY,
+        dataset TEXT NOT NULL,
+        scope_table TEXT NOT NULL,
+        scope_column TEXT NOT NULL,
+        child_table TEXT NOT NULL,
+        child_column TEXT NOT NULL,
+        UNIQUE (dataset, scope_table, scope_column, child_table, child_column)
+    ) STRICT;
+    CREATE TABLE cover_graph (
+        id INTEGER PRIMARY KEY,
+        dataset TEXT NOT NULL,
+        child_table TEXT NOT NULL,
+        child_columns TEXT NOT NULL CHECK (json_valid(child_columns)),
+        parent_table TEXT NOT NULL,
+        parent_columns TEXT NOT NULL CHECK (json_valid(parent_columns)),
+        UNIQUE (dataset, child_table, child_columns, parent_table, parent_columns)
+    ) STRICT;
+    CREATE TABLE cover_links_pending (
+        manifest TEXT PRIMARY KEY REFERENCES manifests (hash),
+        dataset TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO cover_links_pending (manifest, dataset)
+        SELECT DISTINCT manifest, dataset FROM labels;
+    CREATE TRIGGER cover_links_kept BEFORE DELETE ON cover_links
+        BEGIN SELECT RAISE(ABORT, 'a cover link is never removed'); END;
+    CREATE TRIGGER cover_links_fixed BEFORE UPDATE ON cover_links
+        BEGIN SELECT RAISE(ABORT, 'a cover link is never changed'); END;
+    CREATE TRIGGER cover_scopes_kept BEFORE DELETE ON cover_scopes
+        BEGIN SELECT RAISE(ABORT, 'a cover scope is never removed'); END;
+    CREATE TRIGGER cover_scopes_fixed BEFORE UPDATE ON cover_scopes
+        BEGIN SELECT RAISE(ABORT, 'a cover scope is never changed'); END;
+    CREATE TRIGGER cover_graph_kept BEFORE DELETE ON cover_graph
+        BEGIN SELECT RAISE(ABORT, 'a cover graph edge is never removed'); END;
+    CREATE TRIGGER cover_graph_fixed BEFORE UPDATE ON cover_graph
+        BEGIN SELECT RAISE(ABORT, 'a cover graph edge is never changed'); END;
+    """,
 )
 
 
@@ -953,6 +1013,92 @@ class AppDB:
         with self.transaction() as db:
             db.execute("DELETE FROM pending_uploads WHERE dataset = ?", (dataset,))
 
+    # --- The link registry (D408) ---------------------------------------------------------------
+
+    def record_cover_links(
+        self, db: sqlite3.Connection, dataset: str, found: Iterable[Link]
+    ) -> None:
+        """Record coverage links in the transaction ``db``; one recorded already is kept."""
+        db.executemany(
+            "INSERT INTO cover_links"
+            " (dataset, child_table, child_columns, parent_table, parent_columns)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT (dataset, child_table, child_columns, parent_table, parent_columns)"
+            " DO NOTHING",
+            [_link_row(dataset, item) for item in sorted(found)],
+        )
+
+    def record_cover_scopes(
+        self, db: sqlite3.Connection, dataset: str, found: Iterable[Scope]
+    ) -> None:
+        """Record scope mappings in the transaction ``db``; one recorded already is kept."""
+        db.executemany(
+            "INSERT INTO cover_scopes"
+            " (dataset, scope_table, scope_column, child_table, child_column)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT (dataset, scope_table, scope_column, child_table, child_column)"
+            " DO NOTHING",
+            [
+                (dataset, s.scope_table, s.scope_column, s.child_table, s.child_column)
+                for s in sorted(found)
+            ],
+        )
+
+    def record_cover_graph(
+        self, db: sqlite3.Connection, dataset: str, found: Iterable[Link]
+    ) -> None:
+        """Record relationships and keys (``links.graph``) in the transaction ``db``; one
+        recorded already is kept."""
+        db.executemany(
+            "INSERT INTO cover_graph"
+            " (dataset, child_table, child_columns, parent_table, parent_columns)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT (dataset, child_table, child_columns, parent_table, parent_columns)"
+            " DO NOTHING",
+            [_link_row(dataset, item) for item in sorted(found)],
+        )
+
+    def cover_registry(
+        self, dataset: str
+    ) -> tuple[frozenset[Link], frozenset[Scope], frozenset[Link]]:
+        """The dataset's recorded coverage links, scope mappings and graph."""
+        with self.lock:
+            covers = self.connection.execute(
+                "SELECT child_table, child_columns, parent_table, parent_columns FROM cover_links"
+                " WHERE dataset = ? ORDER BY id",
+                (dataset,),
+            ).fetchall()
+            scopes = self.connection.execute(
+                "SELECT scope_table, scope_column, child_table, child_column FROM cover_scopes"
+                " WHERE dataset = ? ORDER BY id",
+                (dataset,),
+            ).fetchall()
+            edges = self.connection.execute(
+                "SELECT child_table, child_columns, parent_table, parent_columns FROM cover_graph"
+                " WHERE dataset = ? ORDER BY id",
+                (dataset,),
+            ).fetchall()
+        return (
+            frozenset(_link_of(row) for row in covers),
+            frozenset(Scope(*row) for row in scopes),
+            frozenset(_link_of(row) for row in edges),
+        )
+
+    def links_pending(self, dataset: str | None = None) -> list[tuple[str, str]]:
+        """The manifests whose links are still to record, with their datasets: of ``dataset``,
+        or of every dataset."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT manifest, dataset FROM cover_links_pending"
+                " WHERE ? IS NULL OR dataset = ? ORDER BY manifest",
+                (dataset, dataset),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+    def links_recorded(self, db: sqlite3.Connection, manifest: str) -> None:
+        """Take a manifest off the work list, in the transaction ``db``."""
+        db.execute("DELETE FROM cover_links_pending WHERE manifest = ?", (manifest,))
+
     # --- Audit trail and proposals --------------------------------------------------------------
 
     def audit(
@@ -1166,6 +1312,21 @@ def _statements(script: str) -> list[str]:
 def loads(text: str) -> JsonValue:
     """A JSON column's value."""
     return json.loads(text)
+
+
+def _link_row(dataset: str, found: Link) -> tuple[str, str, str, str, str]:
+    return (
+        dataset,
+        found.child,
+        columns_text(found.child_columns),
+        found.parent,
+        columns_text(found.parent_columns),
+    )
+
+
+def _link_of(row: tuple[str, str, str, str]) -> Link:
+    child, child_columns, parent, parent_columns = row
+    return link(child, json.loads(child_columns), parent, json.loads(parent_columns))
 
 
 __all__ = [

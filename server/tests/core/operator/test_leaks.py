@@ -20,6 +20,8 @@ from aibi.core.schema.operator import EraseRequest, SessionChange, SessionOpened
 Server = Any
 MakeServer = Any
 KEY = "site-00042"
+F_KEY = 7340931
+"""The key of text F's case: an integer no id, count or time of the test writes."""
 
 
 def _files(root: Path) -> list[bytes]:
@@ -96,7 +98,11 @@ def test_secrets_are_nowhere_but_where_they_belong(
     stored = [path.read_bytes() for path in data.glob("app.db*")]
     blobs = _files(data / "blobs")
     audit = [row[0] for row in server.store.db.connection.execute("SELECT detail FROM audit")]
-    records = [record.getMessage() for record in caplog.records]
+    from tests.core.store import cover_fixtures as fx
+
+    # Each record as formatted, with its traceback (``exc_text``, ``exc_info``, the exception
+    # chain): the middleware logs an unexpected exception with its traceback.
+    records = fx.logged(caplog.records)
     for secret in secrets:
         encoded = secret.encode()
         assert not any(encoded in content for content in stored + blobs), secret
@@ -134,3 +140,65 @@ def test_no_repr_shows_a_secret(server: Server) -> None:
     assert repr(policy.token_digest) not in written
     assert repr(policy.csrf_key) not in written
     assert repr(server.services).count("aibi_") == 0
+
+
+def test_the_coverage_refusals_carry_no_key_over_http(
+    server: Server, caplog: pytest.LogCaptureFixture
+) -> None:
+    """D408's texts through the operator router: B1 with its coverage clause, E with and
+    without the collision note, and F; no key erased (F's a distinctive integer) is in a
+    response, a log record, an audit entry or the app DB's files."""
+    from tests.core.store import cover_fixtures as fx
+
+    caplog.set_level(logging.DEBUG)
+    store = server.store
+    keys = ["m-1", KEY]
+
+    def publish(dataset: str, release: Any) -> str:
+        descriptors, sources, layouts = release
+        with store.pin() as pin:
+            built = store.import_release(pin, dataset, descriptors, sources, layouts)
+            store.publish(dataset, built.manifest.hash, "operator:ada")
+        return built.manifest.hash
+
+    # E without the note: a later release lists the key in an undeclared coverage table.
+    publish("e", fx.enrol(keys, [(1, "m-1"), (2, KEY)], keys))
+    publish("e", fx.enrol(["m-1"], [(1, "m-1")], keys, declare=False))
+    # E with the note: the latest has no members table.
+    publish("n", fx.enrol(keys, [(1, "m-1"), (2, KEY)], keys))
+    publish("n", fx.bare(keys))
+    # B1 with the coverage clause: the latest holds the row and lists a loan of theirs.
+    publish("b", fx.covlib(keys, [(1, "m-1"), (3, KEY)], [1, 3]))
+    publish("b", fx.covlib(keys, [(1, "m-1"), (2, KEY)], [3, 1, 3], declare=False))
+    # F: a live release whose links are still to record and whose descriptors are gone.
+    manifest = publish("f", fx.notes([1, F_KEY], [5], [("n1", 1)], "members"))
+    path = store.blobs.path(store.manifest(manifest).descriptors)
+    path.chmod(0o644)
+    path.unlink()
+    store._descriptors.clear()  # pyright: ignore[reportPrivateUsage]
+    with store.db.transaction() as db:
+        db.execute(
+            "INSERT INTO cover_links_pending (manifest, dataset) VALUES (?, 'f')", (manifest,)
+        )
+
+    texts: list[str] = []
+    for dataset, key, marker in (
+        ("e", KEY, "A live release names the key"),
+        ("n", KEY, "The hit may be a collision"),
+        ("b", KEY, "It also names the key in a coverage or scope table"),
+        ("f", F_KEY, "The link registry is incomplete"),
+    ):
+        response = server.post(
+            f"/operator/datasets/{dataset}/erase", {"table": "members", "key": [key]}
+        )
+        assert response.status_code >= 400
+        assert marker in response.text, response.text
+        texts.append(response.text)
+    audit = [row[0] for row in store.db.connection.execute("SELECT detail FROM audit")]
+    records = fx.logged(caplog.records)
+    stored = [path.read_bytes() for path in (server.root / "data").glob("app.db*")]
+    assert stored
+    for token in (KEY, str(F_KEY)):
+        for text in [*texts, *audit, *records]:
+            assert token not in text
+        assert not any(token.encode() in content for content in stored), token

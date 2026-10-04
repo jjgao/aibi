@@ -205,7 +205,11 @@ core/store/edits.py	_curated	text	form	a number, a literal sentence, or an id th
 core/store/erasure.py	_Person.unheld	text	len(keyed[-1])	a number (a length)
 core/store/erasure.py	_Person.unheld	text	len(self.given)	a number (a length)
 core/store/erasure.py	_Person.unheld	text	more	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/erasure.py	_erase	StoreRefused	_at(hits)	a string of literals and integers: a table's position among the release's tables and row numbers (`_Hit` holds nothing else, D269, D408)
+core/store/erasure.py	_erase	StoreRefused	_blocked(store, dataset, person, blocking)	a string of literals, label numbers the server gave (`@3`) and `_at`'s positions and row numbers (D269, D408); no name or value from a source
 core/store/erasure.py	_erase	StoreRefused	*reason	a Message: segments, passed on (D397)
+core/store/erasure.py	_refuse_unrecorded	StoreRefused	_joined(live)	label numbers the server gave (`@3`) joined by commas (D408); no name or value from a source
+core/store/erasure.py	_refuse_unrecorded	StoreRefused	_joined(gone)	label numbers the server gave (`@3`) joined by commas (D408); no name or value from a source
 core/store/gate.py	_Checks.absent_rows	fail	message	a literal sentence of the server's own (D401); the rows are counted
 core/store/gate.py	_Checks.declarations	fail	message	a literal sentence of the server's own (D401) with numbers (counts of cells); the rows are counted
 core/store/gate.py	_Checks.declarations	fail	problem	a sentence of ``_Checks.listed_cells``: a literal, or one with numbers (counts of cells) only (D401)

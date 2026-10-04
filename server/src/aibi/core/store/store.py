@@ -5,7 +5,12 @@
 plus one. Withdrawal applies to a manifest and so to every label that refers to it; a withdrawn
 manifest is never published again. The latest published release is the highest label whose
 manifest is not withdrawn. Every publish, whether an import's, a re-import's or a session's,
-labels its manifest through ``commit_label``, in the transaction that records what else it did.
+labels its manifest through ``commit_label``, in the transaction that records what else it did,
+and in that transaction records the coverage links, scope mappings, relationships and keys its
+descriptors declare (``links``) in the app DB's link registry, read from the descriptors alone,
+so that an erasure follows them after the release is withdrawn (D408). Releases published before
+the registry existed are on its work list, drained by ``record_known_links`` when the store opens,
+before its sweep deletes a withdrawn release's descriptors, and when an erasure begins.
 
 **Operation slots** (§12.3, D236). Each dataset has one slot, held by this process for the whole
 of an import, a re-import, a withdrawal, an erasure or a session operation (``exclusive``). A
@@ -81,9 +86,9 @@ from aibi.core.schema.limits import CacheLimits, LogLimits
 from aibi.core.schema.output import Segment, data, plain_text, text
 from aibi.core.schema.pack_api import ImportNote, Reshaped
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
-from aibi.core.store import build, parquet, redaction, tables, tombstones
+from aibi.core.store import build, links, parquet, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
-from aibi.core.store.blobs import BlobStore, MissingBlobError, checked
+from aibi.core.store.blobs import BlobStore, CorruptBlobError, MissingBlobError, checked
 from aibi.core.store.build import Built, Layout
 from aibi.core.store.cache import ResultCache
 from aibi.core.store.derivations import (
@@ -263,6 +268,8 @@ class Store:
             self._housekeeper: threading.Thread | None = None
             self._housekeeping_busy = False
             self._closing = False
+            # Before the sweep, which deletes a withdrawn release's descriptors (D408).
+            self.record_known_links()
             # This process holds no pin yet: what a crash left pinned is swept now.
             self.sweep()
             self.run_pending_redactions()
@@ -478,9 +485,49 @@ class Store:
         self.db.record_manifest(db, manifest, dataset, at)
         label = self.db.next_label(db, dataset)
         self.db.add_label(db, dataset, label, manifest, at, by)
+        self._record_links(db, dataset, self.descriptors(manifest))
         written: dict[str, JsonValue] = {**(detail or {}), "label": label, "manifest": manifest}
         self.db.audit(db, at, dataset, by, action, written, session)
         return label
+
+    def _record_links(
+        self, db: sqlite3.Connection, dataset: str, descriptors: Sequence[Descriptor]
+    ) -> None:
+        """Record in the transaction ``db`` the coverage links, scope mappings, relationships
+        and keys the descriptors declare (``links``, D408), from the descriptors alone."""
+        self.db.record_cover_links(db, dataset, links.covers(descriptors))
+        self.db.record_cover_scopes(db, dataset, links.scopes(descriptors))
+        self.db.record_cover_graph(db, dataset, links.graph(descriptors))
+
+    def record_known_links(self, dataset: str | None = None) -> None:
+        """Record the links of the releases published before the registry existed (migration 8's
+        work list), of ``dataset`` or of every dataset: each manifest's descriptors are read
+        outside a transaction, and its links recorded and its entry removed in one. A manifest
+        whose descriptors cannot be read stays on the list: while it is live, whatever the read
+        raised (missing, corrupt, a link, a directory, unreadable: any ``OSError``); once it is
+        withdrawn, unless they are missing or corrupt (swept before the migration, say), which
+        takes it off, since nothing will ever read them. Any other error on a withdrawn
+        release's descriptors (one that passes, or a link or a directory in the blob's place)
+        keeps it, and the sweep spares them (``_spared``) until the next try. An erasure of a
+        dataset with an entry left, live or withdrawn, is refused meanwhile (D408). The store
+        opens whatever the descriptors raise, but not while a queued release's *manifest* blob
+        raises ``OSError``: as for a live release's, the open fails and no sweep runs, so nothing
+        is deleted. It runs when the store opens, before its sweep, which would delete a
+        withdrawn release's descriptors, and when an erasure begins; with nothing on the list it
+        reads no blob."""
+        for manifest, of in self.db.links_pending(dataset):
+            try:
+                descriptors = self.descriptors(manifest)
+            except (MissingBlobError, CorruptBlobError, ValueError):
+                if self.db.is_withdrawn(manifest):
+                    with self.db.transaction() as db:
+                        self.db.links_recorded(db, manifest)
+                continue
+            except OSError:
+                continue
+            with self.db.transaction() as db:
+                self._record_links(db, of, descriptors)
+                self.db.links_recorded(db, manifest)
 
     def _whole(self, manifest: str) -> Manifest:
         """The manifest, if it and every blob it references are stored."""
@@ -618,10 +665,25 @@ class Store:
                 kept.update(self.manifest(manifest).blobs())
             return kept
 
+    def _spared(self) -> set[str]:
+        """The descriptors of the manifests whose links are still to record, which a sweep
+        keeps whether or not the release is withdrawn, so that the next try reads them (D408).
+        An error reading such a manifest other than a missing or corrupt blob raises, so that
+        nothing is deleted (as for a live release's manifest: the store does not open, and no
+        sweep runs, while it lasts); they never keep a redaction waiting (``_holds``)."""
+        with self.lock:
+            spared: set[str] = set()
+            for manifest, _ in self.db.links_pending():
+                try:
+                    spared.add(self.manifest(manifest).descriptors)
+                except (MissingBlobError, CorruptBlobError, ValueError):
+                    continue
+            return spared
+
     def sweep(self) -> list[str]:
         """Delete every blob that is neither referenced nor pinned; returns their digests."""
         with self.lock:
-            kept = self.referenced()
+            kept = self.referenced() | self._spared()
             waiting = set(self.pinned) - kept
             deleted = [digest for digest in self.blobs.digests() if digest not in kept | waiting]
             for digest in deleted:
@@ -700,7 +762,7 @@ class Store:
         or read a release since withdrawn leaves), and run waiting redactions."""
         with self.lock:
             if freed:
-                kept = self.referenced()
+                kept = self.referenced() | self._spared()
                 if any(digest not in kept for digest in freed):
                     self.sweep()
             self.run_pending_redactions()
