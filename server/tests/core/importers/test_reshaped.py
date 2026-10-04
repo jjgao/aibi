@@ -824,6 +824,40 @@ def test_a_tree_in_a_reshaped_table_blocks_erasure_until_a_reimport_drops_it(
     assert erased.withdrawn == (1,)
 
 
+def test_the_reshaped_coverage_s_links_outlive_its_removal_without_a_false_refusal(
+    roots: Roots, lifecycle: Lifecycle, grid: Grid, store: Store
+) -> None:
+    """D408: the links of the coverage the grid reshapes are recorded when the first release is
+    published and kept after a session removes the coverage; a re-import that drops the tree
+    (its grades column emptied) drops it from the reshaped coverage tables too, so the erasure
+    completes, and no live release lists the tree in them."""
+    from aibi.core.store import parquet
+    from aibi.core.store.erasure import erase
+    from aibi.core.store.links import link
+
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.registry, pack="grid")
+    opened = open_session(store, "d", ADA)
+    edit = {"op": "remove_descriptor", "descriptor": "cov:yields.tree_id"}
+    request = ChangeRequest.model_validate({"edits": [edit]})
+    draft = change(store, "d", opened.handle, opened.draft, request, ADA)
+    publish(store, "d", opened.handle, draft, ADA)
+    _orchard(
+        grid,
+        trees=[t for t in TREES if t[0] != "t_graded"],
+        grades=tuple((row[0], row[1], row[2], "", row[4]) for row in GRADES),
+        pickings=[p for p in PICKINGS if p[0] != "t_graded"],
+    )
+    lifecycle.reimport(path, registry=grid.registry, pack="grid")
+    assert link("tree_groups", ["tree_id"], "trees", ["tree_id"]) in store.db.cover_registry("d")[0]
+    assert erase(store, "d", "trees", ["t_graded"], ADA).withdrawn == (1, 2)
+    latest = store.latest("d")
+    assert latest is not None
+    for entry in store.manifest(latest.manifest).tables:
+        for column in parquet.read(store.blobs.read(entry.hash)):
+            assert "t_graded" not in column.values
+
+
 # --- Round 1 of #77's review: C on every build, a commitment, and the gaps ---------------------
 
 

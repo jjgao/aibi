@@ -23,7 +23,7 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   proposal and curation queues), the checks of every descriptor write against the installed packs
   (`writes.py`: extensions, ontology codes, concepts), catalogue statistics (`statistics.py`), the
   derivation log (`derivations.py`, read by `Store.explain`) and the result cache (`cache.py`,
-  `Store.results`).
+  `Store.results`), and the coverage and scope links erasure follows (`links.py`).
 - `core/importers/`: confinement, archives and the upload area, CSV/TSV, workbooks, Parquet and
   database snapshots (read in a worker process that can be killed), `import_dataset` and
   `reimport_dataset`, `checks.py`, which takes a pack importer's result apart before any validator,

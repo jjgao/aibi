@@ -309,6 +309,9 @@ def test_migration_7_adds_an_empty_cache_to_a_log_that_holds_issuances(
     with monkeypatch.context() as patched:
         patched.setattr(appdb, "MIGRATIONS", MIGRATIONS[:6])
         patched.setattr(ResultCache, "trim", lambda self: 0)
+        # Migration 8's link registry (D408) is not there yet either.
+        patched.setattr(Store, "record_known_links", lambda self, dataset=None: None)
+        patched.setattr(Store, "_record_links", lambda self, db, dataset, descriptors: None)
         old = Store(tmp_path / "data")
         try:
             assert old.db.version == 6
@@ -322,7 +325,7 @@ def test_migration_7_adds_an_empty_cache_to_a_log_that_holds_issuances(
             old.close()
     opened = Store(tmp_path / "data")
     try:
-        assert opened.db.version == len(MIGRATIONS) == 7
+        assert opened.db.version == len(MIGRATIONS) == 8
         assert opened.derivations.issuances(result) == [issuance]
         assert opened.results.usage() == 0
         assert fill(opened, result, issuance)
