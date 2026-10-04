@@ -56,6 +56,7 @@ allowed-confusables = ["–", "−"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["INP001"]  # tests are collected in importlib mode, without packages
+"scripts/**" = ["INP001"]  # scripts are run, never imported
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

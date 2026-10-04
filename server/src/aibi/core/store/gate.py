@@ -52,7 +52,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.jsonio import pointer
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Message, text
 from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
 from aibi.core.schema.semantics import ObservationState
@@ -92,7 +92,9 @@ class Dropped:
     descriptor: str
     pointer: str | None
     code: RefusalCode
-    message: str
+    message: Message
+    """The server's sentence: the gate names no id or value in it, which the note gives as its
+    subject and evidence (D397)."""
     count: int
     rows: tuple[int, ...]
     evidence: str | None
@@ -124,7 +126,7 @@ class _Failure:
     code: RefusalCode
     at: int
     where: tuple[str | int, ...]
-    message: str
+    message: Message
     count: int
     rows: tuple[int, ...]
     drop: str | None = None
@@ -208,8 +210,8 @@ def check(
     )
 
 
-def _refusal(code: RefusalCode, path: Sequence[str | int], message: str) -> Refusal:
-    return Refusal(code=code, path=pointer(path), message=[text(message)])
+def _refusal(code: RefusalCode, path: Sequence[str | int], message: Message) -> Refusal:
+    return Refusal(code=code, path=pointer(path), message=list(message))
 
 
 def _moved(refusal: Refusal, positions: Sequence[int]) -> Refusal:
@@ -257,8 +259,8 @@ def _drop(
         )
         if failure.drop == _KEY and isinstance(descriptor, TableDescriptor):
             derived = (
-                (_GRAIN, descriptor.fields.grain is not None, "The key it names was dropped"),
-                (_ROLE, descriptor.fields.role in _KEYED_ROLES, "The key it rests on was dropped"),
+                (_GRAIN, descriptor.fields.grain is not None, _KEY_NAMED),
+                (_ROLE, descriptor.fields.role in _KEYED_ROLES, _KEY_RESTED),
             )
             for field, applies, message in derived:
                 if applies and _proposed(descriptor, field):
@@ -279,7 +281,7 @@ def _drop(
                     descriptor.id,
                     None,
                     RefusalCode.UNKNOWN_DESCRIPTOR,
-                    "Its relationship was dropped",
+                    (text("Its relationship was dropped"),),
                     0,
                     (),
                     _evidence(descriptor),
@@ -295,6 +297,10 @@ def _drop(
         kept.append(descriptor)
         kept_positions.append(positions[index])
     return kept, kept_positions
+
+
+_KEY_NAMED: Message = (text("The key it names was dropped"),)
+_KEY_RESTED: Message = (text("The key it rests on was dropped"),)
 
 
 def _evidence(descriptor: Descriptor) -> str | None:
@@ -402,11 +408,10 @@ class _Checks:
         rows: _Rows,
         drop: str | None,
     ) -> None:
-        self.found.append(
-            _Failure(
-                code, at, where, f"{message} {rows.text()}", rows.count, tuple(rows.first), drop
-            )
-        )
+        """A failure at ``where``: ``message`` is the server's own sentence, a literal, which the
+        rows found complete; it names no id or value (D397)."""
+        said = (text(f"{message} {rows.text()}"),)
+        self.found.append(_Failure(code, at, where, said, rows.count, tuple(rows.first), drop))
 
     # --- The structural checks -----------------------------------------------------------------
 

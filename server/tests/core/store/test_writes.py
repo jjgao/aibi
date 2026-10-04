@@ -27,6 +27,7 @@ from aibi.core.schema.jsonschemas import (
     steps,
 )
 from aibi.core.schema.limits import MAX_LIST, MAX_VALUES
+from aibi.core.schema.output import text
 from aibi.core.schema.pack_api import Pack, PackError, PackManifest, PackRegistry
 from aibi.core.store.tombstones import Tombstone
 from aibi.core.store.writes import check_writes, versions
@@ -70,6 +71,13 @@ def test_an_extension_that_breaks_its_pack_s_schema_is_refused_at_the_member() -
     [refusal] = check_writes(descriptors("C"), registry())
     assert (refusal.code, refusal.path) == ("INVALID_EXTENSION", "/0/extensions/shelf/mark")
     assert "C" not in refusal.model_dump_json()  # the value is never repeated (A6)
+    # the schema's failure keyword is a library's word, so a data token (D397)
+    assert [type(part).__name__ for part in refusal.message] == [
+        "TextSegment",
+        "DataSegment",
+        "TextSegment",
+    ]
+    assert refusal.message[0] == text("The extension does not match its pack's schema (")
 
 
 def test_a_listed_pack_that_is_not_registered_is_refused() -> None:

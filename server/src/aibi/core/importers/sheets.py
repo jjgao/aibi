@@ -45,6 +45,13 @@ Calamine = int | float | str | bool | time | date | datetime | timedelta
 XLSB = "xl/workbook.bin"
 
 
+NOT_A_WORKSHEET = "it is not a worksheet"
+NO_CELL = "it has no cell"
+SKIPPED = frozenset({NOT_A_WORKSHEET, NO_CELL})
+"""The reasons a sheet is skipped, which the parent checks a child's answer against: a string the
+child sends is never server text unchecked (D397)."""
+
+
 @dataclass(frozen=True)
 class Sheet:
     name: str
@@ -131,7 +138,7 @@ def read_workbook(data: bytes, limits: ImportLimits, max_cells: int) -> list[She
             cells = 0
             for metadata in workbook.sheets_metadata:
                 if metadata.typ != SheetTypeEnum.WorkSheet:
-                    sheets.append(Sheet(metadata.name, None, "it is not a worksheet"))
+                    sheets.append(Sheet(metadata.name, None, NOT_A_WORKSHEET))
                     continue
                 sheet = workbook.get_sheet_by_name(metadata.name)
                 extent = _extent(sheet)
@@ -142,14 +149,16 @@ def read_workbook(data: bytes, limits: ImportLimits, max_cells: int) -> list[She
                 if source is not None and (found := long_cell(source.rows)) is not None:
                     named = output.data(metadata.name)
                     raise long_cell_refused(found, source.columns, "The sheet ", named)
-                skipped = "it has no cell" if source is None else None
+                skipped = NO_CELL if source is None else None
                 sheets.append(Sheet(metadata.name, source, skipped))
     except (CalamineError, OSError, ValueError, OverflowError) as error:
-        name = type(error).__name__
         raise refused(
-            RefusalCode.UNPARSEABLE_SOURCE, f"The workbook cannot be read ({name})"
+            RefusalCode.UNPARSEABLE_SOURCE,
+            "The workbook cannot be read (",
+            output.data(type(error).__name__),
+            ")",
         ) from None
     return sheets
 
 
-__all__ = ["Sheet", "duration", "read_workbook"]
+__all__ = ["SKIPPED", "Sheet", "duration", "read_workbook"]

@@ -16,6 +16,7 @@ from aibi.core.importers.infer import (
     infer,
 )
 from aibi.core.schema.descriptors import ListSyntax
+from aibi.core.schema.output import plain_text
 from aibi.core.store.sources import SourceValue
 
 
@@ -33,10 +34,7 @@ def _tables(inferred: Inferred) -> dict[str, TableGuess]:
 
 
 def _notes(inferred: Inferred) -> list[tuple[str | None, str]]:
-    return [
-        (note.subject, "".join(s.model_dump().get("text", "") for s in note.message))
-        for note in inferred.notes
-    ]
+    return [(note.subject, plain_text(note.message)) for note in inferred.notes]
 
 
 @pytest.mark.parametrize(

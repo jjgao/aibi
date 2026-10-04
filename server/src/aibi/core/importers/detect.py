@@ -150,7 +150,9 @@ def detect(data: bytes, *, extension: str, max_cells: int | None = None) -> Dete
     except SourceError as error:
         raise refused(
             RefusalCode.UNPARSEABLE_SOURCE,
-            f"The file cannot be read with the settings detected ({error})",
+            "The file cannot be read with the settings detected (",
+            *error.message,
+            ")",
         ) from None
     evidence = f"Detected (D224): encoding {encoding}, since {why}; {how}"
     if skip:

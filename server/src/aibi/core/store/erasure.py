@@ -72,6 +72,7 @@ from dataclasses import dataclass, field
 from pydantic import JsonValue
 
 from aibi.core.engine.data import PRESENT, KeyPart, Release, key_part
+from aibi.core.schema.output import Message, Segment, data, text
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.store.blobs import MissingBlobError
 from aibi.core.store.cells import ColumnCells
@@ -168,7 +169,7 @@ def _erase(
             withdrawn_before = any(label.withdrawn for label in store.labels(dataset))
             if not redact_only or not withdrawn_before:
                 reason = person.unheld(store, dataset, withdrawn_before, redact_only)
-                raise StoreRefused(RefusalCode.INVALID_KEY, reason)
+                raise StoreRefused(RefusalCode.INVALID_KEY, *reason)
             terms, mode = _redact_only(store, dataset, person), "redact_only"
         withdrawn: list[int] = []
         with store.db.transaction() as db:
@@ -246,8 +247,9 @@ def _redact_only(store: Store, dataset: str, person: "_Person") -> Terms:
         if typed is None:
             raise StoreRefused(
                 RefusalCode.INVALID_KEY,
-                f"The latest release with a table {person.table} has no key of those values' "
-                "number and datatypes",
+                "The latest release with a table ",
+                data(person.table),
+                " has no key of those values' number and datatypes",
             )
         values: Sequence[SourceValue] = [value for _, value in typed]
         break
@@ -582,33 +584,45 @@ class _Person:
                     values[text] = values.get(text, True) and _number(item.value)
         return found
 
-    def unheld(self, store: Store, dataset: str, withdrawn_before: bool, redact_only: bool) -> str:
+    def unheld(
+        self, store: Store, dataset: str, withdrawn_before: bool, redact_only: bool
+    ) -> Message:
         """Why no release holds the key; ``redact_only`` is suggested only where it could do,
-        the dataset having a withdrawn release that may have held the person."""
+        the dataset having a withdrawn release that may have held the person. The table is named
+        as data (D397)."""
         keyed = [
             columns
             for release in self.releases.values()
             if (columns := release.primary_key(self.table)) is not None
         ]
         if keyed and all(len(columns) != len(self.given) for columns in keyed):
-            return f"The key has {len(self.given)} values; the table's key has {len(keyed[-1])}"
+            return (
+                text(f"The key has {len(self.given)} values; the table's key has {len(keyed[-1])}"),
+            )
         if keyed and all(key is None for key in self.keys.values()):
-            return "The key's values are not of its columns' datatypes"
+            return (text("The key's values are not of its columns' datatypes"),)
+        reason: list[Segment]
         if keyed:
-            reason = "No published release holds that row, and no erasure of it waits"
+            reason = [text("No published release holds that row, and no erasure of it waits")]
         else:
-            reason = f"No published release has a table {self.table} with a key"
+            reason = [
+                text("No published release has a table "),
+                data(self.table),
+                text(" with a key"),
+            ]
         if not withdrawn_before:
             if redact_only:
-                reason += "; redact_only needs a release withdrawn earlier, and there is none"
-            return reason
-        reason += (
+                reason.append(
+                    text("; redact_only needs a release withdrawn earlier, and there is none")
+                )
+            return tuple(reason)
+        more = (
             ": check the key; if only a release withdrawn earlier held the person, erase with "
             "redact_only"
         )
         if store.db.upload_pending(dataset):
-            reason += " and uploads, to delete the upload area still to delete"
-        return reason
+            more += " and uploads, to delete the upload area still to delete"
+        return (*reason, text(more))
 
 
 def _number(value: SourceValue) -> bool:

@@ -33,9 +33,9 @@ attaches the connection it is given and nothing else (``snapshot``, D306):
 - The server reads each answer's frame itself, under the same deadline, and refuses one longer
   than ``reader_memory`` bytes; it unpickles the answer allowing no class but those a read
   returns (``Sheet``, ``TypedSource``, ``ParquetSource``, and a snapshot's ``Snapshot``,
-  ``SnapshotTable``, ``ForeignKey`` and ``Skipped``) and ``datetime``'s ``date``,
-  ``datetime``, ``timedelta`` and ``timezone``, looked up in a fixed table without importing
-  anything.
+  ``SnapshotTable``, ``ForeignKey`` and ``Skipped``, whose reason is segments, ``TextSegment``
+  and ``DataSegment``) and ``datetime``'s ``date``, ``datetime``, ``timedelta`` and
+  ``timezone``, looked up in a fixed table without importing anything.
 
 The worker bounds what a hostile file makes a reader consume; it is not a privilege boundary.
 It runs as the server's user, with its files and its network, so a reader that a file could
@@ -95,6 +95,7 @@ from aibi.core.schema.limits import (
     READER_WORKERS,
     ImportLimits,
 )
+from aibi.core.schema.output import DataSegment, TextSegment, data
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store.parquet import ParquetSource
 from aibi.core.store.sources import TypedSource
@@ -113,9 +114,12 @@ _ALLOWED: dict[tuple[str, str], type] = {
         SnapshotTable,
         ForeignKey,
         Skipped,
+        TextSegment,
+        DataSegment,
     )
 }
-"""The only classes an answer may name: what a read returns, and the values of ``datetime``."""
+"""The only classes an answer may name: what a read returns, the segments of a skipped relation's
+reason (D397), and the values of ``datetime``."""
 _KINDS = frozenset({"value", "refused", "memory", "decoded", "error", "panic"})
 _STOPPED = 5
 """Seconds a child that closed its socket is given to end, before it is killed; and seconds an
@@ -168,6 +172,8 @@ def _decoded(value: object) -> int:
             stack.extend(cast(tuple[object, ...], current))
         elif dataclasses.is_dataclass(current) and not isinstance(current, type):
             stack.extend(getattr(current, field.name) for field in dataclasses.fields(current))
+        elif isinstance(current, TextSegment | DataSegment):
+            stack.extend(current.__dict__.values())
     return total
 
 
@@ -702,7 +708,9 @@ class Reader:
             if near or _ALLOCATION.search(ended.stderr):
                 return self._memory()
         if panic is not None:
-            return refused(RefusalCode.UNPARSEABLE_SOURCE, f"The file cannot be read ({panic})")
+            return refused(
+                RefusalCode.UNPARSEABLE_SOURCE, "The file cannot be read (", data(panic), ")"
+            )
         return refused(
             RefusalCode.UNPARSEABLE_SOURCE,
             f"The file cannot be read: its reader ended with {code}",

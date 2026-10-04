@@ -6,6 +6,7 @@ import pytest
 
 from aibi.core.importers.detect import detect
 from aibi.core.importers.errors import ImportRefused
+from aibi.core.schema.output import plain_text
 from aibi.core.store.sources import TooManyCells
 
 
@@ -92,7 +93,7 @@ def test_a_ragged_file_is_unparseable_and_names_the_line() -> None:
         detect(b"a,b\n1,2\n3,4\n5,6,7\n", extension="csv")
     [refusal] = refused.value.refusals
     assert refusal.code == "UNPARSEABLE_SOURCE"
-    assert "line 4" in refusal.message[0].model_dump()["text"]
+    assert "line 4" in plain_text(refusal.message)
 
 
 def test_the_evidence_names_the_rules_and_no_value() -> None:

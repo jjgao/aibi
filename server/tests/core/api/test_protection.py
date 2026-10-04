@@ -193,9 +193,10 @@ def test_configured_cors_origins_reach_the_api_and_mounts_but_never_the_operator
     assert preflight.headers["vary"] == "Origin"
     assert "access-control-allow-credentials" not in preflight.headers
     asked = {**PREFLIGHT, "Access-Control-Request-Headers": "authorization"}
-    assert (
-        built.client.options("/api/health", headers={"Origin": other, **asked}).status_code == 403
-    )
+    refused = built.client.options("/api/health", headers={"Origin": other, **asked})
+    assert refused.status_code == 403
+    # The configured origins are the operator's, not the server's words: each is data (D397).
+    assert refused.json()["refusals"][0]["alternatives"] == [{"data": other}]
     answered = built.client.get("/mcp/x", headers={"Origin": other})
     assert answered.headers["access-control-allow-origin"] == other
     plain = built.client.get("/api/health")

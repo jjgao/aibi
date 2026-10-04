@@ -48,6 +48,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from pydantic import TypeAdapter
+
 import aibi
 from aibi.core.importers import urls
 from aibi.core.importers.confine import Confinement
@@ -64,11 +66,11 @@ from aibi.core.importers.snapshot import (
     ascii_folded,
     read_snapshot,
 )
-from aibi.core.importers.worker import Reader
+from aibi.core.importers.worker import Reader, ReaderError
 from aibi.core.schema.ids import normalise_names
 from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.limits import MAX_TEXT, TEXT_CHARACTERS
-from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.output import Segment, TextSegment, data, text
 from aibi.core.schema.pack_api import (
     ConfinedPath,
     DatabaseSource,
@@ -109,14 +111,15 @@ class Resolved:
     """A server's host, as the provenance records it."""
 
 
-def _variable_refused(connection: Connection, why: str) -> ImportRefused:
+def _variable_refused(connection: Connection, *why: Segment | str) -> ImportRefused:
     return refused(
         RefusalCode.INVALID_VALUE,
         "The environment variable ",
         data(cast(str, connection.url_env)),
         " of the connection ",
         data(connection.name),
-        f" {why}",
+        " ",
+        *why,
     )
 
 
@@ -129,7 +132,7 @@ def _server(connection: Connection, environ: Mapping[str, str]) -> Resolved:
     try:
         read = urls.parse(cast(urls.ServerKind, connection.kind), url)
     except urls.UrlError as refusal:
-        raise _variable_refused(connection, str(refusal)) from None
+        raise _variable_refused(connection, *refusal.message) from None
     target = Target(
         connection.kind, schema=connection.schema, database=read.database, dsn=read.connection()
     )
@@ -263,6 +266,36 @@ def _match(name: str, names: Sequence[str]) -> str | None:
     return folded[0] if len(folded) == 1 else None
 
 
+_REASON_SEGMENTS = 16
+"""The most segments a skipped relation's reason holds, which are a sentence and a kind."""
+_REASON_CHARACTERS = 1000
+"""The most characters a reason holds."""
+_SEGMENTS: TypeAdapter[list[Segment]] = TypeAdapter(list[Segment])
+
+
+def _reason(reason: object) -> list[Segment]:
+    """A skipped relation's reason, as the child sent it across the pipe, validated again here:
+    the child builds segments the parent unpickles, which no validator has looked at (D225,
+    D397). A reason that is not a few valid segments is the child's fault (``ReaderError``), and
+    nothing of it is stored."""
+    try:
+        if (
+            not isinstance(reason, tuple)
+            or len(cast(tuple[object, ...], reason)) > _REASON_SEGMENTS
+        ):
+            raise ValueError("a reason is a few segments")
+        found = _SEGMENTS.validate_python(
+            [cast(Segment, one).model_dump(mode="json") for one in cast(tuple[object, ...], reason)]
+        )
+        if sum(len(one.text if isinstance(one, TextSegment) else one.data) for one in found) > (
+            _REASON_CHARACTERS
+        ):
+            raise ValueError("a reason is short")
+    except Exception:
+        raise ReaderError("a reader's answer holds a reason that is not valid segments") from None
+    return found
+
+
 def _skipped(snapshot: Snapshot) -> list[ImportNote]:
     """A note for each relation the snapshot names as skipped, at most ``import_tables`` of them
     as the worker kept them, and one that counts the rest (D309)."""
@@ -270,7 +303,7 @@ def _skipped(snapshot: Snapshot) -> list[ImportNote]:
         ImportNote(
             "skipped_source",
             None,
-            [text("Skipped "), data(escaped(skipped.name)), text(f": {skipped.reason}")],
+            [text("Skipped "), data(escaped(skipped.name)), text(": "), *_reason(skipped.reason)],
         )
         for skipped in snapshot.skipped
     ]
@@ -392,7 +425,8 @@ class DatabaseImporter:
                     RefusalCode.UNPARSEABLE_SOURCE,
                     "The table ",
                     data(read.name),
-                    f" holds a value that is not read: {error}",
+                    " holds a value that is not read: ",
+                    *error.message,
                 ) from None
             layouts[table.id] = Layout(
                 table.id, tuple(zip(table.columns, read.columns, strict=True))

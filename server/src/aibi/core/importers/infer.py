@@ -61,7 +61,7 @@ from typing import Literal, cast
 
 from aibi.core.engine.data import PRESENT, Cell
 from aibi.core.schema.descriptors import ListSyntax
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Segment, data, listed, text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.store.cells import ColumnCells
 from aibi.core.store.sources import SourceValue, canonical_string
@@ -386,8 +386,9 @@ def _named(column: str, parent: str, key: str) -> bool:
     return column in (key, f"{parent}_{key}", f"{_singular(parent)}_{key}")
 
 
-def _note(kind: Literal["not_proposed"], subject: str, message: str) -> ImportNote:
-    return ImportNote(kind, subject, [text(message)])
+def _note(kind: Literal["not_proposed"], subject: str, *message: Segment) -> ImportNote:
+    """A note whose message is segments: the server's sentence, each id a data token (D397)."""
+    return ImportNote(kind, subject, list(message))
 
 
 def infer(tables: Sequence[SourceTable]) -> Inferred:
@@ -464,10 +465,16 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                         _note(
                             "not_proposed",
                             f"{table.id}.{column}",
-                            f"The column's integers are keys of {parent}, but its id is none of "
-                            f"the key's, {parent}_<key> and {_singular(parent)}_<key>, so no "
-                            "relationship is proposed: small numbers are contained by chance "
-                            "(D229)",
+                            text("The column's integers are keys of "),
+                            data(parent),
+                            text(", but its id is none of the key's, "),
+                            data(parent),
+                            text("_<key> and "),
+                            data(_singular(parent)),
+                            text(
+                                "_<key>, so no relationship is proposed: small numbers are "
+                                "contained by chance (D229)"
+                            ),
                         )
                     )
                     continue
@@ -477,9 +484,12 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                     _note(
                         "not_proposed",
                         f"{table.id}.{column}",
-                        f"The column is its table's key, and its values are keys of "
-                        f"{', '.join(keyed)}: a relationship between two tables' keys is never "
-                        "proposed, since two keys' values fit by chance (D229)",
+                        text("The column is its table's key, and its values are keys of "),
+                        *listed(keyed),
+                        text(
+                            ": a relationship between two tables' keys is never proposed, since "
+                            "two keys' values fit by chance (D229)"
+                        ),
                     )
                 )
     relationships: list[_Link] = list(declared_links)
@@ -489,8 +499,10 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                 _note(
                     "not_proposed",
                     f"{table}.{column}",
-                    "The column's values are keys of its own table; a relationship to itself is "
-                    "not proposed (D229)",
+                    text(
+                        "The column's values are keys of its own table; a relationship to itself "
+                        "is not proposed (D229)"
+                    ),
                 )
             )
             continue
@@ -499,8 +511,10 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                 _note(
                     "not_proposed",
                     f"{table}.{column}",
-                    f"The column's values are keys of {len(parents)} tables, so no relationship "
-                    "is proposed: a join path is never picked silently (D229)",
+                    text(
+                        f"The column's values are keys of {len(parents)} tables, so no "
+                        "relationship is proposed: a join path is never picked silently (D229)"
+                    ),
                 )
             )
             continue
@@ -538,8 +552,10 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                 _note(
                     "not_proposed",
                     table.id,
-                    "No key is proposed: no string or integer column, nor pair of foreign keys, "
-                    "is present and distinct in every row (D229)",
+                    text(
+                        "No key is proposed: no string or integer column, nor pair of foreign "
+                        "keys, is present and distinct in every row (D229)"
+                    ),
                 )
             )
     for table in tables:
@@ -631,9 +647,12 @@ def infer(tables: Sequence[SourceTable]) -> Inferred:
                 _note(
                     "not_proposed",
                     table.id,
-                    f"No identifier is proposed among {', '.join(few)}: "
-                    f"{'its' if len(few) == 1 else 'their'} present values are distinct, but "
-                    f"fewer than {IDENTIFIER_CELLS}, too few to tell (D228)",
+                    text("No identifier is proposed among "),
+                    *listed(few),
+                    text(
+                        f": {'its' if len(few) == 1 else 'their'} present values are distinct, "
+                        f"but fewer than {IDENTIFIER_CELLS}, too few to tell (D228)"
+                    ),
                 )
             )
         role, role_evidence = roles[table.id]

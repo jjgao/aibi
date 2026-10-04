@@ -29,9 +29,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal, cast
 
+from aibi.core.schema import output
 from aibi.core.schema.descriptors import ParseSettings
 from aibi.core.schema.ids import MAX_SAFE_INTEGER
 from aibi.core.schema.jsonio import JsonError, canonical, number_text
+from aibi.core.schema.output import Message, Segment, plain_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,14 +54,20 @@ which ``parse_text`` reads with) and a typed source's string (``long_cell``)."""
 
 
 class SourceError(ValueError):
-    """A raw snapshot that cannot be read: an unparseable file (§13.2) or an invalid value."""
+    """A raw snapshot that cannot be read: an unparseable file (§13.2) or an invalid value. Its
+    ``message`` is segments: the server's words, and as data what the source, its settings or a
+    library gives (D397)."""
+
+    def __init__(self, *message: Segment) -> None:
+        self.message: Message = message
+        super().__init__(plain_text(message))
 
 
 class TooManyCells(SourceError):  # noqa: N818 - a SourceError, named as what it says
     """A text file with more cells than it may have, found while it is parsed."""
 
     def __init__(self, limit: int) -> None:
-        super().__init__(f"more than {limit} cells")
+        super().__init__(output.text(f"more than {limit} cells"))
         self.limit = limit
 
 
@@ -89,7 +97,9 @@ class TypedSource:
         width = len(self.columns)
         for index, row in enumerate(self.rows):
             if len(row) != width:
-                raise SourceError(f"row {index} has {len(row)} values; there are {width} columns")
+                raise SourceError(
+                    output.text(f"row {index} has {len(row)} values; there are {width} columns")
+                )
             for value in row:
                 _check_value(value, index)
 
@@ -121,11 +131,15 @@ def _check_value(value: object, row: int) -> None:
     if isinstance(value, datetime):
         offset = value.utcoffset()
         if offset is not None and offset % timedelta(minutes=1):
-            raise SourceError(f"row {row}: a datetime's offset is whole minutes, not {offset}")
+            raise SourceError(
+                output.text(f"row {row}: a datetime's offset is whole minutes, not {offset}")
+            )
         return
     if isinstance(value, date):
         return
-    raise SourceError(f"row {row}: not a source value: {type(value).__name__}")
+    raise SourceError(
+        output.text(f"row {row}: not a source value: "), output.data(type(value).__name__)
+    )
 
 
 # --- Canonical string form (§12.2) ------------------------------------------------------------
@@ -167,7 +181,7 @@ def encode(source: RawSource) -> bytes:
         header = canonical({"columns": list(source.columns), "format": ROWS_FORMAT}).decode()
     except JsonError:
         raise SourceError(
-            "a column name holds a lone surrogate, which UTF-8 cannot carry"
+            output.text("a column name holds a lone surrogate, which UTF-8 cannot carry")
         ) from None
     # Each line is encoded as it is written, so that the rows' text is held once more in UTF-8
     # and never as one Python string, whose every character is as wide as its widest.
@@ -176,7 +190,9 @@ def encode(source: RawSource) -> bytes:
         for row in source.rows:
             lines.append(("[" + ",".join(_written(value) for value in row) + "]").encode("utf-8"))
     except UnicodeEncodeError:
-        raise SourceError("a string holds a lone surrogate, which UTF-8 cannot carry") from None
+        raise SourceError(
+            output.text("a string holds a lone surrogate, which UTF-8 cannot carry")
+        ) from None
     lines.append(b"")
     return b"\n".join(lines)
 
@@ -216,7 +232,7 @@ def decode(kind: Kind, data: bytes) -> RawSource:
     try:
         lines = data.decode("utf-8").split("\n")
         if len(lines) < 2 or lines[-1] != "":
-            raise SourceError("a typed snapshot is JSON Lines with a header line")
+            raise SourceError(output.text("a typed snapshot is JSON Lines with a header line"))
         header = json.loads(lines[0])
         columns = (
             cast(dict[str, object], header).get("columns") if isinstance(header, dict) else None
@@ -227,20 +243,24 @@ def decode(kind: Kind, data: bytes) -> RawSource:
             or not isinstance(columns, list)
             or not all(isinstance(name, str) for name in cast(list[object], columns))
         ):
-            raise SourceError(f"a typed snapshot starts with its {ROWS_FORMAT} header")
+            raise SourceError(output.text(f"a typed snapshot starts with its {ROWS_FORMAT} header"))
         names = tuple(cast(list[str], columns))
         rows = tuple(tuple(_read(value) for value in _row(line)) for line in lines[1:-1])
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         if isinstance(error, SourceError):
             raise
-        raise SourceError(f"a damaged typed snapshot: {error!r}"[:200]) from None
+        prefix = "a damaged typed snapshot: "
+        # cut so that the whole message is at most 200 characters, as it always was
+        raise SourceError(
+            output.text(prefix), output.data(repr(error)[: 200 - len(prefix)])
+        ) from None
     return TypedSource(names, rows)
 
 
 def _row(line: str) -> list[object]:
     row = json.loads(line)
     if not isinstance(row, list):
-        raise SourceError("each row of a typed snapshot is an array")
+        raise SourceError(output.text("each row of a typed snapshot is an array"))
     return cast(list[object], row)
 
 
@@ -249,10 +269,12 @@ def _read(value: object) -> SourceValue:
         return cast(SourceValue, value)
     [(tag, text)] = cast(dict[str, object], value).items()
     if not isinstance(text, str):
-        raise SourceError(f"a tag in a typed snapshot holds a string: {tag}")
+        raise SourceError(
+            output.text("a tag in a typed snapshot holds a string: "), output.data(tag)
+        )
     if tag == "int":
         if not _INTEGER.fullmatch(text):
-            raise SourceError("an int tag holds an integer in ASCII decimal")
+            raise SourceError(output.text("an int tag holds an integer in ASCII decimal"))
         return int(text)
     if tag == "float":
         return _NON_FINITE[text]
@@ -262,7 +284,7 @@ def _read(value: object) -> SourceValue:
         return datetime.fromisoformat(text)
     if tag == "error":
         return ErrorCell(text)
-    raise SourceError(f"unknown tag in a typed snapshot: {tag}")
+    raise SourceError(output.text("unknown tag in a typed snapshot: "), output.data(tag))
 
 
 # --- Reading a raw snapshot --------------------------------------------------------------------
@@ -277,10 +299,10 @@ def parse(source: RawSource, settings: ParseSettings | None) -> Parsed:
     """
     if isinstance(source, TypedSource):
         if settings is not None:
-            raise SourceError("Parse settings are for text files only")
+            raise SourceError(output.text("Parse settings are for text files only"))
         return Parsed(source.columns, source.rows)
     if settings is None:
-        raise SourceError("A text file is read with parse settings")
+        raise SourceError(output.text("A text file is read with parse settings"))
     return parse_text(source.data, settings)
 
 
@@ -301,17 +323,23 @@ def parse_text(data: bytes, settings: ParseSettings, *, max_cells: int | None = 
     """
     delimiter, quote = settings.delimiter, settings.quote
     if delimiter == quote:
-        raise SourceError("The delimiter and the quote are different characters")
+        raise SourceError(output.text("The delimiter and the quote are different characters"))
     if {delimiter, quote} & {"\r", "\n"}:
-        raise SourceError("Neither the delimiter nor the quote is a line break")
+        raise SourceError(output.text("Neither the delimiter nor the quote is a line break"))
     try:
         text = data.decode(settings.encoding)
     except LookupError:
-        raise SourceError(f"Not a text encoding: {settings.encoding}") from None
+        raise SourceError(
+            output.text("Not a text encoding: "), output.data(settings.encoding)
+        ) from None
     except UnicodeDecodeError as error:
         line = data.count(b"\n", 0, error.start) + 1
         raise SourceError(
-            f"line {line}: the bytes are not {settings.encoding} ({error.reason})"
+            output.text(f"line {line}: the bytes are not "),
+            output.data(settings.encoding),
+            output.text(" ("),
+            output.data(error.reason),
+            output.text(")"),
         ) from None
     start, skipped = 0, 0
     while skipped < settings.skip_rows:
@@ -341,19 +369,25 @@ def parse_text(data: bytes, settings: ParseSettings, *, max_cells: int | None = 
                 header = tuple(record)
             elif len(record) != len(header):
                 raise SourceError(
-                    f"line {skipped + reader.line_num}: {len(record)} fields, and the header "
-                    f"has {len(header)}"
+                    output.text(
+                        f"line {skipped + reader.line_num}: {len(record)} fields, and the header "
+                        f"has {len(header)}"
+                    )
                 )
             else:
                 rows.append(tuple(record))
                 if max_cells is not None and len(header) * len(rows) > max_cells:
                     raise TooManyCells(max_cells)
     except csv.Error as error:
-        raise SourceError(f"line {skipped + reader.line_num}: {error}") from None
+        raise SourceError(
+            output.text(f"line {skipped + reader.line_num}: "), output.data(str(error))
+        ) from None
     if header is None:
         raise SourceError(
-            f"No header row: {before} records after the {skipped} lines skipped, and the header "
-            f"is record {settings.header_row}"
+            output.text(
+                f"No header row: {before} records after the {skipped} lines skipped, and the "
+                f"header is record {settings.header_row}"
+            )
         )
     return Parsed(header, rows)
 

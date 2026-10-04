@@ -243,7 +243,8 @@ def test_unsupported_parquet_types_are_refused_with_those_read(roots: Roots) -> 
     assert refusal.code == "UNSUPPORTED_FORMAT"
     said = [segment.model_dump() for segment in refusal.message]
     assert said[:3] == [{"text": "In "}, {"data": "blobs.parquet"}, {"text": ": "}]
-    assert "binary" in said[3]["text"]
+    assert "binary" in said[-1]["data"]
+    assert not any("binary" in part.get("text", "") for part in said)
     assert "bool" in [segment.model_dump()["text"] for segment in refusal.alternatives]
 
 

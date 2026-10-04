@@ -1353,6 +1353,26 @@ def test_relationships_and_coverage_lead_to_the_parent_key() -> None:
     ]
 
 
+def test_a_composite_key_is_named_one_id_to_a_token() -> None:
+    """Each column of a key is a data token of its own (D296, D397)."""
+    release = _release(
+        table("members", primary_key=["member_id", "card"]),
+        table("loans", primary_key=["loan_id"]),
+        column("members.member_id"),
+        column("members.card", datatype="string"),
+        column("loans.loan_id"),
+        column("loans.member_id"),
+        relationship("loans", ["member_id"], "members", role="holder"),
+    )
+    [refusal] = [r for r in check_release(release) if r.path == "/7/fields/parent_columns"]
+    assert [segment.model_dump() for segment in refusal.message][-4:] == [
+        {"text": ", in any order: "},
+        {"data": "member_id"},
+        {"text": ", "},
+        {"data": "card"},
+    ]
+
+
 def test_coverage_tables_join_no_relationship() -> None:
     to_plans = relationship("loans", ["member_id"], "plans", role="plan", parent_columns=["plan"])
     release = [*(validated(d) for d in RELEASE), validated(to_plans)]

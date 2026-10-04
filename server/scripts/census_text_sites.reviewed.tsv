@@ -1,0 +1,237 @@
+core/analyses/columns.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/columns.py	view_readback	text	index	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/columns.py	view_readback	text	reference	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/common.py	cohort_caveats	text	';'.join(parts)	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/cox.py	_caveats	text	'; '.join(differs)	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/cox.py	_caveats	text	number_text(PH_LEVEL)	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/cox.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/cox.py	view_readback	text	index	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/cox.py	view_readback	text	reference	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/distribution.py	_caveats	text	message	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/distribution.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/distribution.py	view_readback	text	index	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/existence.py	_lift	text	';'.join(parts)	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/existence.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/existence.py	view_readback	text	index	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/existence.py	view_readback	text	reference	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/packs.py	_checked	text	found.most	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/packs.py	_checked	text	found.name	the name of a limit of the server's own (``JsonTooLarge``)
+core/analyses/packs.py	_checked	text	positions	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/packs.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/packs.py	view_readback	text	index	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/packs.py	view_readback	text	reference	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/survival.py	_caveats	text	number_text(PH_LEVEL)	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/survival.py	view_readback	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/survival.py	view_readback	text	reference	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_disclosure	text	because	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_disclosure	text	k	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_disclosure	text	source	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_listed	text	len(names) - LISTED	a number (a length)
+core/analyses/views.py	_one_cohort	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_one_cohort	text	len(listed)	a number (a length)
+core/analyses/views.py	_pack_params	text	cohorts	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_pack_params	text	least	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_pack_params	text	most	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_pack_params	text	total	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_predicates	text	leaf.kind	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_predicates	text	pack_leaves	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_variables	text	leaf.kind	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_variables	text	pack_leaves	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_withheld_form	text	because	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_withheld_form	text	decision	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_withheld_form	text	form	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_withheld_form	text	k	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	_withheld_form	text	source	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	deferred	text	slice_	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/analyses/views.py	static_caveats	text	read.status	a number, or a sentence of the server's own that the analysis chose (a literal)
+core/api/errors.py	_Handlers.http	refusal	methods	what the server wrote: a framework's method names, a limit's name, a constant parameter
+core/api/errors.py	_Handlers.parameters	refusal	problem	what the server wrote: a framework's method names, a limit's name, a constant parameter
+core/api/page.py	_offset	_invalid	[name]	what the server wrote: a framework's method names, a limit's name, a constant parameter
+core/api/protection.py	RequestProtection._operator	text	expected	what the server wrote: a framework's method names, a limit's name, a constant parameter
+core/api/protection.py	RequestProtection._too_large	_refused	limit	what the server wrote: a framework's method names, a limit's name, a constant parameter
+core/bodies.py	overdue	StoreRefused	seconds	a number
+core/bodies.py	stalled	StoreRefused	seconds	a number
+core/catalog/analyses.py	_coxed	text	many.count	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_listed	text	long.most	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_listed	text	many.most	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_run	text	many.most	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_survived	text	many.steps	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_too_many_cells	text	many.cells	a number, or a status (an enumeration member)
+core/catalog/analyses.py	_too_many_cells	text	many.most	a number, or a status (an enumeration member)
+core/catalog/cohorts.py	_listed	text	len(names) - ALTERNATIVES	a number (a length)
+core/catalog/cohorts.py	late	text	seconds	a number, or a status (an enumeration member)
+core/catalog/cohorts.py	log_full	text	log_bytes	a limit
+core/catalog/service.py	Catalog._refused_release	text	len(listed) - ALTERNATIVES	a number (a length)
+core/catalog/service.py	_refused	text	len(listed) - ALTERNATIVES	a number (a length)
+core/catalog/service.py	_unconfirmed	text	len(reads)	a number (a length)
+core/catalog/service.py	_unconfirmed	text	len(reads) - LISTED	a number (a length)
+core/catalog/service.py	_unconfirmed	text	status	a number, or a status (an enumeration member)
+core/engine/canonical.py	intersection	text	leaves	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/counts.py	_fields	text	read.status	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/counts.py	lift_message	text	lift_differs	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/counts.py	unknown_message	text	n_unknown	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/readback.py	_Reader.exists	text	quantified	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/readback.py	_Reader.joined	text	word	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/readback.py	_Reader.predicate	text	words	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/readback.py	_listed_items	text	len(items) - LISTED	a number (a length)
+core/engine/resolve.py	_Resolver._aggregate	text	_EXPECTED.get(kind, 'typed')	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._constant	text	_EXPECTED.get(datatype, 'typed')	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._constant	text	datatype	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._endpoint_column	text	role	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._ids	text	len(columns)	a number (a length)
+core/engine/resolve.py	_Resolver._memberships	text	advice	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._memberships	text	datatype	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._no_range	text	descriptor.fields.datatype	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._not_aggregated	text	descriptor.fields.datatype	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._not_aggregated	text	function	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._not_single	text	''.join((f', or {one}' for one in others))	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._not_single	text	binned	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._offered	text	name	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._quantifiers	text	entries	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._quantifiers	text	len(given)	a number (a length)
+core/engine/resolve.py	_Resolver._quantifiers	text	steps	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._units	text	descriptor.fields.datatype	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._view_endpoint	text	len(fit)	a number (a length)
+core/engine/resolve.py	_Resolver._within_caps	text	depth	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver._within_caps	text	leaves	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/resolve.py	_Resolver.listed	text	len(names) - _LISTED	a number (a length)
+core/engine/suppression.py	disclosed	text	max(k, TINY)	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/worker.py	Workers._late	_refused	seconds	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/engine/worker.py	Workers._memory	_refused	memory	a number, or a word of the server's own: a role, an aggregate, a datatype (a ``Literal``)
+core/importers/archives.py	_limit	_over	message	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/archives.py	_walk	_over	message	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/confine.py	Confinement._too_large	refused	limit	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/confine.py	Confinement.files	_not_confined	message	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/confine.py	_not_confined	refused	[_WHERE]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/databases.py	DatabaseImporter.import_database	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
+core/importers/databases.py	_server	_variable_refused	*refusal.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
+core/importers/databases.py	_skipped	text	rest	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/detect.py	detect	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
+core/importers/errors.py	long_cell_refused	refused	*named	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/errors.py	long_cell_refused	refused	row	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	_Reading.files	_refused_kind	(*READ, 'zip')	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	_Reading.files	_skipped	cast(str, self._skip(member))	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	_Reading.files	_skipped	why	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	_Reading.read	_skipped	_why_skipped(sheet)	a sentence of the closed set ``sheets.SKIPPED``, checked in the parent (a child's fault otherwise)
+core/importers/files.py	_refused_kind	refused	[f'.{known}' for known in kinds]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	read_parquet	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
+core/importers/files.py	read_parquet	refused	list(parquet.SUPPORTED_TYPES)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/infer.py	infer	text	'its' if len(few) == 1 else 'their'	a number (a length)
+core/importers/infer.py	infer	text	len(parents)	a number (a length)
+core/importers/sheets.py	_over	refused	limit	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/sheets.py	_over	refused	what	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/sheets.py	read_workbook	long_cell_refused	named	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/sheets.py	read_workbook	refused	['.xlsx', '.ods', '.csv']	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_collided	refused	*named	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_generated_refused	refused	('columns that store their values',)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_lock_refused	refused	limits.reader_seconds * _WAIT_SHARE / 1000	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_mysql_catalog	refused	(f'decimals of at most {EXACT_DIGITS} digits',)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_mysql_collisions	refused	[_name(name) for name in sorted({name for name, _, _ in schemas}) if name.casefold() ==...	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_mysql_tables	refused	('tables of an engine with transactions, such as InnoDB',)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_mysql_tables	text	what	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_read	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
+core/importers/snapshot.py	_sqlite_tables	text	said	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_unknown_schema	refused	alternatives	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/snapshot.py	_zoned_time_refused	refused	('a time without a time zone, or a timestamp',)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/uploads.py	UploadArea.put	refused	limit	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/uploads.py	_extension	refused	[f'.{known}' for known in EXTENSIONS]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/urls.py	_mysql_checked	UrlError	*what	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/urls.py	parse	UrlError	'://… or '.join(schemes)	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/urls.py	parse	UrlError	shape	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/worker.py	Reader._ended	refused	code	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/worker.py	_Workers.acquire	refused	seconds	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/worker.py	_Workers.acquire	refused	workers	the server's own sentence (a literal or a number of a limit), or a segment already
+core/mcp/calls.py	Calls._place	_limit	seconds	a number, or the server's own sentence (a literal)
+core/mcp/calls.py	Calls._place	_limit	self.concurrent	a number, or the server's own sentence (a literal)
+core/mcp/calls.py	Calls._place	_limit	self.per_client	a number, or the server's own sentence (a literal)
+core/mcp/calls.py	Calls.run	_limit	seconds	a number, or the server's own sentence (a literal)
+core/mcp/calls.py	Calls.tool	_limit	message	a number, or the server's own sentence (a literal)
+core/mcp/server.py	_envelope	_refusal	message	the server's own sentence (a literal), the methods it answers and its tools' names
+core/mcp/server.py	_envelope	_refusal	sorted(known)	the server's own sentence (a literal), the methods it answers and its tools' names
+core/mcp/server.py	_media	text	message	the server's own sentence (a literal), the methods it answers and its tools' names
+core/mcp/server.py	_unknown_tool	text	tool.name	the server's own sentence (a literal), the methods it answers and its tools' names
+core/operator/router.py	_Places.taken	StoreRefused	self._count	a number, or data segments
+core/operator/router.py	operator_router.source_of	refused	[data(name) for name in sorted(services.connections)]	a number, or data segments
+core/schema/checks.py	check_document	text	cohort_leaves	a number
+core/schema/checks.py	check_document	text	pack_leaves	a number
+core/schema/loading.py	_banned_refusal	text	error.message()	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_banned_refusal	text	kind	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_finish	text	len(kept) - MAX_REFUSALS	a number (a length)
+core/schema/loading.py	_refusal	text	json.dumps(value)	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	kind	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	member	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	name	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	path[-1]	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	reason	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	str(choice)	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	str(path[-1])	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/loading.py	_refusal	text	tag	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/params.py	_unknown.build	text	len(declared)	a number (a length)
+core/schema/params.py	_unknown.build	text	len(listed)	a number (a length)
+core/schema/refusals.py	_blank_segment	text	blanked	text the server's own blanking left in a segment
+core/schema/refusals.py	finish_refusals	text	len(ordered) - MAX_REFUSALS	a number (a length)
+core/schema/release.py	_Checker._coverage	refuse	message	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.column	refuse	message	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.ids	refuse	first[descriptor.id]	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.ids	refuse	len(datasets)	a number (a length)
+core/schema/release.py	_Checker.ids	text	descriptor.kind	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.ids	text	kind	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.leads_to_key	refuse	what	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/release.py	_Checker.leads_to_key	text	what	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/store/build.py	_Builder.table	refusal	column	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_Builder.table	refusal	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_Builder.table	refusal	table	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_Builder.table	refusal	where	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_gate_notes	text	dropped.code	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_gate_notes	text	said	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_header_problems	text	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	_unparsed_notes	text	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	change_release	refusal	()	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	change_release	refusal	entry.id	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	change_release	refusal	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	change_release	refusal	table	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	import_release	refusal	()	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	import_release	refusal	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/build.py	import_release	refusal	table	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/edits.py	_Draft.accept	_refused	number	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/edits.py	_Draft.put	_refused	why	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/edits.py	_Draft.put	text	kind	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/edits.py	_curated	text	form	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/erasure.py	_Person.unheld	text	len(keyed[-1])	a number (a length)
+core/store/erasure.py	_Person.unheld	text	len(self.given)	a number (a length)
+core/store/erasure.py	_Person.unheld	text	more	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/erasure.py	_erase	StoreRefused	*reason	a Message: segments, passed on (D397)
+core/store/gate.py	_Checks.fail	text	rows.text()	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.key	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.nulls_in	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.record_filter	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.relationship	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.unknown_groups	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/gate.py	_Checks.unknown_parents	fail	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/proposals.py	curation_queue	StoreRefused	release	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/proposals.py	reject_proposal	StoreRefused	proposal	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	TooManyCells.__init__	text	limit	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	TypedSource.__post_init__	text	index	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	TypedSource.__post_init__	text	len(row)	a number (a length)
+core/store/sources.py	TypedSource.__post_init__	text	width	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	_check_value	text	offset	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	_check_value	text	row	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	decode	text	prefix	a literal sentence of the server's own, held in a local
+core/store/sources.py	parse_text	text	before	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	parse_text	text	len(header)	a number (a length)
+core/store/sources.py	parse_text	text	len(record)	a number (a length)
+core/store/sources.py	parse_text	text	line	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	parse_text	text	settings.header_row	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	parse_text	text	skipped	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/sources.py	parse_text	text	skipped + reader.line_num	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/store.py	Store._whole	StoreRefused	missing[0]	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/store.py	Store.exclusive	StoreRefused	running	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/store.py	Store.exclusive	StoreRefused	session.id	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/store.py	Store.resolve	StoreRefused	pin	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/tables.py	build_table	text	len(layout)	a number (a length)
+core/store/tables.py	build_table	text	len(parsed.names)	a number (a length)
+core/store/writes.py	_out_of_steps	_refusal	budget	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/writes.py	_out_of_steps	_refusal	ceiling	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/writes.py	_out_of_steps	_refusal	remedy	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/writes.py	check_writes	_refusal	*message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/writes.py	check_writes	_refusal	descriptor.kind	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text

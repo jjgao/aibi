@@ -434,7 +434,7 @@ def operator_router(services: Services) -> APIRouter:
                     RefusalCode.INVALID_VALUE,
                     "The server has no connection named ",
                     data(given.connection),
-                    alternatives=sorted(services.connections),
+                    alternatives=[data(name) for name in sorted(services.connections)],
                 )
             return resolve(connection, confinement)
         digest, _, extension = given.upload.partition(".")
