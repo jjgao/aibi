@@ -5,11 +5,13 @@
   policy with ``Cache-Control: no-store`` and ``Cross-Origin-Opener-Policy: same-origin`` (which
   cuts the handle of a page that opened the window, D314), on every response of a page path.
 - ``page_path``: the paths whose every answer, a refusal of request protection's or of routing
-  included, is a page (D311): ``/``, ``/datasets`` and below, and ``/favicon.ico``, which a
-  browser asks for beside each page. ``navigable``: the pages a link from another site may open,
-  ``/`` and ``/datasets/<id>`` (D314).
-- ``route_path``: the path the routes match; ``root_link`` and ``root_of``: the server's root
-  path, which links start from. A root path that is not plain path segments (a letter, digit,
+  included, is a page (D311): ``/``, ``/datasets`` and below, ``/favicon.ico``, which a browser
+  asks for beside each page, and ``/curate`` and below, the web bundle's operator entry (D412).
+  ``navigable``: the pages a link from another site may open, ``/`` and ``/datasets/<id>``
+  (D314), never ``/curate``. ``ASSETS_PREFIX``: the web bundle's files (D410).
+- ``route_path``: the path the routes match; ``root_link``: the server's root path, which links
+  start from (request protection records it, ``classify``). A root path that is not plain path
+  segments (a letter, digit,
   ``.``, ``_``, ``~`` or ``-``, percent-encoded otherwise; neither ``.`` nor ``..``; no empty
   segment and no trailing ``/``) raises ``ValueError``, so that a page is never served with links
   outside the application (D312): the request fails, and request protection answers it with an
@@ -34,6 +36,10 @@ from aibi.core.schema.refusals import Refusal, blank_secrets
 CATALOGUE_PATH = "/"
 DATASETS_PREFIX = "/datasets"
 FAVICON_PATH = "/favicon.ico"
+CURATE_PATH = "/curate"
+"""The web bundle's operator entry (D412): a page path, never a navigable one."""
+ASSETS_PREFIX = "/assets"
+"""The web bundle's files (D410)."""
 STYLE = """
 :root { color-scheme: light dark; --line: #8884; --soft: #8881; --warn: #b36b00; --block: #b00020; }
 body { font: 15px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 72rem; padding: 1rem; }
@@ -78,10 +84,17 @@ _NAVIGABLE = re.compile(r"^/datasets/[^/]+$")
 _SEGMENT = re.compile(r"^(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+$")
 
 
+def under(path: str, prefix: str) -> bool:
+    """Whether ``path`` is ``prefix`` or below it."""
+    return path == prefix or path.startswith(prefix + "/")
+
+
 def page_path(path: str) -> bool:
     """Whether every answer at ``path`` is a page (module docstring)."""
-    return path in (CATALOGUE_PATH, FAVICON_PATH, DATASETS_PREFIX) or path.startswith(
-        DATASETS_PREFIX + "/"
+    return (
+        path in (CATALOGUE_PATH, FAVICON_PATH)
+        or under(path, DATASETS_PREFIX)
+        or under(path, CURATE_PATH)
     )
 
 
@@ -120,11 +133,6 @@ def root_link(root_path: str) -> str:
     return encoded
 
 
-def root_of(scope: Scope) -> str:
-    """``root_link`` of the request's root path."""
-    return root_link(cast(str, scope.get("root_path", "")))
-
-
 def header(root: str) -> Markup:
     """The pages' header: a link to the catalogue, from ``root``."""
     return element(
@@ -161,8 +169,10 @@ def refusal_document(root: str, refusals: Sequence[Refusal]) -> bytes:
 
 
 __all__ = [
+    "ASSETS_PREFIX",
     "CATALOGUE_PATH",
     "CONTENT_SECURITY_POLICY",
+    "CURATE_PATH",
     "DATASETS_PREFIX",
     "FAVICON_PATH",
     "PAGE_HEADERS",
@@ -172,6 +182,6 @@ __all__ = [
     "page_path",
     "refusal_document",
     "root_link",
-    "root_of",
     "route_path",
+    "under",
 ]

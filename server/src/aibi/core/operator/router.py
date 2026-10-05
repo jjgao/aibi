@@ -19,13 +19,17 @@ or one place too many, is answered as on any dataset.
 curation proposers, rejecting a proposal or every open proposal of one proposer or kind of proposer
 (D277), pruning the derivation log's ``count_cohort`` issuances (D300), and opening, changing,
 publishing, discarding and taking over a session (accepting a proposal is an ``accept`` edit,
-D248). Each is one synchronous request whose service call runs in a worker thread, which a
-dropped connection does not cancel. A body is a JSON object (``{}`` when
-empty), received within the deadlines of an upload (below, its length at most ``max_body_bytes``
-when it declares none) and read by ``load_request`` in a worker thread, so that parsing a large body
-never holds up the event loop, and never by the framework; a body refused, or one whose stored text
-holds a secret's shape (``stored_secrets``), is answered 422 with its refusals. The service
-functions raise the core's refusals, which ``api.errors`` answers.
+D248). A take-over carries ``{session, expected}``, the session and the draft the operator was
+shown, which the store compares under the session's slot (D415): a browser's must (request
+protection's record says whether a browser sent it, ``classify``), and a client that is not a
+browser, such as the CLI, may send ``{}``. Each is one synchronous request whose service call
+runs in a worker thread, which a dropped connection does not cancel. A body is a JSON object
+(``{}`` when empty), received within the deadlines of an upload (below, its length at most
+``max_body_bytes`` when it declares none) and read by ``load_request`` in a worker thread, so
+that parsing a large body never holds up the event loop, and never by the framework; a body
+refused, or one whose stored text holds a secret's shape (``stored_secrets``), is answered 422
+with its refusals. The service functions raise the core's refusals, which ``api.errors``
+answers.
 
 Uploads, imports, re-imports and erasures each take one of ``concurrent_imports`` places, and one
 more is refused at once, never queued (``LIMIT_EXCEEDED`` naming ``concurrent_imports``, D266):
@@ -61,6 +65,7 @@ from pydantic import BaseModel, JsonValue
 from starlette.responses import Response
 
 from aibi.core.bodies import Deadlines, declared_length
+from aibi.core.classify import classified
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.databases import Connection, Resolved, resolve
 from aibi.core.importers.errors import refused
@@ -107,6 +112,7 @@ from aibi.core.schema.operator import (
     SessionOpened,
     SessionPublishedOut,
     SkippedProposal,
+    TakeOver,
     Uploaded,
     Withdrawn,
     WithdrawRequest,
@@ -664,10 +670,26 @@ def operator_router(services: Services) -> APIRouter:
 
     @router.post("/datasets/{dataset}/session/take-over", response_model=SessionOpened)
     async def take_over(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, Empty)
+        body = await _body(services, request, TakeOver)
         if isinstance(body, Response):
             return body
-        opened = await run_known(dataset, partial(sessions.take_over, store, dataset, by))
+        found = classified(request.scope)
+        browser = found is None or found.browser
+        if (body.session is None) != (body.expected is None) or (browser and body.session is None):
+            raise StoreRefused(
+                RefusalCode.INVALID_VALUE,
+                "A take-over names the session and the draft it was shown (GET "
+                "/operator/datasets/<dataset>), both or neither, and a browser's names both",
+            )
+        taking = partial(
+            sessions.take_over,
+            store,
+            dataset,
+            by,
+            session=body.session,
+            expected=body.expected,
+        )
+        opened = await run_known(dataset, taking)
         return _json(_opened(dataset, opened))
 
     return router

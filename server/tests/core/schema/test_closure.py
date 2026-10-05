@@ -1176,6 +1176,8 @@ def test_the_helpers_dump_checks_the_values_and_its_flag_is_reset_when_it_raises
 
 
 NO_SEGMENT: dict[str, str] = {
+    "aibi.core.api.bundle._MANIFEST": "a Vite manifest read from the bundle's files, whose "
+    "error shows only its locations: no segment",
     "aibi.core.api.page._DATASET_ID": "an id from a URL: no segment",
     "aibi.core.catalog.service._BY": "an operator's name: no segment",
     "aibi.core.engine.build._ADAPTER": "a descriptor read from the catalogue: no segment",

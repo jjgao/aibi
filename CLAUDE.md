@@ -30,8 +30,10 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   and `reshaped.py`, which records a table a pack's importer unpivoted and has the core rebuild it.
 - `core/api/`: the HTTP application: configuration, one request-protection middleware in front of
   every router and mount, refusals as the one error shape, `aibi-server`, `POST /api/tools/<name>`,
-  the read-only catalogue pages (`page.py`, `markup.py`, `chrome.py`; HTML without a script) and
-  `packs.py`, which installs the packs the configuration's `[packs] modules` names.
+  the read-only catalogue pages (`page.py`, `markup.py`, `chrome.py`; HTML without a script),
+  `packs.py`, which installs the packs the configuration's `[packs] modules` names, and `bundle.py`,
+  which serves the built web bundle; protection records one classification of each request
+  (`core/classify.py`, D414) and everything after it reads that record.
 - `core/operator/`: the operator router behind the curator token, and `aibi`, the operator CLI,
   which talks to it over HTTP only.
 - `core/catalog/`: the catalogue and the service functions of the public tools (`search_catalog`,

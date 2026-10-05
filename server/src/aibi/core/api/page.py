@@ -26,10 +26,13 @@ at most ``MAX_OFFSET`` is ``INVALID_VALUE``, naming the parameter and never echo
 given, and so is an address whose dataset is no dataset id, in plain words; the tool's refusals
 are shown without their paths, which point into a request the browser never sent. Text from data
 is cut as a descriptor member's value is, and lists of tags and facet values after ``LISTED``
-members. The pages take ``GET`` alone; a link from another site may open them (D314).
+members. The pages take ``GET`` alone; a link from another site may open them (D314). With a
+web bundle configured, its documents are served at these two paths instead (``api.bundle``,
+D410).
 
 All text is written by ``api.markup`` (D312), from data in ``<bdi>``s; links are built from the
-server's root path, a dataset id the tool validated, a table id as a fragment and numbers alone.
+server's root path as request protection recorded it (``classify``, D414), a dataset id the tool
+validated, a table id as a fragment and numbers alone.
 Responses carry ``chrome.PAGE_HEADERS`` (D313); request protection adds its headers, and counts
 each request at a page path against the client's ``page`` rate (D314). A curation screen is M5's,
 on the operator router.
@@ -51,11 +54,11 @@ from aibi.core.api.chrome import (
     PAGE_HEADERS,
     STYLE,
     header,
-    root_of,
 )
 from aibi.core.api.errors import refused_page
 from aibi.core.api.markup import Child, Markup, data, document, element, joined, segments
 from aibi.core.catalog.tools import BY_NAME, call
+from aibi.core.classify import root_of
 from aibi.core.mcp.calls import Calls
 from aibi.core.schema.catalog import (
     MAX_HITS,

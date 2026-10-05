@@ -23,7 +23,9 @@ closed, so an unknown key is refused, and every problem is reported at once with
   ``api.connections``); ``tool_body_idle_seconds``, how long the body of a tool call at ``/mcp``
   or ``/api/tools``, which takes no token, may send nothing (D278); and ``[server.rates]``, the
   requests a client may make per minute, in bursts (D259), its ``propose_descriptor`` calls
-  (``proposals``, D277), and its requests to the catalogue page's paths (``page``, D314).
+  (``proposals``, D277), its requests to the catalogue page's paths (``page``, D314) and to the
+  web bundle's files (``assets``, D413); and ``web_bundle``, the directory of a built web bundle
+  the server serves (``api.bundle``, D410), unset by default.
 - ``[curator] token_hash``: ``sha256:<hex>`` of the curator token, never the token (D261).
 - ``[storage]``: ``data``, the store's directory, which holds the upload area (D234), and
   ``imports``, the import directories (D232).
@@ -64,6 +66,9 @@ import's resolve applies to the same paths: SQLite and DuckDB open the store's f
 uploads and a connection's file by a path given as text, and a name below a root is shown by its
 location, which must be text to be described (D253, D398). The server does not start otherwise;
 the remedy is to rename the directory (a link to it does not help: its real path is the target's).
+A web bundle must be an existing directory that neither is, holds nor lies inside the data
+directory (and so its upload area) or an import directory, compared by real paths (D410), so that
+nothing an import or an upload writes is ever served as the bundle's code.
 """
 
 import errno
@@ -205,6 +210,8 @@ class Rates(_Config):
     page: Rate = Rate(per_minute=120, burst=30)
     """Requests to the catalogue page's paths, a bucket of their own so that page views never
     spend the ``api`` bucket agents use (D314)."""
+    assets: Rate = Rate(per_minute=600, burst=100)
+    """Requests to the web bundle's files at ``/assets``, a bucket of their own (D413)."""
 
 
 class ServerSection(_Config):
@@ -224,6 +231,9 @@ class ServerSection(_Config):
     tool_body_idle_seconds: PositiveInt = 10
     """How long a tool call's body, which comes with no token, may send nothing (D278)."""
     rates: Rates = Rates()
+    web_bundle: ConfigPath | None = None
+    """The directory of a built web bundle (``api.bundle``, D410); unset, the server serves the
+    catalogue page of D311 at its paths."""
 
     @model_validator(mode="after")
     def _tls_pair(self) -> Self:
@@ -553,6 +563,7 @@ def _file_problems(config: ServerConfig) -> list[str]:
         imports.append(real)
         if real.is_relative_to(data) or data.is_relative_to(real):
             problems.append(f"{where}: it holds, or lies inside, the data directory")
+    problems += _bundle_problems(server.web_bundle, data, config.storage.imports)
     for name, connection in config.databases.items():
         if connection.schema_ is not None and not is_text(connection.schema_):
             problems.append(f"databases.{name}.schema: not Unicode text")
@@ -568,6 +579,29 @@ def _file_problems(config: ServerConfig) -> list[str]:
         if card.id in seen:
             problems.append(f"models[{index}].id: the model card is registered twice")
         seen.add(card.id)
+    return problems
+
+
+def _bundle_problems(bundle: Path | None, data: Path, imports: Sequence[Path]) -> list[str]:
+    """What refuses a web bundle's directory (D410): not an existing directory, or one that is,
+    holds or lies inside the data directory or an import directory, by real paths."""
+    if bundle is None:
+        return []
+    if not bundle.is_dir():
+        return ["server.web_bundle: not an existing directory"]
+    real = _real(bundle)
+    problems: list[str] = []
+    if real.is_relative_to(data) or data.is_relative_to(real):
+        problems.append(
+            "server.web_bundle: it is, holds or lies inside the data directory, which holds the "
+            "upload area"
+        )
+    for index, directory in enumerate(imports):
+        found = _real(directory)
+        if real.is_relative_to(found) or found.is_relative_to(real):
+            problems.append(
+                f"server.web_bundle: it is, holds or lies inside storage.imports[{index}]"
+            )
     return problems
 
 
@@ -615,26 +649,51 @@ def _replaceable(directory: os.stat_result) -> bool:
     return bool(directory.st_mode & _OTHERS_WRITE) and not directory.st_mode & stat.S_ISVTX
 
 
+def server_owns(uid: int) -> bool:
+    """Whether the server's user, or root, is the owner ``uid`` (D253)."""
+    return uid in (os.geteuid(), 0)
+
+
+def swappable_ways(path: Path) -> tuple[Path, list[tuple[Path, str]]]:
+    """The real path of ``path``, resolved once, a component at a time, and everything that makes
+    it swappable, each with the directory that is to blame (D253): a symbolic link on the way that
+    lies in a directory its group or others can write (unless that directory has the sticky bit
+    and the link is the server's user's or root's), and the real path's own directory if they can
+    so write it. ``OSError`` if a component is missing, or there are too many links."""
+    real, links = _resolved(path)
+    found: list[tuple[Path, str]] = []
+    for holder, link in links:
+        directory = os.stat(holder)
+        if _replaceable(directory) or (
+            directory.st_mode & _OTHERS_WRITE and not server_owns(os.lstat(link).st_uid)
+        ):
+            found.append(
+                (
+                    holder,
+                    "a symbolic link on its way lies in a directory its group or others can "
+                    "write, and so could be swapped",
+                )
+            )
+    if _replaceable(os.stat(real.parent)):
+        found.append(
+            (real.parent, "its group or others can write its directory, and so replace it")
+        )
+    return real, found
+
+
+def swappable_way(path: Path) -> tuple[Path, str | None]:
+    """The real path of ``path`` and the first thing that makes it swappable, if anything
+    (``swappable_ways``); ``OSError`` as there."""
+    real, found = swappable_ways(path)
+    return real, found[0][1] if found else None
+
+
 def _read_file(path: Path) -> tuple[Path, dict[str, object]]:
     """The configuration file's real path and its TOML, once the file-system checks pass."""
-    owners = (os.geteuid(), 0)
     try:
-        real, links = _resolved(path)
-        for holder, link in links:
-            directory = os.stat(holder)
-            if _replaceable(directory) or (
-                directory.st_mode & _OTHERS_WRITE and os.lstat(link).st_uid not in owners
-            ):
-                raise ConfigError(
-                    [
-                        f"{path}: a symbolic link on its way lies in a directory its group or "
-                        "others can write, and so could be swapped"
-                    ]
-                )
-        if _replaceable(os.stat(real.parent)):
-            raise ConfigError(
-                [f"{path}: its group or others can write its directory, and so replace it"]
-            )
+        real, swappable = swappable_way(path)
+        if swappable is not None:
+            raise ConfigError([f"{path}: {swappable}"])
         descriptor = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as error:
         raise ConfigError([f"{path}: cannot be read ({error.strerror})"]) from None
@@ -644,7 +703,7 @@ def _read_file(path: Path) -> tuple[Path, dict[str, object]]:
             raise ConfigError([f"{path}: not a regular file"])
         if status.st_mode & _OTHERS_WRITE:
             raise ConfigError([f"{path}: its group or others can write it; chmod go-w it"])
-        if status.st_uid not in owners:
+        if not server_owns(status.st_uid):
             raise ConfigError([f"{path}: owned by another user; the server's user or root owns it"])
         try:
             return real, tomllib.load(file)
@@ -687,4 +746,7 @@ __all__ = [
     "ServerSection",
     "Storage",
     "load_config",
+    "server_owns",
+    "swappable_way",
+    "swappable_ways",
 ]
