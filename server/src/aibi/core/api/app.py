@@ -5,13 +5,18 @@
 MCP transport at ``/mcp``, whose session manager the application's lifespan runs, and the
 read-only catalogue page at ``/`` and ``/datasets/<dataset>`` (``api.page``, D311), whose paths
 request protection and the error handlers then answer with pages (``pages``, D311, D314); and the
-mounts it is given. All of it is behind one ``RequestProtection``, which the application adds as its
-outermost middleware. It serves no documentation pages and no OpenAPI document (the pages load
-scripts from a CDN; the document is generated, for types, but not served), and redirects no
-trailing slash. A mount at ``/``, or at or below ``/api``, ``/operator`` or, with the tools,
-``/mcp`` or ``/datasets``, is refused: it would take paths from the routers, or put a path under
-the operator router's protection that its routes do not serve. The operator router is included
-once, and never by a mount; the MCP transport answers ``POST`` at ``/mcp`` alone.
+mounts it is given. Given a web bundle too (``api.bundle``, D410), the bundle's routes replace
+the catalogue page at ``/`` and ``/datasets/<dataset>``, and only there, and add ``/curate`` and
+``/assets/<name>``; a bundle without the tool calls is refused (``ValueError``), since its
+documents' data comes only through the tools. All of it is behind one ``RequestProtection``,
+which the application adds as its outermost middleware. It serves no documentation pages and no
+OpenAPI document (the pages load scripts from a CDN; the document is generated, for types, but
+not served), and redirects no trailing slash. A mount at ``/``, or at or below ``/api``,
+``/operator``, ``/assets``, ``/curate`` or, with the tools, ``/mcp`` or ``/datasets``, is
+refused: it would take paths from the routers, put a path under the operator router's
+protection that its routes do not serve, or put another application's files where the web
+bundle's documents load theirs (D410). The operator router is included once, and never by a
+mount; the MCP transport answers ``POST`` at ``/mcp`` alone.
 """
 
 import time
@@ -24,7 +29,8 @@ from starlette.routing import Route
 from starlette.types import ASGIApp
 
 import aibi
-from aibi.core.api.chrome import DATASETS_PREFIX
+from aibi.core.api.bundle import Bundle, bundle_router
+from aibi.core.api.chrome import ASSETS_PREFIX, CURATE_PATH, DATASETS_PREFIX
 from aibi.core.api.errors import install
 from aibi.core.api.page import page_router
 from aibi.core.api.protection import Policy, RequestProtection
@@ -67,12 +73,18 @@ def create_app(
     tools: Calls | None = None,
     mounts: Mapping[str, ASGIApp] = MappingProxyType({}),
     clock: Callable[[], float] = time.monotonic,
+    bundle: Bundle | None = None,
 ) -> FastAPI:
     """The application, every route and mount behind request protection under ``policy``;
-    with ``tools``, the tools over HTTP and MCP and the catalogue page."""
+    with ``tools``, the tools over HTTP and MCP and the catalogue page, or with ``bundle`` too
+    the web bundle in the catalogue page's place."""
+    if bundle is not None and tools is None:
+        raise ValueError("a web bundle is served with the tool calls, which its documents call")
     reserved = (
         API_PREFIX,
         OPERATOR_PREFIX,
+        ASSETS_PREFIX,
+        CURATE_PATH,
         *((MCP_PATH, DATASETS_PREFIX) if tools is not None else ()),
     )
     paths = [_mount_path(path, reserved) for path in mounts]
@@ -91,7 +103,7 @@ def create_app(
     if tools is not None and transport is not None:
         app.include_router(tools_router(tools))
         app.router.routes.append(Route(MCP_PATH, transport, methods=["POST"]))
-        app.include_router(page_router(tools))
+        app.include_router(page_router(tools) if bundle is None else bundle_router(bundle))
     app.include_router(operator_router(services))
     for path in paths:
         app.mount(path, mounts[path])

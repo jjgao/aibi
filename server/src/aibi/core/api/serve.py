@@ -7,12 +7,15 @@
   store, which refuses while another process has it open (D221) or its app DB has pages of
   another size than the derivation log charges (D300), exiting with 1 and a message, and prunes
   the derivation log's expired ``count_cohort`` issuances (``[log]``, D300), and runs uvicorn
-  until it is stopped.
+  until it is stopped. With ``[server] web_bundle``, it first loads the bundle (``api.bundle``,
+  D410), and a bundle refused stops it before the store is opened, exiting with 2 and every
+  problem.
 - ``check`` reads the configuration, installs its packs as ``serve`` does, and prints what it
-  resolves to: the bind, the hosts and origins allowed, the directories and the limits, that
-  ``count_cohort`` is disabled on a system without the query workers' ``/proc`` (which ``serve``
-  writes to standard error too), and the installed packs (which ``serve`` writes to standard
-  error); never the token's hash.
+  resolves to: the bind, the hosts and origins allowed, the directories and the limits, the web
+  bundle (its files and their bytes, and whether it has the operator entry; a bundle refused
+  exits with 2 and every problem), that ``count_cohort`` is disabled on a system without the
+  query workers' ``/proc`` (which ``serve`` writes to standard error too), and the installed
+  packs (which ``serve`` writes to standard error); never the token's hash.
 - ``new-token`` makes a curator token and prints it, once, with the hash the configuration holds.
 - ``hash-token`` reads a token from standard input, or a prompt that does not echo on a terminal,
   and prints its hash; a token is never an argument.
@@ -50,6 +53,7 @@ from starlette.types import ASGIApp
 import aibi
 from aibi.core.api import logs, packs
 from aibi.core.api.app import create_app
+from aibi.core.api.bundle import Bundle, BundleError, load_bundle
 from aibi.core.api.config import ConfigError, ServerConfig, load_config
 from aibi.core.api.connections import guarded_protocol
 from aibi.core.api.logs import WithoutSecrets
@@ -173,15 +177,24 @@ def uvicorn_config(
     return built
 
 
+def bundle_of(config: ServerConfig) -> Bundle | None:
+    """The configuration's web bundle, loaded (D410); ``None`` without one, and ``BundleError``
+    for one refused."""
+    path = config.server.web_bundle
+    return None if path is None else load_bundle(path)
+
+
 def run(
     config: ServerConfig, *, registry: PackRegistry | None = None, stderr: TextIO | None = None
 ) -> int:
     """Serve until stopped, with the packs of ``registry`` (``packs.registry_of``; none if
     ``None``); 1 if another process has the store open, or its app DB has pages of another size
     than the derivation log's accounting charges (``PageSizeError``, D300), whose message is
-    written to standard error."""
+    written to standard error. The web bundle is loaded first, before the store is opened
+    (``bundle_of``; ``BundleError`` for one refused)."""
     err = sys.stderr if stderr is None else stderr
     installed = PackRegistry((), core_version=aibi.__version__) if registry is None else registry
+    bundle = bundle_of(config)
     previous = os.umask(0o077)
     try:
         try:
@@ -200,6 +213,7 @@ def run(
                 Policy.of(config),
                 services_of(config, store, installed),
                 tools=tools_of(config, store, installed),
+                bundle=bundle,
             )
             logging_config = logs.logging_config(copy.deepcopy(uvicorn.config.LOGGING_CONFIG))
             uvicorn.Server(uvicorn_config(config, app, logging_config=logging_config)).run()
@@ -217,9 +231,10 @@ def installed_packs(registry: PackRegistry) -> list[str]:
 
 def check(config: ServerConfig, registry: PackRegistry | None = None) -> list[str]:
     """What the configuration resolves to, without the token's hash, and with ``registry`` the
-    packs installed."""
+    packs installed; ``BundleError`` for a web bundle refused."""
     server = config.server
     policy = Policy.of(config, csrf_key=bytes(32))
+    bundle = bundle_of(config)
     lines = [
         f"bind: {server.bind}:{server.port} ({'TLS' if config.tls else 'no TLS'})",
         "hosts: " + ", ".join(sorted(policy.hosts)),
@@ -235,6 +250,11 @@ def check(config: ServerConfig, registry: PackRegistry | None = None) -> list[st
         f"{config.imports.upload_idle_seconds}; upload min bytes per second: "
         f"{config.imports.upload_min_bytes_per_second}",
         f"tool body idle seconds: {server.tool_body_idle_seconds}",
+        "web bundle: none (the catalogue page at / and /datasets/<id>)"
+        if bundle is None or server.web_bundle is None
+        else f"web bundle: {os.path.realpath(server.web_bundle)}, {bundle.files} files, "
+        f"{bundle.size} bytes; operator entry at /curate: "
+        f"{'yes' if bundle.operator is not None else 'no'}",
     ]
     for name, rate in (
         ("operator", server.rates.operator),
@@ -242,6 +262,7 @@ def check(config: ServerConfig, registry: PackRegistry | None = None) -> list[st
         ("token failures", server.rates.token_failures),
         ("proposals", server.rates.proposals),
         ("page", server.rates.page),
+        ("assets", server.rates.assets),
     ):
         lines.append(f"rate, {name}: {rate.per_minute} a minute, bursts of {rate.burst}")
     log = config.log.limits()
@@ -340,11 +361,16 @@ def main(
         return 1
     if registry is None:
         return 2
-    if args.command == "check":
-        out.writelines(line + "\n" for line in check(config, registry))
-        return 0
-    err.writelines(f"aibi-server: {line}\n" for line in installed_packs(registry))
-    return run(config, registry=registry, stderr=err)
+    try:
+        if args.command == "check":
+            out.writelines(line + "\n" for line in check(config, registry))
+            return 0
+        err.writelines(f"aibi-server: {line}\n" for line in installed_packs(registry))
+        return run(config, registry=registry, stderr=err)
+    except BundleError as error:
+        err.write("aibi-server: the web bundle is refused:\n")
+        err.writelines(f"  {problem}\n" for problem in error.problems)
+        return 2
 
 
 __all__ = [
@@ -352,6 +378,7 @@ __all__ = [
     "NO_WORKERS",
     "Proposals",
     "WithoutSecrets",
+    "bundle_of",
     "check",
     "installed_packs",
     "main",
