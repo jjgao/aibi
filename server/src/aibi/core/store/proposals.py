@@ -80,7 +80,7 @@ from aibi.core.schema.limits import (
     OPEN_PROPOSALS,
     PROPOSAL_BYTES,
 )
-from aibi.core.schema.output import Output
+from aibi.core.schema.output import Boundary, Output, admitted_at
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.schema.refusals import Limit, RefusalCode
 from aibi.core.schema.release import check_release
@@ -608,7 +608,8 @@ def curation_queue(
         with store.lock:
             queue.truncated += store.db.open_proposals(store.db.connection, dataset, after=last)
     for position, note in enumerate(notes):
-        queue.add("notes", position, QueueNote.model_validate(note))
+        made = QueueNote.model_validate(note, context=admitted_at(Boundary.REPORT_NOTES))
+        queue.add("notes", position, made)
     return CurationQueue(
         dataset=dataset,
         release=manifest,

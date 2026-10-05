@@ -42,6 +42,7 @@ from aibi.core.schema.operator import (
     Uploaded,
     Withdrawn,
 )
+from aibi.core.schema.output import Boundary, admitted_at
 from aibi.core.schema.refusals import Refusal
 
 READ_TIMEOUT = httpx.Timeout(120.0)
@@ -87,6 +88,8 @@ class OperatorClient:
         }
 
     def _read[M: BaseModel](self, response: httpx.Response, model: type[M]) -> Answer[M]:
+        """The server's answer as ``model``, or its refusals: read at the ``CLI_CLIENT``
+        boundary, where the configured server's segments are server text again (D268, D399)."""
         if 300 <= response.status_code < 400:
             raise Unreachable("the server answered with a redirect, which is not followed")
         try:
@@ -95,16 +98,17 @@ class OperatorClient:
             raise Unreachable(f"the server answered {response.status_code} without JSON") from None
         if response.status_code >= 400:
             try:
-                refusals = Refusals.model_validate(value).refusals
+                found = Refusals.model_validate(value, context=admitted_at(Boundary.CLI_CLIENT))
             except ValidationError:
                 raise Unreachable(
                     f"the server answered {response.status_code} without refusals"
                 ) from None
-            raise Refused(response.status_code, refusals)
+            raise Refused(response.status_code, found.refusals)
         try:
-            return Answer(model.model_validate(value), response.content)
+            answered = model.model_validate(value, context=admitted_at(Boundary.CLI_CLIENT))
         except ValidationError:
             raise Unreachable("the server's answer is not the operator router's") from None
+        return Answer(answered, response.content)
 
     def _send(
         self,

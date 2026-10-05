@@ -28,6 +28,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
+from tests.core._ast import defined, scopes, string
 from tests.core.importers.builders import Entry, build_xlsx, build_zip
 
 import aibi
@@ -200,16 +201,10 @@ def banned_references(tree: ast.AST) -> list[int]:
     ``_shown`` assigned anywhere in it exempts a bare name or an attribute of that name on
     anything but ``output``, so a module that defines a name of its own should not also reach
     ``output``'s by a bare name."""
-    own: set[str] = set()
+    own = defined(tree)
     aliases = {"output"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            own.add(node.name)
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            own.add(node.id)
-        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
-            own.add(node.attr)
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.Import):
             aliases.update(a.asname for a in node.names if a.asname and a.name.endswith(".output"))
         elif isinstance(node, ast.ImportFrom):
             aliases.update(a.asname or a.name for a in node.names if a.name == "output")
@@ -230,8 +225,7 @@ def banned_references(tree: ast.AST) -> list[int]:
                 isinstance(node.func, ast.Name)
                 and node.func.id == "getattr"
                 and len(node.args) >= 2
-                and isinstance(node.args[1], ast.Constant)
-                and node.args[1].value in BANNED
+                and string(node.args[1]) in BANNED
                 and _is_output(node.args[0], aliases)
             ):
                 found.append(node.lineno)
@@ -362,17 +356,7 @@ def _re_raises(handler: ast.ExceptHandler) -> bool:
 def scan(source: str, file: str) -> list[Handler]:
     """The handlers of a module that catch a ``ValidationError``, by function."""
     tree = ast.parse(source)
-    where: dict[int, str] = {}
-
-    def enclose(node: ast.AST, name: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-                enclose(child, f"{name}.{child.name}" if name else child.name)
-            else:
-                where[id(child)] = name
-                enclose(child, name)
-
-    enclose(tree, "")
+    where = scopes(tree)
     found: list[Handler] = []
     counts: dict[str, int] = {}
     for node in ast.walk(tree):
@@ -385,7 +369,7 @@ def scan(source: str, file: str) -> list[Handler]:
                 reraised = True
             bare = {name.rsplit(".", 1)[-1] for name in classes}
             if bare & (CATCHES_VALIDATION_ERROR | {"<bare>"}):
-                function = where.get(id(node), "") or "<module>"
+                function = where[id(node)]
                 index = counts.get(function, 0)
                 counts[function] = index + 1
                 found.append(Handler(file, function, index, classes, reraised, handler.lineno))
@@ -410,6 +394,10 @@ ALLOWED: dict[tuple[str, str, int], str] = {
         "name, and this one sends any other exception as a fault (ReaderError)"
     ),
     ("importers/worker.py", "_answer", 1): "the child's reporting loop: a panic, by its class",
+    ("importers/worker.py", "serve", 0): (
+        "the child reading a request it cannot unpickle (it holds server text, which no child "
+        "unpickles): sent as a fault (ReaderError), never as the file's"
+    ),
     ("importers/worker.py", "_peak", 0): "reading /proc, which builds no output",
     ("importers/worker.py", "_launch", 0): "cleanup that re-raises what it caught",
     ("importers/worker.py", "Reader._start", 0): "cleanup that re-raises what it caught",

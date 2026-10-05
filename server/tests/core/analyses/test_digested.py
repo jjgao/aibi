@@ -232,14 +232,15 @@ def test_content_changed_anywhere_below_the_digest_s_resolution_is_not_read_back
     analyse: Analyse, shop: Shop, name: str
 ) -> None:
     """The digest rounds numbers and reduces caveats, so a number changed in its last bit, a
-    caveat's message or a true written as 1 keeps it; the content's hash does not."""
+    caveat's message or a true written as 1 keeps it; the content's hash does not, and a changed
+    wording is refused before it (D399)."""
     analysed = _analysed(analyse, shop, name)
     content = json.loads(digested(analysed.view, analysed.outcome).content())
     paths = [path for path in _leaves(content) if path != ("hashed",)]
     assert paths
     for path in paths:
         changed = json.dumps(_set(content, path, _changed(_at(content, path)))).encode()
-        with pytest.raises(ValueError, match=r"D374|validation error"):
+        with pytest.raises(ValueError, match=r"D374|D399|validation error"):
             Digested.read(analysed.view, changed)
 
 

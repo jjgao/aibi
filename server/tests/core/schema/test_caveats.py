@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from tests.core._segments import validated
 
 from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, Severity, sort_caveats
 from aibi.core.schema.output import text
@@ -17,7 +18,7 @@ def caveat(code: str, severity: str, affects: list[str] | None = None) -> Caveat
         "message": [{"text": "x"}],
         "affects": affects or [],
     }
-    return Caveat.model_validate(value)
+    return validated(Caveat, value)
 
 
 def test_every_core_code_declares_a_severity() -> None:
@@ -59,8 +60,8 @@ def test_messages_are_segments() -> None:
     made = caveat("SMALL_N", "warn")
     assert made.message == [text("x")]
     with pytest.raises(ValidationError):
-        Caveat.model_validate(
-            {"code": "SMALL_N", "severity": "warn", "message": "plain", "affects": []}
+        validated(
+            Caveat, {"code": "SMALL_N", "severity": "warn", "message": "plain", "affects": []}
         )
 
 
@@ -103,7 +104,7 @@ def test_segments_hold_unicode_text() -> None:
     for model, member in ((TextSegment, "text"), (DataSegment, "data"), (Data, "data")):
         for bad in ("caf\udce9", "x\ufffe"):
             with pytest.raises(ValidationError):
-                model.model_validate({member: bad})
+                validated(model, {member: bad})
 
 
 def test_caveats_built_without_validation_sort_too() -> None:

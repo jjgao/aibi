@@ -421,17 +421,15 @@ def within_text(values: Iterable[Value], column: int) -> None:
 def _proportion(
     count: int, n: int, position: int, counts: Literal["known", "rows"] = "known"
 ) -> Proportion:
-    reasons = None if n else dict.fromkeys(("/estimate",), _NO_UNITS)
-    return Proportion.model_validate(
-        {
-            "estimate": count / n if n else None,
-            "numerator": count,
-            "denominator": n,
-            "denominator_definition": DenominatorDefinition(
-                position=position, predicate=None, counts=counts
-            ),
-            "not_estimable": reasons,
-        }
+    reasons: dict[str, NotEstimableReason] | None = None if n else {"/estimate": _NO_UNITS}
+    return Proportion(
+        estimate=count / n if n else None,
+        numerator=count,
+        denominator=n,
+        denominator_definition=DenominatorDefinition(
+            position=position, predicate=None, counts=counts
+        ),
+        not_estimable=reasons,
     )
 
 
@@ -575,31 +573,25 @@ def _membership(
         for member, value in (("/numerator", numerator), ("/denominator", denominator)):
             if value is None:
                 reasons[member] = _SUPPRESSED
-        return Proportion.model_validate(
-            {
-                "estimate": estimate,
-                "numerator": numerator,
-                "denominator": denominator,
-                "denominator_definition": DenominatorDefinition(
-                    position=position, predicate=key, counts="known"
-                ),
-                "excluded": None,
-                "not_estimable": reasons,
-            }
-        )
-    return Proportion.model_validate(
-        {
-            "estimate": one.true / known if known else None,
-            "numerator": one.true,
-            "denominator": known,
-            "denominator_definition": DenominatorDefinition(
+        return Proportion(
+            estimate=estimate,
+            numerator=numerator,
+            denominator=denominator,
+            denominator_definition=DenominatorDefinition(
                 position=position, predicate=key, counts="known"
             ),
-            "excluded": {
-                reason: one.unknown_by_reason.get(reason, 0) for reason in ExclusionReason
-            },
-            "not_estimable": None if known else {"/estimate": _NO_UNITS},
-        }
+            excluded=None,
+            not_estimable=reasons,
+        )
+    return Proportion(
+        estimate=one.true / known if known else None,
+        numerator=one.true,
+        denominator=known,
+        denominator_definition=DenominatorDefinition(
+            position=position, predicate=key, counts="known"
+        ),
+        excluded={reason: one.unknown_by_reason.get(reason, 0) for reason in ExclusionReason},
+        not_estimable=None if known else {"/estimate": _NO_UNITS},
     )
 
 

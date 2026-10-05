@@ -38,7 +38,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 from aibi.core.schema.descriptors import (
     ColumnDescriptor,
@@ -49,7 +49,7 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.jsonio import canonical, is_text, pointer
 from aibi.core.schema.limits import MAX_STRING, STRING_CHARACTERS
-from aibi.core.schema.output import Message, Segment, data, text
+from aibi.core.schema.output import REPORT_CLASSIFICATION, Message, Segment, data, text
 from aibi.core.schema.pack_api import NOTE_TEXT, ImportNote, NoteKind
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
@@ -63,6 +63,9 @@ from aibi.core.store.tables import ColumnReport, TableError, TypedTable
 REPORT_FORMAT = "aibi.import-report/2"
 """The format of the import reports a build writes: a note's message holds each id, name and
 value as a data token (D397)."""
+REPORT_2_CLASSIFICATION = 1
+"""The classification of server text (``REPORT_CLASSIFICATION``) a ``/2`` report was written
+under: it is served as written only while the server's is this one (D399)."""
 REPORT_FORMAT_1 = "aibi.import-report/1"
 """The format of the reports written before D397, whose messages could hold an id as server text:
 they are read with each note's fixed text (``read_report``) and never rewritten."""
@@ -238,10 +241,21 @@ def read_descriptors(data: bytes) -> tuple[Descriptor, ...]:
     return tuple(_DESCRIPTORS.validate_json(data))
 
 
+# An error of the adapter holds the input it refused, which may be a look-alike of server text
+# (A6, D399): an adapter takes the configuration of its own, not its models'.
+_NOTE_SEGMENTS: TypeAdapter[list[Segment]] = TypeAdapter(
+    list[Segment], config=ConfigDict(hide_input_in_errors=True)
+)
+
+
 def _note_json(note: ImportNote) -> JsonValue:
+    """A note as its report writes it. Its message is validated as the segments it holds
+    first, with no boundary's capability: a look-alike of server text is refused here, never
+    written to be read back as server text (D399)."""
+    checked = _NOTE_SEGMENTS.validate_python(list(note.message))
     written: dict[str, JsonValue] = {
         "kind": note.kind,
-        "message": [segment.model_dump(mode="json") for segment in note.message],
+        "message": [segment.model_dump(mode="json") for segment in checked],
     }
     if note.subject is not None:
         written["subject"] = note.subject
@@ -270,10 +284,12 @@ def read_report(data: bytes) -> list[dict[str, JsonValue]]:
     """The notes of an import report blob, as JSON values: the one reader of reports, which the
     operator's queue and the public ``curation_queue`` both read through.
 
-    A ``/2`` report is read as written. A ``/1`` report, written before D397, may hold an id a
-    source's names gave as server text, so each of its notes, of every kind, is given its kind's
-    fixed text (``NOTE_TEXT``) instead of its stored message; its subject, count and rows are kept.
-    The blob is never rewritten (D231, D397)."""
+    A ``/2`` report is read as written while the server's classification of server text is the
+    one it was written under (``REPORT_2_CLASSIFICATION``, D399). A ``/1`` report, written before
+    D397, may hold an id a source's names gave as server text, so each of its notes, of every
+    kind, is given its kind's fixed text (``NOTE_TEXT``) instead of its stored message; its
+    subject, count and rows are kept; and so is a ``/2`` report under a later classification.
+    The blob is never rewritten (D231, D397, D399)."""
     parsed: object = json.loads(data)
     if not isinstance(parsed, dict):
         raise ValueError(f"an import report is {REPORT_FORMAT}")
@@ -284,13 +300,14 @@ def read_report(data: bytes) -> list[dict[str, JsonValue]]:
     notes = report.get("notes")
     if not isinstance(notes, list):
         raise ValueError("an import report holds its notes as a list")
-    if given == REPORT_FORMAT:
+    if given == REPORT_FORMAT and REPORT_CLASSIFICATION == REPORT_2_CLASSIFICATION:
         return cast(list[dict[str, JsonValue]], notes)
     return [_fixed(note) for note in notes]
 
 
 def _fixed(note: JsonValue) -> dict[str, JsonValue]:
-    """A note of a ``/1`` report, its message its kind's fixed text (D397)."""
+    """A note of a ``/1`` report, or of a ``/2`` report under a later classification, its
+    message its kind's fixed text (D397, D399)."""
     if not isinstance(note, dict):
         raise ValueError(f"a note of an import report of {REPORT_FORMAT_1} is an object")
     kind = note.get("kind")

@@ -17,7 +17,7 @@ from aibi.core.engine.data import Release
 from aibi.core.engine.suppression import disclosed, suppressed
 from aibi.core.engine.truth import Mark
 from aibi.core.schema.caveats import CaveatCode
-from aibi.core.schema.output import TextSegment
+from aibi.core.schema.output import TextSegment, text
 from aibi.core.schema.results import CohortCount, Disclosure, Issuance, ReleaseRef
 from aibi.core.schema.semantics import Flag, Reason
 
@@ -62,7 +62,7 @@ def served(cohort: CanonicalCohort, parts: CountParts, k: int | None) -> CohortC
         population=parts.population,
         size=parts.size,
         disclosure=Disclosure(min_cell_count=k),
-        readback=[TextSegment(text="a cohort")],
+        readback=[text("a cohort")],
         caveats=list(parts.caveats),
         releases=[
             ReleaseRef(dataset="d", label=1, manifest=cohort.release.manifest, status="published")

@@ -305,16 +305,14 @@ def _row_counts(rows: Sequence[_Row], declared: frozenset[Value], one: Materiali
 
 
 def _proportion(count: int, n: int, position: int) -> Proportion:
-    return Proportion.model_validate(
-        {
-            "estimate": count / n if n else None,
-            "numerator": count,
-            "denominator": n,
-            "denominator_definition": DenominatorDefinition(
-                position=position, predicate=None, counts="known"
-            ),
-            "not_estimable": None if n else {"/estimate": _NO_UNITS},
-        }
+    return Proportion(
+        estimate=count / n if n else None,
+        numerator=count,
+        denominator=n,
+        denominator_definition=DenominatorDefinition(
+            position=position, predicate=None, counts="known"
+        ),
+        not_estimable=None if n else {"/estimate": _NO_UNITS},
     )
 
 

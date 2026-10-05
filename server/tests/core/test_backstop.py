@@ -4,6 +4,7 @@ text holds it: the phrase, its id, an id cut short, ``CamelCase``, any case (A6,
 from typing import Any
 
 import pytest
+from tests.core._segments import validated
 
 from aibi.core.schema.output import TextSegment, text
 
@@ -22,6 +23,6 @@ def test_a_text_segment_holding_any_form_of_the_marker_is_recorded(
 ) -> None:
     found: list[str] = injected.built
     text(f"No relationship to {echo} is proposed")
-    TextSegment.model_construct(text=echo)
+    validated(TextSegment, {"text": echo})  # as a boundary rebuilds it (D399)
     assert len(found) == 2
     found.clear()  # the backstop would otherwise fail this test, which is the point of it

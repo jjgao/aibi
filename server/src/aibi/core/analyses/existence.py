@@ -263,18 +263,16 @@ def _proportion(
             reasons[member] = _SUPPRESSED
     if excluded is None:
         reasons["/excluded"] = _SUPPRESSED
-    return Proportion.model_validate(
-        {
-            "estimate": estimate,
-            "numerator": numerator,
-            "denominator": denominator,
-            "denominator_definition": DenominatorDefinition(
-                position=position, predicate=key, counts="known"
-            ),
-            "excluded": excluded,
-            "ci": Interval(method="wilson", level=level, low=low, high=high),
-            "not_estimable": reasons or None,
-        }
+    return Proportion(
+        estimate=estimate,
+        numerator=numerator,
+        denominator=denominator,
+        denominator_definition=DenominatorDefinition(
+            position=position, predicate=key, counts="known"
+        ),
+        excluded=None if excluded is None else dict(excluded),
+        ci=Interval(method="wilson", level=level, low=low, high=high),
+        not_estimable=reasons or None,
     )
 
 

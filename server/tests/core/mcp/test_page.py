@@ -24,6 +24,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+from tests.core._segments import validated
 
 from aibi.core.api import page
 from aibi.core.api.app import create_app
@@ -353,11 +354,14 @@ def test_suppressed_counts_are_shown_suppressed_as_the_tools_show_them(
 def test_a_count_that_is_not_estimable_for_another_reason_says_so() -> None:
     reference = f"stat:{MANIFEST}/trees/n_rows"
     for reason, said in (("suppressed", "suppressed"), ("no_units", "not estimable (no_units)")):
-        stat = StatCount.model_validate_json(
-            json.dumps({"count": None, "reference": reference, "not_estimable": {"/count": reason}})
+        stat = validated(
+            StatCount,
+            json.dumps(
+                {"count": None, "reference": reference, "not_estimable": {"/count": reason}}
+            ),
         )
         assert parsed(page.count(stat)).text == f"{said} {reference}"
-    known = StatCount.model_validate_json(json.dumps({"count": 7, "reference": reference}))
+    known = validated(StatCount, json.dumps({"count": 7, "reference": reference}))
     assert parsed(page.count(known)).text == f"7 {reference}"
     unexplained = StatCount.model_construct(count=None, reference=reference, not_estimable=None)
     assert parsed(page.count(unexplained)).text == f"suppressed {reference}"
@@ -416,7 +420,8 @@ def test_a_descriptor_lists_each_member_once_with_its_value_status_and_setter() 
 
 def test_the_catalogue_shows_a_hits_description_terms_facets_caveats_and_tables_left_out() -> None:
     reference = f"stat:{MANIFEST}/plots/n_rows"
-    hits = CatalogHits.model_validate_json(
+    hits = validated(
+        CatalogHits,
         json.dumps(
             {
                 "hits": [
@@ -460,7 +465,7 @@ def test_the_catalogue_shows_a_hits_description_terms_facets_caveats_and_tables_
                     }
                 ],
             }
-        )
+        ),
     )
     found = parsed(page.catalogue_page("", hits, 0))
     for expected in (
@@ -499,7 +504,7 @@ def hits_of(description: str | None = None) -> CatalogHits:
             }
         )
     body = {"hits": listed, "total": len(listed), "caveats": []}
-    return CatalogHits.model_validate_json(json.dumps(body))
+    return validated(CatalogHits, json.dumps(body))
 
 
 def test_the_catalogue_says_when_nothing_is_published_and_cuts_long_texts_and_lists() -> None:
@@ -511,12 +516,12 @@ def test_the_catalogue_says_when_nothing_is_published_and_cuts_long_texts_and_li
     for member in ("name", "label"):
         hits = hits_of("short").model_dump(mode="json")
         hits["hits"][0][member] = {"data": "n" * 4_096}
-        written = parsed(page.catalogue_page("", CatalogHits.model_validate(hits), 0))
+        written = parsed(page.catalogue_page("", validated(CatalogHits, hits), 0))
         assert "n" * page.VALUE_CHARACTERS + "…" in written.text, member
         assert "n" * (page.VALUE_CHARACTERS + 1) not in written.text, member
     hits = hits_of("short").model_dump(mode="json")
     hits["hits"][0]["domain_tags"] = [{"data": f"tag{n}"} for n in range(page.LISTED + 5)]
-    listed = parsed(page.catalogue_page("", CatalogHits.model_validate(hits), 0))
+    listed = parsed(page.catalogue_page("", validated(CatalogHits, hits), 0))
     assert f"tag{page.LISTED - 1}, and 5 more" in listed.text
     assert f"tag{page.LISTED}," not in listed.text
 
@@ -550,7 +555,7 @@ def description_of(columns: list[dict[str, Any]], total: int) -> Any:
         "caveats": [],
         "columns_total": total,
     }
-    return DatasetDescription.model_validate_json(json.dumps(body))
+    return validated(DatasetDescription, json.dumps(body))
 
 
 def test_a_datasets_page_shows_its_columns_datatype_and_identifier_and_its_endpoints() -> None:
@@ -831,7 +836,7 @@ def test_a_large_datasets_page_shows_a_bounded_window_of_its_tables() -> None:
         "caveats": [],
         "columns_total": 2_000,
     }
-    wide = DatasetDescription.model_validate_json(json.dumps(body))
+    wide = validated(DatasetDescription, json.dumps(body))
     written = page.dataset_page("", wide, 0)
     found = parsed(written)
     assert len(written) < 200_000

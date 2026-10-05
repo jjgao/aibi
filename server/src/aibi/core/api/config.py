@@ -128,7 +128,9 @@ class _Config(BaseModel):
 def _path(value: object, info: ValidationInfo) -> object:
     if not isinstance(value, str) or not value or "\0" in value:
         raise PydanticCustomError("path_type", "A path is a string that is not empty")
-    context = cast(dict[str, object], info.context or {})
+    # Not every context is a dict: a validator reads what it knows and assumes nothing (D399).
+    given_context = info.context
+    context = cast(dict[str, object], given_context) if isinstance(given_context, dict) else {}
     base = context.get(BASE)
     given = Path(value)
     return given if given.is_absolute() or not isinstance(base, Path) else base / given

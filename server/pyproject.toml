@@ -33,7 +33,9 @@ dev = [
     "pyarrow-stubs>=20",
     "pyright>=1.1.390",
     "pytest>=8.3",
+    "pyyaml>=6.0",
     "ruff>=0.8",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]

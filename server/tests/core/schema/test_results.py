@@ -15,6 +15,7 @@ import jsonschema
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError, computed_field
 from pydantic_core import PydanticSerializationError
+from tests.core._segments import validated
 
 from aibi.core.schema.caveats import Caveat
 from aibi.core.schema.digests import COUNT_MEMBERS, RESULT_MEMBERS, output_digest
@@ -190,9 +191,7 @@ def digested(model: type[Any], value: Any) -> Any:
     if members is None or not isinstance(value, dict) or value.get("digest") != MANIFEST:
         return value
     try:
-        parts = {
-            name: TypeAdapter(kind).validate_python(value[name]) for name, kind in members.items()
-        }
+        parts = {name: validated(kind, value[name]) for name, kind in members.items()}
     except (KeyError, ValidationError):
         return value
     dumped = {
@@ -204,12 +203,12 @@ def digested(model: type[Any], value: Any) -> Any:
 
 
 def _valid(model: type[Any], value: Any) -> Any:
-    return model.model_validate(digested(model, value))
+    return validated(model, digested(model, value))
 
 
 def error_types(model: type[Any], value: dict[str, Any]) -> list[str]:
     with pytest.raises(ValidationError) as raised:
-        model.model_validate(digested(model, value))
+        validated(model, digested(model, value))
     return [str(error["type"]) for error in raised.value.errors()]
 
 
@@ -220,7 +219,7 @@ def test_a_result_validates_and_round_trips() -> None:
     result = _valid(ResultEnvelope, envelope())
     dumped = result.model_dump(mode="json")
     assert _valid(ResultEnvelope, dumped) == result
-    assert ResultEnvelope.model_validate_json(result.model_dump_json()) == result
+    assert validated(ResultEnvelope, result.model_dump_json()) == result
     jsonschema.validate(dumped, SCHEMAS["result.schema.json"]())
 
 
@@ -341,7 +340,7 @@ def test_smuggled_non_finite_values_cannot_be_dumped() -> None:
 def test_releases_issuances_and_versions() -> None:
     assert "release_status" in error_types(ReleaseRef, release(label="draft"))
     assert "release_status" in error_types(ReleaseRef, release(status="draft"))
-    assert ReleaseRef.model_validate(release(label="draft", status="draft"))
+    assert validated(ReleaseRef, release(label="draft", status="draft"))
     both = derivation(releases=[release(), release()])
     assert "duplicate_release" in error_types(Derivation, both)
     for version, accepted in (
@@ -352,7 +351,7 @@ def test_releases_issuances_and_versions() -> None:
     ):
         packs = {"testpack": {"version": version, "results_version": 1}}
         if accepted:
-            assert Derivation.model_validate(derivation(packs=packs))
+            assert validated(Derivation, derivation(packs=packs))
         else:
             assert error_types(Derivation, derivation(packs=packs))
     packs = {"testpack": {"version": "01.2", "results_version": 1}}
@@ -360,7 +359,7 @@ def test_releases_issuances_and_versions() -> None:
     reserved = {"summary": {"version": "1.0", "results_version": 1}}
     assert error_types(Derivation, derivation(packs=reserved))
     other = "iss:01J8Z3S4T5V6W7X8Y9ZABCDEFH"
-    assert Issuance.model_validate({"id": ISSUANCE, "cache_hit": True, "values_from": other})
+    assert validated(Issuance, {"id": ISSUANCE, "cache_hit": True, "values_from": other})
     for cache_hit, values_from in ((True, ISSUANCE), (False, other)):
         issuance = {"id": ISSUANCE, "cache_hit": cache_hit, "values_from": values_from}
         assert "issuance" in error_types(Issuance, issuance)
@@ -390,19 +389,19 @@ def test_population_rules(members: dict[str, Any], error: str) -> None:
 
 
 def test_a_suppressed_count_is_listed_by_its_pointer() -> None:
-    suppressed = Population.model_validate(population(n_false=None, suppressed=["/n_false"]))
+    suppressed = validated(Population, population(n_false=None, suppressed=["/n_false"]))
     assert suppressed.suppressed == ["/n_false"]
     assert suppressed.model_dump()["n_false"] is None
 
 
 def test_analysed_counts() -> None:
-    assert Analysed.model_validate(analysed())
+    assert validated(Analysed, analysed())
     assert "analysed_excluded" in error_types(Analysed, analysed(excluded_units=5))
     assert "analysed_excluded" in error_types(
         Analysed, analysed(excluded={"NOT_ASSESSED": 3}, excluded_units=2)
     )
     hidden = analysed(n=None, not_estimable={"/n": "suppressed"})
-    assert Analysed.model_validate(hidden)
+    assert validated(Analysed, hidden)
     wrong = analysed(n=None, not_estimable={"/n": "no_units"})
     assert "analysed_suppressed" in error_types(Analysed, wrong)
     assert "analysed_breakdown" in error_types(
@@ -704,7 +703,7 @@ def test_more_result_invariants(members: dict[str, Any], error: str) -> None:
 
 def test_releases_are_one_per_dataset_and_sorted() -> None:
     other = release(dataset="archive", manifest="sha256:" + HEX[::-1])
-    releases = Derivation.model_validate(derivation(releases=[other, release()])).releases
+    releases = validated(Derivation, derivation(releases=[other, release()])).releases
     assert [r.dataset for r in releases] == ["archive", "lending"]
     # Refused out of order, not sorted: caveats point at releases by index.
     assert "release_order" in error_types(Derivation, derivation(releases=[release(), other]))
@@ -1054,7 +1053,7 @@ def test_impossible_populations_are_refused() -> None:
     assert "population_breakdown" in error_types(Population, zero)
     short = population(unknown_by_leaf={LEAF: 1})
     assert "population_leaves" in error_types(Population, short)
-    assert Population.model_validate(population(unknown_by_leaf={LEAF: 2, "leaf:" + HEX[::-1]: 1}))
+    assert validated(Population, population(unknown_by_leaf={LEAF: 2, "leaf:" + HEX[::-1]: 1}))
     zero_units = analysed(excluded=None, not_estimable={"/excluded": "suppressed"})
     assert "analysed_breakdown" in error_types(Analysed, zero_units)
 
@@ -1363,7 +1362,7 @@ def test_variables_are_for_views_over_several() -> None:
     one = analysed(variables=[analysed()])
     assert "too_short" in error_types(Analysed, one)
     other = analysed(n=4, excluded=excluded(NO_PARENT=6), excluded_units=6)
-    assert Analysed.model_validate(analysed(variables=[analysed(), other]))
+    assert validated(Analysed, analysed(variables=[analysed(), other]))
 
 
 # --- Round 4: the unit table accounts for suppressed counts; what dumps; the schema's enums -----
@@ -1434,7 +1433,7 @@ def test_n_is_at_most_the_sum_of_the_variables_n() -> None:
     part = analysed(n=4, excluded=excluded(NO_PARENT=6), excluded_units=6)
     assert "analysed_variables" in error_types(Analysed, analysed(n=10, variables=[part, part]))
     within = analysed(n=8, excluded=excluded(NO_PARENT=2), excluded_units=2, variables=[part, part])
-    assert Analysed.model_validate(within)
+    assert validated(Analysed, within)
 
 
 class _Computed(BaseModel):
@@ -1498,13 +1497,20 @@ def test_a_value_that_holds_itself_is_refused_in_every_mode() -> None:
             dump()
 
 
-def test_values_held_in_many_places_and_tuples_dump() -> None:
-    warnings.simplefilter("ignore")  # Pydantic warns of a tuple where the schema has a list
+def test_values_held_in_many_places_dump() -> None:
     shared = {"a": 1.5}
-    positions = [{"x": [shared] * 3, "t": (1, 2)}, {"y": shared}]
+    positions = [{"x": [shared] * 3, "t": [1, 2]}, {"y": shared}]
     values = Values.model_construct(positions=positions, view={})
     assert json.loads(values.model_dump_json())["positions"][0]["t"] == [1, 2]
     assert values.model_dump()["positions"][1] == {"y": {"a": 1.5}}
+
+
+def test_a_tuple_where_the_schema_has_a_list_is_refused_at_the_dump() -> None:
+    # The dump validates what it writes again (D399): a tuple is not a JSON value.
+    values = Values.model_construct(positions=[{"t": (1, 2)}], view={})
+    for dump in (values.model_dump, values.model_dump_json):
+        with pytest.raises(PydanticSerializationError, match="not a valid JSON value"):
+            dump()
 
 
 def test_the_schemas_accept_every_suppressed_count_and_every_pointer_not_estimable() -> None:
@@ -1789,13 +1795,13 @@ def test_a_variable_excludes_at_least_the_units_the_whole_excludes() -> None:
     whole["not_estimable"] = {"/n": "suppressed"}
     assert "analysed_variables" in error_types(Analysed, {**whole, "variables": [part, part]})
     part = {**part, "excluded": excluded(NO_PARENT=8), "excluded_units": 8}
-    assert Analysed.model_validate({**whole, "variables": [part, part]})
+    assert validated(Analysed, {**whole, "variables": [part, part]})
     # With a variable's n suppressed, n is not bounded by the sum of theirs.
     shown = analysed(n=6, excluded=excluded(NO_PARENT=6), excluded_units=6)
     hidden = analysed(n=None, excluded=excluded(NO_PARENT=6), excluded_units=6)
     hidden["not_estimable"] = {"/n": "suppressed"}
     total = analysed(n=12, excluded=excluded(), excluded_units=0)
-    assert Analysed.model_validate({**total, "variables": [shown, hidden]})
+    assert validated(Analysed, {**total, "variables": [shown, hidden]})
 
 
 def test_with_n_true_suppressed_n_may_be_suppressed_beside_a_shown_excluded_units() -> None:
@@ -1819,15 +1825,15 @@ def test_an_output_carries_the_digest_of_its_digested_members() -> None:
     built (§7.6, D298); rendered text is outside it."""
     other = "sha256:" + "f" * 64
     count = digested(CohortCount, cohort_count())
-    assert CohortCount.model_validate(count)
+    assert validated(CohortCount, count)
     assert "digest" in error_types(CohortCount, {**count, "digest": other})
     worded = {**count, "readback": [{"text": "another readback"}]}
-    assert CohortCount.model_validate(worded)
+    assert validated(CohortCount, worded)
     fewer = {**count, "size": {**count["size"], "numerator": 9, "estimate": 9 / 15}}
     fewer["population"] = known_population(n_true=9, n_false=6)
     assert "digest" in error_types(CohortCount, fewer)
     result = digested(ResultEnvelope, envelope())
-    assert ResultEnvelope.model_validate(result)
+    assert validated(ResultEnvelope, result)
     assert "digest" in error_types(ResultEnvelope, {**result, "digest": other})
     relabelled = {**result, "labels": [{"data": "x"}, {"data": "y"}]}
-    assert ResultEnvelope.model_validate(relabelled)
+    assert validated(ResultEnvelope, relabelled)

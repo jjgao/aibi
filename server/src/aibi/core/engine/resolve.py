@@ -3476,9 +3476,11 @@ def _remarked(node: RClause, origin: frozenset[Position]) -> RClause:
 
 
 def _segments(given: tuple[Segment, ...]) -> tuple[Segment, ...] | None:
-    """Segments validated again, since ``model_construct`` builds them unchecked."""
+    """A pack's segments, each an exact ``TextSegment`` or ``DataSegment``, validated again as
+    the instances they are: a pack's object is checked in shape, and a segment is never rebuilt
+    from what it dumps (D285, D399)."""
     try:
-        return tuple(type(segment).model_validate(segment.model_dump()) for segment in given)
+        return tuple(type(segment).model_validate(segment) for segment in given)
     except ValidationError:
         return None
 

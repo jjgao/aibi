@@ -10,7 +10,7 @@ import pickle
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -36,7 +36,15 @@ from aibi.core.importers.worker import (  # pyright: ignore[reportPrivateUsage]
     _Unpickler,
 )
 from aibi.core.schema.limits import ImportLimits
-from aibi.core.schema.output import DataSegment, Segment, TextSegment, data, text
+from aibi.core.schema.output import (
+    Boundary,
+    DataSegment,
+    Segment,
+    TextSegment,
+    data,
+    text,
+    unpickled,
+)
 
 
 def _snapshot(*reasons: tuple[str, Any]) -> Snapshot:
@@ -52,13 +60,24 @@ def test_a_reason_keeps_its_segments_in_the_note() -> None:
 def _crossed(reason: object) -> Snapshot:
     """A snapshot as the parent reads it from a child that sent ``reason``."""
     sent = pickle.dumps(("value", Skipped("t", reason)), protocol=pickle.HIGHEST_PROTOCOL)  # type: ignore[arg-type]
-    _, skipped = _Unpickler(io.BytesIO(sent)).load()
+    _, skipped = cast(Any, unpickled(Boundary.READER_ANSWER, _Unpickler(io.BytesIO(sent))))
     return _snapshot(("t", skipped.reason))
+
+
+def _malformed(value: object) -> TextSegment:
+    """A ``TextSegment`` whose text is ``value``, as only a reflective write makes one: test code
+    only, since D399's rule bans ``object.__setattr__`` on an output in ``src``."""
+    made = object.__new__(TextSegment)
+    object.__setattr__(made, "__dict__", {"text": value})
+    object.__setattr__(made, "__pydantic_fields_set__", {"text"})
+    object.__setattr__(made, "__pydantic_extra__", None)
+    object.__setattr__(made, "__pydantic_private__", None)
+    return made
 
 
 HOSTILE = {
     "a data token past its length": (DataSegment.model_construct(data="x" * 5000),),
-    "a text that is not a string": (TextSegment.model_construct(text=["a", "b"]),),
+    "a text that is not a string": (_malformed(["a", "b"]),),
     "a lone surrogate": (DataSegment.model_construct(data="a\ud800b"),),
     "a text that is not a segment": ("a string",),
     "too many segments": (text("a"),) * 17,
@@ -102,7 +121,9 @@ def test_a_reason_a_child_sends_that_is_not_valid_segments_is_its_fault_and_stor
 def test_a_valid_reason_crosses_the_pipe_whole() -> None:
     reason = (text("a view, not a base table"), DataSegment(data="é" * 200))
     [note] = _skipped(_crossed(reason))
-    TypeAdapter(list[Segment]).validate_python([s.model_dump() for s in note.message])
+    TypeAdapter(list[Segment]).validate_python(
+        list(note.message)
+    )  # valid as the instances they are
     assert note.message[3:] == list(reason)
 
 

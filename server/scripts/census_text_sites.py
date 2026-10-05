@@ -464,6 +464,106 @@ def census() -> tuple[dict[str, Wrapper], list[Site]]:
     return found, sorted(sites, key=lambda s: (s.file, s.line, s.hole, s.wrapper))
 
 
+HOLE = "{}"
+"""What a template holds where its argument is not a literal."""
+
+
+def _constants(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
+    """The strings of each module constant made of literals (a string, or a dict, tuple or list
+    of them), by its name, in every file: a name two files define holds both's."""
+    found: dict[str, list[str]] = {}
+    for tree in trees.values():
+        for node in getattr(tree, "body", []):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                target, value = node.target, node.value
+            else:
+                continue
+            strings = _literals(value)
+            if isinstance(target, ast.Name) and strings:
+                found.setdefault(target.id, []).extend(strings)
+    return found
+
+
+def _literals(node: ast.expr) -> list[str] | None:
+    """The strings of a literal made only of strings (keys of a dict left out), or ``None``."""
+    if isinstance(node, ast.Constant):
+        return [node.value] if isinstance(node.value, str) else None
+    if isinstance(node, ast.Tuple | ast.List):
+        parts = [_literals(element) for element in node.elts]
+    elif isinstance(node, ast.Dict):
+        parts = [_literals(value) for value in node.values]
+    else:
+        return None
+    if not parts or any(part is None for part in parts):
+        return None
+    return [string for part in parts if part is not None for string in part]
+
+
+def _templates(argument: ast.expr, makers: set[str], constants: dict[str, list[str]]) -> list[str]:
+    """What an argument that reaches server text can be, as templates: its literal text, a hole
+    ``{}`` for each part that is not a literal, and every string of a module constant it names."""
+    if isinstance(argument, ast.Constant):
+        return [argument.value] if isinstance(argument.value, str) else [HOLE]
+    if isinstance(argument, ast.JoinedStr):
+        return [
+            "".join(
+                str(part.value) if isinstance(part, ast.Constant) else HOLE
+                for part in argument.values
+            )
+        ]
+    if isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Add):
+        return [
+            left + right
+            for left in _templates(argument.left, makers, constants)
+            for right in _templates(argument.right, makers, constants)
+        ]
+    if isinstance(argument, ast.IfExp):
+        return _templates(argument.body, makers, constants) + _templates(
+            argument.orelse, makers, constants
+        )
+    if isinstance(argument, ast.Call) and _name(argument.func) in makers | SEEDS:
+        return []
+    named = argument.value if isinstance(argument, ast.Subscript) else argument
+    name = _name(named) if isinstance(named, ast.Name | ast.Attribute) else None
+    if name is not None and name in constants:
+        return list(constants[name])
+    return [HOLE]
+
+
+def templates() -> list[str]:
+    """Every template of the server's text, sorted: what reaches ``text()`` and the functions
+    whose argument becomes server text (the census's wrappers, ``refused`` and ``StoreRefused``
+    among them), and a segment written as ``{"text": ...}``. Their digest is checked in with
+    the server's wording (``CACHE_WORDING``, D399), so that no template, even one no golden case
+    renders, changes without it; it is a multiset, so moving code does not change it."""
+    trees = {
+        path.relative_to(ROOT).as_posix(): ast.parse(path.read_text())
+        for path in sorted(ROOT.rglob("*.py"))
+        if path.relative_to(ROOT).parts[0] != "packs"
+    }
+    makers = segment_makers(trees)
+    found = wrappers(trees, makers)
+    imports = _imports(trees)
+    constants = _constants(trees)
+    written: list[str] = []
+    for file, tree in trees.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value == "text":
+                        written += _templates(value, makers, constants)
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _name(node.func) or ""
+            if callee not in found:
+                continue
+            for _, argument in _arguments(node, found[callee], file, imports[file]):
+                written += _templates(argument, makers, constants)
+    return sorted(written)
+
+
 def stale(sites: list[Site], known: dict[Key, str]) -> list[Key]:
     """The reviewed keys that no site has: a review of what is no longer there."""
     present = {site.key for site in sites}

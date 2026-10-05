@@ -168,6 +168,7 @@ core/schema/loading.py	_refusal	text	reason	a member, tag, kind or choice of the
 core/schema/loading.py	_refusal	text	str(choice)	a member, tag, kind or choice of the server's own models, or a constant sentence
 core/schema/loading.py	_refusal	text	str(path[-1])	a member, tag, kind or choice of the server's own models, or a constant sentence
 core/schema/loading.py	_refusal	text	tag	a member, tag, kind or choice of the server's own models, or a constant sentence
+core/schema/output.py	text	{"text": ...}	value	text()'s own argument, rebuilt as a segment in its one call (D399): each call of text() is a site of its own
 core/schema/params.py	_unknown.build	text	len(declared)	a number (a length)
 core/schema/params.py	_unknown.build	text	len(listed)	a number (a length)
 core/schema/refusals.py	_blank_segment	text	blanked	text the server's own blanking left in a segment

@@ -9,6 +9,13 @@ and Unicode text. Members are checked when an output is built, nested outputs in
 again by ``model_copy`` with ``update``. ``model_construct`` bypasses validation, as Pydantic
 documents; what it builds is still checked before it is dumped, where anything but a JSON value
 (objects with string keys, arrays, strings, booleans, ``null`` and such numbers) is refused.
+
+Server text is closed at its type (D399): a ``TextSegment`` is made by ``text()``, passes as an
+exact instance, or is rebuilt at a listed ``Boundary``; it has no subclass and no unchecked
+construction, and every other way in, a mapping included, is refused by its own validator, so
+an output that holds one anywhere refuses it; its lists are mutable, so the outermost dump
+validates the whole again. A static rule (``tests/core/closure_rule.py``) bans the reflective
+routes that skip validators, against mistakes and data, not hostile code in the tree.
 """
 
 import math
@@ -16,20 +23,24 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextvars import ContextVar
 from enum import Enum
 from functools import cache
-from typing import Annotated, Any, Literal, Self, cast
+from typing import Annotated, Any, Literal, Protocol, Self, cast, final
 
 from pydantic import (
     AfterValidator,
     AllowInfNan,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     GetJsonSchemaHandler,
     JsonValue,
+    ModelWrapValidatorHandler,
     SerializerFunctionWrapHandler,
     Strict,
     StrictInt,
+    Tag,
     ValidationError,
+    ValidationInfo,
     WithJsonSchema,
     field_validator,
     model_serializer,
@@ -201,6 +212,11 @@ def _absent_when_null(model: type[BaseModel]) -> frozenset[str]:
 
 _DUMPING: ContextVar[bool] = ContextVar("aibi_output_dumping", default=False)
 """Set while an output is dumped, so that only the outermost output checks the whole."""
+_VALIDATED: ContextVar[bool] = ContextVar("aibi_output_validated", default=False)
+"""Set while a validator dumps the output it is validating (``dumped_in_validation``)."""
+
+
+_V1 = "Pydantic 1's API is closed on an output: use model_validate or model_copy (D399)"
 
 
 class Output(BaseModel):
@@ -221,7 +237,58 @@ class Output(BaseModel):
         strict=True,
         ser_json_inf_nan="constants",
         revalidate_instances="always",
+        # An error's string holds the input it refused, which is data and may be what a guard
+        # refused: a log of a failure is not a place for it (A6, D399).
+        hide_input_in_errors=True,
     )
+
+    # Pydantic 1's API, which builds or copies without the checks of an output, or reaches its
+    # internals, is closed at the type (D399); the validating entries, ``model_validate`` and
+    # ``model_copy``, are the ways to make or copy one. Its dumps (``dict``, ``json``, ``schema``)
+    # only read.
+    def copy(self, *args: Any, **kwargs: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    def _copy_and_set_values(self, *args: Any, **kwargs: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    def _iter(self, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    def _calculate_keys(self, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def _get_value(cls, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def construct(cls, _fields_set: set[str] | None = None, **values: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def from_orm(cls, obj: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def parse_obj(cls, obj: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def parse_raw(cls, *args: Any, **kwargs: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def parse_file(cls, *args: Any, **kwargs: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def validate(cls, value: Any) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
+
+    @classmethod
+    def update_forward_refs(cls, **localns: Any) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        raise TypeError(_V1)
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
         """A copy; with ``update``, a new output validated like any other, so its checks hold."""
@@ -263,6 +330,12 @@ class Output(BaseModel):
         try:
             if outermost:
                 check_values(self)
+                # What a dump writes was admitted by its schema, not only when it was built:
+                # a list of segments is mutable, and a mapping put in one after construction
+                # would be written as server text. The outermost dump validates the whole
+                # again, as the instances they are (the guard admits only exact ones).
+                if not _VALIDATED.get():
+                    type(self).model_validate(self)
             serialised: dict[str, Any] = handler(self)
         finally:
             if token is not None:
@@ -277,8 +350,133 @@ class Output(BaseModel):
         return serialised
 
 
+def dumped_in_validation(output: Output, **options: Any) -> Any:
+    """``output.model_dump(**options)`` for a validator that reads the output it is validating:
+    its members were just validated, so the dump does not validate them again (D399); the values
+    are still checked. It is a capability: the static rule lets only the functions of
+    ``DUMPS_IN_VALIDATION`` (``tests/core/closure_rule.py``) call it, and what it dumps is
+    served nowhere."""
+    token = _VALIDATED.set(True)
+    try:
+        return output.model_dump(**options)
+    finally:
+        _VALIDATED.reset(token)
+
+
+class Boundary(Enum):
+    """The listed places where server text is rebuilt from bytes the server's own code wrote
+    (D399). Each is one validating call whose validation context is the place's capability
+    (``admitted_at``), or the one unpickling of a reader's answer (``unpickled``); there, and only
+    there, a segment written as ``{"text": ...}`` is server text again. The list is closed: a
+    test holds each member's places, so a new place is a new member, with its reason."""
+
+    REPORT_NOTES = "report_notes"
+    """An import report's notes, read back from the blob a build wrote (D231): stored, so a
+    report is served as written only under the classification it was written with
+    (``REPORT_CLASSIFICATION``)."""
+    RESULT_CACHE = "result_cache"
+    """A result's digested content, read back from the cache row the server wrote (D374):
+    stored, so a row is read back only under the wording it was written with
+    (``CACHE_WORDING``)."""
+    READER_ANSWER = "reader_answer"
+    """A reader child's answer (D225): the child runs the server's own code under the same
+    guard and is not a privilege boundary; it validates the refusals it sends, and the server
+    validates them again, and the reasons of skipped relations, as it reads them."""
+    CLI_CLIENT = "cli_client"
+    """The operator CLI's reading of the answers of the server it is configured with, which it
+    trusts as it trusts it with the curator token (D268); the server sends only validated
+    outputs."""
+
+
+STORED = frozenset({Boundary.REPORT_NOTES, Boundary.RESULT_CACHE})
+"""The boundaries that read what was stored, which record what text meant when they wrote it."""
+
+REPORT_CLASSIFICATION = 1
+"""What counts as server text (D397, D399): an import report written under another
+classification is read with each note's fixed text. Raised only when that changes (M4.0f-A2b's
+conversions), never for a change of wording."""
+
+CACHE_WORDING = 1
+"""The server's wording: a cached result written under another wording is not read back, and
+the call computes it again (D374, D399). Raised with any change to a ``text()`` template (a test
+holds their digest) and with every change of ``REPORT_CLASSIFICATION``."""
+
+GUARD_MESSAGE = (
+    "Server text is made only by text(), as an exact TextSegment, or at a listed boundary (D399)"
+)
+"""The message of the guard's refusal, which names nothing it was given."""
+
+
+@final
+class _Admitted:
+    """The capability of a listed boundary, or of ``text()``: the validation context of one
+    call, which Pydantic gives that call's validators and nothing else (D399)."""
+
+    __slots__ = ("member",)
+
+    def __init__(self, member: Boundary | None) -> None:
+        self.member = member
+
+    def __repr__(self) -> str:
+        return "<admitted>"
+
+
+_BY_TEXT = _Admitted(None)
+_ADMITTED = {member: _Admitted(member) for member in Boundary}
+_UNPICKLING: ContextVar[Boundary | None] = ContextVar("aibi_unpickling", default=None)
+"""Set while ``unpickled`` reads a reader's answer: a segment is restored only then."""
+
+
+def admitted_at(member: Boundary) -> object:
+    """The validation context of ``member``'s one call: ``Model.model_validate_json(payload,
+    context=admitted_at(Boundary.X))``, written as a statement of its own at the place the member
+    lists (D399)."""
+    return _ADMITTED[member]
+
+
+class _Loads(Protocol):
+    def load(self) -> Any: ...
+
+
+def unpickled(member: Boundary, unpickler: _Loads) -> object:
+    """What ``unpickler`` loads, its segments restored as they were sent, unchecked (``member``
+    is ``READER_ANSWER``, D225): whoever reads them validates them again, as the instances they
+    are (``databases._reason``)."""
+    token = _UNPICKLING.set(member)
+    try:
+        return unpickler.load()
+    finally:
+        _UNPICKLING.reset(token)
+
+
+@final
 class TextSegment(Output):
+    # Server text: made only by text(), re-validated as an exact instance, or rebuilt at a listed
+    # boundary (Boundary); a mapping, another model, or any object with a text member is refused
+    # anywhere else, by every entry Pydantic has (D397, D399). No docstring: it would be the
+    # schema's description.
     text: str
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        raise TypeError("TextSegment has no subclasses (D399)")
+
+    @classmethod
+    def model_construct(cls, _fields_set: set[str] | None = None, **values: Any) -> Self:
+        raise TypeError("A TextSegment is never built unchecked (D399)")
+
+    def __setstate__(self, state: dict[Any, Any]) -> None:
+        if _UNPICKLING.get() is None:
+            raise TypeError("A TextSegment is unpickled only at a listed boundary (D399)")
+        super().__setstate__(state)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _made_here(
+        cls, value: object, handler: ModelWrapValidatorHandler[Self], info: ValidationInfo
+    ) -> Self:
+        if type(value) is TextSegment or type(info.context) is _Admitted:
+            return handler(value)
+        raise PydanticCustomError("server_text", GUARD_MESSAGE)
 
 
 class DataSegment(Output):
@@ -286,11 +484,43 @@ class DataSegment(Output):
     truncated: Literal[True] | None = None
 
 
-Segment = TextSegment | DataSegment
+def _segment_tag(value: object) -> str:
+    """Which arm of ``Segment`` takes ``value``, by what it is, so that a data token is not
+    tried against ``TextSegment``'s guard first: a data segment, a mapping with no ``text`` key
+    and an object with no ``text`` attribute (``from_attributes``) are data; anything else is
+    text, whose guard admits an exact instance and refuses the rest with its own message (D399)."""
+    if isinstance(value, DataSegment):
+        return "data"
+    if isinstance(value, Mapping):
+        return "text" if "text" in cast(Mapping[object, object], value) else "data"
+    if isinstance(value, TextSegment):
+        return "text"
+    return "text" if hasattr(value, "text") else "data"
+
+
+class _AnyOf:
+    """Writes the union as ``anyOf``, as it was written before it was tagged: the schemas the
+    clients read are the same."""
+
+    def __get_pydantic_json_schema__(
+        self, schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        written = handler(schema)
+        if "oneOf" in written:
+            written["anyOf"] = written.pop("oneOf")
+        return written
+
+
+Segment = Annotated[
+    Annotated[TextSegment, Tag("text")] | Annotated[DataSegment, Tag("data")],
+    Discriminator(_segment_tag),
+    _AnyOf(),
+]
 
 
 def text(value: str) -> TextSegment:
-    return TextSegment(text=value)
+    """Server text: ``value`` must be the server's own words (D397)."""
+    return TextSegment.model_validate({"text": value}, context=_BY_TEXT)
 
 
 def data(value: str) -> DataSegment:

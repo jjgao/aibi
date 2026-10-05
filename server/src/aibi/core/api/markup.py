@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import LiteralString
 
-from aibi.core.schema.output import DataSegment, Segment
+from aibi.core.schema.output import DataSegment, Segment, TextSegment
 
 ELEMENTS = frozenset(
     {
@@ -184,14 +184,19 @@ def data(value: str, *, truncated: bool = False) -> Markup:
     return joined([shown, element("span", "…", attributes={"class": "cut", "title": "cut"})])
 
 
+def _segment(segment: Segment) -> Child:
+    """One segment: a data token as data, server text as text; anything else, which no output
+    holds, is refused, so that a look-alike is never shown as the server's words (D399)."""
+    if isinstance(segment, DataSegment):
+        return data(segment.data, truncated=bool(segment.truncated))
+    if isinstance(segment, TextSegment):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return segment.text
+    raise TypeError("A message holds text and data segments only (D399)")
+
+
 def segments(given: Sequence[Segment]) -> Markup:
     """A message or a readback: the server's text as text, and each data token as data."""
-    return joined(
-        data(segment.data, truncated=bool(segment.truncated))
-        if isinstance(segment, DataSegment)
-        else segment.text
-        for segment in given
-    )
+    return joined(_segment(segment) for segment in given)
 
 
 def document(title: str, style: LiteralString, *body: Child) -> bytes:
