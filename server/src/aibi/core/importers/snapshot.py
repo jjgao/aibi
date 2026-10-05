@@ -15,7 +15,10 @@ consistent:
   whose ``sql`` holds ``virtual``, whose shadow tables only it tells apart); one whose name starts
   ``sqlite_`` is not read, and is noted unless it is one SQLite keeps of its own
   (``sqlite_sequence``, ``sqlite_stat1``…); views, virtual tables and their shadow tables are
-  skipped and noted. A cell is what SQLite stores: an integer, a real, a text or null; a BLOB is
+  skipped and noted. A name in bytes that are not UTF-8, which SQLite stores whatever its client
+  wrote, is read as text with each such byte a lone surrogate (``surrogateescape``): a view's
+  is noted, and a table's or column's refused by name, since it cannot be put in a query (D398).
+  A cell is what SQLite stores: an integer, a real, a text or null; a BLOB is
   refused, and so is a ``VIRTUAL`` generated column, which SQLite would compute by the file's
   expression as it reads it (a ``STORED`` one is read, D306, D309).
 - **DuckDB** files are attached read-only to a session with external access disabled but for the
@@ -97,9 +100,10 @@ SQLite nor DuckDB can be made to open a path without following a link that repla
 check. Whatever the database or its driver raises, but a refusal and running out of memory, is
 ``UNPARSEABLE_SOURCE`` naming the exception's class alone, and the table being counted or read when
 there is one: DuckDB's and the drivers' messages can hold the URL, and so a credential (§14). A name
-from the catalogue that a refusal gives has each lone surrogate and noncharacter escaped
-(``errors.escaped``), and a file is named by its location in its import directory. At most
-``import_tables`` skipped relations are named, and the rest counted (D309).
+from the catalogue that a refusal gives is a data token, which writes each lone surrogate and
+noncharacter as its escape (``output.data``, D398), and a file is named by its location in its
+import directory. At most ``import_tables`` skipped relations are named, and the rest counted
+(D309).
 """
 
 import math
@@ -108,15 +112,17 @@ import sqlite3
 import stat
 import string
 import urllib.parse
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from pydantic import ValidationError
 from sqlglot import exp
 
-from aibi.core.importers.errors import ImportRefused, escaped, long_cell_refused, refused
+from aibi.core.importers.errors import ImportRefused, long_cell_refused, refused
 from aibi.core.importers.urls import mysql_quotable
 from aibi.core.schema.limits import (
     IMPORT_CELLS,
@@ -342,7 +348,7 @@ def read_snapshot(target: Target, limits: ImportLimits) -> Snapshot:
         if target.kind == "sqlite":
             return _sqlite(target, limits)
         return _duckdb(target, limits)
-    except (ImportRefused, MemoryError):
+    except (ImportRefused, MemoryError, ValidationError):
         raise
     except Exception as error:
         raise refused(
@@ -354,8 +360,8 @@ def read_snapshot(target: Target, limits: ImportLimits) -> Snapshot:
 
 
 def _name(name: str) -> DataSegment:
-    """A name from the catalogue, as a refusal gives it (``errors.escaped``, D309)."""
-    return data(escaped(name))
+    """A name from the catalogue, as a refusal gives it: a data token (D309, D398)."""
+    return data(name)
 
 
 def _unreadable(table: str, error: BaseException) -> ImportRefused:
@@ -510,8 +516,7 @@ def _long(
     having no header row."""
     if (found := long_cell(rows)) is not None:
         row, column = found
-        shown = [escaped(column) for column in columns]
-        raise long_cell_refused((before + row, column), shown, "The table ", _name(name))
+        raise long_cell_refused((before + row, column), columns, "The table ", _name(name))
 
 
 def _key(given: Sequence[str], columns: Sequence[str]) -> tuple[str, ...] | None:
@@ -560,6 +565,34 @@ def _sqlite(target: Target, limits: ImportLimits) -> Snapshot:
         connection.close()
     _same_file(target)
     return snapshot
+
+
+def _surrogate_escaped(raw: bytes) -> str:
+    return raw.decode("utf-8", "surrogateescape")
+
+
+@contextmanager
+def _names_as_text(connection: sqlite3.Connection) -> Generator[None]:
+    """The catalogue's text read as ``surrogateescape`` decodes it, so that a name in bytes that
+    are not UTF-8, which SQLite stores whatever its client wrote, reaches a refusal or a note as
+    text, each such byte a lone surrogate (D398). Only the catalogue reads run inside it: a
+    cell's text is still read strictly (D397)."""
+    connection.text_factory = _surrogate_escaped
+    try:
+        yield
+    finally:
+        connection.text_factory = str
+
+
+def _encodable(*names: str) -> bool:
+    """Whether each name encodes as UTF-8, so that it can be bound or written into a query: a
+    name with a lone surrogate, which a byte that is not UTF-8 becomes, cannot."""
+    try:
+        for name in names:
+            name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _sqlite_relation(connection: sqlite3.Connection, name: str) -> _Relation:
@@ -622,7 +655,9 @@ def _sqlite_listed(connection: sqlite3.Connection) -> list[tuple[str, str]]:
 def _sqlite_tables(connection: sqlite3.Connection, limits: ImportLimits) -> Snapshot:
     names: list[str] = []
     skipped: list[Skipped] = []
-    for name, kind in _sqlite_listed(connection):
+    with _names_as_text(connection):
+        listed = _sqlite_listed(connection)
+    for name, kind in listed:
         if ascii_folded(name).startswith("sqlite_"):
             if ascii_folded(name) not in _SQLITE_OWN:
                 skipped.append(Skipped(name, _because("a table named as SQLite's own tables are")))
@@ -637,18 +672,29 @@ def _sqlite_tables(connection: sqlite3.Connection, limits: ImportLimits) -> Snap
     cells.tables(len(names))
     relations: dict[str, _Relation] = {}
     for name in names:
+        if not _encodable(name):
+            continue
         try:
-            relations[name] = _sqlite_relation(connection, name)
+            with _names_as_text(connection):
+                relations[name] = _sqlite_relation(connection, name)
             counted = connection.execute(_count(_table(name, "main"), "sqlite")).fetchone()
         except sqlite3.Error as error:
             raise _unreadable(name, error) from None
         cells.table(name, len(relations[name].columns), int(cast(tuple[int], counted)[0]))
     tables: list[SnapshotTable] = []
     for name in names:
+        if name not in relations:
+            # Its name cannot be put in a query, nor can its columns be read: it is kept for the
+            # refusal that names it (``databases._checked``).
+            tables.append(SnapshotTable(name, (), None, ()))
+            continue
         relation = relations[name]
         columns = relation.columns
         if not columns:
             skipped.append(Skipped(name, _because(_NO_COLUMNS)))
+            continue
+        if not _encodable(*columns):
+            tables.append(SnapshotTable(name, columns, None, ()))
             continue
         try:
             rows = _sqlite_rows(connection, name, columns, relation.primary_key or columns)
@@ -893,7 +939,7 @@ def _opened_database(connection: "duckdb.DuckDBPyConnection", target: Target) ->
         raise refused(
             RefusalCode.INVALID_VALUE,
             "The server opened a database other than the one the connection's URL names: ",
-            data(escaped(str(found))),
+            data(str(found)),
         )
     return cast(str, found)
 
@@ -1761,7 +1807,7 @@ def _mysql_isolation(connection: "duckdb.DuckDBPyConnection") -> None:
         raise refused(
             RefusalCode.UNSUPPORTED_FORMAT,
             "The MySQL session's transactions read no snapshot, at the isolation level ",
-            data(escaped(level)),
+            data(level),
             alternatives=MYSQL_ISOLATION,
         )
 

@@ -32,6 +32,7 @@ import io
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
+from pydantic import ValidationError
 from python_calamine import CalamineError, CalamineSheet, CalamineWorkbook, SheetTypeEnum
 
 from aibi.core.importers.archives import check_container
@@ -151,6 +152,8 @@ def read_workbook(data: bytes, limits: ImportLimits, max_cells: int) -> list[She
                     raise long_cell_refused(found, source.columns, "The sheet ", named)
                 skipped = NO_CELL if source is None else None
                 sheets.append(Sheet(metadata.name, source, skipped))
+    except ValidationError:
+        raise
     except (CalamineError, OSError, ValueError, OverflowError) as error:
         raise refused(
             RefusalCode.UNPARSEABLE_SOURCE,

@@ -1,0 +1,2 @@
+- R2-m2 tests done (brute: SHAPES, wherever tests); next m1 D398+pg test, n1 ban fixtures, n2, n3, n4, n5, n6
+- n1 n2(test) n4 n6(test) done; next SPEC D398 text, n3 doc done, PR body, commit, gates, mutants

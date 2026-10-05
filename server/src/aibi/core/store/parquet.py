@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfoNotFoundError
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pydantic import ValidationError
 
 from aibi.core.schema.output import Message, Segment, data, plain_text, shown, text
 
@@ -241,7 +242,13 @@ def read_source(data: bytes, max_cells: int) -> ParquetSource:
     process that reads it (D225)."""
     try:
         return _read_source(data, max_cells)
-    except (UnsupportedTypeError, CellLimitError, UnreadableParquetError, MemoryError):
+    except (
+        UnsupportedTypeError,
+        CellLimitError,
+        UnreadableParquetError,
+        MemoryError,
+        ValidationError,
+    ):
         raise
     except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as error:
         raise UnreadableParquetError(*_raised(error)) from None
@@ -263,8 +270,19 @@ def _schema(schema: pa.Schema) -> tuple[tuple[str, ...], tuple[ArrowKind, ...]]:
 
 
 def _read_source(data: bytes, max_cells: int) -> ParquetSource:
-    file = pq.ParquetFile(pa.BufferReader(data))
-    names, kinds = _schema(file.schema_arrow)
+    try:
+        file = pq.ParquetFile(pa.BufferReader(data))
+        schema = file.schema_arrow
+    except UnicodeDecodeError as error:
+        # pyarrow decodes a column's or a field's name as it reads the schema, and what it could
+        # not decode is that name's bytes: shown as data, each byte that is not UTF-8 as its
+        # escape (D398). A cell that is not UTF-8 is decoded later, and is "reading it raised
+        # UnicodeDecodeError" (D397).
+        raise UnreadableParquetError(
+            text("a column's or a field's name is not UTF-8: "),
+            shown(bytes(error.object).decode("utf-8", "surrogateescape")),
+        ) from None
+    names, kinds = _schema(schema)
     cells = file.metadata.num_rows * len(names)
     if cells > max_cells:
         raise CellLimitError(cells, max_cells)
@@ -281,7 +299,7 @@ def from_arrow(table: pa.Table) -> ParquetSource:
     try:
         names, kinds = _schema(table.schema)
         return _values(table, names, kinds)
-    except (UnsupportedTypeError, UnreadableParquetError, MemoryError):
+    except (UnsupportedTypeError, UnreadableParquetError, MemoryError, ValidationError):
         raise
     except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as error:
         raise UnreadableParquetError(*_raised(error)) from None
@@ -299,9 +317,9 @@ def _values(table: pa.Table, names: tuple[str, ...], kinds: tuple[ArrowKind, ...
                 column = column.cast(pa.time64("us"), safe=False)
             values = cast(list[object], column.to_pylist())
             columns.append([_value(kind, value) for value in values])
+        except (UnsupportedTypeError, UnreadableParquetError, CellLimitError, ValidationError):
+            raise
         except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as e:
-            if isinstance(e, (UnsupportedTypeError, UnreadableParquetError, CellLimitError)):
-                raise
             raise UnreadableParquetError(*_raised(e), column=index) from None
     rows = tuple(zip(*columns, strict=True)) if columns else ()
     return ParquetSource(names, kinds, rows)

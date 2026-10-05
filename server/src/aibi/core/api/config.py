@@ -53,6 +53,12 @@ Binding (D254): a bind other than the loopback interface needs both TLS files, a
 that others can read is refused; a wildcard bind needs a hostname as well. Import directories
 must exist and be directories, and must neither hold nor lie inside the data directory, compared
 by real paths, so that no import's confinement root holds the store or its uploads being written.
+The real paths of the data directory and of every import directory, a connection's ``path`` and
+its ``schema`` must be Unicode text (``is_text``: UTF-8, and no noncharacter), the one test the
+import's resolve applies to the same paths: SQLite and DuckDB open the store's files, the
+uploads and a connection's file by a path given as text, and a name below a root is shown by its
+location, which must be text to be described (D253, D398). The server does not start otherwise;
+the remedy is to rename the directory (a link to it does not help: its real path is the target's).
 """
 
 import errno
@@ -81,6 +87,7 @@ from aibi.core.api.origins import LOOPBACK_HOSTS, hostname, is_loopback, origin
 from aibi.core.importers.databases import Connection
 from aibi.core.schema.descriptors import ModelCardDescriptor
 from aibi.core.schema.ids import Identifier
+from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.limits import (
     MAX_BODY_BYTES,
     MAX_KEEP_DAYS,
@@ -449,6 +456,10 @@ def _file_problems(config: ServerConfig) -> list[str]:
                 "address nor a configured hostname"
             )
     data = _real(config.storage.data)
+    if not is_text(str(data)):
+        problems.append(
+            "storage.data: its real path is not Unicode text; rename the directory (D253, D398)"
+        )
     imports: list[Path] = []
     for index, directory in enumerate(config.storage.imports):
         where = f"storage.imports[{index}]"
@@ -456,12 +467,20 @@ def _file_problems(config: ServerConfig) -> list[str]:
             problems.append(f"{where}: not an existing directory")
             continue
         real = _real(directory)
+        if not is_text(str(real)):
+            problems.append(
+                f"{where}: its real path is not Unicode text; rename the directory (D253, D398)"
+            )
         imports.append(real)
         if real.is_relative_to(data) or data.is_relative_to(real):
             problems.append(f"{where}: it holds, or lies inside, the data directory")
     for name, connection in config.databases.items():
+        if connection.schema_ is not None and not is_text(connection.schema_):
+            problems.append(f"databases.{name}.schema: not Unicode text")
         if connection.path is None:
             continue
+        if not is_text(str(connection.path)):
+            problems.append(f"databases.{name}.path: not Unicode text")
         real = _real(connection.path)
         if not any(real.is_relative_to(directory) for directory in imports):
             problems.append(f"databases.{name}.path: not inside an import directory")

@@ -246,9 +246,9 @@ def decode(kind: Kind, data: bytes) -> RawSource:
             raise SourceError(output.text(f"a typed snapshot starts with its {ROWS_FORMAT} header"))
         names = tuple(cast(list[str], columns))
         rows = tuple(tuple(_read(value) for value in _row(line)) for line in lines[1:-1])
+    except SourceError:
+        raise
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        if isinstance(error, SourceError):
-            raise
         prefix = "a damaged typed snapshot: "
         # cut so that the whole message is at most 200 characters, as it always was
         raise SourceError(

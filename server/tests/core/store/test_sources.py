@@ -194,6 +194,32 @@ def test_a_damaged_typed_snapshot_is_refused(data: bytes) -> None:
         decode("rows", data)
 
 
+@pytest.mark.parametrize(
+    ("data", "said"),
+    [
+        (b"", "a typed snapshot is JSON Lines with a header line"),
+        (
+            b'{"columns":["a"],"format":"other"}\n',
+            "a typed snapshot starts with its aibi.rows/1 header",
+        ),
+        (
+            b'{"columns":["a"],"format":"aibi.rows/1"}\n5\n',
+            "each row of a typed snapshot is an array",
+        ),
+        (
+            b'{"columns":["a"],"format":"aibi.rows/1"}\n[{"when":"x"}]\n',
+            "unknown tag in a typed snapshot: when",
+        ),
+    ],
+)
+def test_a_typed_snapshot_the_reader_refuses_keeps_its_own_message(data: bytes, said: str) -> None:
+    """Not re-wrapped as a damaged snapshot, whose message is a ``repr`` cut by slicing."""
+    with pytest.raises(SourceError) as refused:
+        decode("rows", data)
+    assert str(refused.value).startswith(said), str(refused.value)
+    assert "damaged" not in str(refused.value)
+
+
 # --- Reading text files -----------------------------------------------------------------------
 
 

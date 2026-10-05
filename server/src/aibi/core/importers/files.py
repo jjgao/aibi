@@ -25,22 +25,25 @@ are counted while it is parsed, a sheet's extent before its cells become values,
 file's cells from its metadata. Every name that becomes a label or an original name (a header, a
 Parquet column's name, a sheet's name, a file's or an archive member's, the dataset's name) is a
 descriptor's string, so one over ``MAX_STRING`` characters is refused (``LIMIT_EXCEEDED``) before
-anything is described. What stays in memory until the release is built is bounded by
-``import_bytes``, the archive limits, ``import_cells`` and ``decoded_bytes``: a text file's bytes,
-which are its raw snapshot, and every table's rows.
+anything is described, and one that is not Unicode text (``UNPARSEABLE_SOURCE``): a file's or a
+member's own name as it is listed, the rest by ``describe`` (D398). A name that is only shown, of an
+entry skipped and noted, is a data token, which writes what is not text as its escape. What stays
+in memory until the release is built is bounded by ``import_bytes``, the archive limits,
+``import_cells`` and ``decoded_bytes``: a text file's bytes, which are its raw snapshot, and every
+table's rows.
 """
 
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Literal, cast
+from typing import Literal, LiteralString, cast
 
 import aibi
 from aibi.core.importers import archives
 from aibi.core.importers.describe import DatasetOrigin, TableOrigin, by_importer, describe
 from aibi.core.importers.detect import detect
-from aibi.core.importers.errors import ImportRefused, long_cell_refused, refused, within
+from aibi.core.importers.errors import ImportRefused, long_cell_refused, refused, text_name, within
 from aibi.core.importers.infer import Datatype, SourceTable, Status, infer
 from aibi.core.importers.sheets import SKIPPED, Sheet, read_workbook
 from aibi.core.importers.worker import Reader, ReaderError
@@ -161,6 +164,7 @@ class _Reading:
                 elif (why := self._skip(entry.name)) is not None:
                     self.notes.append(_skipped(entry.name, why))
                 else:
+                    text_name(entry.name, "A file's name")
                     found.append((entry.name, reader.read(entry.path, self.limits.import_bytes)))
             return found
         extension = _extension(name)
@@ -172,6 +176,7 @@ class _Reading:
                 if content is None:
                     self.notes.append(_skipped(member, cast(str, self._skip(member))))
                 else:
+                    text_name(PurePosixPath(member).name, "A file's name")
                     kept.append((PurePosixPath(member).name, content))
             return kept
         if extension in REFUSED:
@@ -378,8 +383,8 @@ def _refused_kind(name: str, kinds: Sequence[str]) -> ImportRefused:
     )
 
 
-def bounded(name: str, what: str) -> None:
-    """Refuse a name longer than a descriptor's string (§14)."""
+def bounded(name: str, what: LiteralString) -> None:
+    """Refuse a name longer than a descriptor's string (§14); ``what`` is the server's own words."""
     if len(name) > MAX_STRING:
         raise refused(
             RefusalCode.LIMIT_EXCEEDED,

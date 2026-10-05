@@ -58,8 +58,10 @@ that ends in any other way before it answers are ``UNPARSEABLE_SOURCE``. A ``Mem
 the server is ``LIMIT_EXCEEDED`` too: naming ``import_bytes`` while it pickles and sends a
 request, which holds a file's bytes, and ``decoded_bytes`` while it receives or unpickles an
 answer. Any other exception, and an answer that breaks the framing or holds another class, is a
-fault of the reader, raised as ``ReaderError``. After a failure the child is gone, and the import
-is refused.
+fault of the reader, raised as ``ReaderError``: a ``ValidationError`` (an output a reader built
+from something it did not check) by its class name alone, whose errors can hold a source's
+names, and any other exception with its traceback (D225, D398). After a failure the child is
+gone, and the import is refused.
 """
 
 import contextlib
@@ -82,6 +84,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any, Self, cast
+
+from pydantic import ValidationError
 
 import aibi
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
@@ -193,6 +197,11 @@ def _answer(
         return ("refused", [r.model_dump(mode="json") for r in error.refusals]), decoded
     except MemoryError:
         return ("memory",), decoded
+    except ValidationError as error:
+        # A reader built an output from a name it did not check: a fault, sent by its class
+        # alone, since its errors' messages, contexts and locations can hold the name (D225,
+        # D285, D398).
+        return ("error", type(error).__name__), decoded
     except Exception as error:
         return ("error", "".join(traceback.format_exception(error))), decoded
     except BaseException as error:

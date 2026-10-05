@@ -34,6 +34,10 @@ so the server process stays the only writer of the store.
   not echo on a terminal, never from an argument: an erased person's key would stay in the
   shell's history and show in ``ps``.
 - **Files** a command reads are UTF-8; one that is not is a usage error.
+- **Arguments and the environment are UTF-8**: an argument, or a value of ``AIBI_SERVER``,
+  ``AIBI_OPERATOR``, ``AIBI_TOKEN`` or ``AIBI_HANDLE`` (``SENT``), that is not (a lone surrogate,
+  as Python reads bytes that are not UTF-8) is a usage error before anything else, naming no
+  value; ``XDG_STATE_HOME`` (``PATHS``) is a local path, used as given (D268, D398).
 - **Exit codes**: 0 done, 1 refused, 2 usage (a missing token, operator or handle), 3 the server
   unreachable, 130 interrupted (the server may still finish the operation).
 """
@@ -84,6 +88,14 @@ from aibi.core.schema.refusals import Refusal, blank, holds_secret
 DONE, REFUSED, USAGE, UNREACHABLE, INTERRUPTED = 0, 1, 2, 3, 130
 HANDLE_SHAPE = re.compile(r"^ses_[A-Za-z0-9_-]{43}$")
 STDIN = "-"
+SENT = ("AIBI_SERVER", "AIBI_OPERATOR", "AIBI_TOKEN", "AIBI_HANDLE")
+"""The environment variables whose values reach a request's URL, a header or a body, and so must
+be UTF-8 text (D268, D398)."""
+PATHS = ("XDG_STATE_HOME",)
+"""The environment variables that name a local path, used as the file system gives it and never
+sent (D268, D398). ``HOME``, which the default state directory takes from ``Path.home()``, is
+read from the process's own environment and not from the mapping the CLI is given, and is a path
+of the same kind."""
 DEFAULT_SERVER = "http://127.0.0.1:8000"
 STATE_FORMAT = "aibi.cli-sessions/1"
 
@@ -874,6 +886,25 @@ def main(
         _STREAMS.reset(token)
 
 
+def _utf8(given: Sequence[str], environ: Mapping[str, str]) -> None:
+    """Refuse, before anything else, an argument or an environment value that is sent and is not
+    UTF-8 text (a byte the file system or the terminal gave that is not UTF-8, read as a lone
+    surrogate): it could go into no request. The message names no value (D268, D398)."""
+    if not all(_encodes(argument) for argument in given):
+        raise Usage("an argument is not UTF-8 text; give names and paths as UTF-8")
+    for variable in SENT:
+        if not _encodes(environ.get(variable, "")):
+            raise Usage(f"{variable} is not UTF-8 text")
+
+
+def _encodes(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _main(
     argv: Sequence[str] | None,
     client: httpx.Client | None,
@@ -885,6 +916,7 @@ def _main(
 ) -> int:
     try:
         given = list(sys.argv[1:] if argv is None else argv)
+        _utf8(given, environ)
         if any(holds_secret(argument) for argument in given):
             raise Usage(
                 "an argument has a token's or a handle's shape, and secrets are never arguments: "

@@ -28,6 +28,7 @@ from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
 
+from aibi.core.importers.errors import text_name
 from aibi.core.importers.infer import Inferred, Status
 from aibi.core.schema.descriptors import Descriptor, ParseSettings
 
@@ -114,7 +115,30 @@ def describe(
     at: str,
 ) -> list[Descriptor]:
     """The dataset's descriptors: the dataset, each table and its columns in source order, then
-    the relationships and their coverage. ``origins`` is by table id, in the tables' order."""
+    the relationships and their coverage. ``origins`` is by table id, in the tables' order.
+
+    Every string it is given must be Unicode text, since a descriptor holds nothing else; one that
+    is not is ``UNPARSEABLE_SOURCE`` naming it as data, checked in this order before anything is
+    described (D309, D398): the dataset's name, the source's location, then each table's
+    original name, label, columns, comment, columns' comments and parse evidence, then the
+    dataset's packs. Importers check names earlier where they can (a file's name as it is
+    listed, a database's names as they are read); this is the check none of them can bypass."""
+    text_name(dataset.name, "The dataset's name")
+    text_name(dataset.location, "The source's location")
+    for origin in origins.values():
+        text_name(origin.original_name, "A table's original name")
+        text_name(origin.label, "A table's original name")
+        for column in origin.columns:
+            text_name(column, "A column's name")
+        if origin.comment is not None:
+            text_name(origin.comment, "A table's comment")
+        for comment in origin.column_comments:
+            if comment is not None:
+                text_name(comment, "A column's comment")
+        if origin.parse_evidence is not None:
+            text_name(origin.parse_evidence, "A table's parse evidence")
+    for pack in dataset.packs:
+        text_name(pack, "A pack's name")
     curation = _Curation(by, at)
     found: list[Descriptor] = [
         curation.descriptor(
