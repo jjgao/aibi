@@ -651,6 +651,31 @@ FiniteJsonObject = Annotated[
 """A JSON object with only finite numbers, safe integers and Unicode text."""
 
 
+def _finite_extensions(value: JsonObject) -> JsonObject:
+    """A pack-keyed object of objects of JSON values as JSON reads it back, each value checked
+    from its own root, as a descriptor's ``extensions`` count it (its members are the values)."""
+    checked: dict[str, dict[str, JsonValue]] = {}
+    for pack, extension in value.items():
+        if not isinstance(extension, dict):
+            raise PydanticCustomError(
+                "output_json", "An extensions object holds an object for each pack (SPEC §5.1)"
+            )
+        checked[pack] = {name: _finite_json(member) for name, member in extension.items()}
+    # The two outer layers: keys that are Unicode text, two deep.
+    _finite_json({pack: dict.fromkeys(kept) for pack, kept in checked.items()})
+    return cast(JsonObject, checked)
+
+
+FiniteExtensions = Annotated[
+    JsonObject,
+    AfterValidator(_finite_extensions),
+    WithJsonSchema({"type": "object", "additionalProperties": _OUTPUT_JSON}),
+]
+"""A descriptor's ``extensions`` as an output, ``{pack: {name: value}}``: each value is checked
+from its own root, as the descriptor counts it, and the schema is ``FiniteJsonObject``'s (the
+vocabulary of D416 allows no more)."""
+
+
 class Computed:
     """Marks a member computed from data: ``null`` there means *not estimable* (SPEC §8.2).
 
