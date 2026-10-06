@@ -15,12 +15,15 @@ release it withdraws after that (D273). The index holds no cell values, only des
 concepts, facet values and disclosed counts; an erasure deletes the dataset's row all the same,
 since it was built from a release the erasure withdrew (``redaction``).
 
-A pack's facet (``facet(release) -> {name: [values]}``, §10.1) is called on a view of the
-release's descriptors for each registered pack the dataset lists, and its facets are named
-``<pack id>.<name>``. A facet that raises, or returns anything but identifiers naming at most
-``MAX_ENTRIES`` lists of at most ``MAX_ENTRIES`` strings of Unicode text of at most
-``MAX_STRING`` characters, is left out of the entry and logged without its values, never
-raised, so that a pack cannot take the catalogue down.
+A pack's facet (``facet(release) -> {name: [values]}``, §10.1) is called through its handle's
+guard (D403) on its pack's view of the release's descriptors, one per pack and release in the
+catalogue read, for each registered pack the dataset lists, and its facets are named
+``<pack id>.<name>``. A facet that raises, or returns anything but a ``dict`` of identifiers
+naming at most ``MAX_ENTRIES`` lists of at most ``MAX_ENTRIES`` strings of Unicode text of at most
+``MAX_STRING`` characters (``copiers.facet_values``), is left out of the entry and logged without
+its values, never raised, so that a pack cannot take the catalogue down. An entry is built from
+one pack's facet calls alone, in the core's fixed order, so the entry kept under its basis does
+not depend on what else the read built.
 """
 
 import hashlib
@@ -31,6 +34,8 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from aibi.core.catalog.disclosure import DisclosedTable, disclose_table, effective_k
+from aibi.core.engine.resolve import LabelledView, Operation
+from aibi.core.schema.copiers import facet_values
 from aibi.core.schema.descriptors import (
     ColumnDescriptor,
     DatasetDescriptor,
@@ -38,15 +43,14 @@ from aibi.core.schema.descriptors import (
     EndpointDescriptor,
     TableDescriptor,
 )
-from aibi.core.schema.ids import IDENTIFIER_RE
-from aibi.core.schema.jsonio import canonical, is_text
-from aibi.core.schema.limits import MAX_ENTRIES, MAX_STRING
-from aibi.core.schema.pack_api import PackRegistry
+from aibi.core.schema.guards import Hook, PackFailed
+from aibi.core.schema.jsonio import canonical
+from aibi.core.schema.pack_api import Facet, PackRegistry
 from aibi.core.store import statistics
 from aibi.core.store.blobs import MissingBlobError
 from aibi.core.store.manifest import Manifest
 from aibi.core.store.store import Store
-from aibi.core.store.writes import view
+from aibi.core.store.writes import packs_of
 
 _logger = logging.getLogger(__name__)
 
@@ -114,49 +118,37 @@ def basis(manifest: str, floor: int | None, registry: PackRegistry | None) -> st
     ).hexdigest()
 
 
-def _facet_values(found: object) -> dict[str, tuple[str, ...]] | None:
-    if not isinstance(found, Mapping) or len(cast(Mapping[object, object], found)) > MAX_ENTRIES:
-        return None
-    kept: dict[str, tuple[str, ...]] = {}
-    for name, values in cast(Mapping[object, object], found).items():
-        if not isinstance(name, str) or IDENTIFIER_RE.fullmatch(name) is None or "__" in name:
-            return None
-        if isinstance(values, str) or not isinstance(values, Sequence):
-            return None
-        listed = cast(Sequence[object], values)
-        if len(listed) > MAX_ENTRIES or not all(
-            isinstance(v, str) and 0 < len(v) <= MAX_STRING and is_text(v) for v in listed
-        ):
-            return None
-        kept[name] = tuple(cast(Sequence[str], listed))
-    return kept
-
-
 def facets(
     registry: PackRegistry | None,
     dataset: str,
     manifest: str,
     label: int,
     descriptors: Sequence[Descriptor],
+    operation: Operation | None = None,
 ) -> dict[str, tuple[str, ...]]:
-    """The facets of the registered packs the dataset lists, ``<pack id>.<name>``."""
+    """The facets of the registered packs the dataset lists, ``<pack id>.<name>``, each facet
+    called through its handle's guard on its pack's view of the release in ``operation``
+    (D403); a facet that fails, or gives what is not facets, is left out."""
     if registry is None:
         return {}
-    released = view(dataset, manifest, label, descriptors)
+    views = Operation() if operation is None else operation
     found: dict[str, tuple[str, ...]] = {}
-    for pack in released.packs:
-        if pack not in registry.ids:
+    for facet in registry.facets([pack for pack in packs_of(descriptors) if pack in registry.ids]):
+        pack = facet.pack
+        view = views.labelled(pack, dataset, manifest, label, descriptors)
+        given = _facet(facet, view)
+        if given is None:
+            _logger.warning("the %s pack's facet was left out of the catalogue", pack)
             continue
-        for facet in registry.facets([pack]):
-            try:
-                given = _facet_values(facet(released))
-            except Exception:
-                given = None
-            if given is None:
-                _logger.warning("the %s pack's facet was left out of the catalogue", pack)
-                continue
-            found.update({f"{pack}.{name}": values for name, values in given.items()})
+        found.update({f"{pack}.{name}": values for name, values in given.items()})
     return dict(sorted(found.items()))
+
+
+def _facet(facet: Hook[Facet], view: LabelledView) -> dict[str, tuple[str, ...]] | None:
+    try:
+        return facet.call(lambda h: facet_values(h, view))
+    except PackFailed:
+        return None
 
 
 def kept_statistics(
@@ -196,10 +188,11 @@ def build_entry(
     label: int,
     manifest: str,
     pinned: Manifest,
+    operation: Operation | None = None,
 ) -> Entry | None:
     """The entry of the published release ``manifest``, which the caller has pinned as
-    ``pinned``; ``None`` for one without catalogue statistics, which the catalogue leaves out
-    (D270)."""
+    ``pinned``, its facets called in ``operation``; ``None`` for one without catalogue
+    statistics, which the catalogue leaves out (D270)."""
     descriptors = store.descriptors(manifest)
     k = effective_k(floor, dataset_k(descriptors))
     disclosed = disclosed_tables(store, pinned, k)
@@ -276,7 +269,7 @@ def build_entry(
         data_use=tuple((ref.system, ref.code, ref.label) for ref in fields.data_use or ()),
         packs=tuple(fields.packs or ()),
         concepts=tuple(sorted(concepts)),
-        facets=facets(registry, dataset, manifest, label, descriptors),
+        facets=facets(registry, dataset, manifest, label, descriptors, operation),
         tables=tuple(indexed_tables),
         words="\n".join(word for word in words if word).casefold(),
         suppressed=suppressed,
@@ -298,6 +291,7 @@ def entries(store: Store, registry: PackRegistry | None, floor: int | None) -> l
         }
     found: list[Entry] = []
     uncounted: list[str] = []
+    operation = Operation()
     for dataset, latest in sorted(current.items()):
         wanted = basis(latest.manifest, floor, registry)
         row = rows.get(dataset)
@@ -308,7 +302,14 @@ def entries(store: Store, registry: PackRegistry | None, floor: int | None) -> l
             with store.pin() as pin:
                 pinned = pin.manifest(latest.manifest)
                 entry = build_entry(
-                    store, registry, floor, dataset, latest.label, latest.manifest, pinned
+                    store,
+                    registry,
+                    floor,
+                    dataset,
+                    latest.label,
+                    latest.manifest,
+                    pinned,
+                    operation,
                 )
                 if entry is None:
                     _logger.warning("a release of %s has no catalogue statistics", dataset)

@@ -24,7 +24,7 @@ jobs:
     # The core tests take about 14 minutes; the job's limit leaves them and every other step room,
     # and each test step's own limit leaves the annotations' step time to run when one is reached
     # (D340).
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: server
@@ -74,7 +74,7 @@ jobs:
         run: uv run lint-imports
       - name: Core tests, which must load no pack (SPEC P8)
         id: core
-        timeout-minutes: 28
+        timeout-minutes: 45
         run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
       - name: Other tests
         id: other

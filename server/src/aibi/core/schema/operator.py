@@ -66,7 +66,7 @@ from aibi.core.schema.ids import (
 )
 from aibi.core.schema.jsonio import escape_token
 from aibi.core.schema.limits import KEY_COLUMNS, MAX_STRING, STRING_CHARACTERS, LimitName
-from aibi.core.schema.output import DATA_MARK, Count, FiniteJsonObject, Output, text
+from aibi.core.schema.output import DATA_MARK, Count, FiniteJsonObject, Output, TextSegment, text
 from aibi.core.schema.refusals import (
     SECRET_BLANK,
     Refusal,
@@ -355,11 +355,13 @@ class ChangeNote(Output):
 
 class SkippedProposal(Output):
     """A pack's proposal that was not recorded, or a proposer that failed (no ``descriptor``),
-    with the codes of why (D249)."""
+    with the codes of why (D249). A name is the pack's text, which is data, or, where the core
+    does not show what the pack gave, the core's own words as a segment of its own
+    (``TextSegment``), which no name a pack gives can be (D403)."""
 
     pack: PackId
-    descriptor: QueueText | None = None
-    pointer: QueueText | None = None
+    descriptor: QueueText | TextSegment | None = None
+    pointer: QueueText | TextSegment | None = None
     codes: list[str]
 
 
@@ -367,6 +369,9 @@ class ProposersRan(Output):
     proposals: list[PositiveInt]
     """The proposals recorded, or found open already."""
     skipped: list[SkippedProposal]
+    """At most ``MAX_QUEUE_ITEMS``, in the order the proposers ran."""
+    truncated: Count | None = None
+    """The skipped left out past ``MAX_QUEUE_ITEMS``, when there were any."""
 
 
 class ImportPublished(Output):

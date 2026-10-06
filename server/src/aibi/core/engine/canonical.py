@@ -53,7 +53,6 @@ from aibi.core.engine.resolve import (
     ViewEndpoint,
     ViewPredicate,
     ViewVariable,
-    pack_failed,
     resolve,
 )
 from aibi.core.engine.resolved import (
@@ -73,12 +72,14 @@ from aibi.core.engine.resolved import (
     measure,
 )
 from aibi.core.schema.caveats import Severity
+from aibi.core.schema.copiers import caveat_codes
 from aibi.core.schema.document import Document
+from aibi.core.schema.guards import Hook, PackFailed
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.limits import LEAVES, MAX_LEAVES
 from aibi.core.schema.loading import as_written
 from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.pack_api import PackRegistry
+from aibi.core.schema.pack_api import CaveatRule, PackRegistry
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.results import PackVersion, ReleaseRef
@@ -524,37 +525,36 @@ def _ruled(
 ) -> tuple[RuledCaveat, ...] | None:
     """What the caveat rules of the packs involved raise for a canonical cohort, each code once;
     ``None`` when a rule raises, or gives what is not a list of codes its pack declares (D287).
-    Each rule reads a copy of the form of its own, and a view of its own of the release's
-    descriptors, copied as it reads them, without its label; none is made for a pack without a
-    rule. A ``MemoryError`` is not the pack's failure, and is raised; anything else a rule
-    raises, a ``RecursionError`` included, is."""
+    Each rule is called through its handle's guard (D403), and reads a copy of the form of its
+    own and a view of its own of the release's descriptors, copied as it reads them, without its
+    label; none is made for a pack without a rule. The passed types are not the pack's failure,
+    and are raised anew; anything else a rule raises, a ``RecursionError`` included, is."""
     if registry is None or not involved:
         return ()
     found: set[RuledCaveat] = set()
-    for pack in registry.listed(involved):
-        if pack.caveat_rule is None:
-            continue
-        view = PackView.of(release)
-        try:
-            given = cast(
-                object, pack.caveat_rule(view, cast(dict[str, JsonValue], _copy(dict(form))))
-            )
-            if not isinstance(given, list | tuple):
-                return None
-            codes = [
-                str.__str__(code)
-                for code in cast(Sequence[object], given)
-                if isinstance(code, str) and str.__str__(code) in pack.caveat_codes
-            ]
-            if len(codes) != len(cast(Sequence[object], given)):
-                return None
-        except MemoryError:
-            raise
-        except Exception as error:
-            pack_failed(pack.id, "caveat rule", error)
+    for rule in registry.caveat_rules(involved):
+        declared = registry.pack(rule.pack).caveat_codes
+        codes = _rule_codes(rule, release, form, declared)
+        if codes is None:
             return None
-        found.update(RuledCaveat(code, pack.caveat_codes[code], pack.id) for code in codes)
+        found.update(RuledCaveat(code, declared[code], rule.pack) for code in codes)
     return tuple(sorted(found, key=lambda caveat: (caveat.code, caveat.pack)))
+
+
+def _rule_codes(
+    rule: Hook[CaveatRule],
+    release: Release,
+    form: Mapping[str, JsonValue],
+    declared: Mapping[str, Severity],
+) -> tuple[str, ...] | None:
+    """The codes one caveat rule raises, on a copy of the form and a view of the release of its
+    own, made for this call alone (D287); ``None`` when it fails."""
+    form_copy = cast(dict[str, JsonValue], _copy(dict(form)))
+    view = PackView.of(release)
+    try:
+        return rule.call(lambda h: caveat_codes(h, view, form_copy, codes=declared))
+    except PackFailed:
+        return None
 
 
 def _copy(value: JsonValue) -> JsonValue:

@@ -46,7 +46,7 @@ from tests.core import generated_set
 import aibi.core
 from aibi.core.schema import output
 from aibi.core.schema.curation import QueueNote
-from aibi.core.schema.operator import Refusals
+from aibi.core.schema.operator import Refusals, SkippedProposal
 from aibi.core.schema.output import (
     GUARD_MESSAGE,
     Boundary,
@@ -113,7 +113,7 @@ class _Floaty(Output):
 # --- the generated set --------------------------------------------------------------------------
 
 CORE_SET = generated_set.generated_set(aibi.core)
-CORE_SET_SIZE = 80
+CORE_SET_SIZE = 88
 """The types of the core that hold server text, ``TextSegment`` left out (D399)."""
 MODELS = sorted(
     (kind for kind in CORE_SET.values() if issubclass(kind, BaseModel)),
@@ -152,7 +152,7 @@ A ``Callable`` is a value, never walked."""
 
 def test_the_generated_set_is_the_checked_in_size() -> None:
     assert len(CORE_SET) == CORE_SET_SIZE
-    assert len(MODELS) == 35
+    assert len(MODELS) == 38
 
 
 def test_every_carrier_and_protocol_left_out_is_named() -> None:
@@ -1051,13 +1051,26 @@ def _puts(model: type[Output]) -> Iterator[tuple[str, int, bool, Callable[[_Buil
             )
 
 
+BARE_SLOTS: dict[type[Output], str] = {
+    SkippedProposal: (
+        "its segment slots are bare members of a frozen output (a name as the core's own words), "
+        "held by no list or dict: no mapping to put in place; the list of them in ProposersRan "
+        "is put to the test there"
+    ),
+}
+"""The models of the set with no mutable container holding a segment slot, each with why."""
+
+
 @pytest.mark.parametrize("model", MODELS, ids=[kind.__qualname__ for kind in MODELS])
 def test_class_a_mapping_put_in_place_is_refused_by_every_dump_entry(model: type[Output]) -> None:
     """A frozen output's list is mutable, and a mapping put in one after construction would be
     written as server text: every entry that dumps refuses it, with the guard's own message and
     nothing it was given, whichever instance is dumped (the root or one below it)."""
     clean = _built(model)
-    assert clean.containers, "a mutable container holds a segment slot of the model"
+    if model in BARE_SLOTS:
+        assert not clean.containers, "listed as holding no container, and it does"
+    else:
+        assert clean.containers, "a mutable container holds a segment slot of the model"
     for entry in _entries(clean.root).values():
         assert _refuses(entry) is not True, "the clean instance meets no guard"
     written: list[str] = []
@@ -1166,11 +1179,11 @@ NO_SEGMENT: dict[str, str] = {
     "aibi.core.api.page._DATASET_ID": "an id from a URL: no segment",
     "aibi.core.catalog.service._BY": "an operator's name: no segment",
     "aibi.core.engine.build._ADAPTER": "a descriptor read from the catalogue: no segment",
-    "aibi.core.engine.resolve._CLAUSES": "clauses of a canonical document: no segment",
     "aibi.core.importers.checks._DESCRIPTORS": "descriptors a pack's importer built: no segment",
     "aibi.core.importers.describe._ADAPTER": "a descriptor the importer built: no segment",
     "aibi.core.importers.reshaped._ADAPTER": "a descriptor the importer owns: no segment",
     "aibi.core.operator.auth._BY": "an operator's name: no segment",
+    "aibi.core.schema.copiers._CLAUSES": "clauses a pack's compiler gave: no segment",
     "aibi.core.schema.pack_api._CONCEPT": "a concept a pack gave: a descriptor, no segment",
     "aibi.core.schema.pack_api._ENTRY": "an analysis entry a pack gave: a descriptor, no segment",
     "aibi.core.schema.loading._DESCRIPTOR": "a descriptor from a file: no segment",
