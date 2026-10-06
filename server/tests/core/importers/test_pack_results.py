@@ -27,6 +27,7 @@ from aibi.core.schema.pack_api import (
     ImportResult,
     PackRegistry,
     Refused,
+    Reshaped,
 )
 from aibi.core.schema.refusals import Refusal
 from aibi.core.store.build import Layout
@@ -959,10 +960,11 @@ def test_the_classes_the_copy_rebuilds_have_the_fields_it_copies() -> None:
 
     found = {
         cls.__name__: tuple(f.name for f in fields(cls))
-        for cls in (ImportResult, ImportNote, Layout, TypedSource, TextSource, ErrorCell)
+        for cls in (ImportResult, ImportNote, Layout, TypedSource, TextSource, ErrorCell, Reshaped)
     }
     assert found == {
-        "ImportResult": ("sources", "layouts", "descriptors", "notes"),
+        "ImportResult": ("sources", "layouts", "descriptors", "notes", "reshaped"),
+        "Reshaped": ("column", "absent", "dropped", "digest", "empty"),
         "ImportNote": ("kind", "subject", "message", "count", "rows"),
         "Layout": ("source", "columns"),
         "TypedSource": ("columns", "rows"),

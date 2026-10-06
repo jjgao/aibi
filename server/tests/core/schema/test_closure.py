@@ -113,7 +113,7 @@ class _Floaty(Output):
 # --- the generated set --------------------------------------------------------------------------
 
 CORE_SET = generated_set.generated_set(aibi.core)
-CORE_SET_SIZE = 79
+CORE_SET_SIZE = 80
 """The types of the core that hold server text, ``TextSegment`` left out (D399)."""
 MODELS = sorted(
     (kind for kind in CORE_SET.values() if issubclass(kind, BaseModel)),
@@ -1169,6 +1169,7 @@ NO_SEGMENT: dict[str, str] = {
     "aibi.core.engine.resolve._CLAUSES": "clauses of a canonical document: no segment",
     "aibi.core.importers.checks._DESCRIPTORS": "descriptors a pack's importer built: no segment",
     "aibi.core.importers.describe._ADAPTER": "a descriptor the importer built: no segment",
+    "aibi.core.importers.reshaped._ADAPTER": "a descriptor the importer owns: no segment",
     "aibi.core.operator.auth._BY": "an operator's name: no segment",
     "aibi.core.schema.loading._DESCRIPTOR": "a descriptor from a file: no segment",
     "aibi.core.store.build._DESCRIPTORS": "descriptors read back from a blob: no segment",
