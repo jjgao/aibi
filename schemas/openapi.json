@@ -606,17 +606,93 @@
         "title": "AnalysedVariable",
         "type": "object"
       },
+      "AnalysisEntry": {
+        "additionalProperties": false,
+        "description": "A registry entry as ``list_analyses`` lists it (§9.1, D417): an analysis descriptor's\nmembers, in the envelope's order, as an output. Every string in it is the core's or a\npack's data, never an instruction (A6): the entry is marked as data as a whole. Its JSON is\nthe descriptor's: ``extensions`` and ``curation`` are written only when the descriptor was\ngiven them.",
+        "properties": {
+          "curation": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Curation",
+            "type": "object"
+          },
+          "definition": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Definition",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "extensions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Extensions",
+            "type": "object"
+          },
+          "fields": {
+            "$ref": "#/components/schemas/FieldsOut"
+          },
+          "id": {
+            "maxLength": 129,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "pattern": "^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."
+                }
+              ]
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "analysis",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Provenance",
+            "type": "object"
+          },
+          "version": {
+            "pattern": "^(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})\\.(?:0|[1-9][0-9]{0,15})$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "kind",
+          "id",
+          "version",
+          "fields"
+        ],
+        "title": "AnalysisEntry",
+        "type": "object",
+        "x-aibi-data": true
+      },
       "AnalysisListing": {
         "additionalProperties": false,
         "description": "What ``list_analyses`` gives (§9.1, §9.4, §11.1; D316): each registry entry, by id, and,\nfor a dataset, each one's applicability.",
         "properties": {
           "analyses": {
             "items": {
-              "additionalProperties": {
-                "$ref": "#/components/schemas/OutputJson"
-              },
-              "type": "object",
-              "x-aibi-data": true
+              "$ref": "#/components/schemas/AnalysisEntry"
             },
             "title": "Analyses",
             "type": "array"
@@ -3075,6 +3151,24 @@
         "title": "CoveredLeaf",
         "type": "object"
       },
+      "CrossDatasetOut": {
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string",
+            "x-aibi-data": true
+          }
+        },
+        "required": [
+          "method"
+        ],
+        "title": "CrossDatasetOut",
+        "type": "object",
+        "x-aibi-data": true
+      },
       "Csrf": {
         "additionalProperties": false,
         "description": "The CSRF token a browser's operator requests carry (D263).",
@@ -4479,6 +4573,110 @@
         "title": "Explanation",
         "type": "object"
       },
+      "FieldsOut": {
+        "additionalProperties": false,
+        "description": "An analysis descriptor's ``fields``, as an output (§9.1). ``params`` and ``returns`` are\nJSON Schemas a pack or the core wrote: data, never instructions (A6).",
+        "properties": {
+          "assumes_independent_groups": {
+            "title": "Assumes Independent Groups",
+            "type": "boolean"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Caveats",
+            "type": "array"
+          },
+          "cross_dataset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CrossDatasetOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "library": {
+            "$ref": "#/components/schemas/LibraryOut"
+          },
+          "methods": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 64,
+            "title": "Methods",
+            "type": "object"
+          },
+          "min_events": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "title": "Min Events",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "min_group_n": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "title": "Min Group N",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Params",
+            "type": "object"
+          },
+          "randomness": {
+            "$ref": "#/components/schemas/RandomnessOut"
+          },
+          "requires": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementOut"
+            },
+            "maxItems": 64,
+            "title": "Requires",
+            "type": "array"
+          },
+          "returns": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Returns",
+            "type": "object"
+          },
+          "uses_reference": {
+            "title": "Uses Reference",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requires",
+          "params",
+          "returns",
+          "methods",
+          "assumptions",
+          "uses_reference",
+          "assumes_independent_groups",
+          "cross_dataset",
+          "caveats"
+        ],
+        "title": "FieldsOut",
+        "type": "object",
+        "x-aibi-data": true
+      },
       "GraphEdge": {
         "additionalProperties": false,
         "properties": {
@@ -5017,6 +5215,32 @@
         ],
         "title": "LabelState",
         "type": "object"
+      },
+      "LibraryOut": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "version": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string",
+            "x-aibi-data": true
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "LibraryOut",
+        "type": "object",
+        "x-aibi-data": true
       },
       "Limit": {
         "additionalProperties": false,
@@ -7226,6 +7450,29 @@
         "title": "QueueUndeclared",
         "type": "object"
       },
+      "RandomnessOut": {
+        "additionalProperties": false,
+        "properties": {
+          "replicates": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "title": "Replicates",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "seeded": {
+            "title": "Seeded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seeded",
+          "replicates"
+        ],
+        "title": "RandomnessOut",
+        "type": "object",
+        "x-aibi-data": true
+      },
       "Range": {
         "additionalProperties": false,
         "allOf": [
@@ -7876,6 +8123,86 @@
           "direction": "request",
           "null": true
         }
+      },
+      "RequirementOut": {
+        "additionalProperties": false,
+        "description": "What an analysis needs, as ``list_analyses`` lists it (§9.1): a descriptor's\n``Requirement`` as an output. A pack's text, so data (A6).",
+        "properties": {
+          "datatype": {
+            "enum": [
+              "number",
+              "integer",
+              "string",
+              "boolean",
+              "category",
+              "list<category>",
+              "date",
+              "datetime",
+              "time_offset"
+            ],
+            "title": "Datatype",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "endpoint",
+              "column",
+              "table"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "max": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "min": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Min",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "on": {
+            "const": "unit",
+            "title": "On",
+            "type": "string"
+          },
+          "predicate": {
+            "maxLength": 129,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+                }
+              ]
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+            "title": "Predicate",
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "RequirementOut",
+        "type": "object",
+        "x-aibi-data": true
       },
       "ResultEnvelope": {
         "additionalProperties": false,

@@ -93,6 +93,7 @@ from aibi.core.schema.descriptors import (
     RelationshipDescriptor,
     TableDescriptor,
 )
+from aibi.core.schema.entries import analysis_entry
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.numbers import NotEstimableReason
 from aibi.core.schema.output import Data, Output, Segment, data, text
@@ -724,7 +725,7 @@ class Catalog:
         """Every registry entry, by id, and for a dataset each one's applicability to the release
         the request pins, for its unit or for each of the release's keyed tables."""
         analyses = self.analyses
-        entries = [_dumped(analysis.entry) for analysis in analyses.all()]
+        entries = [analysis_entry(analysis.entry) for analysis in analyses.all()]
         if request.dataset is None:
             return AnalysisListing(analyses=entries)
         release = self._release(request.dataset, request.release)
