@@ -74,7 +74,8 @@ CSRF_KEY = "aibi.csrf"
 """The ASGI scope key under which request protection puts the CSRF token of the process."""
 
 _CSRF_CONTEXT = b"aibi-csrf/1\0"
-_ENCODED_NAME = re.compile(r"^(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$")
+ENCODED_NAME = re.compile(r"^(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$")
+"""An ``Aibi-Operator`` value's shape (D262), which the OpenAPI document gives as its pattern."""
 _BY: TypeAdapter[str] = TypeAdapter(By)
 
 
@@ -186,7 +187,7 @@ def encode_operator(name: str) -> str:
 def attribution(header: str) -> str | None:
     """The attribution, ``operator:<name>``, of an ``Aibi-Operator`` value; ``None`` if it is
     not a name encoded as ``encode_operator`` encodes one, or not a valid name."""
-    if _ENCODED_NAME.fullmatch(header) is None:
+    if ENCODED_NAME.fullmatch(header) is None:
         return None
     try:
         name = urllib.parse.unquote(header, errors="strict")
@@ -215,6 +216,7 @@ __all__ = [
     "CSRF_HEADER",
     "CSRF_KEY",
     "DECODINGS",
+    "ENCODED_NAME",
     "OPERATOR_HEADER",
     "OPERATOR_KEY",
     "OPERATOR_PREFIX",

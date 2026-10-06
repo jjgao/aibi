@@ -1928,6 +1928,54 @@
       "x-aibi-data": true
     },
     "cohorts": {
+      "allOf": [
+        {
+          "prefixItems": [
+            {
+              "properties": {
+                "position": {
+                  "const": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "position": {
+                  "const": 1
+                }
+              }
+            },
+            {
+              "properties": {
+                "position": {
+                  "const": 2
+                }
+              }
+            },
+            {
+              "properties": {
+                "position": {
+                  "const": 3
+                }
+              }
+            },
+            {
+              "properties": {
+                "position": {
+                  "const": 4
+                }
+              }
+            },
+            {
+              "properties": {
+                "position": {
+                  "const": 5
+                }
+              }
+            }
+          ]
+        }
+      ],
       "contains": {
         "properties": {
           "reference": {
@@ -1942,50 +1990,6 @@
       "maxItems": 6,
       "minContains": 0,
       "minItems": 1,
-      "prefixItems": [
-        {
-          "properties": {
-            "position": {
-              "const": 0
-            }
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "const": 1
-            }
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "const": 2
-            }
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "const": 3
-            }
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "const": 4
-            }
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "const": 5
-            }
-          }
-        }
-      ],
       "title": "Cohorts",
       "type": "array"
     },

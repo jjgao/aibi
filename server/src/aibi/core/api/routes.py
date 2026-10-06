@@ -12,7 +12,7 @@ API_PREFIX = "/api"
 def api_router() -> APIRouter:
     router = APIRouter(prefix=API_PREFIX)
 
-    @router.get("/health", response_model=Health)
+    @router.get("/health", response_model=Health, operation_id="health")
     def health() -> Response:
         return Response(Health(status="ok").model_dump_json(), media_type="application/json")
 
