@@ -22,6 +22,7 @@ from typing import cast
 
 from aibi.core.engine.data import PRESENT, Cell, Row, Table, Value
 from aibi.core.schema.descriptors import ColumnFields
+from aibi.core.schema.output import Message, data, plain_text, text
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.schema.semantics import ObservationState
 from aibi.core.store import derive, parquet
@@ -47,16 +48,16 @@ _PHYSICAL: dict[str | None, parquet.PhysicalType] = {
 }
 
 
-Problem = tuple[RefusalCode, str | None, tuple[str | int, ...], str]
+Problem = tuple[RefusalCode, str | None, tuple[str | int, ...], Message]
 """A problem's code, its column (``None`` for the table), where it is in that column's
-``fields``, and what it is."""
+``fields``, and what it is, each column id a data token (D397)."""
 
 
 class TableError(ValueError):
     """What stops a table from being built."""
 
     def __init__(self, problems: Sequence[Problem]) -> None:
-        super().__init__("; ".join(message for *_, message in problems))
+        super().__init__("; ".join(plain_text(message) for *_, message in problems))
         self.problems = tuple(problems)
 
 
@@ -92,19 +93,26 @@ def build_table(
     ``layout[i]``, and its columns' fields by column id. Raises ``TableError``."""
     changed = RefusalCode.COLUMNS_CHANGED
     if len(layout) != len(parsed.names):
-        message = f"The source has {len(parsed.names)} columns, and {len(layout)} are laid out"
+        message = (
+            text(f"The source has {len(parsed.names)} columns, and {len(layout)} are laid out"),
+        )
         raise TableError([(changed, None, (), message)])
     problems: list[Problem] = []
     for name in layout:
         fields = columns.get(name)
         if fields is None:
-            problems.append((changed, None, (), f"The source column {name} has no descriptor"))
+            message = (text("The source column "), data(name), text(" has no descriptor"))
+            problems.append((changed, None, (), message))
         elif fields.derived is not None:
-            message = f"A source column is not derived: {name}"
+            message = (text("A source column is not derived: "), data(name))
             problems.append((RefusalCode.INVALID_VALUE, name, ("derived",), message))
     for name, fields in columns.items():
         if fields.derived is None and name not in layout:
-            message = f"The column {name} is neither in the source nor derived"
+            message = (
+                text("The column "),
+                data(name),
+                text(" is neither in the source nor derived"),
+            )
             problems.append((changed, name, (), message))
         for code, where, message in derive.problems(fields, columns):
             problems.append((code, name, where, message))

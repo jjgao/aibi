@@ -44,6 +44,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
+from aibi.core.schema.output import Message, Segment, data, listed, plain_text, text
+
 ServerKind = Literal["postgres", "mysql"]
 SCHEMES: Mapping[ServerKind, tuple[str, ...]] = {
     "postgres": ("postgresql", "postgres"),
@@ -148,7 +150,13 @@ def mysql_quotable(name: str, constant: bool = False) -> bool:
 
 class UrlError(ValueError):
     """A URL outside the grammar: the message says why, and holds none of the URL's text but a
-    parameter's name."""
+    parameter's name, which it gives as a ``data`` segment (D397); ``str`` is its text joined."""
+
+    def __init__(self, *message: Segment | str) -> None:
+        self.message: Message = tuple(
+            text(part) if isinstance(part, str) else part for part in message
+        )
+        super().__init__(plain_text(self.message))
 
 
 @dataclass(frozen=True)
@@ -189,15 +197,17 @@ def _mysql(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _decoded(text: str, what: str) -> str:
-    if _BAD_PERCENT.search(text):
-        raise UrlError(f"holds a URL whose {what} has a % that begins no percent-escape")
+def _decoded(written: str, *what: Segment | str) -> str:
+    if _BAD_PERCENT.search(written):
+        raise UrlError("holds a URL whose ", *what, " has a % that begins no percent-escape")
     try:
-        found = urllib.parse.unquote(text, encoding="utf-8", errors="strict")
+        found = urllib.parse.unquote(written, encoding="utf-8", errors="strict")
     except UnicodeDecodeError:
-        raise UrlError(f"holds a URL whose {what} has percent-escapes that are not UTF-8") from None
+        raise UrlError(
+            "holds a URL whose ", *what, " has percent-escapes that are not UTF-8"
+        ) from None
     if "\x00" in found:
-        raise UrlError(f"holds a URL whose {what} has a NUL character")
+        raise UrlError("holds a URL whose ", *what, " has a NUL character")
     return found
 
 
@@ -262,15 +272,18 @@ def _parameters(kind: ServerKind, query: str) -> tuple[tuple[str, str], ...]:
         if not _NAME.fullmatch(name):
             raise UrlError("holds a URL whose query has a parameter it does not name plainly")
         if not equals:
-            raise UrlError(f"holds a URL whose query gives {name} no value")
+            raise UrlError("holds a URL whose query gives ", data(name), " no value")
         if name not in PARAMETERS[kind]:
             raise UrlError(
-                f"holds a URL whose query sets {name}, which the server does not read from a URL "
-                f"(it reads {', '.join(sorted(PARAMETERS[kind]))})"
+                "holds a URL whose query sets ",
+                data(name),
+                ", which the server does not read from a URL (it reads ",
+                *listed(sorted(PARAMETERS[kind])),
+                ")",
             )
         if any(name == seen for seen, _ in found):
-            raise UrlError(f"holds a URL whose query sets {name} twice")
-        found.append((name, _decoded(value, f"parameter {name}")))
+            raise UrlError("holds a URL whose query sets ", data(name), " twice")
+        found.append((name, _decoded(value, "parameter ", data(name))))
     return tuple(found)
 
 
@@ -321,13 +334,18 @@ def _mysql_checked(read: ServerUrl) -> None:
     value, where it splits the whole connection string into attributes whatever the quoting, and
     the host ``localhost`` without ``socket``, which its client reads as its compiled-in default
     socket (``/tmp/mysql.sock``), a path any local user can plant, rather than as TCP."""
-    parts = [("user", read.user), ("password", read.password or ""), ("database", read.database)]
-    parts.extend((f"parameter {name}", value) for name, value in read.parameters)
+    parts: list[tuple[tuple[Segment | str, ...], str]] = [
+        (("user",), read.user),
+        (("password",), read.password or ""),
+        (("database",), read.database),
+    ]
+    parts.extend((("parameter ", data(name)), value) for name, value in read.parameters)
     for what, value in parts:
         if "?" in value:
             raise UrlError(
-                f"holds a URL whose {what} has a ?, which the MySQL scanner reads as the start of "
-                "its connection attributes"
+                "holds a URL whose ",
+                *what,
+                " has a ?, which the MySQL scanner reads as the start of its connection attributes",
             )
     if read.host == "localhost" and not any(name == "socket" for name, _ in read.parameters):
         raise UrlError(

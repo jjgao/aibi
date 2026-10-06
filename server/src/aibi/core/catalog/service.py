@@ -96,7 +96,7 @@ from aibi.core.schema.descriptors import (
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.numbers import NotEstimableReason
 from aibi.core.schema.output import Data, Output, Segment, data, text
-from aibi.core.schema.pack_api import NoteKind, PackRegistry
+from aibi.core.schema.pack_api import NOTE_TEXT, PackRegistry
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.schema.semantics import ObservationState
 from aibi.core.store import statistics
@@ -125,17 +125,6 @@ _DATASET_URI = re.compile(
 _CONCEPT_URI = re.compile(r"^aibi://concept/(?P<id>[^/?#]+)$")
 _MODEL_URI = re.compile(r"^aibi://model/(?P<id>[^/?#]+)$")
 _ANALYSIS_URI = re.compile(r"^aibi://analysis/(?P<id>[^/?#@]+)@(?P<version>[^/?#]+)$")
-NOTE_TEXT: Mapping[NoteKind, str] = {
-    "skipped_source": "A source was skipped at import",
-    "renamed": "A name was changed to make an id",
-    "not_proposed": "The importer proposed nothing here",
-    "dropped": "A proposal was dropped at import: it did not hold against the data",
-    "unparsed": "Cells whose value does not parse as the column's datatype, which are UNKNOWN",
-    "gap": "Rows that the coverage or the endpoint's coding does not account for",
-    "reimported": "Changed by a re-import",
-}
-"""The message of an import report's note in the public queue under a disclosure setting, by its
-kind: the report's own words may quote counts (D277)."""
 RESOURCE_TEMPLATES = (
     ("aibi://dataset/{dataset}@{release}/{descriptor}", "descriptor"),
     ("aibi://concept/{concept}", "concept"),

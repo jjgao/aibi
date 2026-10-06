@@ -42,8 +42,8 @@ from aibi.core.importers.describe import DatasetOrigin, TableOrigin, by_importer
 from aibi.core.importers.detect import detect
 from aibi.core.importers.errors import ImportRefused, long_cell_refused, refused, within
 from aibi.core.importers.infer import Datatype, SourceTable, Status, infer
-from aibi.core.importers.sheets import read_workbook
-from aibi.core.importers.worker import Reader
+from aibi.core.importers.sheets import SKIPPED, Sheet, read_workbook
+from aibi.core.importers.worker import Reader, ReaderError
 from aibi.core.schema.descriptors import ParseSettings
 from aibi.core.schema.ids import normalise_names
 from aibi.core.schema.limits import (
@@ -122,6 +122,14 @@ def _stem(name: str) -> str:
 
 def _skipped(name: str, why: str) -> ImportNote:
     return ImportNote("skipped_source", None, [text("Skipped "), data(name), text(f": {why}")])
+
+
+def _why_skipped(sheet: Sheet) -> str:
+    """Why a sheet was skipped, as the child says it: one of the two sentences it writes, or else
+    its fault (``ReaderError``, D225), since the parent writes the sentence as server text."""
+    if sheet.skipped not in SKIPPED:
+        raise ReaderError("a reader's answer holds a sheet skipped for a reason it does not give")
+    return sheet.skipped
 
 
 class _Reading:
@@ -249,7 +257,7 @@ class _Reading:
             for sheet in read:
                 label = f"{stem} {sheet.name}" if several else sheet.name
                 if sheet.source is None:
-                    self.notes.append(_skipped(label, cast(str, sheet.skipped)))
+                    self.notes.append(_skipped(label, _why_skipped(sheet)))
                     continue
                 typed = sheet.source
                 self.add(_Unit("sheet", sheet.name, label, typed, typed.columns, typed.rows))
@@ -342,7 +350,8 @@ def read_parquet(content: bytes, limits: ImportLimits, max_cells: int) -> parque
     except parquet.UnsupportedTypeError as error:
         raise refused(
             RefusalCode.UNSUPPORTED_FORMAT,
-            f"A Parquet column's type is not read: {error}",
+            "A Parquet column's type is not read: ",
+            *error.message,
             alternatives=list(parquet.SUPPORTED_TYPES),
         ) from None
     except parquet.CellLimitError:
@@ -353,7 +362,7 @@ def read_parquet(content: bytes, limits: ImportLimits, max_cells: int) -> parque
         ) from None
     except parquet.UnreadableParquetError as error:
         raise refused(
-            RefusalCode.UNPARSEABLE_SOURCE, f"Not a Parquet file that can be read: {error}"
+            RefusalCode.UNPARSEABLE_SOURCE, "Not a Parquet file that can be read: ", *error.message
         ) from None
     if (found := long_cell(read.rows)) is not None:
         raise long_cell_refused(found, read.names, "The file")

@@ -299,6 +299,57 @@ def data(value: str) -> DataSegment:
     return DataSegment(data=value)
 
 
+def _escape(character: str) -> str:
+    code = ord(character)
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
+
+
+def escaped(name: str) -> str:
+    """``name`` with each lone surrogate and noncharacter written as its ``\\u`` escape, so that a
+    segment can hold a name a source gives that is not Unicode text (D309)."""
+    if is_text(name):
+        return name
+    return "".join(character if is_text(character) else _escape(character) for character in name)
+
+
+def shown(name: str) -> DataSegment:
+    """``data(escaped(name))``, cut only between escapes, never inside one: a name, a type string
+    or a time zone that a source gives, as a data token (A6, D397)."""
+    kept: list[str] = []
+    size = 0
+    for character in name:
+        piece = character if is_text(character) else _escape(character)
+        if size + len(piece) > DATA_TOKEN_MAX:
+            return DataSegment(data="".join(kept), truncated=True)
+        kept.append(piece)
+        size += len(piece)
+    return DataSegment(data="".join(kept))
+
+
+Message = tuple[Segment, ...]
+"""What a carrier holds of a message on its way to a refusal or a note (a returned problem, an
+exception, a record): the server's text and data tokens, never one string to be wrapped later
+(D397)."""
+
+
+def plain_text(message: Iterable[Segment]) -> str:
+    """A message's text and data joined, for an exception's own message or a log; never made
+    server text (D397)."""
+    return "".join(
+        segment.text if isinstance(segment, TextSegment) else segment.data for segment in message
+    )
+
+
+def listed(values: Iterable[str], separator: str = ", ") -> list[Segment]:
+    """``values`` as data tokens, one for each, between server text ``separator`` (D296, D397)."""
+    found: list[Segment] = []
+    for value in values:
+        if found:
+            found.append(text(separator))
+        found.append(data(value))
+    return found
+
+
 class Data(Output):
     """Text from data or a document outside segments: labels, values, names, notes (SPEC §8.1)."""
 

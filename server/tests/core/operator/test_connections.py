@@ -58,10 +58,8 @@ def test_an_unknown_connection_is_refused_listing_the_configured_ones(with_libra
     assert answered.status_code == 422, answered.text
     [refusal] = answered.json()["refusals"]
     assert refusal["code"] == "INVALID_VALUE"
-    assert [alternative["text"] for alternative in refusal["alternatives"]] == [
-        "archive",
-        "ledger",
-    ]
+    # The operator's configuration is not the server's words: each name is data (D397).
+    assert refusal["alternatives"] == [{"data": "archive"}, {"data": "ledger"}]
 
 
 def test_a_request_can_give_a_connection_no_host_path_or_credential(with_library: Any) -> None:

@@ -230,13 +230,17 @@ def check_writes(
                 if failure.keyword == OUT_OF_STEPS:
                     found.append(_out_of_steps(where, steps(value, ceiling), ceiling))
                     continue
-                message = (
-                    "The pack's schema cannot evaluate the extension"
+                message: tuple[Segment | str, ...] = (
+                    ("The pack's schema cannot evaluate the extension",)
                     if failure.keyword == UNEVALUABLE
-                    else f"The extension does not match its pack's schema ({failure.keyword})"
+                    else (
+                        "The extension does not match its pack's schema (",
+                        data(failure.keyword),
+                        ")",
+                    )
                 )
                 found.append(
-                    _refusal(RefusalCode.INVALID_EXTENSION, (*where, *failure.path), message)
+                    _refusal(RefusalCode.INVALID_EXTENSION, (*where, *failure.path), *message)
                 )
         if registry is None or not checked:
             continue

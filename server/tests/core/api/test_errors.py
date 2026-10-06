@@ -89,7 +89,19 @@ def test_a_path_parameter_is_named_not_echoed(built: Built) -> None:
     assert response.status_code == 422
     [found] = response.json()["refusals"]
     assert found["code"] == "INVALID_VALUE"
-    assert "dataset" in found["message"][0]["text"]
+    # the parameter's name and the validator's message are data, not the server's words (D397)
+    assert {"data": "dataset"} in found["message"]
+    assert found["message"][0] == {"text": "The "}
+    # "The ⟨path⟩ parameter ⟨dataset⟩ is not valid: ⟨message⟩": the library's words are data too
+    [the, where, parameter, name, valid, said] = found["message"]
+    assert (the, parameter, valid) == (
+        {"text": "The "},
+        {"text": " parameter "},
+        {"text": " is not valid: "},
+    )
+    assert (where, name) == ({"data": "path"}, {"data": "dataset"})
+    assert list(said) == ["data"]
+    assert said["data"]
     assert "Not-An-Id" not in response.text
     query = built.client.get(
         "/operator/datasets/d/queue", params={"release": "zero-x"}, headers=built.headers()

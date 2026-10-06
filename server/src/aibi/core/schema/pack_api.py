@@ -212,6 +212,21 @@ NoteKind = Literal[
     "skipped_source", "renamed", "not_proposed", "dropped", "unparsed", "gap", "reimported"
 ]
 
+NOTE_TEXT: Mapping[NoteKind, str] = MappingProxyType(
+    {
+        "skipped_source": "A source was skipped at import",
+        "renamed": "A name was changed to make an id",
+        "not_proposed": "The importer proposed nothing here",
+        "dropped": "A proposal was dropped at import: it did not hold against the data",
+        "unparsed": "Cells whose value does not parse as the column's datatype, which are UNKNOWN",
+        "gap": "Rows that the coverage or the endpoint's coding does not account for",
+        "reimported": "Changed by a re-import",
+    }
+)
+"""An import report note's fixed text, by its kind: the message of every note in the public queue
+under a disclosure setting, whose own words may quote counts (D277), and of every note of a report
+written before D397 (``aibi.import-report/1``), whose words may hold an id as server text."""
+
 
 @dataclass(frozen=True)
 class ImportNote:
@@ -1027,6 +1042,7 @@ class PackRegistry:
 
 
 __all__ = [
+    "NOTE_TEXT",
     "Analysis",
     "AnalysisInputs",
     "CaveatRule",

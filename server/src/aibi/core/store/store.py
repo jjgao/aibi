@@ -78,7 +78,7 @@ from aibi.core.engine.data import Release
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
 from aibi.core.schema.limits import CacheLimits, LogLimits
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Segment, data, plain_text, text
 from aibi.core.schema.pack_api import ImportNote
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 from aibi.core.store import build, parquet, redaction, tables, tombstones
@@ -133,9 +133,15 @@ class StoreLockedError(RuntimeError):
 
 
 class StoreRefused(Exception):  # noqa: N818 - the spec's word
-    def __init__(self, code: RefusalCode, message: str, *, limit: Limit | None = None) -> None:
-        super().__init__(f"{code}: {message}")
-        self.refusal = Refusal(code=code, path=None, message=[text(message)], limit=limit)
+    """A refusal of the store. A part given as a string is the server's own words; a name or id
+    from a source, an operator or a document is a ``data`` segment (A6, D397)."""
+
+    def __init__(
+        self, code: RefusalCode, *message: Segment | str, limit: Limit | None = None
+    ) -> None:
+        segments = [text(part) if isinstance(part, str) else part for part in message]
+        super().__init__(f"{code}: {plain_text(segments)}")
+        self.refusal = Refusal(code=code, path=None, message=segments, limit=limit)
 
 
 @dataclass(frozen=True)
@@ -464,7 +470,7 @@ class Store:
         found = self._whole(manifest)
         if found.dataset != dataset:
             raise StoreRefused(
-                RefusalCode.INVALID_VALUE, f"The release is of dataset {found.dataset}"
+                RefusalCode.INVALID_VALUE, "The release is of dataset ", data(found.dataset)
             )
         at = self.now()
         self.db.record_manifest(db, manifest, dataset, at)

@@ -125,7 +125,7 @@ from aibi.core.schema.limits import (
     TABLE_COLUMNS,
     ImportLimits,
 )
-from aibi.core.schema.output import DataSegment, Segment, data
+from aibi.core.schema.output import DataSegment, Message, Segment, data, shown, text
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.store import parquet
 from aibi.core.store.sources import long_cell
@@ -246,10 +246,10 @@ class SnapshotTable:
 @dataclass(frozen=True)
 class Skipped:
     """A relation that is not read, and why, as its note says it: ``a view, not a base
-    table``…"""
+    table``…, in segments, a kind the catalogue names as data (D397)."""
 
     name: str
-    reason: str
+    reason: Message
 
 
 @dataclass(frozen=True)
@@ -347,7 +347,9 @@ def read_snapshot(target: Target, limits: ImportLimits) -> Snapshot:
     except Exception as error:
         raise refused(
             RefusalCode.UNPARSEABLE_SOURCE,
-            f"The database cannot be read ({type(error).__name__})",
+            "The database cannot be read (",
+            data(type(error).__name__),
+            ")",
         ) from None
 
 
@@ -363,7 +365,9 @@ def _unreadable(table: str, error: BaseException) -> ImportRefused:
         RefusalCode.UNPARSEABLE_SOURCE,
         "The table ",
         _name(table),
-        f" cannot be read ({type(error).__name__})",
+        " cannot be read (",
+        data(type(error).__name__),
+        ")",
     )
 
 
@@ -385,14 +389,19 @@ def _kept(skipped: Iterable[Skipped], limits: ImportLimits) -> tuple[tuple[Skipp
     return tuple(ordered[: limits.import_tables]), max(0, len(ordered) - limits.import_tables)
 
 
-def _not_base(what: str) -> str:
-    return f"{what}, not a base table"
+def _not_base(*what: Segment) -> Message:
+    return (*what, text(", not a base table"))
+
+
+def _because(reason: str) -> Message:
+    """One of the reasons below, the server's own words."""
+    return (text(reason),)
 
 
 _NO_COLUMNS = "a base table without columns, which is not read"
 
 
-def _shown(target: Target, suffix: str = "") -> DataSegment:
+def _located(target: Target, suffix: str = "") -> DataSegment:
     """The file a refusal names: its location in its import directory (D310)."""
     return data(f"{target.location or os.path.basename(cast(str, target.path))}{suffix}")
 
@@ -407,7 +416,7 @@ def _same_file(target: Target) -> None:
         raise refused(
             RefusalCode.PATH_NOT_CONFINED,
             "The database file changed after it was confined: ",
-            _shown(target),
+            _located(target),
         )
 
 
@@ -428,7 +437,7 @@ def _beside(target: Target) -> set[tuple[int, int]]:
             raise refused(
                 RefusalCode.PATH_NOT_CONFINED,
                 "A file beside the database is not a regular file: ",
-                _shown(target, suffix),
+                _located(target, suffix),
             )
         found.add((status.st_dev, status.st_ino))
     return found
@@ -462,7 +471,7 @@ def _opened_confined(target: Target, before: Mapping[int, tuple[int, int]]) -> N
             raise refused(
                 RefusalCode.PATH_NOT_CONFINED,
                 "The database file opened is not the one confined: ",
-                _shown(target),
+                _located(target),
             )
 
 
@@ -616,12 +625,14 @@ def _sqlite_tables(connection: sqlite3.Connection, limits: ImportLimits) -> Snap
     for name, kind in _sqlite_listed(connection):
         if ascii_folded(name).startswith("sqlite_"):
             if ascii_folded(name) not in _SQLITE_OWN:
-                skipped.append(Skipped(name, "a table named as SQLite's own tables are"))
+                skipped.append(Skipped(name, _because("a table named as SQLite's own tables are")))
             continue
         if kind == "table":
             names.append(name)
         else:
-            skipped.append(Skipped(name, _not_base(_SQLITE_SKIPPED.get(kind, f"a {kind}"))))
+            said = _SQLITE_SKIPPED.get(kind)
+            what = (text(said),) if said is not None else (text("a "), data(kind))
+            skipped.append(Skipped(name, _not_base(*what)))
     cells = _Cells(limits)
     cells.tables(len(names))
     relations: dict[str, _Relation] = {}
@@ -637,7 +648,7 @@ def _sqlite_tables(connection: sqlite3.Connection, limits: ImportLimits) -> Snap
         relation = relations[name]
         columns = relation.columns
         if not columns:
-            skipped.append(Skipped(name, _NO_COLUMNS))
+            skipped.append(Skipped(name, _because(_NO_COLUMNS)))
             continue
         try:
             rows = _sqlite_rows(connection, name, columns, relation.primary_key or columns)
@@ -840,7 +851,9 @@ def _duckdb(target: Target, limits: ImportLimits) -> Snapshot:
     except duckdb.Error as error:
         raise refused(
             RefusalCode.UNPARSEABLE_SOURCE,
-            f"The database cannot be opened ({type(error).__name__})",
+            "The database cannot be opened (",
+            data(type(error).__name__),
+            ")",
         ) from None
     try:
         database: str | None = None
@@ -1034,7 +1047,7 @@ def _read(
     for relation in relations:
         columns = relation.columns
         if not columns:
-            extra.append(Skipped(relation.name, _NO_COLUMNS))
+            extra.append(Skipped(relation.name, _because(_NO_COLUMNS)))
             continue
         primary = _key(relation.primary_key or (), columns)
         try:
@@ -1052,7 +1065,8 @@ def _read(
                 _name(relation.name),
                 ", column ",
                 _name(columns[error.column]),
-                f", of the type {error.arrow_type}",
+                ", of the type ",
+                shown(error.arrow_type),
                 alternatives=DATABASE_TYPES,
             ) from None
         except parquet.UnreadableParquetError as error:
@@ -1063,13 +1077,15 @@ def _read(
                     _name(relation.name),
                     ", column ",
                     _name(columns[error.column]),
-                    f", cannot be read: {error}",
+                    ", cannot be read: ",
+                    *error.message,
                 ) from None
             raise refused(
                 RefusalCode.UNPARSEABLE_SOURCE,
                 "The table ",
                 _name(relation.name),
-                f" cannot be read: {error}",
+                " cannot be read: ",
+                *error.message,
             ) from None
         if target.kind == "mysql":
             try:
@@ -1227,18 +1243,18 @@ def _duckdb_catalog(
         raise _unknown_schema(schema, schemas)
     tables = [(str(name), comment) for name, comment in _fetched(connection, _DUCKDB_TABLES, given)]
     views = [
-        Skipped(str(row[0]), _not_base("a view"))
+        Skipped(str(row[0]), _not_base(text("a view")))
         for row in _fetched(connection, _DUCKDB_VIEWS, given)
     ]
     read = {name for name, _ in tables}
     columns: list[_Column] = []
     defaulted: dict[str, set[str]] = {}
-    for table, column, comment, has_default, text, zoned_time in _fetched(
+    for table, column, comment, has_default, textual, zoned_time in _fetched(
         connection, _DUCKDB_COLUMNS, given
     ):
         if zoned_time and str(table) in read:
             raise _zoned_time_refused(str(table), str(column))
-        columns.append(_Column(str(table), str(column), comment, text=bool(text)))
+        columns.append(_Column(str(table), str(column), comment, text=bool(textual)))
         if has_default:
             defaulted.setdefault(str(table), set()).add(str(column))
     for table, names in sorted(defaulted.items()):
@@ -1549,31 +1565,32 @@ def _postgres_catalog(
     relations = query(_POSTGRES_RELATIONS.format(schema=named))
     for name, kind, comment, partition, root, foreign, detaching, secured, computed in relations:
         if detaching:
-            skipped.append(Skipped(str(name), _DETACHING))
+            skipped.append(Skipped(str(name), _because(_DETACHING)))
             continue
         if partition and root != schema:
-            skipped.append(Skipped(str(name), _OTHER_ROOT))
+            skipped.append(Skipped(str(name), _because(_OTHER_ROOT)))
             continue
         if partition and kind != "f":
             continue
         if foreign:
-            skipped.append(Skipped(str(name), _FOREIGN_PARTITION))
+            skipped.append(Skipped(str(name), _because(_FOREIGN_PARTITION)))
             continue
         if kind in ("r", "p") and secured:
-            skipped.append(Skipped(str(name), _ROW_SECURITY))
+            skipped.append(Skipped(str(name), _because(_ROW_SECURITY)))
             continue
         if kind in ("r", "p") and computed:
-            skipped.append(Skipped(str(name), _COMPUTED))
+            skipped.append(Skipped(str(name), _because(_COMPUTED)))
             continue
         if kind in ("r", "p") and str(name) in owner_code:
-            skipped.append(Skipped(str(name), _OWNER_CAST))
+            skipped.append(Skipped(str(name), _because(_OWNER_CAST)))
             continue
         if kind in ("r", "p"):
             tables.append((str(name), comment))
             if kind == "r":
                 ordinary.add(str(name))
         else:
-            skipped.append(Skipped(str(name), _not_base(_POSTGRES_SKIPPED[str(kind)])))
+            what = text(_POSTGRES_SKIPPED[str(kind)])
+            skipped.append(Skipped(str(name), _not_base(what)))
     for name, _ in tables:
         try:
             query(_postgres_lock(schema, name, name in ordinary))
@@ -1736,7 +1753,9 @@ def _mysql_isolation(connection: "duckdb.DuckDBPyConnection") -> None:
     if level is None:
         raise refused(
             RefusalCode.UNPARSEABLE_SOURCE,
-            f"The MySQL session's isolation level cannot be read ({type(failed).__name__})",
+            "The MySQL session's isolation level cannot be read (",
+            data(type(failed).__name__),
+            ")",
         )
     if level not in MYSQL_ISOLATION:
         raise refused(
@@ -1790,7 +1809,7 @@ def _mysql_tables(
     for name, kind, comment, transactions in listed:
         if kind not in _MYSQL_BASE:
             what = _MYSQL_SKIPPED.get(str(kind), "a relation of another kind")
-            skipped.append(Skipped(str(name), _not_base(what)))
+            skipped.append(Skipped(str(name), _not_base(text(what))))
             continue
         if transactions != "YES":
             raise refused(

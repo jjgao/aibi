@@ -105,7 +105,7 @@ from aibi.core.schema.limits import (
     TOKEN_FAILURES,
 )
 from aibi.core.schema.operator import Refusals
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, blank_secrets
 
 RateClass = Literal["operator", "api", "token_failures", "page"]
@@ -203,14 +203,14 @@ def _refused(
     message: str,
     *,
     limit: Limit | None = None,
-    alternatives: Sequence[str] = (),
+    alternatives: Sequence[Segment] = (),
     headers: tuple[tuple[bytes, bytes], ...] = (),
 ) -> _Refused:
     found = Refusal(
         code=code,
         path=None,
         message=[text(message)],
-        alternatives=[text(alternative) for alternative in alternatives],
+        alternatives=list(alternatives),
         limit=limit,
     )
     return _Refused(found, headers)
@@ -404,7 +404,9 @@ class RequestProtection:
             refusal = _refused(
                 RefusalCode.ORIGIN_NOT_ALLOWED,
                 "Cross-origin requests are not allowed here",
-                alternatives=sorted(self.policy.cors_origins) if cors else (),
+                alternatives=[data(origin) for origin in sorted(self.policy.cors_origins)]
+                if cors
+                else (),
             )
             await self._refuse(seen, send, refusal)
             return
@@ -489,7 +491,7 @@ class RequestProtection:
                 return _refused(
                     RefusalCode.UNSUPPORTED_MEDIA_TYPE,
                     "This request's body is not of the content type the path reads",
-                    alternatives=[expected],
+                    alternatives=[text(expected)],
                 ), None
         return None, by
 

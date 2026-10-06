@@ -903,6 +903,10 @@ def test_redact_only_is_refused_while_no_release_is_withdrawn(
         erase(store, "lib", "members", ["m-99"], "operator:ada", redact_only=True)
     assert refused.value.refusal.code == "INVALID_KEY"
     assert "check the key" not in str(refused.value)
+    assert str(refused.value).endswith(
+        "No published release holds that row, and no erasure of it waits; "
+        "redact_only needs a release withdrawn earlier, and there is none"
+    )
     assert _details(store, "erase") == []
     assert _details(store, "note") == [{"member": "m-99"}]
 

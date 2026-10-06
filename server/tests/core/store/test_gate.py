@@ -13,6 +13,7 @@ import pytest
 from aibi.core.engine import build
 from aibi.core.engine.data import items, missing, present
 from aibi.core.schema.descriptors import Descriptor
+from aibi.core.schema.output import plain_text
 from aibi.core.schema.semantics import ObservationState
 from aibi.core.store import gate
 from aibi.core.store.build import BuildRefused, Built, Layout, read_report
@@ -418,7 +419,7 @@ def test_a_proposed_grain_goes_with_the_proposed_key_it_names(
     descriptors[9] = _relationship("harvests", "plot_id", "plots", "proposed")
     built = _import(store, descriptors, _rows((*PLOTS, ("p1", 7.0))))
     assert built.gate is not None
-    dropped = [(d.descriptor, d.pointer, d.message) for d in built.gate.dropped]
+    dropped = [(d.descriptor, d.pointer, plain_text(d.message)) for d in built.gate.dropped]
     assert (("plots", "/fields/grain", "The key it names was dropped") in dropped) is not kept
     plots = {d.id: d for d in built.descriptors}["plots"]
     assert ("grain" in plots.fields.model_fields_set) is kept
@@ -442,7 +443,7 @@ def test_a_proposed_role_that_rests_on_the_key_goes_with_it(
     descriptors[9] = _relationship("harvests", "plot_id", "plots", "proposed")
     built = _import(store, descriptors, _rows((*PLOTS, ("p1", 7.0))))
     assert built.gate is not None
-    dropped = [(d.descriptor, d.pointer, d.message) for d in built.gate.dropped]
+    dropped = [(d.descriptor, d.pointer, plain_text(d.message)) for d in built.gate.dropped]
     assert (("plots", "/fields/role", "The key it rests on was dropped") in dropped) is not kept
     plots = {d.id: d for d in built.descriptors}["plots"]
     assert ("role" in plots.fields.model_fields_set) is kept

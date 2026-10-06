@@ -55,7 +55,7 @@ from aibi.core.schema.limits import (
     UPLOAD_SECONDS,
 )
 from aibi.core.schema.operator import Refusals
-from aibi.core.schema.output import text
+from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Refusal, RefusalCode, blank_secrets
 from aibi.core.store.build import BuildRefused
 from aibi.core.store.carry import CarryRefused
@@ -148,12 +148,15 @@ def refused_page(
     return Response(body, status_code=answer, media_type="text/html", headers=extra)
 
 
-def refusal(code: RefusalCode, message: str, *, alternatives: Sequence[str] = ()) -> Refusal:
-    """A refusal without a path, in the server's own words."""
+def refusal(
+    code: RefusalCode, *message: Segment | str, alternatives: Sequence[str] = ()
+) -> Refusal:
+    """A refusal without a path: a part given as a string is the server's own words, a segment is
+    kept as it is (a name or a library's message is ``data``, D397)."""
     return Refusal(
         code=code,
         path=None,
-        message=[text(message)],
+        message=[text(part) if isinstance(part, str) else part for part in message],
         alternatives=[text(alternative) for alternative in alternatives],
     )
 
@@ -191,8 +194,17 @@ class _Handlers:
             where, *rest = (str(element) for element in details.get("loc", ()))
             name = rest[0] if rest else where
             problem = "is missing" if details.get("type") == "missing" else "is not valid"
-            message = f"The {where} parameter {name} {problem}: {details.get('msg', '')}"
-            found.append(refusal(RefusalCode.INVALID_VALUE, message))
+            found.append(
+                refusal(
+                    RefusalCode.INVALID_VALUE,
+                    "The ",
+                    data(where),
+                    " parameter ",
+                    data(name),
+                    f" {problem}: ",
+                    data(str(details.get("msg", ""))),
+                )
+            )
         invalid = refusal(RefusalCode.INVALID_VALUE, "A parameter is not valid")
         return self.answer(request, found or [invalid])
 

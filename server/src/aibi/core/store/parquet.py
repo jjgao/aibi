@@ -34,6 +34,8 @@ from zoneinfo import ZoneInfoNotFoundError
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from aibi.core.schema.output import Message, Segment, data, plain_text, shown, text
+
 PhysicalType = Literal["int64", "float64", "string", "bool", "date32", "timestamp", "strings"]
 """``timestamp`` is in microseconds, UTC; ``strings`` is a list of strings."""
 
@@ -154,10 +156,15 @@ SUPPORTED_TYPES = (
 
 
 class UnsupportedTypeError(ValueError):
-    """A column of a type ``read_source`` does not read."""
+    """A column of a type ``read_source`` does not read; ``message`` gives its type string, which
+    the file writes, as data (D397)."""
 
     def __init__(self, column: int, arrow_type: str) -> None:
-        super().__init__(f"column {column + 1} has the Parquet type {arrow_type}")
+        self.message: Message = (
+            text(f"column {column + 1} has the Parquet type "),
+            shown(arrow_type),
+        )
+        super().__init__(plain_text(self.message))
         self.column = column
         self.arrow_type = arrow_type
 
@@ -171,11 +178,18 @@ class CellLimitError(ValueError):
 
 class UnreadableParquetError(ValueError):
     """Bytes that are not a Parquet file pyarrow can read; ``column`` names the column whose
-    values could not be read, when it is one column's fault (an out-of-range date, say)."""
+    values could not be read, when it is one column's fault (an out-of-range date, say). Its
+    ``message`` is segments (D397)."""
 
-    def __init__(self, message: str, column: int | None = None) -> None:
-        super().__init__(message)
+    def __init__(self, *message: Segment, column: int | None = None) -> None:
+        self.message: Message = message
+        super().__init__(plain_text(message))
         self.column = column
+
+
+def _raised(error: BaseException) -> Message:
+    """What reading raised, named by its class (a library's name, so data, D397)."""
+    return (text("reading it raised "), data(type(error).__name__))
 
 
 @dataclass(frozen=True)
@@ -230,8 +244,7 @@ def read_source(data: bytes, max_cells: int) -> ParquetSource:
     except (UnsupportedTypeError, CellLimitError, UnreadableParquetError, MemoryError):
         raise
     except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as error:
-        name = type(error).__name__
-        raise UnreadableParquetError(f"reading it raised {name}") from None
+        raise UnreadableParquetError(*_raised(error)) from None
 
 
 def _schema(schema: pa.Schema) -> tuple[tuple[str, ...], tuple[ArrowKind, ...]]:
@@ -239,7 +252,7 @@ def _schema(schema: pa.Schema) -> tuple[tuple[str, ...], tuple[ArrowKind, ...]]:
     name and ``UnsupportedTypeError`` for a type that is not read."""
     names = tuple(field.name for field in schema)
     if len(set(names)) != len(names):
-        raise UnreadableParquetError("two columns have the same name")
+        raise UnreadableParquetError(text("two columns have the same name"))
     kinds: list[ArrowKind] = []
     for index, field in enumerate(schema):
         kind = _kind(field.type)
@@ -271,8 +284,7 @@ def from_arrow(table: pa.Table) -> ParquetSource:
     except (UnsupportedTypeError, UnreadableParquetError, MemoryError):
         raise
     except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as error:
-        name = type(error).__name__
-        raise UnreadableParquetError(f"reading it raised {name}") from None
+        raise UnreadableParquetError(*_raised(error)) from None
 
 
 def _values(table: pa.Table, names: tuple[str, ...], kinds: tuple[ArrowKind, ...]) -> ParquetSource:
@@ -290,7 +302,7 @@ def _values(table: pa.Table, names: tuple[str, ...], kinds: tuple[ArrowKind, ...
         except (pa.ArrowException, OSError, ValueError, OverflowError, ZoneInfoNotFoundError) as e:
             if isinstance(e, (UnsupportedTypeError, UnreadableParquetError, CellLimitError)):
                 raise
-            raise UnreadableParquetError(f"reading it raised {type(e).__name__}", index) from None
+            raise UnreadableParquetError(*_raised(e), column=index) from None
     rows = tuple(zip(*columns, strict=True)) if columns else ()
     return ParquetSource(names, kinds, rows)
 

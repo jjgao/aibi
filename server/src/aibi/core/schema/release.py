@@ -43,7 +43,7 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.document import ClauseModel, CoveredLeaf, ExistsLeaf, ValueLeaf, walk
 from aibi.core.schema.jsonio import pointer
-from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.output import Segment, data, listed, text
 from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
 
 Path = list[str | int]
@@ -132,7 +132,7 @@ class _Checker:
                 text(f"{what} the key of "),
                 data(table),
                 text(", in any order: "),
-                data(", ".join(key)),
+                *listed(key),
             )
 
     def time_offset(self, path: Path, column: ColumnDescriptor | None, what: str) -> None:

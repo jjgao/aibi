@@ -49,8 +49,8 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.jsonio import canonical, is_text, pointer
 from aibi.core.schema.limits import MAX_STRING, STRING_CHARACTERS
-from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.pack_api import ImportNote
+from aibi.core.schema.output import Message, Segment, data, text
+from aibi.core.schema.pack_api import NOTE_TEXT, ImportNote, NoteKind
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
 from aibi.core.store import gate, statistics, tables
@@ -60,7 +60,12 @@ from aibi.core.store.manifest import Manifest, SourceColumn, SourceEntry, TableE
 from aibi.core.store.sources import RawSource, SourceError, decode, encode, parse
 from aibi.core.store.tables import ColumnReport, TableError, TypedTable
 
-REPORT_FORMAT = "aibi.import-report/1"
+REPORT_FORMAT = "aibi.import-report/2"
+"""The format of the import reports a build writes: a note's message holds each id, name and
+value as a data token (D397)."""
+REPORT_FORMAT_1 = "aibi.import-report/1"
+"""The format of the reports written before D397, whose messages could hold an id as server text:
+they are read with each note's fixed text (``read_report``) and never rewritten."""
 _PARSE_FIELDS = ("datatype", "missing_codes", "list_syntax", "derived", "units")
 _DESCRIPTORS: TypeAdapter[list[Descriptor]] = TypeAdapter(list[Descriptor])
 
@@ -114,14 +119,14 @@ def import_release(
     refusals: list[Refusal] = []
     for table in index.tables:
         if table not in layouts:
-            message = "No source lays out the table"
+            message = (text("No source lays out the table"),)
             refusals.append(index.refusal(RefusalCode.COLUMNS_CHANGED, table, (), message))
     for table, layout in layouts.items():
         if table not in index.tables:
-            message = f"No descriptor for the table {table}"
+            message = (text("No descriptor for the table "), data(table))
             refusals.append(_refusal(RefusalCode.UNKNOWN_DESCRIPTOR, None, message))
         elif len({column for column, _ in layout.columns}) != len(layout.columns):
-            message = "The layout gives a column id to two source columns"
+            message = (text("The layout gives a column id to two source columns"),)
             refusals.append(index.refusal(RefusalCode.DUPLICATE_ENTRY, table, (), message))
         if layout.source not in sources:
             raise ValueError(f"table {table} is laid out on no source: {layout.source}")
@@ -129,14 +134,14 @@ def import_release(
     entries: list[SourceEntry] = []
     for name, source in sorted(sources.items()):
         try:
-            data = encode(source)
+            stored = encode(source)
         except SourceError as error:
             readers = sorted(table for table, layout in layouts.items() if layout.source == name)
             path = [index.tables[readers[0]]] if readers and readers[0] in index.tables else None
             raise BuildRefused(
-                [_refusal(RefusalCode.UNPARSEABLE_SOURCE, path, str(error))]
+                [_refusal(RefusalCode.UNPARSEABLE_SOURCE, path, error.message)]
             ) from None
-        entries.append(SourceEntry(name=name, kind=source.kind, hash=blobs.put(data, holder)))
+        entries.append(SourceEntry(name=name, kind=source.kind, hash=blobs.put(stored, holder)))
     builder = _Builder(blobs, index, holder, gate.needed(descriptors))
     for table, layout in sorted(layouts.items()):
         builder.table(table, sources[layout.source], layout.source, layout.columns)
@@ -171,11 +176,11 @@ def change_release(
     changed = RefusalCode.COLUMNS_CHANGED
     for table in index.tables:
         if base.table(table) is None:
-            message = "The table has no source; adding a table is a re-import"
+            message = (text("The table has no source; adding a table is a re-import"),)
             refusals.append(index.refusal(changed, table, (), message))
     for entry in base.tables:
         if entry.id not in index.tables:
-            message = f"Removing the table {entry.id} is a re-import"
+            message = (text("Removing the table "), data(entry.id), text(" is a re-import"))
             refusals.append(_refusal(changed, None, message))
     _refuse_if(refusals)
     needed = gate.needed(descriptors) if gate_mode is not None else None
@@ -189,8 +194,10 @@ def change_release(
         source_kind = index.table_fields(entry.id).fields.source
         if source_kind is not None and source_kind.kind == "pack":
             message = (
-                "A pack importer reshaped this table, and rebuilding it comes with packs' "
-                "rebuild (M4); a re-import changes its parsing until then"
+                text(
+                    "A pack importer reshaped this table, and rebuilding it comes with packs' "
+                    "rebuild (M4); a re-import changes its parsing until then"
+                ),
             )
             raise BuildRefused([index.refusal(RefusalCode.NOT_SUPPORTED, entry.id, (), message)])
         source = base.source(entry.source)
@@ -203,8 +210,8 @@ def change_release(
         typed: dict[str, gate.Cells] = dict(builder.typed)
         for entry in reused:
             if needed.get(entry.id):
-                data = blobs.read(entry.hash)
-                typed[entry.id] = tables.decode_cells(entry.id, data, needed[entry.id])
+                stored = blobs.read(entry.hash)
+                typed[entry.id] = tables.decode_cells(entry.id, stored, needed[entry.id])
         result = gate.check(descriptors, typed, mode=gate_mode)
         _refuse_if(result.refusals)
         builder.index = _Index(result.descriptors)
@@ -252,7 +259,7 @@ def sorted_notes(notes: Sequence[ImportNote]) -> list[ImportNote]:
 
 
 def report_bytes(notes: Sequence[ImportNote]) -> bytes:
-    """The import report blob (D231): ``{"format": "aibi.import-report/1", "notes": [...]}`` in
+    """The import report blob (D231): ``{"format": "aibi.import-report/2", "notes": [...]}`` in
     RFC 8785 form, the notes in ``sorted_notes`` order, without timestamps, so that the same
     inputs give the same report."""
     ordered: list[JsonValue] = [_note_json(note) for note in sorted_notes(notes)]
@@ -260,22 +267,50 @@ def report_bytes(notes: Sequence[ImportNote]) -> bytes:
 
 
 def read_report(data: bytes) -> list[dict[str, JsonValue]]:
-    """The notes of an import report blob, as JSON values."""
+    """The notes of an import report blob, as JSON values: the one reader of reports, which the
+    operator's queue and the public ``curation_queue`` both read through.
+
+    A ``/2`` report is read as written. A ``/1`` report, written before D397, may hold an id a
+    source's names gave as server text, so each of its notes, of every kind, is given its kind's
+    fixed text (``NOTE_TEXT``) instead of its stored message; its subject, count and rows are kept.
+    The blob is never rewritten (D231, D397)."""
     parsed: object = json.loads(data)
     if not isinstance(parsed, dict):
         raise ValueError(f"an import report is {REPORT_FORMAT}")
     report = cast(dict[str, JsonValue], parsed)
-    if report.get("format") != REPORT_FORMAT:
+    given = report.get("format")
+    if given not in (REPORT_FORMAT, REPORT_FORMAT_1):
         raise ValueError(f"an import report is {REPORT_FORMAT}")
-    return cast(list[dict[str, JsonValue]], report["notes"])
+    notes = report.get("notes")
+    if not isinstance(notes, list):
+        raise ValueError("an import report holds its notes as a list")
+    if given == REPORT_FORMAT:
+        return cast(list[dict[str, JsonValue]], notes)
+    return [_fixed(note) for note in notes]
+
+
+def _fixed(note: JsonValue) -> dict[str, JsonValue]:
+    """A note of a ``/1`` report, its message its kind's fixed text (D397)."""
+    if not isinstance(note, dict):
+        raise ValueError(f"a note of an import report of {REPORT_FORMAT_1} is an object")
+    kind = note.get("kind")
+    if not isinstance(kind, str) or kind not in NOTE_TEXT:
+        raise ValueError(
+            f"an import report of {REPORT_FORMAT_1} holds a note of a kind it does not know"
+        )
+    said: JsonValue = [{"text": NOTE_TEXT[cast(NoteKind, kind)]}]
+    return {**note, "message": said}
 
 
 def _gate_notes(result: GateResult) -> list[ImportNote]:
     found: list[ImportNote] = []
     for dropped in result.dropped:
-        what = "field " + dropped.pointer if dropped.pointer else "descriptor"
-        message: list[Segment] = [text(f"The proposed {what} was dropped ({dropped.code}). ")]
-        message.append(text(dropped.message))
+        message: list[Segment] = []
+        if dropped.pointer:
+            message += [text("The proposed field "), data(dropped.pointer), text(" was dropped")]
+        else:
+            message.append(text("The proposed descriptor was dropped"))
+        message += [text(f" ({dropped.code}). "), *dropped.message]
         if dropped.evidence:
             message.extend((text(". Its evidence: "), data(dropped.evidence)))
         count = dropped.count or None
@@ -352,7 +387,7 @@ class _Index:
         code: RefusalCode,
         table: str,
         where: tuple[str | int, ...],
-        message: str,
+        message: Message,
         column: str | None = None,
     ) -> Refusal:
         """A refusal at ``where`` in the column's ``fields``, or at the table's descriptor."""
@@ -366,8 +401,8 @@ class _Index:
         return _refusal(code, path, message)
 
 
-def _refusal(code: RefusalCode, path: Sequence[str | int] | None, message: str) -> Refusal:
-    return Refusal(code=code, path=None if path is None else pointer(path), message=[text(message)])
+def _refusal(code: RefusalCode, path: Sequence[str | int] | None, message: Message) -> Refusal:
+    return Refusal(code=code, path=None if path is None else pointer(path), message=list(message))
 
 
 def _header_problems(names: Sequence[str], path: Sequence[str | int]) -> list[Refusal]:
@@ -387,7 +422,7 @@ def _header_problems(names: Sequence[str], path: Sequence[str | int]) -> list[Re
             )
         elif not is_text(name):
             message = f"Header name {position} is not Unicode text (a noncharacter or surrogate)"
-            found.append(_refusal(RefusalCode.UNPARSEABLE_SOURCE, path, message))
+            found.append(_refusal(RefusalCode.UNPARSEABLE_SOURCE, path, (text(message),)))
     return found
 
 
@@ -432,11 +467,13 @@ class _Builder:
             parsed = parse(raw, settings)
         except SourceError as error:
             code = RefusalCode.UNPARSEABLE_SOURCE
-            raise BuildRefused([_refusal(code, settings_path, str(error))]) from None
+            raise BuildRefused([_refusal(code, settings_path, error.message)]) from None
         _refuse_if(_header_problems(parsed.names, settings_path))
         names = tuple(name for _, name in columns)
         if parsed.names != names:
-            message = "The parse settings give other source columns; changing them is a re-import"
+            message = (
+                text("The parse settings give other source columns; changing them is a re-import"),
+            )
             raise BuildRefused([_refusal(RefusalCode.COLUMNS_CHANGED, settings_path, message)])
         fields = self.index.column_fields(table)
         try:
@@ -518,6 +555,7 @@ class _Builder:
 
 __all__ = [
     "REPORT_FORMAT",
+    "REPORT_FORMAT_1",
     "BuildRefused",
     "Built",
     "Layout",

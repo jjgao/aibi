@@ -41,6 +41,7 @@ from aibi.core.schema.descriptors import (
     derived_inputs,
 )
 from aibi.core.schema.jsonio import number_text
+from aibi.core.schema.output import Message, data, text
 from aibi.core.schema.refusals import RefusalCode
 from aibi.core.schema.semantics import ObservationState
 from aibi.core.store.cells import ColumnCells
@@ -57,8 +58,9 @@ _INT64 = 2**63
 _MICROSECONDS = 10**6
 
 Location = tuple[str | int, ...]
-Problem = tuple[RefusalCode, Location, str]
-"""A problem's code, where it is in the derived column's ``fields``, and what it is."""
+Problem = tuple[RefusalCode, Location, Message]
+"""A problem's code, where it is in the derived column's ``fields``, and what it is: the server's
+words, with each column id and each units value a data token of its own (D397)."""
 _INVALID = RefusalCode.INVALID_VALUE
 _UNITS = RefusalCode.UNITS_UNCONVERTIBLE
 
@@ -73,45 +75,46 @@ def problems(fields: ColumnFields, columns: Mapping[str, ColumnFields]) -> list[
     for where, name in derived_inputs(derived):
         input_fields = columns.get(name)
         if input_fields is not None and input_fields.datatype == "list<category>":
-            found.append((_INVALID, (*at, *where), f"A derivation reads no list column: {name}"))
+            message = (text("A derivation reads no list column: "), data(name))
+            found.append((_INVALID, (*at, *where), message))
     datatype = fields.datatype
     if isinstance(derived, DateDiff):
         for where, name in derived_inputs(derived):
             if _datatype(columns, name) not in _TIMES:
-                found.append(
-                    (_INVALID, (*at, *where), f"date_diff reads date or datetime columns: {name}")
-                )
+                message = (text("date_diff reads date or datetime columns: "), data(name))
+                found.append((_INVALID, (*at, *where), message))
         if factor("s", derived.units) is None:
-            found.append((_UNITS, (*at, "units"), f"Not a unit of time: {derived.units}"))
+            message = (text("Not a unit of time: "), data(derived.units))
+            found.append((_UNITS, (*at, "units"), message))
         found.extend(_units_agree(fields, derived.units))
         if datatype not in (None, "number", "time_offset"):
-            found.append((_INVALID, ("datatype",), "date_diff gives a number or a time offset"))
+            message = (text("date_diff gives a number or a time offset"),)
+            found.append((_INVALID, ("datatype",), message))
     elif isinstance(derived, Arith):
         for where, name in derived_inputs(derived):
             if _datatype(columns, name) not in _NUMERIC:
-                found.append((_INVALID, (*at, *where), f"arith reads numeric columns: {name}"))
+                message = (text("arith reads numeric columns: "), data(name))
+                found.append((_INVALID, (*at, *where), message))
         if datatype not in (None, *_NUMERIC):
-            found.append((_INVALID, ("datatype",), "arith gives a number"))
+            found.append((_INVALID, ("datatype",), (text("arith gives a number"),)))
     elif isinstance(derived, UnitConvert):
         given = columns.get(derived.input)
         source_units = None if given is None else given.units
         if _datatype(columns, derived.input) not in _NUMERIC:
-            found.append(
-                (_INVALID, (*at, "input"), f"unit_convert reads a numeric column: {derived.input}")
-            )
+            message = (text("unit_convert reads a numeric column: "), data(derived.input))
+            found.append((_INVALID, (*at, "input"), message))
         elif source_units is None:
-            found.append(
-                (_UNITS, (*at, "input"), f"The input's units are undeclared: {derived.input}")
-            )
+            message = (text("The input's units are undeclared: "), data(derived.input))
+            found.append((_UNITS, (*at, "input"), message))
         elif factor(source_units, derived.units) is None:
-            found.append(
-                (_UNITS, (*at, "units"), f"{source_units} does not convert to {derived.units}")
-            )
+            message = (data(source_units), text(" does not convert to "), data(derived.units))
+            found.append((_UNITS, (*at, "units"), message))
         found.extend(_units_agree(fields, derived.units))
         if datatype not in (None, "number", "time_offset"):
-            found.append((_INVALID, ("datatype",), "unit_convert gives a number or a time offset"))
+            message = (text("unit_convert gives a number or a time offset"),)
+            found.append((_INVALID, ("datatype",), message))
     elif datatype == "list<category>":
-        found.append((_INVALID, ("datatype",), "value_map gives one value, not a list"))
+        found.append((_INVALID, ("datatype",), (text("value_map gives one value, not a list"),)))
     return found
 
 
@@ -130,7 +133,12 @@ def _datatype(columns: Mapping[str, ColumnFields], name: str) -> str | None:
 
 def _units_agree(fields: ColumnFields, units: str) -> list[Problem]:
     if fields.units is not None and fields.units != units:
-        message = f"The derivation gives {units}, and the column declares {fields.units}"
+        message = (
+            text("The derivation gives "),
+            data(units),
+            text(", and the column declares "),
+            data(fields.units),
+        )
         return [(_INVALID, ("units",), message)]
     return []
 

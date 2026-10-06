@@ -2,8 +2,7 @@
 
 from collections.abc import Sequence
 
-from aibi.core.schema.jsonio import is_text
-from aibi.core.schema.output import Segment, data, text
+from aibi.core.schema.output import Segment, data, escaped, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.store.sources import FIELD_CHARACTERS
 
@@ -36,21 +35,6 @@ def refused(
                 limit=None if limit is None else Limit(name=limit[0], max=limit[1]),
             )
         ]
-    )
-
-
-def escaped(name: str) -> str:
-    """``name`` with each lone surrogate and noncharacter written as its ``\\u`` escape, so that a
-    segment can hold a name a source gives that is not Unicode text (D309)."""
-    if is_text(name):
-        return name
-    return "".join(
-        character
-        if is_text(character)
-        else (
-            f"\\u{ord(character):04x}" if ord(character) <= 0xFFFF else f"\\U{ord(character):08x}"
-        )
-        for character in name
     )
 
 

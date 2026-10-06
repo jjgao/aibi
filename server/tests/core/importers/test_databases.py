@@ -57,7 +57,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.limits import MAX_STRING, MAX_TEXT, ImportLimits
-from aibi.core.schema.output import DataSegment, TextSegment
+from aibi.core.schema.output import DataSegment, TextSegment, plain_text
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store.sources import TypedSource
 from aibi.core.store.store import Store
@@ -200,7 +200,7 @@ def test_a_view_in_a_sqlite_file_is_not_imported_and_is_noted(
     assert [part for part in note.message if isinstance(part, DataSegment)] == [
         DataSegment(data="recent")
     ]
-    assert note.message[-1].model_dump()["text"] == ": a view, not a base table"
+    assert plain_text(note.message[2:]) == ": a view, not a base table"
 
 
 def test_reading_a_sqlite_file_changes_nothing_in_it_and_runs_no_trigger(
@@ -1228,7 +1228,7 @@ def test_a_postgres_table_whose_reading_would_run_its_owners_code_is_noted_and_n
     )
     relations, skipped = _postgres_catalog(cast(Any, session), "public", ImportLimits())
     assert [relation.name for relation in relations] == ["kept"]
-    reasons = {item.name: item.reason for item in skipped}
+    reasons = {item.name: plain_text(item.reason) for item in skipped}
     assert set(reasons) == {"guarded", "computed"}
     assert "row security" in reasons["guarded"]
     assert "virtual generated column" in reasons["computed"]
@@ -1659,9 +1659,11 @@ def test_a_server_url_whose_query_sets_a_parameter_not_allowed_is_refused_naming
         connect("postgres", url_env="LIBRARY_URL", environ={"LIBRARY_URL": url})
     refusal = refusal_of(refused)
     assert refusal.code == RefusalCode.INVALID_VALUE
-    assert said in shown(refusal)
+    assert said in plain_text(refusal.message)
     assert "hunter2" not in shown(refusal)
     assert "decoy" not in shown(refusal)
+    if said.startswith("sets "):  # the parameter's name is one data token, not server text
+        assert DataSegment(data=said.split()[1].rstrip(",")) in refusal.message
 
 
 @pytest.mark.parametrize(
