@@ -48,6 +48,11 @@ closed, so an unknown key is refused, and every problem is reported at once with
   variable that holds the URL, read when an import runs; and for Postgres and DuckDB the
   ``schema`` read (``public`` and ``main`` by default). Credentials are never in the file (§14).
 - ``[[models]]``: model cards (§5.9), validated as descriptors, each id once.
+- ``[packs] modules``: the modules the server imports for their packs (§10.1, D404), at most
+  ``MAX_PACKS``, each once: a dotted name of ASCII identifiers (``[A-Za-z_][A-Za-z0-9_]*``) of at
+  most ``MAX_MODULE_CHARACTERS`` characters, neither ``aibi.core`` nor under it. ``[packs]``
+  without ``modules``, or no ``[packs]``, installs none. One validator reads the section and
+  reports every problem in it at once, each with its TOML path.
 
 Binding (D254): a bind other than the loopback interface needs both TLS files, and a key file
 that others can read is refused; a wildcard bind needs a hostname as well. Import directories
@@ -64,11 +69,12 @@ the remedy is to rename the directory (a link to it does not help: its real path
 import errno
 import ipaddress
 import os
+import re
 import stat
 import tomllib
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Annotated, Literal, Self, cast
+from typing import Annotated, Literal, LiteralString, Self, cast
 
 from pydantic import (
     BaseModel,
@@ -81,7 +87,7 @@ from pydantic import (
     ValidationInfo,
     model_validator,
 )
-from pydantic_core import ErrorDetails, PydanticCustomError
+from pydantic_core import ErrorDetails, InitErrorDetails, PydanticCustomError
 
 from aibi.core.api.origins import LOOPBACK_HOSTS, hostname, is_loopback, origin
 from aibi.core.importers.databases import Connection
@@ -91,6 +97,7 @@ from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.limits import (
     MAX_BODY_BYTES,
     MAX_KEEP_DAYS,
+    MAX_PACKS,
     MIN_LOG_BYTES,
     MIN_QUERY_MEMORY,
     CacheLimits,
@@ -359,6 +366,75 @@ class DatabaseConnection(_Config):
         return Connection(name, self.kind, self.path, self.url_env, self.schema_)
 
 
+MAX_MODULE_CHARACTERS = 200
+"""The longest name a module of ``[packs] modules`` may have."""
+_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+"""A dotted name of ASCII identifiers, matched whole (``fullmatch``)."""
+CORE_PACKAGE = "aibi.core"
+"""The package no module of ``[packs]`` may be, or be under."""
+
+
+class Packs(_Config):
+    """``[packs]``: the modules the server imports for their packs (D404)."""
+
+    modules: tuple[str, ...] = ()
+
+
+def _module_problem(name: object) -> str | None:
+    if type(name) is not str:
+        return "a module's name is a string"
+    if len(name) > MAX_MODULE_CHARACTERS:
+        return f"a module's name has at most {MAX_MODULE_CHARACTERS} characters"
+    if not name.isascii() or _MODULE.fullmatch(name) is None:
+        return "not a dotted name of ASCII identifiers, such as 'mypacks.library'"
+    if name == CORE_PACKAGE or name.startswith(f"{CORE_PACKAGE}."):
+        return f"a module of {CORE_PACKAGE} is the core's, not a pack's"
+    return None
+
+
+def _packs(value: object) -> object:
+    """``[packs]`` read whole: every problem in it at once, each at its place (D253, D404)."""
+    if isinstance(value, Packs):
+        return value
+    if type(value) is not dict:
+        raise PydanticCustomError("packs_type", "[packs] is a table")
+    section = cast(dict[object, object], value)
+    found: list[InitErrorDetails] = []
+
+    def refuse(
+        loc: tuple[int | str, ...], kind: LiteralString, message: str, given: object
+    ) -> None:
+        # The core's own words, none with a brace that pydantic would read as a placeholder.
+        template = cast(LiteralString, message)
+        found.append({"type": PydanticCustomError(kind, template), "loc": loc, "input": given})
+
+    for key, given in section.items():
+        if key != "modules":
+            found.append({"type": "extra_forbidden", "loc": (str(key),), "input": given})
+    names = section.get("modules", [])
+    kept: list[str] = []
+    if type(names) is not list:
+        refuse(("modules",), "modules_type", "a list of module names", names)
+    else:
+        listed = cast(list[object], names)
+        if len(listed) > MAX_PACKS:
+            refuse(("modules",), "modules_count", f"at most {MAX_PACKS} modules", len(listed))
+        seen: set[str] = set()
+        for index, name in enumerate(listed):
+            problem = _module_problem(name)
+            if problem is not None:
+                refuse(("modules", index), "module", problem, name)
+                continue
+            name = cast(str, name)
+            if name in seen:
+                refuse(("modules", index), "module", "the module is given twice", name)
+            seen.add(name)
+            kept.append(name)
+    if found:
+        raise ValidationError.from_exception_data("packs", found)
+    return Packs(modules=tuple(kept))
+
+
 class ServerConfig(_Config):
     server: ServerSection = ServerSection()
     curator: Curator
@@ -372,6 +448,7 @@ class ServerConfig(_Config):
         default_factory=dict[str, DatabaseConnection]
     )
     models: list[ModelCardDescriptor] = Field(default_factory=list[ModelCardDescriptor])
+    packs: Annotated[Packs, BeforeValidator(_packs)] = Packs()
 
     @property
     def loopback(self) -> bool:
@@ -592,15 +669,18 @@ def load_config(path: Path) -> ServerConfig:
 
 __all__ = [
     "BASE",
+    "CORE_PACKAGE",
     "HTTP_SETTINGS",
     "MAX_CONCURRENT_IMPORTS",
     "MAX_LINKS",
+    "MAX_MODULE_CHARACTERS",
     "WORKER_THREADS",
     "ConfigError",
     "Curator",
     "DatabaseConnection",
     "Disclosure",
     "Imports",
+    "Packs",
     "Rate",
     "Rates",
     "ServerConfig",

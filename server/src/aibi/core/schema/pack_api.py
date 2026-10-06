@@ -623,6 +623,11 @@ def _shown(text: str, most: int = SHOWN_CHARACTERS) -> str:
     return "".join(written) + ("…" if len(text) > most else "")
 
 
+quoted = _shown
+"""``_shown`` under a name other modules may import: the server's loader quotes a module's name
+in its problems as a registration quotes a pack's (D404)."""
+
+
 def _named(value: object) -> str:
     """How a problem names a key a pack gave: quoted (``_shown``) when it is exactly a ``str`` of
     Unicode text, else in the core's words, never formatting the pack's object."""
@@ -658,9 +663,11 @@ class _Reads:
     members are still read; a ``PASSED`` type stops registration (``_Passing``, the instance
     recorded as ``raised``, so that no other stops it)."""
 
-    def __init__(self, label: str, problems: list[str]) -> None:
+    def __init__(self, label: str, problems: list[str], module: str | None = None) -> None:
         self.label = label
         self.problems = problems
+        self.module = module
+        """The module that gave the pack, when the registry was given labels (D404)."""
         self.raised: _Passing | None = None
 
     def __call__[T](
@@ -675,22 +682,27 @@ class _Reads:
         default the member) is not a JSON value, quoting the core's reason; any other exception,
         of whatever type, is that the member could not be read."""
         passing: type[BaseException] | None = None
+        refused = False
         try:
             return True, read()
         except BaseException as error:  # every exception of the pack's is contained (D402)
+            # Facts only: no core code builds a problem while the pack's exception is being
+            # handled, so that a core bug there never has it as its context (D404).
             passing = passed(error)
-            if passing is None:
-                if copy is not None and error is copy.refused:
-                    shown = f"its {member}" if where is None else where
-                    self.problems.append(
-                        f"{self.label}: {shown} is not a JSON value: it holds {copy.reason}"
-                    )
-                else:
-                    self.problems.append(f"{self.label}: its {member} could not be read")
+            refused = copy is not None and error is copy.refused
         if passing is not None:
             self.raised = _Passing(passing)
             raise self.raised
+        self.problems.append(self._problem(member, copy if refused else None, where))
         return False, None
+
+    def _problem(self, member: str, refusal: _Allowance | None, where: str | None) -> str:
+        """The problem of a member that could not be read, or, with the copy's own ``refusal``,
+        of one that is not a JSON value, quoting the core's reason."""
+        if refusal is None:
+            return f"{self.label}: its {member} could not be read"
+        shown = f"its {member}" if where is None else where
+        return f"{self.label}: {shown} is not a JSON value: it holds {refusal.reason}"
 
 
 def _member[E: Enum](kind: type[E], given: object) -> E | None:
@@ -1049,6 +1061,11 @@ class _Kept:
     hooks: _Hooks
     leaf_schemas: dict[str, JsonSchema]
     analyses: list[RegisteredAnalysis]
+    label: str = ""
+    """What its problems are prefixed with: its id, escaped, or with labels its module's name and
+    its id (D404)."""
+    module: str | None = None
+    """The module that gave it, when the registry was given labels (D404)."""
 
 
 def _analysis_copy(analysis: RegisteredAnalysis) -> RegisteredAnalysis:
@@ -1066,10 +1083,17 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     pack's ``analyses``."""
     manifest = _manifest(given, reads)
     if manifest is not None:
-        reads.label = _shown(manifest.id)
+        reads.label = (
+            _shown(manifest.id)
+            if reads.module is None
+            else f"the module {_shown(reads.module)} (pack {_shown(manifest.id)})"
+        )
     name = None if manifest is None else manifest.id
     problems = reads.problems
+    # ``label`` prefixes every problem of the pack's; ``space`` is its namespace as a problem
+    # quotes it, kept apart from the label, which may name its module too (D404).
     label = reads.label
+    space = "" if name is None else _shown(name)
     if manifest is not None and not SpecifierSet(manifest.requires_core, prereleases=True).contains(
         core
     ):
@@ -1088,7 +1112,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             concepts.append(copy)
     if name is not None:
         problems.extend(
-            f"{label}: concept {_shown(c.id)} is not in its namespace {label}:"
+            f"{label}: concept {_shown(c.id)} is not in its namespace {space}:"
             for c in concepts
             if not c.id.startswith(f"{name}:")
         )
@@ -1131,10 +1155,10 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     leaf_kinds: dict[str, LeafKind] = {}
     leaf_schemas: dict[str, JsonSchema] = {}
     ok, items = reads("leaf kinds", lambda: _items(given.leaf_kinds))
-    rule = "<pack id>.<name>" if name is None else f"{label}.<name>"
+    rule = "<pack id>.<name>" if name is None else f"{space}.<name>"
     for kind, leaf in _keys(items or [], "leaf kind", reads, rule):
         if name is not None and not _namespaced(name, kind):
-            problems.append(f"{label}: leaf kind {_shown(kind)} is not {label}.<name>")
+            problems.append(f"{label}: leaf kind {_shown(kind)} is not {space}.<name>")
         leaf_kinds[kind] = cast(LeafKind, leaf)
         copied = _schema(
             lambda o=leaf: cast(LeafKind, o).schema,
@@ -1149,7 +1173,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     ok, items = reads("translators", lambda: _items(given.translators))
     for format, translator in _keys(items or [], "translator format", reads, rule):
         if name is not None and not _namespaced(name, format):
-            problems.append(f"{label}: translator format {_shown(format)} is not {label}.<name>")
+            problems.append(f"{label}: translator format {_shown(format)} is not {space}.<name>")
         translators[format] = cast(Translator, translator)
 
     analyses: list[tuple[AnalysisDescriptor, Analysis]] = []
@@ -1164,7 +1188,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         if not ok or entry is None:
             continue
         if name is not None and not _namespaced(name, entry.id):
-            problems.append(f"{label}: analysis {_shown(entry.id)} is not {label}.<name>")
+            problems.append(f"{label}: analysis {_shown(entry.id)} is not {space}.<name>")
         for member, kept_schema in (
             ("params", entry.fields.params),
             ("returns", entry.fields.returns),
@@ -1193,14 +1217,14 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         predicates[predicate] = cast(RequirementPredicate, function)
 
     codes: dict[str, Severity] = {}
-    code_rule = "<pack id>.<CODE>" if name is None else f"{label}.<CODE>"
+    code_rule = "<pack id>.<CODE>" if name is None else f"{space}.<CODE>"
     ok, items = reads("caveat codes", lambda: _items(given.caveat_codes))
     for code, severity in items or []:
         if type(code) is not str or not is_text(code):
             problems.append(f"{label}: caveat code {_named(code)} is not {code_rule}")
             continue
         if name is not None and (code.partition(".")[0] != name or not is_pack_code(code)):
-            problems.append(f"{label}: caveat code {_shown(code)} is not {label}.<CODE>")
+            problems.append(f"{label}: caveat code {_shown(code)} is not {space}.<CODE>")
         member = _member(Severity, severity)
         if member is None:
             problems.append(f"{label}: caveat code {_shown(code)} has no severity")
@@ -1250,7 +1274,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     ok, caveat_rule = reads("caveat rule", lambda: given.caveat_rule)
 
     if manifest is None:
-        return _Kept(None, _Hooks(), leaf_schemas, [])
+        return _Kept(None, _Hooks(), leaf_schemas, [], label, reads.module)
     pack = manifest.id
 
     def handle[H](hook: H | None, stage: str) -> Hook[H] | None:
@@ -1294,7 +1318,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         requirement_predicates=tuple(predicates),
         analyses=tuple(analysis.entry.id for analysis in registered),
     )
-    return _Kept(kept, hooks, leaf_schemas, registered)
+    return _Kept(kept, hooks, leaf_schemas, registered, label, reads.module)
 
 
 def _handed_out(pack: PackInfo) -> PackInfo:
@@ -1323,42 +1347,77 @@ class PackRegistry:
     never a hook object: a hook's code runs only through ``Hook.call`` (D403).
     """
 
-    def __init__(self, packs: Iterable[Pack], *, core_version: str) -> None:
+    def __init__(
+        self,
+        packs: Iterable[Pack],
+        *,
+        core_version: str,
+        labels: Sequence[str] | None = None,
+        on_stop: Callable[[str], None] | None = None,
+    ) -> None:
+        """``labels``, if given, names the module that gave each pack, position by position, and
+        every problem about a pack then names its module, and its id once its manifest is read;
+        a problem across packs names every module involved (D404). ``on_stop`` is given the
+        label of the pack whose code asked to exit, before the registry exits (D404)."""
         try:
             core = Version(core_version)
         except InvalidVersion:
             raise PackError([f"core version {core_version!r} is not a PEP 440 version"]) from None
+        given_packs = list(packs)
+        modules: list[str] | None = None if labels is None else list(labels)
+        if modules is not None and (
+            len(modules) != len(given_packs) or any(type(one) is not str for one in modules)
+        ):
+            raise ValueError("labels name one module, as text, for each pack given")
         problems: list[str] = []
         kept: list[_Kept] = []
         leaf_schemas: dict[str, JsonSchema] = {}
         readers: list[_Reads] = []
         passing: type[BaseException] | None = None
+        stopped = ""
+        reading = ""
         try:
-            for position, given in enumerate(list(packs), 1):
-                label = f"the {_ordinal(position)} pack given"
+            for position, given in enumerate(given_packs, 1):
+                module = None if modules is None else modules[position - 1]
+                label = (
+                    f"the {_ordinal(position)} pack given"
+                    if module is None
+                    else f"the module {_shown(module)}"
+                )
+                reading = label
                 if type(given) is not Pack:
                     problems.append(f"{label} is not a Pack")
                     continue
-                readers.append(_Reads(label, problems))
+                readers.append(_Reads(label, problems, module))
                 found = _registered(given, core, readers[-1])
                 leaf_schemas.update(found.leaf_schemas)
                 if found.pack is not None:
                     kept.append(found)
         except _Passing as stop:
             # Only a stop a guard of this registry's raised passes, its type taken by identity.
-            ours = any(stop is reads.raised for reads in readers)
-            passing = next((kind for kind in PASSED if ours and kind is stop.kind), None)
+            stopping = next((reads for reads in readers if stop is reads.raised), None)
+            passing = next(
+                (kind for kind in PASSED if stopping is not None and kind is stop.kind), None
+            )
+            stopped = "" if stopping is None else stopping.label
             if passing is None:
-                problems.append("registration was stopped by what is not a guard's")
+                # Unreachable but by introspection: named by the pack being read when it came.
+                problems.append(
+                    f"{reading}: registration was stopped by what is not a guard's"
+                    if reading
+                    else "registration was stopped by what is not a guard's"
+                )
         if passing is not None:
+            if passing is SystemExit and on_stop is not None:
+                on_stop(stopped)
             raise SystemExit(1) if passing is SystemExit else passing()
         by_id: dict[str, _Kept] = {}
-        owners: dict[tuple[str, str], str] = {}
+        owners: dict[tuple[str, str], _Kept] = {}
         declared = {code for one in kept if one.pack for code in one.pack.caveat_codes}
         for one in kept:
             pack = one.pack
             assert pack is not None
-            label = _shown(pack.id)
+            label = one.label
             problems.extend(
                 f"{label}: analysis {_shown(analysis.entry.id)} cites {_shown(code)}, which no "
                 "registered pack declares"
@@ -1366,18 +1425,22 @@ class PackRegistry:
                 for code in analysis.entry.fields.caveats
                 if "." in code and code.partition(".")[0] != pack.id and code not in declared
             )
-            if pack.id in by_id:
-                problems.append(f"pack {label} is registered twice")
-            by_id[pack.id] = one
+            first = by_id.setdefault(pack.id, one)
+            if first is not one:
+                problems.append(
+                    f"pack {label} is registered twice"
+                    if first.module is None or one.module is None
+                    else f"pack {_shown(pack.id)} is registered by the modules "
+                    f"{_shown(first.module)} and {_shown(one.module)}"
+                )
             claims = [("ontology system", system) for system in pack.ontology_systems]
             claims += [("concept", concept.id) for concept in pack.concepts]
             for claim in claims:
-                if claim in owners and owners[claim] != pack.id:
+                owner = owners.setdefault(claim, one)
+                if owner.pack is not None and owner.pack.id != pack.id:
                     problems.append(
-                        f"{claim[0]} {_shown(claim[1])} is registered by "
-                        f"{_shown(owners[claim])} and {label}"
+                        f"{claim[0]} {_shown(claim[1])} is registered by {owner.label} and {label}"
                     )
-                owners.setdefault(claim, pack.id)
         if problems:
             raise PackError(problems)
         ordered = dict(sorted(by_id.items()))
@@ -1595,4 +1658,5 @@ __all__ = [
     "Validator",
     "cell_digest",
     "plain_json",
+    "quoted",
 ]
