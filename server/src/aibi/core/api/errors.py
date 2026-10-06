@@ -28,13 +28,15 @@ pages' policy and ``Cache-Control: no-store`` (D311, D313), its links from the s
 path. Whether a request is at a page path, and that root, are what request protection recorded
 in its scope (``classify``, D414), never classified here again: a mount's scope holds the mount's
 path and root, so a refusal inside a mount at ``/m/datasets`` is JSON, as protection's own would
-be, and an unusable root path raises (D312). No response
-quotes the request: a parameter is named, not echoed, and ``refused`` and ``refused_page``, which
-every handler answers through, write each refusal with anything of a token's or a handle's shape
+be, and an unusable root path raises (D312). A refusal's response carries, beside the security
+headers, only those ``RESPONSE_HEADERS`` gives its status (``checked_headers`` refuses another),
+the table the OpenAPI document declares them from. No response quotes the request: a parameter is
+named, not echoed, and ``refused`` and ``refused_page``, which every handler answers through,
+write each refusal with anything of a token's or a handle's shape
 blanked (``blank_secrets``), whichever service raised it.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from fastapi import FastAPI, Request
@@ -111,6 +113,19 @@ _LIMITS: Mapping[str, int] = {
 }
 RETRY_IMPORT = 30
 """The ``Retry-After`` of an import refused while ``concurrent_imports`` run, in seconds."""
+RETRY_AFTER = "Retry-After"
+WWW_AUTHENTICATE = "WWW-Authenticate"
+ALLOW = "Allow"
+RESPONSE_HEADERS: Mapping[int, tuple[str, ...]] = {
+    401: (WWW_AUTHENTICATE,),
+    405: (ALLOW,),
+    429: (RETRY_AFTER,),
+    503: (RETRY_AFTER,),
+}
+"""The headers a refusal's response carries beside the security and transport ones, by status:
+the one table the server's answers are checked against (``checked_headers``) and the OpenAPI
+document declares (``api.openapi``). A status not listed carries none. Each is optional: a
+proposal's 429 has no ``Retry-After``, a 405 raised without ``Allow`` has none."""
 
 
 def status_of(refusal: Refusal) -> int:
@@ -119,6 +134,27 @@ def status_of(refusal: Refusal) -> int:
     if code == R.LIMIT_EXCEEDED:
         return 422 if refusal.limit is None else _LIMITS.get(refusal.limit.name, 422)
     return _STATUS.get(code, 422)
+
+
+def refusal_statuses() -> frozenset[int]:
+    """Every status a refusal is answered with: those of its codes and limits, 422 for the others
+    (``status_of``) and 401, which a request without the curator token gets (the OpenAPI document
+    declares each, ``api.openapi``). ``_Handlers.http`` passes another client error's status
+    through, which the document's ``default`` response covers."""
+    return frozenset({*_STATUS.values(), *_LIMITS.values(), 422, 401})
+
+
+def checked_headers(status: int, names: Iterable[str]) -> None:
+    """Refuse (``ValueError``) a response header ``status`` does not carry (``RESPONSE_HEADERS``):
+    a header the OpenAPI document would not declare is a bug here, not a fact it omits. The error
+    is a programmer's, never a client's, so it is not caught: from a handler it becomes the JSON
+    500 ``INTERNAL_ERROR`` (with the security headers), and from request protection the server's
+    own 500, by design (D416)."""
+    allowed = {name.lower() for name in RESPONSE_HEADERS.get(status, ())}
+    if undeclared := sorted({name.lower() for name in names} - allowed):
+        raise ValueError(
+            f"a {status} refusal carries headers the API does not declare: {undeclared}"
+        )
 
 
 def refused(
@@ -134,7 +170,8 @@ def refused(
     answer = status if status is not None else status_of(listed[0])
     extra = dict(headers or {})
     if answer == 503:
-        extra.setdefault("Retry-After", str(RETRY_IMPORT))
+        extra.setdefault(RETRY_AFTER, str(RETRY_IMPORT))
+    checked_headers(answer, extra)
     body = Refusals(refusals=listed).model_dump_json()
     return Response(body, status_code=answer, media_type="application/json", headers=extra)
 
@@ -150,9 +187,11 @@ def refused_page(
     every token or handle shape blanked, with the pages' headers (D313)."""
     listed = [blank_secrets(found) for found in refusals]
     answer = status if status is not None else status_of(listed[0])
-    extra = {**(headers or {}), **PAGE_HEADERS}
+    extra = dict(headers or {})
     if answer == 503:
-        extra.setdefault("Retry-After", str(RETRY_IMPORT))
+        extra.setdefault(RETRY_AFTER, str(RETRY_IMPORT))
+    checked_headers(answer, extra)
+    extra.update(PAGE_HEADERS)
     body = refusal_document(root, listed)
     return Response(body, status_code=answer, media_type="text/html", headers=extra)
 
@@ -230,13 +269,13 @@ class _Handlers:
                 "This path does not take this method",
                 alternatives=methods,
             )
-            return self.answer(request, [found], headers={"Allow": allowed} if allowed else None)
+            return self.answer(request, [found], headers={ALLOW: allowed} if allowed else None)
         if error.status_code == 401:
             found = refusal(
                 RefusalCode.TOKEN_REQUIRED,
                 "Operator requests carry the curator token: Authorization: Bearer <token>",
             )
-            return self.answer(request, [found], headers={"WWW-Authenticate": AUTHORIZATION})
+            return self.answer(request, [found], headers={WWW_AUTHENTICATE: AUTHORIZATION})
         if 400 <= error.status_code < 500:
             found = refusal(RefusalCode.INVALID_VALUE, "The request is not one this path takes")
             return self.answer(request, [found], status=error.status_code)
@@ -259,4 +298,17 @@ def install(app: FastAPI, *, pages: bool = False) -> None:
     app.add_exception_handler(Exception, handlers.unexpected)
 
 
-__all__ = ["RETRY_IMPORT", "install", "refusal", "refused", "refused_page", "status_of"]
+__all__ = [
+    "ALLOW",
+    "RESPONSE_HEADERS",
+    "RETRY_AFTER",
+    "RETRY_IMPORT",
+    "WWW_AUTHENTICATE",
+    "checked_headers",
+    "install",
+    "refusal",
+    "refusal_statuses",
+    "refused",
+    "refused_page",
+    "status_of",
+]

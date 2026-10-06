@@ -11,9 +11,11 @@ from starlette.types import Message, Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 
 from aibi.core.api.app import create_app
-from aibi.core.api.protection import Policy, RequestProtection
+from aibi.core.api.errors import refusal
+from aibi.core.api.protection import Policy, RequestProtection, _Refused, _Seen
 from aibi.core.api.serve import services_of
 from aibi.core.schema.pack_api import PackRegistry
+from aibi.core.schema.refusals import RefusalCode
 
 Built = Any
 MakeApp = Any
@@ -425,6 +427,34 @@ def test_every_response_carries_the_security_headers(make_app: MakeApp) -> None:
     )
 
 
+def test_a_refusal_with_a_header_outside_the_table_is_a_programmer_error_that_raises(
+    built: Built,
+) -> None:
+    """Protection's own answers are checked against the one table of the headers a status carries
+    (``errors.RESPONSE_HEADERS``, which the OpenAPI document declares): a header it does not give
+    the status fails loudly, before anything is sent (a 500 by design, ``errors.checked_headers``),
+    and the headers it does give pass."""
+    middleware = RequestProtection(_unused, policy=Policy.of(built.config))
+    seen = _Seen.of({"type": "http", "method": "GET", "path": "/api/health"}, pages=False)
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    def refuse(code: RefusalCode, status_header: tuple[bytes, bytes]) -> None:
+        found = _Refused(refusal(code, "m"), (status_header,))
+        anyio.run(middleware._refuse, seen, send, found)
+
+    with pytest.raises(ValueError, match="does not declare"):
+        refuse(RefusalCode.NOT_FOUND, (b"allow", b"GET"))
+    with pytest.raises(ValueError, match="does not declare"):
+        refuse(RefusalCode.TOKEN_REQUIRED, (b"retry-after", b"1"))
+    assert sent == []
+    refuse(RefusalCode.METHOD_NOT_ALLOWED, (b"allow", b"GET"))
+    assert [message["type"] for message in sent] == ["http.response.start", "http.response.body"]
+    assert sent[0]["status"] == 405
+
+
 def test_lifespan_passes_through_and_other_scopes_are_refused(built: Built) -> None:
     seen: list[str] = []
 
@@ -462,6 +492,10 @@ def test_an_attribution_smuggled_into_the_scope_is_dropped(built: Built, asgi: A
 
     assert asgi(smuggling, "/api/health").status == 204
     assert "aibi.operator" not in seen[0]
+
+
+async def _unused(scope: Scope, receive: Receive, send: Send) -> None:
+    raise AssertionError("never called")  # pragma: no cover
 
 
 async def _mounted(scope: Scope, receive: Receive, send: Send) -> None:

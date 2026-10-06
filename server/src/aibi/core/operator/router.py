@@ -174,6 +174,60 @@ class Services:
     """The named database connections of the configuration, by name (D253, D305)."""
 
 
+UPLOAD_OPERATION = "upload"
+"""The operation id of an upload, whose body is the file's bytes (``application/octet-stream``)."""
+
+
+@dataclass(frozen=True)
+class OperatorBody[M: BaseModel]:
+    """An operator route's JSON body, declared once: the model ``_body`` reads it as, the route's
+    name (its handler's), its operation id and its summary, which the route and the OpenAPI
+    document take from here (``api.openapi``)."""
+
+    model: type[M]
+    name: str
+    operation: str
+
+    @property
+    def summary(self) -> str:
+        """The route's summary in the OpenAPI document: its name as words, without the trailing
+        underscore a handler's name takes to avoid a keyword or a builtin."""
+        return self.name.strip("_").replace("_", " ").title()
+
+
+IMPORT_BODY = OperatorBody(ImportRequest, "import_", "import_dataset")
+REIMPORT_BODY = OperatorBody(ImportRequest, "reimport", "reimport")
+WITHDRAW_BODY = OperatorBody(WithdrawRequest, "withdraw", "withdraw")
+ERASE_BODY = OperatorBody(EraseRequest, "erase_", "erase_dataset")
+PROPOSERS_BODY = OperatorBody(Empty, "proposers", "proposers")
+REJECT_BODY = OperatorBody(Empty, "reject", "reject")
+REJECT_ALL_BODY = OperatorBody(RejectProposals, "reject_all", "reject_all")
+ISSUANCE_BODY = OperatorBody(IssuanceRequest, "issuance", "issuance")
+PRUNE_BODY = OperatorBody(PruneRequest, "prune", "prune")
+OPEN_BODY = OperatorBody(Empty, "open_", "open_session")
+CHANGE_BODY = OperatorBody(SessionChange, "change", "change")
+PUBLISH_BODY = OperatorBody(SessionEnd, "publish", "publish")
+DISCARD_BODY = OperatorBody(SessionEnd, "discard", "discard")
+TAKE_OVER_BODY = OperatorBody(TakeOver, "take_over", "take_over")
+OPERATOR_BODIES: tuple[OperatorBody[BaseModel], ...] = (
+    IMPORT_BODY,
+    REIMPORT_BODY,
+    WITHDRAW_BODY,
+    ERASE_BODY,
+    PROPOSERS_BODY,
+    REJECT_BODY,
+    REJECT_ALL_BODY,
+    ISSUANCE_BODY,
+    PRUNE_BODY,
+    OPEN_BODY,
+    CHANGE_BODY,
+    PUBLISH_BODY,
+    DISCARD_BODY,
+    TAKE_OVER_BODY,
+)
+"""Every operator route with a JSON body; a test reads ``_body``'s calls from this source."""
+
+
 def require_operator(request: Request) -> str:
     """The request's attribution, ``operator:<name>``, which request protection recorded; a
     request without one is refused as one without the curator token."""
@@ -201,9 +255,11 @@ def _loaded[M: BaseModel](source: bytes, model: type[M], digest: bytes | None) -
     return RequestResult(None, refused) if refused else loaded
 
 
-async def _body[M: BaseModel](services: Services, request: Request, model: type[M]) -> M | Response:
-    """The body, received within its deadlines (``bodies.Deadlines``) and read as ``model`` in a
-    worker thread, or the response that refuses it (422)."""
+async def _body[M: BaseModel](
+    services: Services, request: Request, expected: OperatorBody[M]
+) -> M | Response:
+    """The body, received within its deadlines (``bodies.Deadlines``) and read as the route's
+    model in a worker thread, or the response that refuses it (422)."""
     length = declared_length(request.headers.raw)
     deadlines = _deadlines(services, services.max_body_bytes if length is None else length)
     stream = request.stream()
@@ -211,7 +267,7 @@ async def _body[M: BaseModel](services: Services, request: Request, model: type[
         source = await deadlines.read(stream)
     finally:
         await stream.aclose()
-    loaded = await anyio.to_thread.run_sync(_loaded, source, model, services.token_digest)
+    loaded = await anyio.to_thread.run_sync(_loaded, source, expected.model, services.token_digest)
     if loaded.value is None:
         body = Refusals(refusals=loaded.refusals).model_dump_json()
         return Response(body, status_code=422, media_type="application/json")
@@ -343,27 +399,31 @@ def operator_router(services: Services) -> APIRouter:
 
     # --- Reads ---------------------------------------------------------------------------
 
-    @router.get("/csrf", response_model=Csrf)
+    @router.get("/csrf", response_model=Csrf, operation_id="csrf")
     def csrf(request: Request) -> Response:
         token = request.scope.get(CSRF_KEY)
         if not isinstance(token, str):
             raise HTTPException(status_code=401)
         return _json(Csrf(csrf=token))
 
-    @router.get("/datasets", response_model=Datasets)
+    @router.get("/datasets", response_model=Datasets, operation_id="datasets")
     def datasets() -> Response:
         return _json(Datasets(datasets=[_state(store, found) for found in store.datasets()]))
 
-    @router.get("/datasets/{dataset}", response_model=DatasetState)
+    @router.get("/datasets/{dataset}", response_model=DatasetState, operation_id="dataset_state")
     def dataset_state(dataset: DatasetParameter) -> Response:
         return _json(_state(store, dataset))
 
-    @router.get("/datasets/{dataset}/queue", response_model=CurationQueue)
+    @router.get("/datasets/{dataset}/queue", response_model=CurationQueue, operation_id="queue")
     def queue(dataset: DatasetParameter, release: LabelQuery = None) -> Response:
         _known(store, dataset)
         return _json(curation_queue(store, dataset, release=release))
 
-    @router.get("/datasets/{dataset}/descriptors/{descriptor}", response_model=DescriptorShown)
+    @router.get(
+        "/datasets/{dataset}/descriptors/{descriptor}",
+        response_model=DescriptorShown,
+        operation_id="descriptor",
+    )
     def descriptor(
         dataset: DatasetParameter, descriptor: DescriptorParameter, release: ReleaseQuery = None
     ) -> Response:
@@ -395,7 +455,9 @@ def operator_router(services: Services) -> APIRouter:
 
     # --- Uploads and imports -------------------------------------------------------------
 
-    @router.post("/datasets/{dataset}/uploads", response_model=Uploaded)
+    @router.post(
+        "/datasets/{dataset}/uploads", response_model=Uploaded, operation_id=UPLOAD_OPERATION
+    )
     async def upload(
         dataset: DatasetParameter, extension: ExtensionQuery, request: Request
     ) -> Response:
@@ -467,25 +529,41 @@ def operator_router(services: Services) -> APIRouter:
             )
         return _published(dataset, published)
 
-    @router.post("/datasets/{dataset}/import", response_model=ImportPublished)
+    @router.post(
+        "/datasets/{dataset}/import",
+        response_model=ImportPublished,
+        name=IMPORT_BODY.name,
+        operation_id=IMPORT_BODY.operation,
+        summary=IMPORT_BODY.summary,
+    )
     async def import_(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, ImportRequest)
+        body = await _body(services, request, IMPORT_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run(partial(importing, dataset, body, by, False)))
 
-    @router.post("/datasets/{dataset}/reimport", response_model=ImportPublished)
+    @router.post(
+        "/datasets/{dataset}/reimport",
+        response_model=ImportPublished,
+        name=REIMPORT_BODY.name,
+        operation_id=REIMPORT_BODY.operation,
+    )
     async def reimport(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, ImportRequest)
+        body = await _body(services, request, REIMPORT_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run(partial(importing, dataset, body, by, True)))
 
     # --- Withdrawal, erasure and proposers -----------------------------------------------
 
-    @router.post("/datasets/{dataset}/withdraw", response_model=Withdrawn)
+    @router.post(
+        "/datasets/{dataset}/withdraw",
+        response_model=Withdrawn,
+        name=WITHDRAW_BODY.name,
+        operation_id=WITHDRAW_BODY.operation,
+    )
     async def withdraw(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, WithdrawRequest)
+        body = await _body(services, request, WITHDRAW_BODY)
         if isinstance(body, Response):
             return body
         labels = await run_known(dataset, partial(store.withdraw, dataset, body.release, by))
@@ -511,9 +589,15 @@ def operator_router(services: Services) -> APIRouter:
             uploads_pending=erased.uploads_pending,
         )
 
-    @router.post("/datasets/{dataset}/erase", response_model=ErasedOut)
+    @router.post(
+        "/datasets/{dataset}/erase",
+        response_model=ErasedOut,
+        name=ERASE_BODY.name,
+        operation_id=ERASE_BODY.operation,
+        summary=ERASE_BODY.summary,
+    )
     async def erase_(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, EraseRequest)
+        body = await _body(services, request, ERASE_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run(partial(erasing, dataset, body, by)))
@@ -527,18 +611,28 @@ def operator_router(services: Services) -> APIRouter:
         assert ran is not None
         return ran
 
-    @router.post("/datasets/{dataset}/proposers", response_model=ProposersRan)
+    @router.post(
+        "/datasets/{dataset}/proposers",
+        response_model=ProposersRan,
+        name=PROPOSERS_BODY.name,
+        operation_id=PROPOSERS_BODY.operation,
+    )
     async def proposers(dataset: DatasetParameter, request: Request) -> Response:
-        body = await _body(services, request, Empty)
+        body = await _body(services, request, PROPOSERS_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run_known(dataset, partial(proposing, dataset)))
 
-    @router.post("/datasets/{dataset}/proposals/{proposal}/reject", response_model=Rejected)
+    @router.post(
+        "/datasets/{dataset}/proposals/{proposal}/reject",
+        response_model=Rejected,
+        name=REJECT_BODY.name,
+        operation_id=REJECT_BODY.operation,
+    )
     async def reject(
         dataset: DatasetParameter, proposal: ProposalParameter, request: Request, by: Operator
     ) -> Response:
-        body = await _body(services, request, Empty)
+        body = await _body(services, request, REJECT_BODY)
         if isinstance(body, Response):
             return body
         await run_known(dataset, partial(reject_proposal, store, dataset, proposal, by))
@@ -550,9 +644,14 @@ def operator_router(services: Services) -> APIRouter:
         )
         return ProposalsRejected(dataset=dataset, rejected=rejected, kept=kept)
 
-    @router.post("/datasets/{dataset}/proposals/reject", response_model=ProposalsRejected)
+    @router.post(
+        "/datasets/{dataset}/proposals/reject",
+        response_model=ProposalsRejected,
+        name=REJECT_ALL_BODY.name,
+        operation_id=REJECT_ALL_BODY.operation,
+    )
     async def reject_all(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, RejectProposals)
+        body = await _body(services, request, REJECT_ALL_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run_known(dataset, partial(rejecting, dataset, body, by)))
@@ -576,9 +675,14 @@ def operator_router(services: Services) -> APIRouter:
             at=found.at,
         )
 
-    @router.post("/log/issuance", response_model=LoggedIssuance)
+    @router.post(
+        "/log/issuance",
+        response_model=LoggedIssuance,
+        name=ISSUANCE_BODY.name,
+        operation_id=ISSUANCE_BODY.operation,
+    )
     async def issuance(request: Request) -> Response:
-        body = await _body(services, request, IssuanceRequest)
+        body = await _body(services, request, ISSUANCE_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run(partial(logged, body)))
@@ -605,26 +709,39 @@ def operator_router(services: Services) -> APIRouter:
         pruned = log.prune(cutoff, results_before=results)
         return Pruned(pruned=pruned, before=cutoff, results_before=results, log_bytes=log.usage())
 
-    @router.post("/log/prune", response_model=Pruned)
+    @router.post(
+        "/log/prune", response_model=Pruned, name=PRUNE_BODY.name, operation_id=PRUNE_BODY.operation
+    )
     async def prune(request: Request) -> Response:
-        body = await _body(services, request, PruneRequest)
+        body = await _body(services, request, PRUNE_BODY)
         if isinstance(body, Response):
             return body
         return _json(await run(partial(pruning, body)))
 
     # --- Sessions ------------------------------------------------------------------------
 
-    @router.post("/datasets/{dataset}/session/open", response_model=SessionOpened)
+    @router.post(
+        "/datasets/{dataset}/session/open",
+        response_model=SessionOpened,
+        name=OPEN_BODY.name,
+        operation_id=OPEN_BODY.operation,
+        summary=OPEN_BODY.summary,
+    )
     async def open_(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, Empty)
+        body = await _body(services, request, OPEN_BODY)
         if isinstance(body, Response):
             return body
         opened = await run_known(dataset, partial(sessions.open_session, store, dataset, by))
         return _json(_opened(dataset, opened))
 
-    @router.post("/datasets/{dataset}/session/change", response_model=DraftChanged)
+    @router.post(
+        "/datasets/{dataset}/session/change",
+        response_model=DraftChanged,
+        name=CHANGE_BODY.name,
+        operation_id=CHANGE_BODY.operation,
+    )
     async def change(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, SessionChange)
+        body = await _body(services, request, CHANGE_BODY)
         if isinstance(body, Response):
             return body
         changing = partial(
@@ -639,9 +756,14 @@ def operator_router(services: Services) -> APIRouter:
         )
         return _json(DraftChanged(dataset=dataset, draft=await run_known(dataset, changing)))
 
-    @router.post("/datasets/{dataset}/session/publish", response_model=SessionPublishedOut)
+    @router.post(
+        "/datasets/{dataset}/session/publish",
+        response_model=SessionPublishedOut,
+        name=PUBLISH_BODY.name,
+        operation_id=PUBLISH_BODY.operation,
+    )
     async def publish(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, SessionEnd)
+        body = await _body(services, request, PUBLISH_BODY)
         if isinstance(body, Response):
             return body
         publishing = partial(
@@ -659,18 +781,28 @@ def operator_router(services: Services) -> APIRouter:
         )
         return _json(out)
 
-    @router.post("/datasets/{dataset}/session/discard", response_model=SessionEnded)
+    @router.post(
+        "/datasets/{dataset}/session/discard",
+        response_model=SessionEnded,
+        name=DISCARD_BODY.name,
+        operation_id=DISCARD_BODY.operation,
+    )
     async def discard(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, SessionEnd)
+        body = await _body(services, request, DISCARD_BODY)
         if isinstance(body, Response):
             return body
         discarding = partial(sessions.discard, store, dataset, body.handle, body.expected, by)
         await run_known(dataset, discarding)
         return _json(SessionEnded(dataset=dataset, outcome="discarded"))
 
-    @router.post("/datasets/{dataset}/session/take-over", response_model=SessionOpened)
+    @router.post(
+        "/datasets/{dataset}/session/take-over",
+        response_model=SessionOpened,
+        name=TAKE_OVER_BODY.name,
+        operation_id=TAKE_OVER_BODY.operation,
+    )
     async def take_over(dataset: DatasetParameter, request: Request, by: Operator) -> Response:
-        body = await _body(services, request, TakeOver)
+        body = await _body(services, request, TAKE_OVER_BODY)
         if isinstance(body, Response):
             return body
         found = classified(request.scope)
@@ -695,4 +827,13 @@ def operator_router(services: Services) -> APIRouter:
     return router
 
 
-__all__ = ["DATASET_PATTERN", "Operator", "Services", "operator_router", "require_operator"]
+__all__ = [
+    "DATASET_PATTERN",
+    "OPERATOR_BODIES",
+    "UPLOAD_OPERATION",
+    "Operator",
+    "OperatorBody",
+    "Services",
+    "operator_router",
+    "require_operator",
+]

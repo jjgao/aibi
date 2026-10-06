@@ -66,6 +66,7 @@ def tools_router(calls: Calls) -> APIRouter:
             methods=["POST"],
             response_model=tool.output,
             name=tool.name,
+            operation_id=tool.name,
         )
     return router
 
