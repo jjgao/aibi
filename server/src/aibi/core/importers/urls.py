@@ -44,6 +44,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
+from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.output import Message, Segment, data, listed, plain_text, text
 
 ServerKind = Literal["postgres", "mysql"]
@@ -234,6 +235,8 @@ def _host(written: str) -> str:
 
 def _database(kind: ServerKind, written: str) -> str:
     database = _decoded(written, "database")
+    if not is_text(database):
+        raise UrlError("holds a URL whose database, decoded, is not Unicode text")
     if "/" in database:
         raise UrlError("holds a URL whose database, decoded, holds a /")
     if _CONTROL.search(database):

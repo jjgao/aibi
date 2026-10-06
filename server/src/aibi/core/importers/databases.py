@@ -33,7 +33,8 @@ columns are not the parent's declared primary key (as a relationship's must be, 
 child columns another declared foreign key of the table already has, in any order, is not kept,
 and a note says why. The relations that are not base tables are skipped and noted, at most
 ``import_tables`` of them, as the worker keeps them, each in a note of its own and the rest
-counted in one, their names escaped where they are not Unicode text (``errors.escaped``, D309).
+counted in one, each name a data token, which writes a lone surrogate or a noncharacter as its
+escape (``output.data``, D309, D398).
 Names over ``MAX_STRING`` characters and comments over ``MAX_TEXT`` are ``LIMIT_EXCEEDED``, and
 either one that is not Unicode text (a noncharacter, say) is ``UNPARSEABLE_SOURCE``, before
 anything is described; so is a comment that holds a control character but tab, line feed and
@@ -46,7 +47,7 @@ import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import LiteralString, cast
 
 from pydantic import TypeAdapter
 
@@ -54,7 +55,7 @@ import aibi
 from aibi.core.importers import urls
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.describe import DatasetOrigin, TableOrigin, by_importer, describe
-from aibi.core.importers.errors import ImportRefused, escaped, refused
+from aibi.core.importers.errors import ImportRefused, refused, text_name
 from aibi.core.importers.files import DECLARED, bounded, renamed
 from aibi.core.importers.infer import Datatype, ForeignKey, SourceTable, Status, infer
 from aibi.core.importers.snapshot import (
@@ -182,6 +183,20 @@ def _file(connection: Connection, confinement: Confinement) -> Resolved:
             data(confinement.location(path)),
         )
     location = confinement.location(path)
+    # SQLite and DuckDB open the file by a path given as text, so its real path must be Unicode
+    # text: its location below the import directory (a subdirectory or a file named in bytes
+    # that are not UTF-8), and the import directory's own real path. The configuration checks
+    # the same predicate (``is_text``) on its roots at start, so this refuses a root the
+    # configuration did not see: a library caller's, or one a link has changed since. The
+    # refusal names the location, never the absolute path (D310, D398).
+    text_name(location, "The source's location")
+    if not is_text(str(path)):
+        raise refused(
+            RefusalCode.UNPARSEABLE_SOURCE,
+            "The real path of the import directory that holds the connection's file is not "
+            "Unicode text: ",
+            data(location),
+        )
     if connection.kind == "duckdb":
         location = f"{location}/{connection.schema or 'main'}"
     target = Target(
@@ -204,14 +219,9 @@ def resolve(
     return _file(connection, confinement)
 
 
-def _named(name: str, what: str) -> None:
+def _named(name: str, what: LiteralString) -> None:
     bounded(name, what)
-    if not is_text(name):
-        raise refused(
-            RefusalCode.UNPARSEABLE_SOURCE,
-            f"{what} is not Unicode text (a lone surrogate or a noncharacter): ",
-            data(escaped(name)),
-        )
+    text_name(name, what)
 
 
 _CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
@@ -303,7 +313,7 @@ def _skipped(snapshot: Snapshot) -> list[ImportNote]:
         ImportNote(
             "skipped_source",
             None,
-            [text("Skipped "), data(escaped(skipped.name)), text(": "), *_reason(skipped.reason)],
+            [text("Skipped "), data(skipped.name), text(": "), *_reason(skipped.reason)],
         )
         for skipped in snapshot.skipped
     ]

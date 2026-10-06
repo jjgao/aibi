@@ -13,7 +13,7 @@ remain are listed and not remembered:
    found this way, and a new one is found without being named. Functions are known by their names,
    which over-approximates: two functions of one name are one wrapper.
 2. A *site* is an argument of a wrapper, at a parameter that reaches text, that is not a string
-   literal and not a segment (a call of ``data``, ``shown``, ``listed``, ``escaped``, or a function
+   literal and not a segment (a call of ``data``, ``shown``, ``listed``, or a function
    annotated to return a ``Segment`` or ``Message``): an f-string is a site for each of its holes,
    and a parameter a wrapper passes on is a site where it is called, not where it is passed. An
    exception that is raised with a message and caught where ``str(error)`` goes to a wrapper is a
@@ -54,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[1] / "src" / "aibi"
 """The package to read; ``--root DIRECTORY`` reads the ``aibi`` package at DIRECTORY instead (a
 checkout's ``src/aibi``)."""
 SEEDS = {"text", "TextSegment"}
-SEGMENTS = {"data", "shown", "listed", "escaped", "DataSegment"}
+SEGMENTS = {"data", "shown", "listed", "DataSegment"}
 """Calls whose result is a segment, or whose argument becomes one: what they hold is data."""
 CARRIERS = {"str", "repr", "format", "join", "plain_text", "strip", "lower", "upper", "title"}
 """Functions and methods whose result is made of their argument's characters."""

@@ -29,6 +29,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     Strict,
     StrictInt,
+    ValidationError,
     WithJsonSchema,
     field_validator,
     model_serializer,
@@ -293,28 +294,32 @@ def text(value: str) -> TextSegment:
 
 
 def data(value: str) -> DataSegment:
-    """A data token, cut to the maximum length and marked when cut."""
-    if len(value) > DATA_TOKEN_MAX:
-        return DataSegment(data=value[:DATA_TOKEN_MAX], truncated=True)
-    return DataSegment(data=value)
+    """A data token, cut to the maximum length and marked when cut. It is total over ``str``
+    (D398): a lone surrogate or a noncharacter, which no output may hold, is written as its
+    ``\\u``/``\\U`` escape, and a cut never ends inside an escape; on Unicode text it is the
+    plain token, unchanged. The escapes are for display only and never parsed back: a backslash
+    is not escaped, so the text ``a\\udcff`` and the lone surrogate show alike. Anything but a
+    ``str`` is a ``TypeError``: a type confusion stays loud, whatever the model would coerce."""
+    if not isinstance(value, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise TypeError(f"a data token is made of a str, not {type(value).__name__}")
+    try:
+        if len(value) > DATA_TOKEN_MAX:
+            return DataSegment(data=value[:DATA_TOKEN_MAX], truncated=True)
+        return DataSegment(data=value)
+    except ValidationError:
+        return _shown(value)
 
 
 def _escape(character: str) -> str:
+    """A code point as its escape: ``\\u`` and four hex digits, or ``\\U`` and eight."""
     code = ord(character)
     return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
 
 
-def escaped(name: str) -> str:
-    """``name`` with each lone surrogate and noncharacter written as its ``\\u`` escape, so that a
-    segment can hold a name a source gives that is not Unicode text (D309)."""
-    if is_text(name):
-        return name
-    return "".join(character if is_text(character) else _escape(character) for character in name)
-
-
-def shown(name: str) -> DataSegment:
-    """``data(escaped(name))``, cut only between escapes, never inside one: a name, a type string
-    or a time zone that a source gives, as a data token (A6, D397)."""
+def _shown(name: str) -> DataSegment:
+    """``name`` as a data token with each lone surrogate and noncharacter written as its escape,
+    cut only between escapes, never inside one: what ``data`` gives for a string that is not
+    Unicode text (A6, D397, D398)."""
     kept: list[str] = []
     size = 0
     for character in name:
@@ -325,6 +330,10 @@ def shown(name: str) -> DataSegment:
         size += len(piece)
     return DataSegment(data="".join(kept))
 
+
+shown = data
+"""``data``, by the name A1 gave it for a name, a type string or a time zone that a source gives
+(D397); the two are one function since ``data`` is total (D398)."""
 
 Message = tuple[Segment, ...]
 """What a carrier holds of a message on its way to a refusal or a note (a returned problem, an

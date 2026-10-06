@@ -1,13 +1,14 @@
 """Confining the files an import reads (SPEC §14, D232).
 
 Every file that any importer, core or pack, opens resolves inside the upload area or an import
-directory, after symlinks are followed. ``Confinement.confine`` refuses a URL (a scheme, or
-``://``), a path holding a NUL character, a glob (``*``, ``?`` or ``[`` in a path that does not
-exist as written, so a file named ``[draft] a.csv`` is a path), a relative path, a path that does
-not exist, anything that is neither a regular file nor a directory, and anything whose real path
-is outside every root. It records the device and inode of what it confined. A hard link is the
-file it links, wherever its other names are: it is accepted, as any file an operator put inside
-a root is (D232).
+directory, after symlinks are followed. ``Confinement.confine`` refuses, first, a path that cannot
+be a file's name (a lone surrogate outside U+DC80-DCFF, which no file system's bytes decode to,
+D398), then a path holding a NUL character, then a URL (a scheme, or ``://``), a glob (``*``, ``?``
+or ``[`` in a path that does not exist as written, so a file named ``[draft] a.csv`` is a path), a
+relative path, a path that does not exist, anything that is neither a regular file nor a directory,
+and anything whose real path is outside every root. It records the device and inode of what it
+confined. A hard link is the file it links, wherever its other names are: it is accepted, as any
+file an operator put inside a root is (D232).
 
 ``read`` opens the real path once, with ``O_NOFOLLOW``, checks through that descriptor that it
 is the regular file confined (the same device and inode) and reads it into memory under a limit,
@@ -69,6 +70,10 @@ class Confinement:
         """The real path of ``given``, if it is a file or directory inside a root; otherwise a
         ``PATH_NOT_CONFINED`` refusal (``ImportRefused``)."""
         written = os.fspath(given)
+        try:
+            os.fsencode(written)
+        except UnicodeError:
+            raise _not_confined("A path that cannot be a file's name: ", written) from None
         if "\0" in written:
             shown = written.replace("\0", "\\0")
             raise _not_confined("A path cannot hold a NUL character: ", shown)
@@ -84,7 +89,7 @@ class Confinement:
         try:
             real = Path(os.path.realpath(written, strict=True))
             status = os.stat(real, follow_symlinks=False)
-        except OSError:
+        except (OSError, ValueError):
             raise _not_confined("No such file or directory: ", written) from None
         if not (stat.S_ISREG(status.st_mode) or stat.S_ISDIR(status.st_mode)):
             raise _not_confined("Neither a regular file nor a directory: ", written)

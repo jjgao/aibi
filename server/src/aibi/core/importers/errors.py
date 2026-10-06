@@ -1,8 +1,10 @@
 """The refusal that stops an import (SPEC §8.6, §13.2)."""
 
 from collections.abc import Sequence
+from typing import LiteralString
 
-from aibi.core.schema.output import Segment, data, escaped, text
+from aibi.core.schema.jsonio import is_text
+from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 from aibi.core.store.sources import FIELD_CHARACTERS
 
@@ -58,6 +60,17 @@ def long_cell_refused(
     )
 
 
+def text_name(name: str, what: LiteralString) -> None:
+    """Refuse a name that is not Unicode text (a lone surrogate or a noncharacter), which no
+    descriptor can hold (D309, D398)."""
+    if not is_text(name):
+        raise refused(
+            RefusalCode.UNPARSEABLE_SOURCE,
+            f"{what} is not Unicode text (a lone surrogate or a noncharacter): ",
+            data(name),
+        )
+
+
 def out_of_memory(name: str, maximum: int) -> ImportRefused:
     """The server's own memory ran out (a ``MemoryError``) holding what the source reads to:
     ``LIMIT_EXCEEDED``, naming the limit that bounds it."""
@@ -80,4 +93,4 @@ def within(error: ImportRefused, name: str) -> ImportRefused:
     )
 
 
-__all__ = ["ImportRefused", "escaped", "long_cell_refused", "out_of_memory", "refused", "within"]
+__all__ = ["ImportRefused", "long_cell_refused", "out_of_memory", "refused", "text_name", "within"]

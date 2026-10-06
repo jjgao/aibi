@@ -553,14 +553,24 @@ def test_a_long_cell_is_named_by_its_row_in_the_table_after_the_first_batch(
 
 
 @pytest.mark.parametrize(
-    ("script", "code", "limit"),
+    ("script", "code", "limit", "written"),
     [
-        (f'CREATE TABLE "{"t" * (MAX_STRING + 1)}" (id INTEGER);', "LIMIT_EXCEEDED", "string"),
-        ('CREATE TABLE authors ("name\ufffe" TEXT);', "UNPARSEABLE_SOURCE", None),
+        (
+            f'CREATE TABLE "{"t" * (MAX_STRING + 1)}" (id INTEGER);',
+            "LIMIT_EXCEEDED",
+            "string",
+            f"A table's name has more than {MAX_STRING} characters",
+        ),
+        (
+            'CREATE TABLE authors ("name\ufffe" TEXT);',
+            "UNPARSEABLE_SOURCE",
+            None,
+            "A column's name is not Unicode text (a lone surrogate or a noncharacter): name\\ufffe",
+        ),
     ],
 )
 def test_a_name_over_a_strings_length_or_not_unicode_text_is_refused(
-    roots: Any, store: Store, connect: Any, script: str, code: str, limit: str | None
+    roots: Any, store: Store, connect: Any, script: str, code: str, limit: str | None, written: str
 ) -> None:
     source = connect("sqlite", sqlite_file(roots.inside, script))
     with pytest.raises(ImportRefused) as refused:
@@ -569,6 +579,13 @@ def test_a_name_over_a_strings_length_or_not_unicode_text_is_refused(
     assert refusal.code == code
     assert (refusal.limit.name if refusal.limit else None) == (
         None if limit is None else f"{limit}_characters"
+    )
+    assert (
+        "".join(
+            segment.text if isinstance(segment, TextSegment) else segment.data
+            for segment in refusal.message
+        )
+        == written
     )
 
 
@@ -4058,3 +4075,83 @@ def test_the_postgres_read_of_a_type_outside_pg_catalog_uses_its_output_function
     amount = _postgres_read(relation, "amount").sql(dialect="postgres")
     assert "cast(" in amount.lower()
     assert _postgres_read(relation, "plain").sql(dialect="postgres") == '"plain"'
+
+
+# --- A Postgres database in SQL_ASCII, which stores a name as the bytes it was given -------------
+
+_SQL_ASCII = {
+    "table": "CREATE TABLE public.%I (a int)",
+    "column": "CREATE TABLE public.u (%I int)",
+    "view": "CREATE VIEW public.%I AS SELECT 1",
+    "another schema": "CREATE SCHEMA %I",
+    "table comment": "COMMENT ON TABLE public.base IS %L",
+}
+"""A statement that makes one object whose name (or comment, ``%L``) the test gives as bytes."""
+
+
+@contextmanager
+def _sql_ascii_database(url: str) -> Iterator[str]:
+    """A database the server holds in ``SQL_ASCII``, dropped after the test; the test is skipped
+    when the test's user cannot make one."""
+    name = f"aibi_ascii_{secrets.token_hex(4)}"
+    try:
+        try:
+            _execute(
+                "postgres",
+                url,
+                [
+                    f"CREATE DATABASE {name} ENCODING 'SQL_ASCII' LC_COLLATE 'C' LC_CTYPE 'C' "
+                    "TEMPLATE template0"
+                ],
+                alone=True,
+            )
+        except subprocess.CalledProcessError:
+            pytest.skip("the test's user cannot make a database in SQL_ASCII")
+        yield _rewritten("postgres", url, database=name)
+    finally:
+        with suppress(subprocess.CalledProcessError):
+            _execute("postgres", url, [f"DROP DATABASE IF EXISTS {name}"], alone=True)
+
+
+def _named_by_byte(statement: str) -> str:
+    """A ``DO`` block that runs ``statement`` with ``%I`` (or ``%L``) the text ``x`` and the byte
+    0xFF: ASCII on the wire, so that no client encoding is involved."""
+    return f"DO $$ BEGIN EXECUTE format('{statement}', 'x' || chr(255)); END $$"
+
+
+@pytest.mark.databases
+@pytest.mark.parametrize("what", list(_SQL_ASCII))
+def test_a_postgres_database_in_sql_ascii_with_a_name_in_bytes_that_are_not_utf8_cannot_be_read(
+    roots: Any, connect: Any, what: str
+) -> None:
+    """D398's residual, pinned: the server converts every name to the session's UTF-8 as it sends
+    it, and refuses a byte it cannot convert, before the name reaches aibi, so the whole database
+    is unreadable whichever object holds the name, a view and another schema's name included,
+    where the SQLite twin notes a view. If a server or a reader ever lets such a name through,
+    this fails, and D398's table of what each kind can carry is to be revised."""
+    url = _server_url("AIBI_TEST_POSTGRES_URL")
+    with _sql_ascii_database(url) as database:
+        _execute(
+            "postgres",
+            database,
+            ["CREATE TABLE public.base (c int)", _named_by_byte(_SQL_ASCII[what])],
+        )
+        source = connect("postgres", url_env="U", environ={"U": database})
+        with pytest.raises(ImportRefused) as refused:
+            DatabaseImporter().import_database(source, roots.options("library"))
+    refusal = refusal_of(refused)
+    assert refusal.code == RefusalCode.UNPARSEABLE_SOURCE
+    assert plain_text(refusal.message) == "The database cannot be read (IOException)"
+
+
+@pytest.mark.databases
+def test_a_postgres_database_in_sql_ascii_with_names_that_are_text_is_read(
+    roots: Any, connect: Any
+) -> None:
+    """The control of the test above: the refusal is the name's, not SQL_ASCII's."""
+    url = _server_url("AIBI_TEST_POSTGRES_URL")
+    with _sql_ascii_database(url) as database:
+        _execute("postgres", database, ["CREATE TABLE public.base (c int)"])
+        source = connect("postgres", url_env="U", environ={"U": database})
+        found = DatabaseImporter().import_database(source, roots.options("library"))
+    assert sorted(found.layouts) == ["base"]

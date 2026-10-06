@@ -23,6 +23,8 @@ import stat
 import zipfile
 from collections.abc import Callable
 
+from pydantic import ValidationError
+
 from aibi.core.importers.errors import ImportRefused, refused
 from aibi.core.schema.limits import (
     ARCHIVE_BYTES,
@@ -75,6 +77,8 @@ def _walk(
     archive."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data_))
+    except ValidationError:
+        raise
     except Exception:
         raise refused(unreadable, "Not a zip archive that can be read") from None
     with archive:
@@ -103,7 +107,7 @@ def _walk(
                         _limit(limits, info, size, total, len(data_))
                         if chunks is not None:
                             chunks.append(chunk)
-            except ImportRefused:
+            except (ImportRefused, ValidationError):
                 raise
             except Exception:
                 raise _archive_refused(

@@ -109,11 +109,13 @@ core/importers/databases.py	_skipped	text	rest	the server's own sentence (a lite
 core/importers/detect.py	detect	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
 core/importers/errors.py	long_cell_refused	refused	*named	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/errors.py	long_cell_refused	refused	row	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/errors.py	text_name	refused	what	a ``LiteralString`` parameter: the server's own words, which pyright holds to a literal at every caller (D398)
 core/importers/files.py	_Reading.files	_refused_kind	(*READ, 'zip')	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/files.py	_Reading.files	_skipped	cast(str, self._skip(member))	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/files.py	_Reading.files	_skipped	why	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/files.py	_Reading.read	_skipped	_why_skipped(sheet)	a sentence of the closed set ``sheets.SKIPPED``, checked in the parent (a child's fault otherwise)
 core/importers/files.py	_refused_kind	refused	[f'.{known}' for known in kinds]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/files.py	bounded	refused	what	a ``LiteralString`` parameter: the server's own words, which pyright holds to a literal at every caller (D398)
 core/importers/files.py	read_parquet	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
 core/importers/files.py	read_parquet	refused	list(parquet.SUPPORTED_TYPES)	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/infer.py	infer	text	'its' if len(few) == 1 else 'their'	a number (a length)
