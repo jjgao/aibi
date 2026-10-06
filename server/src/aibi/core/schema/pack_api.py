@@ -34,6 +34,7 @@ from pydantic import (
 )
 
 from aibi.core.schema.caveats import CORE_SEVERITIES, CaveatCode, Severity
+from aibi.core.schema.concepts import CORE_SORTS, ids_by_sort
 from aibi.core.schema.descriptors import (
     RELEASE_KINDS,
     AnalysisDescriptor,
@@ -1450,6 +1451,15 @@ class PackRegistry:
         self._hooks: Mapping[str, _Hooks] = MappingProxyType(
             {pack_id: one.hooks for pack_id, one in ordered.items()}
         )
+        sorts = {
+            concept.id: concept.fields.sort
+            for pack in self._packs.values()
+            for concept in pack.concepts
+        }
+        self._concept_sorts: Mapping[str, str] = MappingProxyType(sorts)
+        """Each registered pack's concept id -> its sort, from the core's copies (D402, D405)."""
+        self._concept_ids = ids_by_sort({**CORE_SORTS, **sorts})
+        """The concept ids of each sort, the core's and every pack's, sorted (D405)."""
         self._systems = {
             system: hook for one in ordered.values() for system, hook in one.hooks.systems.items()
         }
@@ -1510,6 +1520,17 @@ class PackRegistry:
             ),
             key=lambda concept: concept.id,
         )
+
+    def concept_sorts(self) -> Mapping[str, str]:
+        """Each registered pack's concept id -> its sort: one read-only mapping, built at
+        registration from the core's copies of the concepts, so that a descriptor write's
+        check reads no concept and copies none (D405)."""
+        return self._concept_sorts
+
+    def concept_ids(self, sort: str) -> tuple[str, ...]:
+        """The ids of the concepts of ``sort``, the core's and every registered pack's, sorted:
+        one tuple per sort, built at registration (D405); none for a sort no concept has."""
+        return self._concept_ids.get(sort, ())
 
     def ontology_validator(self, system: str) -> "Hook[OntologyValidator] | None":
         """The handle on the validator of an ontology system, if a pack registered it."""

@@ -20,8 +20,10 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   and `digests.py`, which hashes and digests.
 - `core/store/`: blobs, raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure,
   the validation gate, the release lifecycle (operation slots, curation sessions with handles, the
-  proposal and curation queues), catalogue statistics (`statistics.py`), the derivation log
-  (`derivations.py`, read by `Store.explain`) and the result cache (`cache.py`, `Store.results`).
+  proposal and curation queues), the checks of every descriptor write against the installed packs
+  (`writes.py`: extensions, ontology codes, concepts), catalogue statistics (`statistics.py`), the
+  derivation log (`derivations.py`, read by `Store.explain`) and the result cache (`cache.py`,
+  `Store.results`).
 - `core/importers/`: confinement, archives and the upload area, CSV/TSV, workbooks, Parquet and
   database snapshots (read in a worker process that can be killed), `import_dataset` and
   `reimport_dataset`, `checks.py`, which takes a pack importer's result apart before any validator,

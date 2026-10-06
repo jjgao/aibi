@@ -20,12 +20,18 @@ dataset whose ``packs`` is, say. A rule is checked as far as the release allows:
 an unknown relationship still has its tables checked. Paths point into the list of
 descriptors. The structural checks of the validation gate, which need the
 data, come with the importers.
+
+A concept outside ``core:`` is checked on descriptor writes only (``pack_concepts``, which
+``store.writes.check_writes`` runs, D405), by the same traversal: never here, since
+carry-forward reads a refusal here as something gone and deletes what names it. A refusal of a
+concept lists the nearest ids of the sort its place needs. Every refusal is recorded and built
+only if it is returned (``finish_lazy``), as ``finish_refusals`` would return it.
 """
 
 from collections import defaultdict
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Callable, Container, Hashable, Mapping, Sequence
 
-from aibi.core.schema.concepts import CORE_CONCEPTS
+from aibi.core.schema.concepts import CORE_SORTS, core_ids
 from aibi.core.schema.descriptors import (
     RELEASE_KINDS,
     ColumnDescriptor,
@@ -44,8 +50,9 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.document import ClauseModel, CoveredLeaf, ExistsLeaf, ValueLeaf, walk
 from aibi.core.schema.jsonio import pointer
-from aibi.core.schema.output import Segment, data, listed, text
-from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
+from aibi.core.schema.output import data, text
+from aibi.core.schema.params import nearest
+from aibi.core.schema.refusals import Record, Refusal, RefusalCode, finish_lazy, said
 
 Path = list[str | int]
 
@@ -61,16 +68,84 @@ def check_release(descriptors: Sequence[Descriptor]) -> list[Refusal]:
     checker.cycles()
     checker.packs()
     checker.absent()
-    return finish_refusals(checker.refusals)
+    return finish_lazy(checker.records)
 
 
-_CORE_SORTS = {concept.id: concept.fields.sort for concept in CORE_CONCEPTS}
+def pack_concepts(
+    descriptors: Sequence[Descriptor],
+    sorts: Mapping[str, str],
+    ids: Callable[[str], Sequence[str]],
+    *,
+    only: Container[str] | None = None,
+) -> list[Record]:
+    """The refusals, as records for ``finish_lazy``, of the concepts the descriptors whose ids
+    are in ``only`` (or every descriptor) name outside ``core:``, which ``check_release``
+    leaves alone (D405): each must be in ``sorts`` (concept id -> sort, the installed packs'),
+    ``UNKNOWN_DESCRIPTOR`` if not, and of the sort the place needs, ``INVALID_VALUE`` if not;
+    each refusal lists the nearest of ``ids(sort)``, the ids of the sort the place needs. Paths
+    point into ``descriptors``, as ``check_release``'s do; ``core:`` concepts and every other
+    rule are left to ``check_release``."""
+    checker = _Checker(descriptors, sorts=sorts, ids=ids)
+    for index, descriptor in enumerate(descriptors):
+        if only is None or descriptor.id in only:
+            checker.references(index, descriptor)
+    return checker.records
+
+
+def _not_of_a_release(code: str, at: str | None, kind: str) -> Refusal:
+    return Refusal(
+        code=code,
+        path=at,
+        message=[text(f"A release holds no {kind} descriptors")],
+        alternatives=[text(known) for known in RELEASE_KINDS],
+    )
+
+
+def _concept_refused(
+    code: str,
+    at: str | None,
+    given: str,
+    sort: str,
+    found: str | None,
+    known: Sequence[str],
+    packs: bool,
+) -> Refusal:
+    """The refusal of concept ``given`` where one of ``sort`` is named, ``found`` its sort if it
+    has one, listing the nearest of ``known``, the ids of ``sort``: the core's alone for a
+    ``core:`` concept (``packs`` false), the core's and the installed packs' otherwise (D405)."""
+    if found is not None:
+        message = [text(f"Expected a concept of sort {sort}, not {found}: "), data(given)]
+    elif packs:
+        message = [text("No installed pack registers the concept "), data(given)]
+    else:
+        message = [text("The core has no concept "), data(given)]
+    listed = nearest(given, known)
+    if not known:
+        none = f"; the core has no concept of sort {sort}"
+        message.append(text(none + ", and no installed pack registers one" if packs else none))
+    elif len(listed) < len(known):
+        has = "the core and the installed packs have" if packs else "the core has"
+        nearest_ = f"and the {len(listed)} nearest are listed"
+        message.append(text(f"; {has} {len(known)} concepts of sort {sort}, {nearest_}"))
+    return Refusal(code=code, path=at, message=message, alternatives=[data(id_) for id_ in listed])
 
 
 class _Checker:
-    def __init__(self, descriptors: Sequence[Descriptor]) -> None:
+    def __init__(
+        self,
+        descriptors: Sequence[Descriptor],
+        *,
+        sorts: Mapping[str, str] | None = None,
+        ids: Callable[[str], Sequence[str]] = core_ids,
+    ) -> None:
+        """``sorts`` (the installed packs' concept id -> sort) makes this the concept pass of
+        ``pack_concepts``: ``concept`` checks the concepts outside ``core:`` against it, and
+        nothing else is recorded; ``ids`` gives the concept ids a refusal of a concept lists."""
         self.descriptors = descriptors
-        self.refusals: list[Refusal] = []
+        self.sorts = sorts
+        self.listing = ids
+        self.records: list[Record] = []
+        """What is refused, built only if it is returned (``finish_lazy``)."""
         self.tables: dict[str, TableDescriptor] = {}
         self.columns: dict[str, dict[str, int]] = defaultdict(dict)
         """Column ids of each table, with the index of their descriptor."""
@@ -86,15 +161,18 @@ class _Checker:
 
     def refuse(self, code: RefusalCode, path: Path, message: str, *names: str) -> None:
         """A refusal whose message is ``message`` followed by ``names`` as data, joined by and."""
-        segments: list[Segment] = [text(message)]
+        parts = [message]
         for position, name in enumerate(names):
             if position:
-                segments.append(text(" and "))
-            segments.append(data(name))
-        self.say(code, path, *segments)
+                parts.append(" and ")
+            parts.append(name)
+        self.say(code, path, *parts)
 
-    def say(self, code: RefusalCode, path: Path, *message: Segment) -> None:
-        self.refusals.append(Refusal(code=code, path=pointer(path), message=list(message)))
+    def say(self, code: RefusalCode, path: Path, *parts: str) -> None:
+        """A refusal whose message is ``parts``, text and data in turn, from text; recorded, not
+        built. The concept pass records only what ``concept`` finds."""
+        if self.sorts is None:
+            self.records.append((pointer(path), code, said, parts))
 
     def table(self, path: Path, name: str) -> bool:
         """Whether the release has table ``name``; refused at ``path`` if not."""
@@ -131,10 +209,10 @@ class _Checker:
             self.say(
                 RefusalCode.INVALID_VALUE,
                 path,
-                text(f"{what} the key of "),
-                data(table),
-                text(", in any order: "),
-                *listed(key),
+                f"{what} the key of ",
+                table,
+                ", in any order: ",
+                *[part for name in key for part in (", ", name)][1:],
             )
 
     def time_offset(self, path: Path, column: ColumnDescriptor | None, what: str) -> None:
@@ -144,16 +222,19 @@ class _Checker:
             )
 
     def concept(self, path: Path, mapping: ConceptMapping | str | None, sort: str) -> None:
-        """A ``core:`` concept named here is a core concept of ``sort`` (§5.7)."""
+        """A ``core:`` concept named here is a core concept of ``sort`` (§5.7); in the concept
+        pass, a concept outside ``core:`` is an installed pack's of ``sort`` (D405), and a
+        ``core:`` one is left to ``check_release``. A refusal lists the nearest concept ids of
+        ``sort``."""
         concept = mapping.concept if isinstance(mapping, ConceptMapping) else mapping
-        if concept is None or not concept.startswith("core:"):
+        if concept is None or concept.startswith("core:") != (self.sorts is None):
             return
-        found = _CORE_SORTS.get(concept)
-        if found is None:
-            self.refuse(RefusalCode.UNKNOWN_DESCRIPTOR, path, "The core has no concept ", concept)
-        elif found != sort:
-            message = f"Expected a concept of sort {sort}, not {found}: "
-            self.refuse(RefusalCode.INVALID_VALUE, path, message, concept)
+        found = (CORE_SORTS if self.sorts is None else self.sorts).get(concept)
+        if found == sort:
+            return
+        code = RefusalCode.UNKNOWN_DESCRIPTOR if found is None else RefusalCode.INVALID_VALUE
+        arguments = (concept, sort, found, self.listing(sort), self.sorts is not None)
+        self.records.append((pointer(path), code, _concept_refused, arguments))
 
     # --- The rules -----------------------------------------------------------------------------
 
@@ -161,14 +242,9 @@ class _Checker:
         first: dict[str, int] = {}
         for index, descriptor in enumerate(self.descriptors):
             if descriptor.kind not in RELEASE_KINDS:
-                self.refusals.append(
-                    Refusal(
-                        code=RefusalCode.INVALID_VALUE,
-                        path=f"/{index}/kind",
-                        message=[text(f"A release holds no {descriptor.kind} descriptors")],
-                        alternatives=[text(kind) for kind in RELEASE_KINDS],
-                    )
-                )
+                at = pointer([index, "kind"])
+                code = RefusalCode.INVALID_VALUE
+                self.records.append((at, code, _not_of_a_release, (descriptor.kind,)))
             if descriptor.id in first:
                 self.refuse(
                     RefusalCode.DUPLICATE_ENTRY,
@@ -790,4 +866,4 @@ def on_cycles[Node: Hashable](graph: Mapping[Node, Sequence[Node]]) -> set[Node]
     return found
 
 
-__all__ = ["check_release", "on_cycles"]
+__all__ = ["check_release", "on_cycles", "pack_concepts"]

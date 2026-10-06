@@ -774,7 +774,8 @@ worker.Workers(QueryLimits(query_seconds=60)).run([], [worker.Query({SLOW!r}, {{
 def _gone(pid: int) -> bool:
     try:
         status = Path(f"/proc/{pid}/status").read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # a process that exits while its status is being read answers ESRCH
         return True
     return "\nState:\tZ" in status
 
