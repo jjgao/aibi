@@ -377,6 +377,21 @@ def scan(source: str, file: str) -> list[Handler]:
 
 
 ALLOWED: dict[tuple[str, str, int], str] = {
+    ("importers/checks.py", "run_importer", 0): (
+        "contains whatever a pack's importer raised, a ValidationError of its own among it: the "
+        "result is the pack's failure (PACK_FAILED, a fault), never a refusal about the file"
+    ),
+    ("importers/checks.py", "run_importer", 1): (
+        "building the refusal is guarded too: the constant PACK_FAILED stands, which names no data"
+    ),
+    ("importers/checks.py", "_pack_refused", 0): (
+        "reading a pack's Refused back as refusals: whatever fails is the pack's failure "
+        "(PACK_FAILED), and the refusals it gave are not shown"
+    ),
+    ("importers/checks.py", "_descriptors", 0): (
+        "reading the descriptors a pack returned back: whatever fails is the pack's failure "
+        "(PACK_FAILED), naming nothing it gave"
+    ),
     ("importers/confine.py", "Confinement._resolved", 0): (
         "realpath and stat raise OSError, and ValueError only for a path the pre-check let "
         "through; nothing here builds an output"

@@ -69,6 +69,13 @@ LAX = Strict(False)
 JSON-compatible data validates again; every other member stays strict."""
 
 
+def _is(value: object, kind: type) -> bool:
+    """Whether ``value``'s type is ``kind`` or a subclass of it, read from the type's method
+    resolution order: ``isinstance`` would read the value's ``__class__`` and call a metaclass's
+    ``__instancecheck__``, both of which a value's own code may define (D400)."""
+    return type.__subclasscheck__(kind, type(value))
+
+
 class OutputError(ValueError):
     """An output holds a value that JSON text cannot carry unchanged (SPEC §8.2)."""
 
@@ -78,12 +85,12 @@ def _enum_data(member: Enum) -> object:
     ``float`` mixin, which must be its value. A member of a plain ``Enum`` is refused: Pydantic
     writes it by value in one place and as itself in another, and two keys can become one."""
     written: object
-    if isinstance(member, str):
-        written = str.__str__(member)
-    elif isinstance(member, int):
-        written = int.__index__(member)
-    elif isinstance(member, float):
-        written = float.__float__(member)
+    if _is(member, str):
+        written = str.__str__(cast(str, member))
+    elif _is(member, int):
+        written = int.__index__(cast(int, member))
+    elif _is(member, float):
+        written = float.__float__(cast(float, member))
     else:
         raise OutputError("Outputs hold only JSON values (SPEC §8.2)")
     value = cast(object, member.value)
@@ -113,8 +120,8 @@ def _check_scalar(value: object) -> None:
     elif kind is int:
         if abs(cast(int, value)) > MAX_SAFE_INTEGER:
             raise OutputError("Outputs hold no numbers beyond ±(2^53 - 1) (SPEC §8.2)")
-    elif isinstance(value, Enum):
-        _check_scalar(_enum_data(value))
+    elif _is(value, Enum):
+        _check_scalar(_enum_data(cast(Enum, value)))
     elif value is not None and kind is not bool:
         raise OutputError("Outputs hold only JSON values (SPEC §8.2)")
 
@@ -124,7 +131,7 @@ def _check_keys(members: dict[object, object]) -> None:
     are written as the same text."""
     written_keys: set[str] = set()
     for key in members:
-        written = _enum_data(key) if isinstance(key, Enum) else key
+        written = _enum_data(cast(Enum, key)) if _is(key, Enum) else key
         if type(written) is not str or not is_text(written):
             raise OutputError("Outputs have Unicode text keys only (SPEC §8.2)")
         if written in written_keys:
@@ -132,7 +139,7 @@ def _check_keys(members: dict[object, object]) -> None:
         written_keys.add(written)
 
 
-_SCALARS = frozenset({str, int, float, bool, type(None)})
+_SCALARS: tuple[type, ...] = (str, int, float, bool, type(None))
 """The types of scalars that need no look at their members."""
 
 
@@ -141,9 +148,10 @@ def _members(value: object) -> Iterable[object] | None:
     Python's own types; ``None`` for a scalar. Another model, or a subclass of a container, could
     dump otherwise than its members say, so it is refused."""
     kind = type(value)
-    if isinstance(value, Output):
-        return [*value.__dict__.values(), *(value.__pydantic_extra__ or {}).values()]
-    if isinstance(value, BaseModel):
+    if _is(value, Output):
+        output = cast(Output, value)
+        return [*output.__dict__.values(), *(output.__pydantic_extra__ or {}).values()]
+    if _is(value, BaseModel):
         raise OutputError("Outputs hold only outputs and JSON values (SPEC §8.2)")
     if kind is dict:
         members = cast(dict[object, object], value)
@@ -151,7 +159,7 @@ def _members(value: object) -> Iterable[object] | None:
         return members.values()
     if kind is list or kind is tuple:
         return cast(list[object] | tuple[object, ...], value)
-    if isinstance(value, dict | list | tuple):
+    if _is(value, dict) or _is(value, list) or _is(value, tuple):
         raise OutputError("Outputs hold only JSON values (SPEC §8.2)")
     return None
 
@@ -178,7 +186,8 @@ def check_values(value: object) -> None:
             on_path.discard(id(container))
             done.add(id(container))
             continue
-        if type(item) in _SCALARS:
+        kind = type(item)
+        if any(kind is scalar for scalar in _SCALARS):
             _check_scalar(item)
             continue
         # A container is looked at once, wherever else it is held: done and on_path hold the
@@ -396,7 +405,7 @@ REPORT_CLASSIFICATION = 1
 classification is read with each note's fixed text. Raised only when that changes (M4.0f-A2b's
 conversions), never for a change of wording."""
 
-CACHE_WORDING = 1
+CACHE_WORDING = 2
 """The server's wording: a cached result written under another wording is not read back, and
 the call computes it again (D374, D399). Raised with any change to a ``text()`` template (a test
 holds their digest) and with every change of ``REPORT_CLASSIFICATION``."""

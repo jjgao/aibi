@@ -216,26 +216,27 @@ class PackView:
         return cls(release.dataset, release.manifest, packs, DescriptorCopies(release.by_id))
 
 
-_BUILT_IN: Mapping[type, str] = MappingProxyType(
-    {
-        found: name
-        for name, found in vars(builtins).items()
-        if isinstance(found, type) and issubclass(found, BaseException)
-    }
+_BUILT_IN: tuple[tuple[type, str], ...] = tuple(
+    (found, name)
+    for name, found in vars(builtins).items()
+    if isinstance(found, type) and issubclass(found, BaseException)
 )
-"""Each built-in exception type by its name in ``builtins``: the one name a log may give a
-pack's exception, since a pack names its own types, and sets ``__module__``, as it likes."""
+"""Each built-in exception type with its name in ``builtins``: the one name a log may give a
+pack's exception, since a pack names its own types, and sets ``__module__``, as it likes. It is
+looked up by identity, which runs no code of the pack's: a dict would hash the pack's type, and
+its metaclass may make that raise, or say something else (D400)."""
 
 
 def pack_failed(pack: str, stage: str, error: BaseException) -> None:
     """Log that a pack's code raised: the pack and the exception's type only, since its message
     may quote the leaf or the release (D285), and the type's name only for a built-in exception,
     since a pack names its own types as it likes (D343)."""
+    kind = type(error)
     _logger.warning(
         "pack %s: its %s raised %s",
         pack,
         stage,
-        _BUILT_IN.get(type(error), "an exception of its own"),
+        next((name for found, name in _BUILT_IN if found is kind), "an exception of its own"),
     )
 
 
@@ -2530,10 +2531,10 @@ class _Resolver:
             found: tuple[Segment, ...] | None = None
             try:
                 given = cast(object, leaf_kind.summary(PackLeaf.model_validate_json(key)))
-                if isinstance(given, list | tuple):
+                if type(given) is list or type(given) is tuple:
                     items = tuple(cast(Sequence[object], given))
                     if len(items) <= MAX_SUMMARY_SEGMENTS and all(
-                        type(item) in (TextSegment, DataSegment) for item in items
+                        type(item) is TextSegment or type(item) is DataSegment for item in items
                     ):
                         found = _segments(cast(tuple[Segment, ...], items))
             except MemoryError:
