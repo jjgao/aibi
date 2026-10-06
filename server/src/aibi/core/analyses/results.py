@@ -50,7 +50,7 @@ from aibi.core.schema.caveats import CORE_SEVERITIES, Caveat, CaveatCode, sort_c
 from aibi.core.schema.digests import RESULT_MEMBERS, hashed, output_digest
 from aibi.core.schema.ids import DerivationId, Sha256
 from aibi.core.schema.numbers import NotEstimableReason
-from aibi.core.schema.output import Data, Output, text
+from aibi.core.schema.output import CACHE_WORDING, Boundary, Data, Output, admitted_at, text
 from aibi.core.schema.results import (
     Analysed,
     AnalysisRef,
@@ -132,6 +132,9 @@ class _Written(Output):
     analysed: list[Analysed]
     values: dict[str, JsonValue]
     caveats: list[Caveat]
+    text_format: int = 0
+    """The server's wording the content was written under (``CACHE_WORDING``); content written
+    before D399 has none, and reads as 0."""
 
 
 class _Content(_Written):
@@ -140,6 +143,12 @@ class _Content(_Written):
     sees a change below its resolution (D374)."""
 
     hashed: Sha256
+
+
+class OtherWording(ValueError):  # noqa: N818 - a quiet miss, not a fault
+    """Digested content written under another wording than the server's (``CACHE_WORDING``),
+    content written before D399 included: a miss the call fills again, which is not a fault
+    (D374, D399)."""
 
 
 def _hash_of(written: _Written) -> str:
@@ -215,8 +224,19 @@ class Digested:
             analysed=list(self.analysed),
             values=cast(dict[str, JsonValue], self.values.model_dump(mode="json")),
             caveats=list(self.caveats),
+            text_format=CACHE_WORDING,
         )
-        content = _Content(**dict(written), hashed=_hash_of(written))
+        content = _Content(
+            result=written.result,
+            digest=written.digest,
+            cohorts=written.cohorts,
+            population=written.population,
+            analysed=written.analysed,
+            values=written.values,
+            caveats=written.caveats,
+            text_format=written.text_format,
+            hashed=_hash_of(written),
+        )
         return content.model_dump_json().encode()
 
     @classmethod
@@ -226,8 +246,13 @@ class Digested:
         its cohorts as the view does and gives, taken again, the digest it was written with;
         its values are checked by the analysis's values model, which gives the typed values
         its charts read. A pack's analysis has no values model of the core's, so its content
-        is not read (and a pack's result is never given from the cache, M3.5c)."""
-        found = _Content.model_validate_json(content)
+        is not read (and a pack's result is never given from the cache, M3.5c). Content written
+        under another wording than the server's is refused as ``OtherWording``, before
+        anything else is looked at (D399). Its segments are server text again here, the
+        ``RESULT_CACHE`` boundary: the server wrote them, from validated outputs."""
+        found = _Content.model_validate_json(content, context=admitted_at(Boundary.RESULT_CACHE))
+        if found.text_format != CACHE_WORDING:
+            raise OtherWording("Digested content of another wording is not read back (D399)")
         if _hash_of(found) != found.hashed:
             raise ValueError("Digested content is read back only as it was written (D374)")
         core = CORE.get(view.analysis.id)
@@ -235,7 +260,8 @@ class Digested:
             raise ValueError("Only a core analysis's digested content is read back (D374)")
         if found.result != view.identity.id or found.cohorts != _cohort_refs(view):
             raise ValueError("Digested content is read back only for the result it is of (D374)")
-        typed = core.values.model_validate_json(_json_text(found.values))
+        written = _json_text(found.values)
+        typed = core.values.model_validate_json(written, context=admitted_at(Boundary.RESULT_CACHE))
         back = cls(
             result=found.result,
             cohorts=tuple(found.cohorts),

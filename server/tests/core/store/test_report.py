@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from pydantic import JsonValue
+from tests.core._segments import validated
 
 from aibi.core.schema.curation import QueueNote
 from aibi.core.schema.jsonio import canonical
@@ -51,7 +52,7 @@ def test_a_report_of_format_1_gives_every_kind_its_fixed_text_and_nothing_stored
         assert {k: v for k, v in note.items() if k != "message"} == {
             k: v for k, v in given.items() if k != "message"
         }
-        queued = QueueNote.model_validate(note)
+        queued = validated(QueueNote, note)
         assert queued.subject == f"zqx_{kind}"
         assert MARK not in queued.model_dump_json()
     assert blob == _blob(REPORT_FORMAT_1, [_note(kind) for kind in KINDS])

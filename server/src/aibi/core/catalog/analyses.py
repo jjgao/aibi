@@ -61,7 +61,14 @@ from pydantic import JsonValue
 from aibi.core.analyses import columns, cox, distribution, members, packs, survival
 from aibi.core.analyses.existence import CohortAt, compare
 from aibi.core.analyses.registry import disclosure_of, withheld, withheld_form
-from aibi.core.analyses.results import Digested, Outcome, digested, issued_packs, render
+from aibi.core.analyses.results import (
+    Digested,
+    OtherWording,
+    Outcome,
+    digested,
+    issued_packs,
+    render,
+)
 from aibi.core.analyses.views import CheckedView
 from aibi.core.catalog.cohorts import (
     ANSWER_SECONDS,
@@ -446,7 +453,8 @@ def _hits(
 ) -> tuple[dict[int, tuple[Cached, Digested]], set[str]]:
     """The views whose results the cache holds, by position, each with its row and its content
     read back; and the results whose rows do not read back as their view's content (D374),
-    which are misses, logged by their kind alone, and whose rows the call's fill replaces."""
+    which are misses, logged by their kind alone, and whose rows the call's fill replaces. A row
+    written under another wording is such a miss, but no fault, and is not logged (D399)."""
     found: dict[int, tuple[Cached, Digested]] = {}
     unread: set[str] = set()
     for index, view in enumerate(views):
@@ -457,6 +465,8 @@ def _hits(
             continue
         try:
             found[index] = (row, Digested.read(view, row.content))
+        except OtherWording:
+            unread.add(view.identity.id)
         except ValueError:
             LOGGER.error("result cache: a cached content did not read back for its view")
             unread.add(view.identity.id)

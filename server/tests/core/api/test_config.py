@@ -32,6 +32,7 @@ from aibi.core.schema.limits import (
     LogLimits,
     QueryLimits,
 )
+from aibi.core.schema.output import Boundary, admitted_at
 
 EXAMPLE = Path(__file__).resolve().parents[3] / "aibi.example.toml"
 HASH = "sha256:" + "a" * 64
@@ -539,3 +540,18 @@ def test_page_views_have_a_rate_of_their_own_apart_from_the_agents(write_config:
     given = minimal(**{"server.rates": "page = { per_minute = 6, burst = 2 }"})
     configured = load_config(write_config(given)).server.rates
     assert (configured.page.per_minute, configured.page.burst) == (6, 2)
+
+
+def test_a_path_validator_assumes_no_dict_context() -> None:
+    """The validation context is a dict, or something else (the capability of D399): a validator
+    that reads it reads a dict and assumes none, and a path is then as written."""
+    from pydantic import BaseModel
+
+    class Holder(BaseModel):
+        where: config_module.ConfigPath
+
+    assert Holder.model_validate(
+        {"where": "data"}, context={config_module.BASE: Path("/x")}
+    ).where == Path("/x/data")
+    for context in (None, {}, admitted_at(Boundary.CLI_CLIENT), "a string", 7):
+        assert Holder.model_validate({"where": "data"}, context=context).where == Path("data")

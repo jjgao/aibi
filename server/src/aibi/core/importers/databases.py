@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import LiteralString, cast
 
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 
 import aibi
 from aibi.core.importers import urls
@@ -280,23 +280,24 @@ _REASON_SEGMENTS = 16
 """The most segments a skipped relation's reason holds, which are a sentence and a kind."""
 _REASON_CHARACTERS = 1000
 """The most characters a reason holds."""
-_SEGMENTS: TypeAdapter[list[Segment]] = TypeAdapter(list[Segment])
+_SEGMENTS: TypeAdapter[list[Segment]] = TypeAdapter(
+    list[Segment], config=ConfigDict(hide_input_in_errors=True)
+)
 
 
 def _reason(reason: object) -> list[Segment]:
     """A skipped relation's reason, as the child sent it across the pipe, validated again here:
     the child builds segments the parent unpickles, which no validator has looked at (D225,
-    D397). A reason that is not a few valid segments is the child's fault (``ReaderError``), and
-    nothing of it is stored."""
+    D397). They are validated as the instances they are, with no boundary's capability, so
+    that only an exact segment passes (D399). A reason that is not a few valid segments is the
+    child's fault (``ReaderError``), and nothing of it is stored."""
     try:
         if (
             not isinstance(reason, tuple)
             or len(cast(tuple[object, ...], reason)) > _REASON_SEGMENTS
         ):
             raise ValueError("a reason is a few segments")
-        found = _SEGMENTS.validate_python(
-            [cast(Segment, one).model_dump(mode="json") for one in cast(tuple[object, ...], reason)]
-        )
+        found = _SEGMENTS.validate_python(list(cast(tuple[object, ...], reason)))
         if sum(len(one.text if isinstance(one, TextSegment) else one.data) for one in found) > (
             _REASON_CHARACTERS
         ):

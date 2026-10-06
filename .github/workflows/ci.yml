@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The base branch's tip is read below (the server's wording, D399), without credentials.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.18"
@@ -41,6 +43,27 @@ jobs:
         run: uv python install
       - name: Install dependencies
         run: uv sync --locked
+      - name: The base branch's wording (D374, D399)
+        # tests/core/test_wording.py and test_text_projection.py compare the server's wording with
+        # the base's: the checked-in files are consistent with themselves, so a change of a
+        # template, or of a result's text, with CACHE_WORDING untouched and the files written
+        # again passes them and fails against the base's copies. A stacked pull request's base is
+        # its parent's branch, which is the right one. A file the base lacks is one this change
+        # introduces.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        working-directory: .
+        run: |
+          set -eu
+          git rev-parse --verify "origin/${BASE_REF}^{commit}"
+          mkdir -p "${RUNNER_TEMP}/wording-base"
+          for path in server/tests/core/wording.json server/tests/core/analyses/golden/text_projection.json; do
+            if git cat-file -e "origin/${BASE_REF}:${path}"; then
+              git show "origin/${BASE_REF}:${path}" > "${RUNNER_TEMP}/wording-base/$(basename "${path}")"
+            fi
+          done
+          echo "AIBI_WORDING_BASE=${RUNNER_TEMP}/wording-base" >> "${GITHUB_ENV}"
       - name: Lint
         run: uv run ruff check .
       - name: Format

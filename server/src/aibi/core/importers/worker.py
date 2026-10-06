@@ -85,7 +85,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Any, Self, cast
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 import aibi
 from aibi.core.importers.errors import ImportRefused, out_of_memory, refused
@@ -99,10 +99,15 @@ from aibi.core.schema.limits import (
     READER_WORKERS,
     ImportLimits,
 )
-from aibi.core.schema.output import DataSegment, TextSegment, data
+from aibi.core.schema.operator import Refusals
+from aibi.core.schema.output import Boundary, DataSegment, TextSegment, admitted_at, data, unpickled
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store.parquet import ParquetSource
 from aibi.core.store.sources import TypedSource
+
+_REFUSALS: TypeAdapter[list[Refusal]] = TypeAdapter(
+    list[Refusal], config=ConfigDict(hide_input_in_errors=True)
+)
 
 _ALLOWED: dict[tuple[str, str], type] = {
     (kind.__module__, kind.__qualname__): kind
@@ -194,7 +199,7 @@ def _answer(
             return ("decoded",), decoded
         return ("value", value), decoded
     except ImportRefused as error:
-        return ("refused", [r.model_dump(mode="json") for r in error.refusals]), decoded
+        return _refused(error.refusals), decoded
     except MemoryError:
         return ("memory",), decoded
     except ValidationError as error:
@@ -206,6 +211,24 @@ def _answer(
         return ("error", "".join(traceback.format_exception(error))), decoded
     except BaseException as error:
         return ("panic", type(error).__name__, _peak("self")), decoded
+
+
+_UNREADABLE = "a reader's request cannot be read by the reader"
+"""What the child sends, as a fault, for a request it cannot unpickle (D399)."""
+
+_UNSENT = "a reader's refusals are not outputs the server can send"
+"""What the child sends, as a fault, for refusals its own writer refuses (D399)."""
+
+
+def _refused(refusals: Sequence[Refusal]) -> tuple[object, ...]:
+    """What the child sends for a read's refusals: dumped from ``Refusals``, which validates
+    them first, so that a look-alike of a segment is refused here and never sent to be rebuilt
+    as server text (D399). One refused here is the server's fault, not the file's, and the
+    parent raises it as ``ReaderError`` (D225, D398)."""
+    try:
+        return ("refused", Refusals(refusals=list(refusals)).model_dump(mode="json")["refusals"])
+    except ValidationError:
+        return ("error", _UNSENT)
 
 
 def _limit(kind: int, value: int) -> None:
@@ -291,12 +314,20 @@ def serve(descriptor: int, parent: int) -> None:
         request = _request(sock)
         if request is None:
             return
+        unreadable = False
         try:
             call = None if isinstance(request, MemoryError) else pickle.loads(request)
         except MemoryError:
             call = None
+        except Exception:
+            # A request the child cannot read (it holds server text, which no child unpickles,
+            # D399): the server's fault, never the file's.
+            unreadable = True
         del request
-        answer, decoded = _answer(limits, call, decoded)
+        if unreadable:
+            answer = ("error", _UNREADABLE)
+        else:
+            answer, decoded = _answer(limits, call, decoded)
         del call
         try:
             written = pickle.dumps(answer, protocol=pickle.HIGHEST_PROTOCOL)
@@ -642,11 +673,12 @@ class Reader:
             _send(child.sock, request, self._deadline)
             del request
             held = (DECODED_BYTES, self.limits.decoded_bytes)  # then the answer's text
-            answer = _Unpickler(
+            unpickler = _Unpickler(
                 _Chunks(
                     _receive(child.sock, self._deadline, self.limits.reader_memory, child.watch)
                 )
-            ).load()
+            )
+            answer = unpickled(Boundary.READER_ANSWER, unpickler)
         except _Late:
             self._kill()
             raise refused(
@@ -680,7 +712,10 @@ class Reader:
             child.peak = max(child.peak, panic[1])
         ended = self._kill()
         if kind == "refused":
-            raise ImportRefused([Refusal.model_validate(one) for one in found[1]])
+            refusals = _REFUSALS.validate_python(
+                found[1], context=admitted_at(Boundary.READER_ANSWER)
+            )
+            raise ImportRefused(refusals)
         if kind == "memory":
             raise self._memory()
         if kind == "decoded":

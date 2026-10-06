@@ -24,7 +24,7 @@ from aibi.core.schema.descriptors import (
 from aibi.core.schema.export import descriptor_schema
 from aibi.core.schema.limits import MAX_CLAUSES, MAX_COLUMNS, MAX_ENTRIES, MAX_LIST, MAX_PACKS
 from aibi.core.schema.loading import _kept, load_descriptor, refusal_from_error
-from aibi.core.schema.output import TextSegment
+from aibi.core.schema.output import TextSegment, text
 from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.release import check_release, on_cycles
 
@@ -1456,9 +1456,7 @@ def test_null_messages_fit_required_members_too() -> None:
     refusal = only({**table("members"), "label": None})
     assert refusal.code == "NULL_NOT_ALLOWED"
     assert refusal.message == [
-        TextSegment(
-            text="null is not allowed here: give a value, or omit the member if it is optional"
-        )
+        text("null is not allowed here: give a value, or omit the member if it is optional")
     ]
 
 
@@ -1466,9 +1464,7 @@ def test_the_reserved_observation_window_says_why_it_is_refused() -> None:
     refusal = only(table("t", observation_window={"start": "x"}))
     assert (refusal.code, refusal.path) == ("UNKNOWN_MEMBER", "/fields/observation_window")
     assert refusal.message == [
-        TextSegment(
-            text="observation_window is reserved for timeline queries (M7) and must be absent in v1"
-        )
+        text("observation_window is reserved for timeline queries (M7) and must be absent in v1")
     ]
 
 

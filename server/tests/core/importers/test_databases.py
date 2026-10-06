@@ -57,7 +57,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.limits import MAX_STRING, MAX_TEXT, ImportLimits
-from aibi.core.schema.output import DataSegment, TextSegment, plain_text
+from aibi.core.schema.output import DataSegment, TextSegment, plain_text, text
 from aibi.core.schema.refusals import Refusal, RefusalCode
 from aibi.core.store.sources import TypedSource
 from aibi.core.store.store import Store
@@ -2434,7 +2434,7 @@ def test_a_postgres_foreign_key_to_another_schemas_table_of_a_read_tables_name_i
     imported, found = _postgres_import(store, roots, connect, url, schema)
     assert not any(isinstance(d, RelationshipDescriptor) for d in found.values())
     said = [part for note in imported.result.notes for part in note.message]
-    assert TextSegment(text=": a base table without columns, which is not read") in said
+    assert text(": a base table without columns, which is not read") in said
 
 
 @pytest.fixture
@@ -2662,7 +2662,7 @@ def test_a_mariadb_sequence_is_skipped_and_a_system_versioned_table_read(
     assert isinstance(kept, TypedSource)
     assert kept.rows == ((1,),)
     said = [part for note in imported.result.notes for part in note.message]
-    assert TextSegment(text=": a sequence, not a base table") in said
+    assert text(": a sequence, not a base table") in said
 
 
 @pytest.mark.databases
@@ -2808,7 +2808,7 @@ def test_a_postgres_partition_of_another_schemas_table_is_noted_and_not_read(
     assert set(imported.result.sources) == {"kept"}
     said = [part for note in imported.result.notes for part in note.message]
     assert DataSegment(data="loans_2024") in said
-    assert TextSegment(text=": a partition of a table of another schema, which is not read") in said
+    assert text(": a partition of a table of another schema, which is not read") in said
 
 
 @pytest.mark.databases

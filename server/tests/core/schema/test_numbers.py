@@ -7,6 +7,7 @@ import jsonschema
 import pytest
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError
+from tests.core._segments import validated
 
 from aibi.core.schema.numbers import (
     EffectSize,
@@ -14,6 +15,7 @@ from aibi.core.schema.numbers import (
     Proportion,
     not_estimable_problems,
 )
+from aibi.core.schema.output import text
 
 KNOWN = {"position": 0, "predicate": "leaf:" + "a" * 64, "counts": "known"}
 
@@ -30,12 +32,12 @@ def proportion(**members: Any) -> dict[str, Any]:
 
 def error_types(model: type[Any], value: dict[str, Any]) -> list[str]:
     with pytest.raises(ValidationError) as raised:
-        model.model_validate(value)
+        validated(model, value)
     return [str(error["type"]) for error in raised.value.errors()]
 
 
 def test_a_proportion_names_its_counts_and_denominator() -> None:
-    parsed = Proportion.model_validate(proportion())
+    parsed = validated(Proportion, proportion())
     assert parsed.model_dump() == proportion()
     for member in ("estimate", "numerator", "denominator", "denominator_definition"):
         assert "missing" in error_types(
@@ -102,13 +104,13 @@ def test_a_zero_denominator_is_not_estimable_in_the_order_of_the_reasons(
             not_estimable={"/estimate": reason},
         )
         if reason in allowed:
-            assert Proportion.model_validate(value).reasons() == {"/estimate": reason}
+            assert validated(Proportion, value).reasons() == {"/estimate": reason}
         else:
             assert "proportion_zero_denominator" in error_types(Proportion, value)
 
 
 def test_the_estimate_is_the_double_numerator_over_denominator() -> None:
-    assert Proportion.model_validate(proportion(estimate=124 / 301, numerator=124, denominator=301))
+    assert validated(Proportion, proportion(estimate=124 / 301, numerator=124, denominator=301))
     rounded = proportion(estimate=0.4119601329, numerator=124, denominator=301)
     assert "proportion_estimate" in error_types(Proportion, rounded)
 
@@ -120,7 +122,7 @@ def test_an_interval_is_suppressed_only_with_a_count() -> None:
     )
     assert "proportion_suppressed" in error_types(Proportion, value)
     value["not_estimable"] = {"/ci/low": "not_converged", "/ci/high": "not_converged"}
-    assert Proportion.model_validate(value)
+    assert validated(Proportion, value)
 
 
 def test_an_interval_method_is_an_identifier() -> None:
@@ -140,7 +142,7 @@ def test_suppressed_counts_suppress_the_estimate_and_its_interval() -> None:
             "/ci/high": "suppressed",
         },
     )
-    assert Proportion.model_validate(value)
+    assert validated(Proportion, value)
     with_bounds = {**value, "ci": {"method": "wilson", "level": 0.95, "low": 0.1, "high": 0.4}}
     with_bounds["not_estimable"] = {"/estimate": "suppressed", "/numerator": "suppressed"}
     assert "proportion_interval" in error_types(Proportion, with_bounds)
@@ -151,16 +153,16 @@ def test_nested_nulls_are_keyed_from_the_enclosing_object() -> None:
         ci={"method": "wilson", "level": 0.95, "low": 0.05, "high": None},
         not_estimable={"/ci/high": "not_reached"},
     )
-    assert Proportion.model_validate(value).ci is not None
+    assert validated(Proportion, value).ci is not None
     assert "not_estimable_missing" in error_types(Proportion, {**value, "not_estimable": None})
 
 
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
 def test_non_finite_numbers_are_refused(bad: float) -> None:
     with pytest.raises(ValidationError):
-        Proportion.model_validate(proportion(estimate=bad))
+        validated(Proportion, proportion(estimate=bad))
     with pytest.raises(ValidationError):
-        Interval.model_validate({"method": "wald", "level": 0.95, "low": bad, "high": 1.0})
+        validated(Interval, {"method": "wald", "level": 0.95, "low": bad, "high": 1.0})
 
 
 def test_non_finite_numbers_cannot_be_serialised() -> None:
@@ -173,7 +175,7 @@ def test_non_finite_numbers_cannot_be_serialised() -> None:
         estimate=0.5,
         numerator=2**60,
         denominator=2**61,
-        denominator_definition=Proportion.model_validate(proportion()).denominator_definition,
+        denominator_definition=validated(Proportion, proportion()).denominator_definition,
     )
     with pytest.raises(PydanticSerializationError):
         too_large.model_dump()
@@ -194,14 +196,14 @@ def effect(**members: Any) -> dict[str, Any]:
 
 
 def test_effect_sizes() -> None:
-    assert EffectSize.model_validate(effect()).measure == "hazard_ratio"
+    assert validated(EffectSize, effect()).measure == "hazard_ratio"
     assert "effect_versus" in error_types(EffectSize, effect(versus=1))
     assert "effect_ratio" in error_types(EffectSize, effect(estimate=0.0))
     assert "effect_ratio" in error_types(
         EffectSize, effect(ci={"method": "wald", "level": 0.95, "low": -0.1, "high": 2.0})
     )
     difference = effect(measure="mean_difference", estimate=-3.5)
-    assert EffectSize.model_validate(difference).estimate == -3.5
+    assert validated(EffectSize, difference).estimate == -3.5
     assert "enum" in error_types(EffectSize, effect(measure="odds_ratio"))
 
 
@@ -220,7 +222,7 @@ def test_a_zero_denominator_may_mean_no_units() -> None:
     no_units = proportion(
         estimate=None, numerator=0, denominator=0, not_estimable={"/estimate": "no_units"}
     )
-    assert Proportion.model_validate(no_units)
+    assert validated(Proportion, no_units)
 
 
 def test_a_suppressed_breakdown_is_null_and_kept() -> None:
@@ -237,14 +239,14 @@ def test_a_suppressed_breakdown_is_null_and_kept() -> None:
         ),
         0,
     )
-    shown = Proportion.model_validate(proportion(excluded=reasons))
+    shown = validated(Proportion, proportion(excluded=reasons))
     assert shown.model_dump()["excluded"] == reasons
-    hidden = Proportion.model_validate(
-        proportion(excluded=None, not_estimable={"/excluded": "suppressed"})
+    hidden = validated(
+        Proportion, proportion(excluded=None, not_estimable={"/excluded": "suppressed"})
     )
     assert hidden.model_dump()["excluded"] is None
-    assert Proportion.model_validate_json(hidden.model_dump_json()) == hidden
-    assert "excluded" not in Proportion.model_validate(proportion()).model_dump()
+    assert validated(Proportion, hidden.model_dump_json()) == hidden
+    assert "excluded" not in validated(Proportion, proportion()).model_dump()
     assert "proportion_excluded" in error_types(Proportion, proportion(excluded={"NOT_COVERED": 1}))
     wrong = proportion(excluded=None, not_estimable={"/excluded": "no_units"})
     assert "proportion_counts" in error_types(Proportion, wrong)
@@ -263,8 +265,8 @@ def test_counts_are_null_only_when_suppressed_and_the_estimate_with_them() -> No
 
 def test_numbers_beyond_the_safe_range_are_refused() -> None:
     with pytest.raises(ValidationError):
-        EffectSize.model_validate(
-            {"measure": "mean_difference", "position": 1, "versus": 0, "estimate": 1e20}
+        validated(
+            EffectSize, {"measure": "mean_difference", "position": 1, "versus": 0, "estimate": 1e20}
         )
 
 
@@ -283,7 +285,7 @@ def test_not_estimable_maps_in_json_are_non_empty_objects_of_pointers() -> None:
 def test_a_level_outside_zero_to_one_is_refused_by_the_model_and_the_schema(level: float) -> None:
     value = {"method": "wald", "level": level, "low": 0.0, "high": 1.0}
     with pytest.raises(ValidationError):
-        Interval.model_validate(value)
+        validated(Interval, value)
     schema = TypeAdapter(Interval).json_schema()
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(value, schema)
@@ -293,8 +295,8 @@ def test_a_level_outside_zero_to_one_is_refused_by_the_model_and_the_schema(leve
 def test_a_copy_with_an_update_keeps_the_members_left_out_absent() -> None:
     """Only the members given are passed on: a default written out as given would change the
     copy (``not_estimable`` would be given, and empty)."""
-    given = Proportion.model_validate(proportion())
-    copied = given.model_copy(update={"denominator_text": [{"text": "loans"}]})
+    given = validated(Proportion, proportion())
+    copied = given.model_copy(update={"denominator_text": [text("loans")]})
     assert copied.model_fields_set == given.model_fields_set | {"denominator_text"}
     assert copied.model_dump() == {**given.model_dump(), "denominator_text": [{"text": "loans"}]}
     assert given.model_copy() == given
@@ -304,10 +306,10 @@ def test_not_estimable_names_only_members_in_the_schema() -> None:
     schema = TypeAdapter(Proportion).json_schema()
     suppressed = {"/estimate": "suppressed", "/numerator": "suppressed"}
     hidden = proportion(estimate=None, numerator=None, not_estimable=suppressed)
-    Proportion.model_validate(hidden)
+    validated(Proportion, hidden)
     jsonschema.validate(hidden, schema)
     unknown = {**hidden, "not_estimable": {**suppressed, "/foo": "suppressed"}}
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(unknown, schema)
     with pytest.raises(ValidationError):
-        Proportion.model_validate(unknown)
+        validated(Proportion, unknown)

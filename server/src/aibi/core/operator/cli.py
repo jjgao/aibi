@@ -82,7 +82,7 @@ from aibi.core.schema.operator import (
     Uploaded,
     Withdrawn,
 )
-from aibi.core.schema.output import DataSegment, Segment
+from aibi.core.schema.output import DataSegment, Segment, TextSegment
 from aibi.core.schema.refusals import Refusal, blank, holds_secret
 
 DONE, REFUSED, USAGE, UNREACHABLE, INTERRUPTED = 0, 1, 2, 3, 130
@@ -652,11 +652,18 @@ def _json_argument(written: str, what: str) -> JsonValue:
 # --- Summaries: every string from the server escaped ------------------------------------------
 
 
+def _segment(segment: Segment) -> str:
+    """One segment's text, escaped; anything but a segment, which no output holds, is refused, so
+    that a look-alike is never shown as the server's words (D399)."""
+    if isinstance(segment, DataSegment):
+        return escaped(segment.data)
+    if isinstance(segment, TextSegment):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return escaped(segment.text)
+    raise TypeError("A message holds text and data segments only (D399)")
+
+
 def _segments(segments: Sequence[Segment]) -> str:
-    return "".join(
-        escaped(segment.data if isinstance(segment, DataSegment) else segment.text)
-        for segment in segments
-    )
+    return "".join(_segment(segment) for segment in segments)
 
 
 def _refusal(refusal: Refusal) -> list[str]:

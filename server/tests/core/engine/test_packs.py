@@ -91,12 +91,10 @@ class Kind:
 def _refuse(members: Mapping[str, Any]) -> object:
     raise Refused(
         [
-            Refusal.model_validate(
-                {
-                    "code": "hygiene.NO_SUCH_GRADE",
-                    "path": "/worst",
-                    "message": [{"text": "grades run from 1 to 5"}],
-                }
+            Refusal(
+                code="hygiene.NO_SUCH_GRADE",
+                path="/worst",
+                message=[text("grades run from 1 to 5")],  # a pack's words, by text() (D399)
             )
         ]
     )

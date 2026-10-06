@@ -7,7 +7,6 @@ import pytest
 from aibi.core.schema.output import (
     DATA_TOKEN_MAX,
     DataSegment,
-    TextSegment,
     data,
     listed,
     plain_text,
@@ -51,5 +50,5 @@ def test_listed_gives_each_value_a_token_of_its_own() -> None:
 
 
 def test_plain_text_joins_text_and_data() -> None:
-    message = (TextSegment(text="arith reads numeric columns: "), DataSegment(data="t.c"))
+    message = (text("arith reads numeric columns: "), DataSegment(data="t.c"))
     assert plain_text(message) == "arith reads numeric columns: t.c"

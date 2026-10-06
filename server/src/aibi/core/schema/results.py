@@ -99,6 +99,7 @@ from aibi.core.schema.output import (
     FiniteJsonObject,
     Output,
     Segment,
+    dumped_in_validation,
 )
 from aibi.core.schema.semantics import ExclusionReason, Reason
 
@@ -858,7 +859,8 @@ class ResultEnvelope(Output):
         suppressed_counts = any(population.suppressed for population in self.population)
         # What raises a caveat is found in the digested parts only, and caveats point only there
         # (and at the releases): documents and parameters hold user text (A6).
-        digested = self.model_dump(
+        digested = dumped_in_validation(
+            self,
             mode="json",
             include={
                 "cohorts": True,
@@ -919,7 +921,9 @@ class ResultEnvelope(Output):
 
 def _check_digest(output: "ResultEnvelope | CohortCount", members: Sequence[str]) -> None:
     """An output's ``digest`` is the digest of the members of §7.6 it carries (D298)."""
-    dumped = cast(dict[str, JsonValue], output.model_dump(mode="json", include=set(members)))
+    dumped = cast(
+        dict[str, JsonValue], dumped_in_validation(output, mode="json", include=set(members))
+    )
     if output.digest != output_digest(dumped, output.caveats, members):
         raise problem(
             "digest",
@@ -1057,7 +1061,7 @@ class CohortCount(Output):
             )
         _check_caveats(
             self.caveats,
-            self.model_dump(mode="json", include={"population"}),
+            dumped_in_validation(self, mode="json", include={"population"}),
             {
                 CaveatCode.SUPPRESSED: suppressed,
                 CaveatCode.NOT_ESTIMABLE: any(

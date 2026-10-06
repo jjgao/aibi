@@ -8,7 +8,7 @@ import sys
 import threading
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from pydantic import BaseModel
@@ -73,10 +73,11 @@ class Injected:
     """The injected text, the matcher, and the segments a value holds.
 
     The fixture is also a backstop at construction, in the test's own process: while it is
-    active, every ``TextSegment`` validated (built, validated from a dict or JSON, nested in
-    another output, revalidated, or copied with an update) or constructed without validation is
-    looked at, and one whose text the matcher finds is recorded, which fails the test, whichever
-    of those built it and whether or not it reaches the value a test looks at. A segment built
+    active, every ``TextSegment`` validated (built by ``text()``, rebuilt at a boundary from a
+    dict or JSON, nested in another output, revalidated, or copied with an update) is looked at,
+    and one whose text the matcher finds is recorded, which fails the test, whichever of those
+    built it and whether or not it reaches the value a test looks at; a ``TextSegment`` is never
+    constructed without validation (D399). A segment built
     in a reader's child process crosses the pipe unpickled and never passes the backstop: the end
     check, ``spoken``, which every test makes of the value it was given, covers it."""
 
@@ -179,15 +180,6 @@ def injected(monkeypatch: pytest.MonkeyPatch) -> Iterator[Injected]:
                 found.built.append(value)
         return checked(value)
 
-    constructed = TextSegment.model_construct
-
-    def construct(_fields_set: set[str] | None = None, **values: Any) -> TextSegment:
-        given = values.get("text")
-        if isinstance(given, str) and found.found(given):
-            found.built.append(given)
-        return constructed(_fields_set, **values)
-
     monkeypatch.setattr(output, "is_text", watched)
-    monkeypatch.setattr(TextSegment, "model_construct", construct)
     yield found
     assert found.built == [], f"server text built from injected text: {found.built}"
