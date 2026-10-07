@@ -56,8 +56,17 @@ down which (directly, or with a ``via`` back down one it went up) ``some`` and `
 categories of any column; ``missing`` names ``columns`` and ``min_cell_count`` (D337). A pack's
 analysis is also ``unavailable`` wherever it requires a column of a datatype no input column is
 handed (dates and datetimes), naming those roles, since every view of it is refused (D341).
+
+Applicability answers as that scan of every descriptor, for each analysis, requirement and unit,
+would, but reads the release once per call (D420): ``_index`` counts, in one pass, what meets
+each requirement kind, per table, and which tables could compare categories; ``_Index.signature``
+finds, per requirement shape and ``min``, the units a requirement misses and those where it is
+unconfirmed, by bisection over the units sorted by count; ``_choice`` judges each analysis at the
+first best unit and ``_roles`` names its roles there. The index is the call's own, never kept on
+the registry, its packs or an ``Analyses``, which threads share.
 """
 
+from bisect import bisect_left
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -417,73 +426,33 @@ class Analyses:
         views = Operation() if operation is None else operation
         release = _Release(dataset, manifest, descriptors)
         rowless = _rowless(descriptors)
-        keyed = [
-            descriptor.id
-            for descriptor in descriptors
-            if isinstance(descriptor, TableDescriptor) and descriptor.fields.primary_key
-        ]
-        units = [unit] if unit is not None else keyed
+        index = _index(descriptors, unit)
         held: dict[str, bool] = {}
         found: list[ApplicableAnalysis] = []
         for analysis in self.all():
-            outcomes = [self._matched(analysis, release, views, table, held) for table in units]
-            if not outcomes:
-                outcomes = [(_UNAVAILABLE, ["unit"], list[str]())]
             refused = _refused(analysis, k, rowless)
-            if refused:
-                outcomes = [
-                    (_UNAVAILABLE, [*missing, *refused], list[str]()) for _, missing, _ in outcomes
-                ]
-            if k is not None and analysis.id in CATEGORIES_UNDER_K and units:
-                outcomes = [
-                    outcome
-                    if _categories(descriptors, table)
-                    else (_UNAVAILABLE, [*outcome[1], "columns", "min_cell_count"], list[str]())
-                    for table, outcome in zip(units, outcomes, strict=True)
-                ]
             unrun = _unrun(analysis)
-            if unrun:
-                outcomes = [
-                    (_UNAVAILABLE, [*missing, *unrun], list[str]()) for _, missing, _ in outcomes
-                ]
-            found.append(_best(analysis, outcomes))
-        return found
-
-    def _matched(
-        self,
-        analysis: Registered,
-        release: "_Release",
-        views: Operation,
-        unit: str,
-        held: dict[str, bool],
-    ) -> tuple[int, list[str], list[str]]:
-        """The status rank of one analysis for one unit, the roles it misses and those met only
-        by unconfirmed descriptors; ``held`` keeps what each requirement predicate gave, which
-        reads the release and not the unit, so that it runs once."""
-        descriptors = release.descriptors
-        missing: list[str] = []
-        unconfirmed: list[str] = []
-        for requirement in analysis.entry.fields.requires:
-            if requirement.kind is None and requirement.predicate is None:
+            if not index.units:
+                found.append(_best(analysis, [(_UNAVAILABLE, ["unit", *refused, *unrun], [])]))
                 continue
-            matches = _matches(
-                requirement.kind, requirement.on, requirement.datatype, descriptors, unit
-            )
-            least = 1 if requirement.min is None else requirement.min
-            reference = requirement.predicate
-            if reference is not None and reference not in held:
-                held[reference] = self._holds(reference, views, release)
-            holds = reference is None or held[reference]
-            if (requirement.kind is not None and len(matches) < least) or not holds:
-                missing.append(requirement.role)
-            elif (
-                requirement.kind is not None
-                and least
-                and (sum(not _unsettled(match) for match in matches) < least)
-            ):
-                unconfirmed.append(requirement.role)
-        rank = _UNAVAILABLE if missing else _CAVEATS if unconfirmed else _AVAILABLE
-        return rank, missing, unconfirmed
+            for requirement in analysis.entry.fields.requires:
+                reference = requirement.predicate
+                if reference is not None and reference not in held:
+                    held[reference] = self._holds(reference, views, release)
+            table = index.units[_choice(index, analysis, held, k, rowless)]
+            rank, missing, unconfirmed = _roles(index, analysis, held, table)
+            if refused:
+                rank, missing, unconfirmed = _UNAVAILABLE, [*missing, *refused], []
+            if _under_k(analysis, k) and table not in index.categorised:
+                rank, missing, unconfirmed = (
+                    _UNAVAILABLE,
+                    [*missing, "columns", "min_cell_count"],
+                    [],
+                )
+            if unrun:
+                rank, missing, unconfirmed = _UNAVAILABLE, [*missing, *unrun], []
+            found.append(_best(analysis, [(rank, missing, unconfirmed)]))
+        return found
 
     def _holds(self, reference: str, views: Operation, release: "_Release") -> bool:
         """Whether a requirement predicate holds of the release: called through its handle's
@@ -575,53 +544,251 @@ def _refused(analysis: Registered, k: int | None, rowless: bool) -> list[str]:
     return found
 
 
-def _matches(
-    kind: str | None,
-    on: str | None,
-    datatype: str | None,
-    descriptors: Sequence[Descriptor],
-    unit: str,
-) -> list[Descriptor]:
-    """The descriptors that meet a requirement of ``kind`` for the unit table ``unit``."""
-    found: list[Descriptor] = []
-    for descriptor in descriptors:
-        if kind == "endpoint" and isinstance(descriptor, EndpointDescriptor):
-            if usable_endpoint(descriptor) and (on != "unit" or descriptor.fields.table == unit):
-                found.append(descriptor)
-        elif kind == "column" and isinstance(descriptor, ColumnDescriptor):
-            table = descriptor.id.split(".", 1)[0]
-            if (on != "unit" or table == unit) and (
-                datatype is None or descriptor.fields.datatype == datatype
-            ):
-                found.append(descriptor)
-        elif (
-            kind == "table"
-            and isinstance(descriptor, TableDescriptor)
-            and descriptor.id != unit
-            and descriptor.fields.role != "coverage"
-        ):
-            found.append(descriptor)
-    return found
+_EVERY = "*"
+"""The datatype a column requirement without one is indexed under: any (no datatype is ``*``)."""
+
+_Shape = tuple[str, str | None, str | None]
+"""A requirement's shape: its kind, and its ``on`` and ``datatype`` where the kind reads them."""
+
+_Prefix = tuple[list[int], list[int], int]
+"""Over the units, one count each: its distinct values ascending, for each the set of the units
+whose count is below it (a bitset, unit *i* at bit *i*), and the set of every unit."""
 
 
-def _categories(descriptors: Sequence[Descriptor], unit: str) -> bool:
-    """Whether a view of ``unit`` could compare categories (``CATEGORIES_UNDER_K``): its table
-    has a column of categories, or is in a relationship (a coverage table is in none, which the
-    release's checks refuse), since a path through it reaches every other table's columns, and a
-    step down one, directly or with a ``via`` back down the one it went up, makes categories
+@dataclass
+class _Index:
+    """What applicability reads of a release, made in one pass over its descriptors for one
+    call and never kept (D420): the units in turn, and for each requirement kind the number of
+    descriptors that meet it, and of those settled (none of their fields' statuses unconfirmed,
+    ``_unsettled``), per table where ``"on": "unit"`` reads one, so that a requirement is met
+    or not at a unit by a lookup instead of a scan (``count``).
+
+    Over the units, each requirement's shape (kind, ``on``, ``datatype``) is indexed once per
+    call, its counts sorted with the units below each distinct count (``_Prefix``), so that a
+    requirement of any ``min`` finds the units it misses and those where it is unconfirmed by
+    two bisections (``signature``). Both caches are this object's, made inside the call: none is
+    kept on the registry, its packs or the ``Analyses``, which threads share."""
+
+    units: list[str]
+    """The tables tried as the unit, in the descriptors' order: the one named, or each keyed
+    table (a table given twice is tried twice, as the scan tried it)."""
+    endpoints: list[int]
+    """Usable endpoints (D347), and of those settled."""
+    endpoints_of: dict[str, list[int]]
+    """The same, per endpoint table."""
+    columns: dict[tuple[str | None, str], list[int]]
+    """Columns, and of those settled, per (table, or ``None`` for every table) and (datatype,
+    or ``_EVERY`` for any)."""
+    tables: list[int]
+    """Tables other than coverage tables, and of those settled."""
+    tables_of: dict[str, list[int]]
+    """The same, per table id (a table given twice counted twice)."""
+    categorised: set[str]
+    """The tables over which a view could compare categories (``CATEGORIES_UNDER_K``): those with
+    a column of categories, or in a relationship (a coverage table is in none, which the
+    release's checks refuse), since a path through it reaches every other table's columns, and
+    a step down one, directly or with a ``via`` back down the one it went up, makes categories
     (false and true) of any column by ``some`` and ``every`` (§6.1, §9.2)."""
-    return any(
-        (
-            isinstance(descriptor, RelationshipDescriptor)
-            and unit in (descriptor.fields.child_table, descriptor.fields.parent_table)
-        )
-        or (
-            isinstance(descriptor, ColumnDescriptor)
-            and descriptor.id.split(".", 1)[0] == unit
-            and descriptor.fields.datatype in CATEGORIES
-        )
-        for descriptor in descriptors
+    shapes: dict[_Shape, tuple[_Prefix, _Prefix]] = field(
+        default_factory=dict[_Shape, tuple[_Prefix, _Prefix]]
     )
+    signatures: dict[tuple[_Shape, int], tuple[int, int]] = field(
+        default_factory=dict[tuple[_Shape, int], tuple[int, int]]
+    )
+
+    @property
+    def every(self) -> int:
+        """The set of every unit."""
+        return (1 << len(self.units)) - 1
+
+    def count(
+        self, kind: str | None, on: str | None, datatype: str | None, unit: str
+    ) -> tuple[int, int]:
+        """How many descriptors meet a requirement of ``kind`` for the unit table ``unit``, and
+        how many of those are settled: endpoints an analysis can use, on the unit table with
+        ``"on": "unit"``; columns of ``datatype`` (any, without one), on the unit table with
+        ``"on": "unit"``; tables other than the unit and coverage tables."""
+        if kind == "endpoint":
+            found = self.endpoints if on != "unit" else self.endpoints_of.get(unit, _NONE)
+        elif kind == "column":
+            key = (unit if on == "unit" else None, _EVERY if datatype is None else datatype)
+            found = self.columns.get(key, _NONE)
+        elif kind == "table":
+            own = self.tables_of.get(unit, _NONE)
+            return self.tables[0] - own[0], self.tables[1] - own[1]
+        else:
+            found = _NONE
+        return found[0], found[1]
+
+    def signature(
+        self, kind: str, on: str | None, datatype: str | None, least: int
+    ) -> tuple[int, int]:
+        """The units at which a requirement of ``kind`` and at least ``least`` descriptors is
+        not met (fewer meet it), and those at which it is met but not by ``least`` settled
+        ones, as bitsets over ``units``."""
+        shape = _shape(kind, on, datatype)
+        found = self.signatures.get((shape, least))
+        if found is None:
+            prefixes = self.shapes.get(shape)
+            if prefixes is None:
+                counts = [self.count(kind, on, datatype, unit) for unit in self.units]
+                prefixes = (
+                    _prefix([count for count, _ in counts]),
+                    _prefix([settled for _, settled in counts]),
+                )
+                self.shapes[shape] = prefixes
+            missed = _below(prefixes[0], least)
+            found = (missed, _below(prefixes[1], least) & ~missed if least else 0)
+            self.signatures[(shape, least)] = found
+        return found
+
+
+_NONE = (0, 0)
+
+
+def _shape(kind: str, on: str | None, datatype: str | None) -> _Shape:
+    """A requirement's shape: an endpoint's reads its ``on``, a column's its ``on`` and its
+    ``datatype``, a table's neither."""
+    if kind == "column":
+        return kind, on, datatype
+    return kind, on if kind == "endpoint" else None, None
+
+
+def _index(descriptors: Sequence[Descriptor], unit: str | None) -> _Index:
+    """The release's ``_Index``, for ``unit`` or, with none, for each keyed table: one pass
+    over the descriptors, each read once."""
+    keyed: list[str] = []
+    endpoints = [0, 0]
+    endpoints_of: dict[str, list[int]] = {}
+    columns: dict[tuple[str | None, str], list[int]] = {}
+    tables = [0, 0]
+    tables_of: dict[str, list[int]] = {}
+    categorised: set[str] = set()
+    for descriptor in descriptors:
+        if isinstance(descriptor, EndpointDescriptor):
+            if usable_endpoint(descriptor):
+                settled = not _unsettled(descriptor)
+                table = descriptor.fields.table
+                assert table is not None, "a usable endpoint declares its table"
+                _add(endpoints, settled)
+                _add(endpoints_of.setdefault(table, [0, 0]), settled)
+        elif isinstance(descriptor, ColumnDescriptor):
+            settled = not _unsettled(descriptor)
+            table = descriptor.id.split(".", 1)[0]
+            datatype = descriptor.fields.datatype
+            for key in (table, None):
+                _add(columns.setdefault((key, _EVERY), [0, 0]), settled)
+                if datatype is not None:
+                    _add(columns.setdefault((key, datatype), [0, 0]), settled)
+            if datatype in CATEGORIES:
+                categorised.add(table)
+        elif isinstance(descriptor, TableDescriptor):
+            fields = descriptor.fields
+            if fields.primary_key:
+                keyed.append(descriptor.id)
+            if fields.role != "coverage":
+                settled = not _unsettled(descriptor)
+                _add(tables, settled)
+                _add(tables_of.setdefault(descriptor.id, [0, 0]), settled)
+        elif isinstance(descriptor, RelationshipDescriptor):
+            fields = descriptor.fields
+            categorised.update((fields.child_table, fields.parent_table))
+    units = [unit] if unit is not None else keyed
+    return _Index(units, endpoints, endpoints_of, columns, tables, tables_of, categorised)
+
+
+def _add(counts: list[int], settled: bool) -> None:
+    counts[0] += 1
+    counts[1] += settled
+
+
+def _prefix(values: Sequence[int]) -> _Prefix:
+    """``values``' ``_Prefix``: a bitset made only at each distinct value, so that its size is
+    the units' times the distinct values' (at most √(2D)+1 for D descriptors), not the units'
+    squared."""
+    order = sorted(range(len(values)), key=values.__getitem__)
+    seen = bytearray((len(values) + 7) // 8)
+    distinct: list[int] = []
+    below: list[int] = []
+    for position in order:
+        value = values[position]
+        if not distinct or distinct[-1] != value:
+            distinct.append(value)
+            below.append(int.from_bytes(seen, "little"))
+        seen[position >> 3] |= 1 << (position & 7)
+    return distinct, below, int.from_bytes(seen, "little")
+
+
+def _below(prefix: _Prefix, least: int) -> int:
+    """The units whose value is below ``least``."""
+    distinct, below, every = prefix
+    at = bisect_left(distinct, least)
+    return every if at == len(distinct) else below[at]
+
+
+def _under_k(analysis: Registered, k: int | None) -> bool:
+    """Whether ``analysis`` shows only numbers' units under ``k`` (``CATEGORIES_UNDER_K``)."""
+    return k is not None and analysis.id in CATEGORIES_UNDER_K
+
+
+def _choice(
+    index: _Index, analysis: Registered, held: Mapping[str, bool], k: int | None, rowless: bool
+) -> int:
+    """Where ``analysis`` is judged among ``index.units`` (at least one), as the scan judged
+    it at each unit and kept the first best: the first unit where its requirements are all met
+    by settled descriptors, else the first where they are all met, else the first; under *k*
+    one that shows only numbers' units is met only over a unit with categories, and one that
+    every disclosure setting or a pack's datatypes refuse is unavailable at every unit, so is
+    judged at the first. ``held`` holds what each of its requirement predicates gave."""
+    if _refused(analysis, k, rowless) or _unrun(analysis):
+        return 0
+    every = index.every
+    missed = unconfirmed = 0
+    for requirement in analysis.entry.fields.requires:
+        if requirement.predicate is not None and not held[requirement.predicate]:
+            missed = every
+        if requirement.kind is not None:
+            least = 1 if requirement.min is None else requirement.min
+            not_met, unsettled = index.signature(
+                requirement.kind, requirement.on, requirement.datatype, least
+            )
+            missed |= not_met
+            unconfirmed |= unsettled
+    met = every & ~missed
+    if _under_k(analysis, k):
+        met &= _bits(index.units, index.categorised)
+    best = (met & ~unconfirmed) or met
+    return (best & -best).bit_length() - 1 if best else 0
+
+
+def _bits(units: Sequence[str], tables: set[str]) -> int:
+    """The units that are among ``tables``, as a bitset over ``units``."""
+    seen = bytearray((len(units) + 7) // 8)
+    for position, unit in enumerate(units):
+        if unit in tables:
+            seen[position >> 3] |= 1 << (position & 7)
+    return int.from_bytes(seen, "little")
+
+
+def _roles(
+    index: _Index, analysis: Registered, held: Mapping[str, bool], unit: str
+) -> tuple[int, list[str], list[str]]:
+    """The status rank of ``analysis`` for one unit, the roles it misses and those met only by
+    unconfirmed descriptors; ``held`` holds what each of its requirement predicates gave."""
+    missing: list[str] = []
+    unconfirmed: list[str] = []
+    for requirement in analysis.entry.fields.requires:
+        if requirement.kind is None and requirement.predicate is None:
+            continue
+        count, settled = index.count(requirement.kind, requirement.on, requirement.datatype, unit)
+        least = 1 if requirement.min is None else requirement.min
+        holds = requirement.predicate is None or held[requirement.predicate]
+        if (requirement.kind is not None and count < least) or not holds:
+            missing.append(requirement.role)
+        elif requirement.kind is not None and least and settled < least:
+            unconfirmed.append(requirement.role)
+    rank = _UNAVAILABLE if missing else _CAVEATS if unconfirmed else _AVAILABLE
+    return rank, missing, unconfirmed
 
 
 def _unsettled(descriptor: Descriptor) -> bool:

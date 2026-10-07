@@ -1163,3 +1163,66 @@ def test_duckdb_loaded_before_the_packs_fails_the_start(
     ran = _fresh(tmp_path, write_config, f"import {module}\n" + CHECK, LIBRARY)
     assert ran.stdout.startswith("status 2 "), ran.stderr
     assert f"  {packs.LOADED_DUCKDB}\n" in ran.stderr
+
+
+MANY = """
+from aibi.core.schema.descriptors import AnalysisDescriptor
+
+
+class Many:
+    def __init__(self, id, size):
+        self.id, self.size = id, size
+
+    @property
+    def entry(self):
+        return AnalysisDescriptor.model_validate({
+            "kind": "analysis", "id": self.id, "version": "1.0.0", "label": "Many",
+            "fields": {
+                "requires": [{"role": f"r{n}", "min": 1} for n in range(self.size)],
+                "params": {"type": "object"}, "returns": {"type": "object"},
+                "methods": {}, "assumptions": [], "uses_reference": False,
+                "assumes_independent_groups": True, "cross_dataset": None, "caveats": [],
+            },
+        })
+
+    def run(self, inputs):
+        return {}
+
+
+def many(pack, sizes):
+    return tuple(Many(f"{pack}.a{n}", size) for n, size in enumerate(sizes))
+"""
+
+
+def test_check_and_serve_refuse_the_same_packs_over_the_cap_on_requirements(
+    make_pack: MakePack, write_config: Write, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two modules whose packs' analyses have 4,097 requirements together, each well under
+    the cap: ``check`` and ``serve`` both refuse them, naming each pack's share whatever the
+    modules' order (D420); at 4,096 both start."""
+    shelf = make_pack(
+        MANY + 'PACK = Pack(manifest=manifest("shelf"), analyses=many("shelf", [64] * 33))\n'
+    )
+    stock = make_pack(
+        MANY + 'PACK = Pack(manifest=manifest("stock"), analyses=many("stock", [64] * 31 + [1]))\n'
+    )
+    within = make_pack(
+        MANY + 'PACK = Pack(manifest=manifest("stock"), analyses=many("stock", [64] * 31))\n'
+    )
+    problem = (
+        "  the packs' analyses have 4097 requirements in all, more than the 4096 allowed "
+        f"(MAX_PACK_REQUIREMENTS): the module {shelf} (pack shelf) has 2112, the module {stock} "
+        "(pack stock) has 1985\n"
+    )
+    monkeypatch.setattr(serve.uvicorn, "Server", _Stopped)
+    for modules in ((shelf, stock), (stock, shelf)):
+        path = write_config(config_text(*modules))
+        code, out, err = run_main("check", "--config", str(path))
+        assert (code, out) == (2, "")
+        assert problem in err
+        code, _, err = run_main("serve", "--config", str(path))
+        assert code == 2
+        assert problem in err
+    path = write_config(config_text(shelf, within))
+    assert run_main("check", "--config", str(path))[0] == 0
+    assert run_main("serve", "--config", str(path))[0] == 0
