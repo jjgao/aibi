@@ -5,7 +5,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CURATE_PATH, forgetAddress } from "../../src/operator/url";
-import { words } from "./render";
+import { freshReaders, words } from "./render";
 
 const OPERATOR = "aibi operator The operator screens are not built yet.";
 const ORIGIN = window.location.origin;
@@ -17,12 +17,14 @@ function freshPage(): void {
   root.id = "root";
   document.body.append(root);
   vi.resetModules();
+  freshReaders();
 }
 
 beforeEach(freshPage);
 
 afterEach(() => {
   window.history.replaceState(null, "", "/");
+  vi.unstubAllGlobals();
 });
 
 /** Load the operator entry at `address` as a browser would: its module runs on import. */

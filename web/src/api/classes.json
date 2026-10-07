@@ -1,0 +1,52 @@
+{
+  "adapter_fed": {
+    "why": "A number a response gave, which the person's next request takes back: an offset (a page's next_offset, columns_next), a proposal's id, a release's label, the open session's id (a take-over's).",
+    "positions": [
+      "Accept.proposal",
+      "DescribeColumn.release",
+      "DescribeDataset.columns_offset",
+      "DescribeDataset.release",
+      "ListAnalyses.release",
+      "QueueRequest.release",
+      "SearchCatalog.offset",
+      "TakeOver.session",
+      "WithdrawRequest.release",
+      "path:proposal",
+      "query:release"
+    ]
+  },
+  "typed_by_the_person": {
+    "why": "A number the person types (or the client's constant, for a page's size).",
+    "positions": [
+      "Completeness.min_present",
+      "DescribeDataset.columns_limit",
+      "ExistsLeaf.min_count",
+      "SearchCatalog.limit",
+      "SearchCatalog.min_rows",
+      "SomeAtLeast.some"
+    ]
+  },
+  "both": {
+    "why": "Typed by the person, or taken back from a response: a bin's edge, a column's statistic, a member's key or value, a document or a descriptor read back.",
+    "positions": [
+      "CoveredLeaf.scope.*[]",
+      "DescriptorJson",
+      "DocumentJson",
+      "ParameterValue",
+      "Range.gt",
+      "Range.gte",
+      "Range.lt",
+      "Range.lte",
+      "RequestJson",
+      "UnitKey.key[]",
+      "ValueLeaf.value",
+      "ValueLeaf.values[]"
+    ]
+  },
+  "never_in_the_client": {
+    "why": "The data subject's key, which no screen takes (D269).",
+    "positions": [
+      "EraseRequest.key[]"
+    ]
+  }
+}
