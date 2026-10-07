@@ -4,8 +4,7 @@
  * the real skeleton's build (the positive case: a strict allow-list must not refuse React's own
  * closure and Vite's helpers).
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { build, type Plugin, type Rolldown } from "vite";
@@ -18,7 +17,6 @@ import {
   type GateChunk,
   noWorker,
   operatorClosure,
-  operatorGate,
   OPERATOR_QUERIES,
   operatorProblem,
   packagesOf,
@@ -28,106 +26,11 @@ import { ASSET_FILE_NAMES, CHUNK_FILE_NAMES, ENTRY_FILE_NAMES, sanitizeFileName 
 import { EXTENSIONS } from "../../scripts/check-bundle.mjs";
 import { checkBudget, readPolicy } from "../../scripts/policy-files.mjs";
 import { buildConfig } from "../../vite.config";
+import { cleanup, gated, project, refused, virtual } from "./synthetic";
 
 const WEB = path.join(import.meta.dirname, "../..");
-const scratch = realpathSync(mkdtempSync(path.join(os.tmpdir(), "aibi-gate-")));
 
-afterAll(() => {
-  rmSync(scratch, { recursive: true, force: true });
-});
-
-type Files = Record<string, string>;
-
-const STUBS: Files = {
-  "node_modules/react/package.json": '{"name":"react","version":"0.0.0","main":"index.js"}',
-  "node_modules/react/index.js": "export const react = 'react';",
-  "node_modules/scheduler/package.json": '{"name":"scheduler","version":"0.0.0","main":"index.js"}',
-  "node_modules/scheduler/index.js": "export const scheduler = 'scheduler';",
-  "node_modules/vega-util/package.json": '{"name":"vega-util","version":"0.0.0","main":"index.js"}',
-  "node_modules/vega-util/index.js": "export const vega = 'vega-util ' + Math.random();",
-  "node_modules/react-dom/package.json": '{"name":"react-dom","version":"0.0.0","main":"index.js"}',
-  "node_modules/react-dom/index.js": "import { vega } from 'vega-util'; export const dom = 'react-dom ' + vega;",
-  "node_modules/react-dom/node_modules/vega-util/package.json":
-    '{"name":"vega-util","version":"0.0.1","main":"index.js"}',
-  "node_modules/react-dom/node_modules/vega-util/index.js": "export const vega = 'nested ' + Math.random();",
-  "node_modules/@charts/core/package.json": '{"name":"@charts/core","version":"0.0.0","main":"index.js"}',
-  "node_modules/@charts/core/index.js": "export const charts = 'charts ' + Math.random();",
-  "node_modules/vega-lite/package.json": '{"name":"vega-lite","version":"0.0.0","main":"node_modules/react/chart.js"}',
-  "node_modules/vega-lite/node_modules/react/chart.js": "export const lite = 'vega-lite ' + Math.random();",
-  "node_modules/react-router/package.json": '{"name":"react-router","version":"0.0.0","main":"index.js"}',
-  "node_modules/react-router/index.js": "export const router = 'router ' + Math.random();",
-};
-
-let projects = 0;
-
-/** A two-entry project: `index.html` loads `src/index.js`, `operator.html` `src/operator.js`. */
-function project(files: Files): string {
-  projects += 1;
-  const root = path.join(scratch, `p${String(projects)}`);
-  const all: Files = {
-    "index.html": '<!doctype html><div id="root"></div><script type="module" src="/src/index.js"></script>',
-    "operator.html": '<!doctype html><div id="root"></div><script type="module" src="/src/operator.js"></script>',
-    "src/index.js": "document.title = 'index';",
-    "src/operator.js": "document.title = 'operator';",
-    ...STUBS,
-    ...files,
-  };
-  for (const [name, text] of Object.entries(all)) {
-    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
-    writeFileSync(path.join(root, name), text);
-  }
-  return root;
-}
-
-/** A virtual module `\0aibi-virtual` that `import "virtual:aibi"` resolves to. */
-const virtual: Plugin = {
-  name: "virtual",
-  resolveId(id) {
-    return id === "virtual:aibi" ? "\0aibi-virtual" : null;
-  },
-  load(id) {
-    return id === "\0aibi-virtual" ? "export const v = 'virtual ' + Math.random();" : null;
-  },
-};
-
-/** Build a synthetic project with the gate; the output's chunks, or the build's error. */
-async function gated(
-  root: string,
-  harness = false,
-  plugins: Plugin[] = [],
-): Promise<{ chunks: GateChunk[] } | { error: string }> {
-  try {
-    const output = await build({
-      root,
-      configFile: false,
-      logLevel: "silent",
-      publicDir: false,
-      plugins: [...plugins, operatorGate({ harness })],
-      build: {
-        write: false,
-        assetsInlineLimit: 0,
-        modulePreload: { polyfill: false },
-        rolldownOptions: {
-          input: { index: path.join(root, "index.html"), operator: path.join(root, "operator.html") },
-          output: { sanitizeFileName },
-        },
-      },
-    });
-    const outputs = (Array.isArray(output) ? output : [output]) as Rolldown.RolldownOutput[];
-    return { chunks: outputs.flatMap((found) => found.output.filter((item) => item.type === "chunk")) };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "a build failed without an Error" };
-  }
-}
-
-async function refused(root: string, harness = false, plugins: Plugin[] = []): Promise<string> {
-  const found = await gated(root, harness, plugins);
-  if (!("error" in found)) {
-    throw new Error("the build passed the gate");
-  }
-  expect(found.error).toContain("The build's gate refuses it");
-  return found.error;
-}
+afterAll(cleanup);
 
 describe("packagesOf", () => {
   it.each([
@@ -367,121 +270,121 @@ describe("gateProblems on chunks", () => {
 describe("the gate on real builds of a synthetic project", () => {
   it("passes a legitimate build: React's stubs, the app's src/, a lazy chunk", async () => {
     const root = project({
-      "src/operator.js":
-        "import { react } from 'react'; import { scheduler } from 'scheduler'; import { shared } from './shared.js';" +
-        " document.title = react + scheduler + shared; void import('./lazy.js');",
-      "src/index.js": "import { shared } from './shared.js'; document.title = shared;",
-      "src/shared.js": "export const shared = 'shared ' + Math.random();",
-      "src/lazy.js": "export const lazy = 'lazy';",
+      "src/operator.ts":
+        "import { react } from 'react'; import { scheduler } from 'scheduler'; import { shared } from './shared.ts';" +
+        " document.title = react + scheduler + shared; void import('./lazy.ts');",
+      "src/index.ts": "import { shared } from './shared.ts'; document.title = shared;",
+      "src/shared.ts": "export const shared = 'shared ' + Math.random();",
+      "src/lazy.ts": "export const lazy = 'lazy';",
     });
     const found = await gated(root);
     expect("chunks" in found ? found.chunks.length : found.error).toBeGreaterThan(2);
   });
 
   it("refuses a chart package the operator imports statically", async () => {
-    const root = project({ "src/operator.js": "import { vega } from 'vega-util'; document.title = vega;" });
+    const root = project({ "src/operator.ts": "import { vega } from 'vega-util'; document.title = vega;" });
     expect(await refused(root)).toContain('the package "vega-util"');
   });
 
   it("refuses a chart package only a lazy import of the operator reaches", async () => {
     const root = project({
-      "src/operator.js": "void import('./later.js');",
-      "src/later.js": "import { vega } from 'vega-util'; export const later = vega;",
+      "src/operator.ts": "void import('./later.ts');",
+      "src/later.ts": "import { vega } from 'vega-util'; export const later = vega;",
     });
     expect(await refused(root)).toContain('the package "vega-util"');
   });
 
   it("refuses a chart package inside a chunk the operator shares with the catalogue", async () => {
     const root = project({
-      "src/operator.js": "import { both } from './both.js'; document.title = both;",
-      "src/index.js": "import { both } from './both.js'; document.title = both + 'i';",
-      "src/both.js": "import { vega } from 'vega-util'; export const both = vega;",
+      "src/operator.ts": "import { both } from './both.ts'; document.title = both;",
+      "src/index.ts": "import { both } from './both.ts'; document.title = both + 'i';",
+      "src/both.ts": "import { vega } from 'vega-util'; export const both = vega;",
     });
     expect(await refused(root)).toContain('the package "vega-util"');
   });
 
   it("refuses a package nested under an allowed one, and an allowed one nested under a chart package", async () => {
-    const nested = project({ "src/operator.js": "import { dom } from 'react-dom'; document.title = dom;" });
+    const nested = project({ "src/operator.ts": "import { dom } from 'react-dom'; document.title = dom;" });
     expect(await refused(nested)).toContain('the package "vega-util"');
-    const mirror = project({ "src/operator.js": "import { lite } from 'vega-lite'; document.title = lite;" });
+    const mirror = project({ "src/operator.ts": "import { lite } from 'vega-lite'; document.title = lite;" });
     expect(await refused(mirror)).toContain('the package "vega-lite"');
   });
 
   it("refuses a worker the operator starts, whose chart code Vite emits as an asset, not a chunk", async () => {
     const root = project({
-      "src/operator.js": "new Worker(new URL('./chart/w.js', import.meta.url), { type: 'module' });",
-      "src/chart/w.js": "import { vega } from 'vega-util'; postMessage(vega);",
+      "src/operator.ts": "new Worker(new URL('./chart/w.ts', import.meta.url), { type: 'module' });",
+      "src/chart/w.ts": "import { vega } from 'vega-util'; postMessage(vega);",
     });
     expect(await refused(root)).toMatch(/assets\/w-?[A-Za-z0-9_-]*\.js: a file of a type the loader does not serve/u);
   });
 
   it("refuses the harness in a worker of a production build, and any worker of an end-to-end one", async () => {
     const root = project({
-      "src/index.js": "new Worker(new URL('./harness/h.js', import.meta.url), { type: 'module' });",
-      "src/harness/h.js": "postMessage('harness ' + Math.random());",
+      "src/index.ts": "new Worker(new URL('./harness/h.ts', import.meta.url), { type: 'module' });",
+      "src/harness/h.ts": "postMessage('harness ' + Math.random());",
     });
     expect(await refused(root)).toContain("a script that is no chunk");
     expect(await refused(root, true)).toContain("a script that is no chunk");
   });
 
   it("refuses a scoped package, a router and a chart module", async () => {
-    expect(await refused(project({ "src/operator.js": "import { charts } from '@charts/core'; document.title = charts;" }))).toContain(
+    expect(await refused(project({ "src/operator.ts": "import { charts } from '@charts/core'; document.title = charts;" }))).toContain(
       '"@charts/core"',
     );
-    expect(await refused(project({ "src/operator.js": "import { router } from 'react-router'; document.title = router;" }))).toContain(
+    expect(await refused(project({ "src/operator.ts": "import { router } from 'react-router'; document.title = router;" }))).toContain(
       '"react-router"',
     );
     const chart = project({
-      "src/operator.js": "import { chart } from './chart/Chart.js'; document.title = chart;",
-      "src/chart/Chart.js": "export const chart = 'chart ' + Math.random();",
+      "src/operator.ts": "import { chart } from './chart/Chart.ts'; document.title = chart;",
+      "src/chart/Chart.ts": "export const chart = 'chart ' + Math.random();",
     });
-    expect(await refused(chart)).toContain('the chart module "src/chart/Chart.js"');
+    expect(await refused(chart)).toContain('the chart module "src/chart/Chart.ts"');
   });
 
   it("refuses a virtual module other than Vite's and Rolldown's own", async () => {
-    const root = project({ "src/operator.js": "import { v } from 'virtual:aibi'; document.title = v;" });
+    const root = project({ "src/operator.ts": "import { v } from 'virtual:aibi'; document.title = v;" });
     expect(await refused(root, false, [virtual])).toContain('the virtual module "\\u0000aibi-virtual"');
   });
 
   it("refuses a module outside src/, in the project or outside it", async () => {
     const top = project({
-      "src/operator.js": "import { top } from '../top.js'; document.title = top;",
+      "src/operator.ts": "import { top } from '../top.js'; document.title = top;",
       "top.js": "export const top = 'top ' + Math.random();",
     });
     expect(await refused(top)).toContain("top.js\", outside the allow-list");
-    const root = project({ "src/operator.js": "import { outside } from '../../outside.js'; document.title = outside;" });
+    const root = project({ "src/operator.ts": "import { outside } from '../../outside.js'; document.title = outside;" });
     writeFileSync(path.join(root, "..", "outside.js"), "export const outside = 'outside ' + Math.random();");
     expect(await refused(root)).toContain("outside.js\", outside the allow-list");
   });
 
   it("refuses the harness imported statically by the operator, or by the catalogue", async () => {
     const operator = project({
-      "src/operator.js": "import { marker } from './harness/h.js'; document.title = marker;",
-      "src/harness/h.js": "export const marker = 'harness ' + Math.random();",
+      "src/operator.ts": "import { marker } from './harness/h.ts'; document.title = marker;",
+      "src/harness/h.ts": "export const marker = 'harness ' + Math.random();",
     });
-    expect(await refused(operator)).toContain('the harness module "src/harness/h.js"');
+    expect(await refused(operator)).toContain('the harness module "src/harness/h.ts"');
     const catalogue = project({
-      "src/index.js": "import { marker } from './harness/h.js'; document.title = marker;",
-      "src/harness/h.js": "export const marker = 'harness ' + Math.random();",
+      "src/index.ts": "import { marker } from './harness/h.ts'; document.title = marker;",
+      "src/harness/h.ts": "export const marker = 'harness ' + Math.random();",
     });
-    expect(await refused(catalogue)).toContain('the harness module "src/harness/h.js"');
+    expect(await refused(catalogue)).toContain('the harness module "src/harness/h.ts"');
     expect("chunks" in (await gated(catalogue, true))).toBe(true);
   });
 
   it("refuses a node_modules directory that is not the project's own, under src/chart/ or elsewhere in src/", async () => {
     const chart = project({
-      "src/operator.js": "import { chart } from './chart/node_modules/react/x.js'; document.title = chart;",
-      "src/chart/node_modules/react/x.js": "export const chart = 'chart ' + Math.random();",
+      "src/operator.ts": "import { chart } from './chart/node_modules/react/x.ts'; document.title = chart;",
+      "src/chart/node_modules/react/x.ts": "export const chart = 'chart ' + Math.random();",
     });
-    expect(await refused(chart)).toContain("src/chart/node_modules/react/x.js\", in a node_modules directory that is not the project's own");
+    expect(await refused(chart)).toContain("src/chart/node_modules/react/x.ts\", in a node_modules directory that is not the project's own");
     const foo = project({
-      "src/operator.js": "import { foo } from './foo/node_modules/x/y.js'; document.title = foo;",
-      "src/foo/node_modules/x/y.js": "export const foo = 'foo ' + Math.random();",
+      "src/operator.ts": "import { foo } from './foo/node_modules/x/y.ts'; document.title = foo;",
+      "src/foo/node_modules/x/y.ts": "export const foo = 'foo ' + Math.random();",
     });
-    expect(await refused(foo)).toContain("src/foo/node_modules/x/y.js\", in a node_modules directory that is not the project's own");
+    expect(await refused(foo)).toContain("src/foo/node_modules/x/y.ts\", in a node_modules directory that is not the project's own");
     const mirror = project({
-      "src/operator.js": "import { ok } from './my_node_modules/x.js'; document.title = ok;",
-      "src/my_node_modules/x.js": "export const ok = 'ok';",
+      "src/operator.ts": "import { ok } from './my_node_modules/x.ts'; document.title = ok;",
+      "src/my_node_modules/x.ts": "export const ok = 'ok';",
     });
     expect("chunks" in (await gated(mirror))).toBe(true);
   });
@@ -490,8 +393,8 @@ describe("the gate on real builds of a synthetic project", () => {
     "refuses an operator import whose query %s would place it elsewhere under a path normaliser",
     async (suffix) => {
       const root = project({
-        "src/operator.js": `import { react } from 'react${suffix}'; document.title = react;`,
-        "src/root.js": "export const root = 'root';",
+        "src/operator.ts": `import { react } from 'react${suffix}'; document.title = react;`,
+        "src/root.ts": "export const root = 'root';",
       });
       expect(await refused(root)).toContain("a query or fragment");
     },
@@ -499,7 +402,7 @@ describe("the gate on real builds of a synthetic project", () => {
 
   it.each(["?raw", "?url&inline"])("refuses a module of src/ imported with %s", async (suffix) => {
     const root = project({
-      "src/operator.js": `import text from './text.txt${suffix}'; document.title = String(text);`,
+      "src/operator.ts": `import text from './text.txt${suffix}'; document.title = String(text);`,
       "src/text.txt": "text",
     });
     expect(await refused(root)).toContain("a query or fragment");
@@ -507,25 +410,25 @@ describe("the gate on real builds of a synthetic project", () => {
 
   it("refuses a chart module imported with a query that would place it elsewhere", async () => {
     const root = project({
-      "src/operator.js": "import { chart } from './chart/Chart.js?/../../root.js'; document.title = chart;",
-      "src/chart/Chart.js": "export const chart = 'chart ' + Math.random();",
-      "src/root.js": "export const root = 'root';",
+      "src/operator.ts": "import { chart } from './chart/Chart.ts?/../../root.ts'; document.title = chart;",
+      "src/chart/Chart.ts": "export const chart = 'chart ' + Math.random();",
+      "src/root.ts": "export const root = 'root';",
     });
     expect(await refused(root)).toContain("a query or fragment");
   });
 
   it("refuses the harness imported with a query that would place it elsewhere, in a production build", async () => {
     const root = project({
-      "src/index.js": "import { marker } from './harness/h.js?/../../root.js'; document.title = marker;",
-      "src/harness/h.js": "export const marker = 'harness ' + Math.random();",
-      "src/root.js": "export const root = 'root';",
+      "src/index.ts": "import { marker } from './harness/h.ts?/../../root.ts'; document.title = marker;",
+      "src/harness/h.ts": "export const marker = 'harness ' + Math.random();",
+      "src/root.ts": "export const root = 'root';",
     });
-    expect(await refused(root)).toContain('the harness module "src/harness/h.js"');
+    expect(await refused(root)).toContain('the harness module "src/harness/h.ts"');
   });
 
   it("refuses a raw script a build emits as an asset, which no worker made", async () => {
     const root = project({
-      "src/index.js": "import u from './w.cjs?url'; document.title = u;",
+      "src/index.ts": "import u from './w.cjs?url'; document.title = u;",
       "src/w.cjs": "postMessage(1);",
     });
     expect(await refused(root)).toMatch(/assets\/w-?[A-Za-z0-9_-]*\.cjs: a file of a type the loader does not serve/u);
@@ -533,9 +436,9 @@ describe("the gate on real builds of a synthetic project", () => {
 
   it("names every file after the loader's grammar, whatever the module's name", async () => {
     const root = project({
-      "src/operator.js": "void import('./-lazy @~(é).js'); void import('./.dot.js'); import './-we ird@.css';",
-      "src/-lazy @~(é).js": "export const lazy = 'lazy ' + Math.random();",
-      "src/.dot.js": "export const dot = 'dot ' + Math.random();",
+      "src/operator.ts": "void import('./-lazy @~(é).ts'); void import('./.dot.ts'); import './-we ird@.css';",
+      "src/-lazy @~(é).ts": "export const lazy = 'lazy ' + Math.random();",
+      "src/.dot.ts": "export const dot = 'dot ' + Math.random();",
       "src/-we ird@.css": "p { color: red; }",
     });
     const output = await build({
@@ -567,12 +470,12 @@ describe("the gate on real builds of a synthetic project", () => {
 
 /** The six ways to ask Vite for a worker, each from the module that starts it. */
 const WORKER_FORMS: [string, string][] = [
-  ["?worker", "import W from './w.js?worker'; new W();"],
-  ["?worker&url", "import u from './w.js?worker&url'; new Worker(u);"],
-  ["?worker&inline", "import W from './w.js?worker&inline'; new W();"],
-  ["?sharedworker&inline", "import W from './w.js?sharedworker&inline'; new W();"],
-  ["new Worker(new URL(...))", "new Worker(new URL('./w.js', import.meta.url), { type: 'module' });"],
-  ["new SharedWorker(new URL(...))", "new SharedWorker(new URL('./w.js', import.meta.url), { type: 'module' });"],
+  ["?worker", "import W from './w.ts?worker'; new W();"],
+  ["?worker&url", "import u from './w.ts?worker&url'; new Worker(u);"],
+  ["?worker&inline", "import W from './w.ts?worker&inline'; new W();"],
+  ["?sharedworker&inline", "import W from './w.ts?sharedworker&inline'; new W();"],
+  ["new Worker(new URL(...))", "new Worker(new URL('./w.ts', import.meta.url), { type: 'module' });"],
+  ["new SharedWorker(new URL(...))", "new SharedWorker(new URL('./w.ts', import.meta.url), { type: 'module' });"],
 ];
 
 describe("the gate refuses any worker, through the skeleton's own configuration", () => {
@@ -593,18 +496,18 @@ describe("the gate refuses any worker, through the skeleton's own configuration"
     }
   }
 
-  const ENTRIES = ["src/index.js", "src/operator.js"] as const;
+  const ENTRIES = ["src/index.ts", "src/operator.ts"] as const;
   const MODES = ["production", "e2e"] as const;
 
   it.each(MODES)("passes a build with no worker in %s mode (so that a refusal below is the worker's)", async (mode) => {
-    expect(await built(project({ "src/w.js": "postMessage(1);" }), mode)).toBeNull();
+    expect(await built(project({ "src/w.ts": "postMessage(1);" }), mode)).toBeNull();
   });
 
   describe.each(WORKER_FORMS)("%s", (_form, code) => {
     it.each(ENTRIES.flatMap((entry) => MODES.map((mode) => [entry, mode] as const)))(
       "is refused from %s in %s mode",
       async (entry, mode) => {
-        const root = project({ [entry]: code, "src/w.js": "postMessage(1);" });
+        const root = project({ [entry]: code, "src/w.ts": "postMessage(1);" });
         const error = await built(root, mode);
         expect(error).toContain("The build's gate refuses it");
         expect(error).toContain("the build has a worker");
@@ -754,7 +657,7 @@ describe("the skeleton's configuration", () => {
     const chunks = await real("e2e");
     const harness = chunks.filter((chunk) => chunk.moduleIds.some((id) => id.includes("/src/harness/")));
     expect(harness.map((chunk) => chunk.isEntry)).toEqual([false]);
-    const operator = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/operator.html"));
+    const operator = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/operator.html") === true);
     expect(operator?.dynamicImports).toEqual(harness.map((chunk) => chunk.fileName));
     expect(gateProblems(realpathSync(WEB), chunks, { harness: false })).toEqual([
       expect.stringContaining('the harness module "src/harness/Harness.tsx"'),

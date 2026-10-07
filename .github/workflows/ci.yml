@@ -130,7 +130,8 @@ jobs:
 
   web:
     name: Web checks
-    # The web package (D418): its licences and advisories, types, lint and tests, both builds
+    # The web package (D418, D419): its licences and advisories, the generated API types against
+    # the checked-in OpenAPI document, types, lint and tests, both builds
     # through the build's gate and check-bundle (which runs the real loader), and the policy
     # matrix in Chromium against the built bundles served by the real server.
     runs-on: ubuntu-latest
@@ -163,6 +164,8 @@ jobs:
         run: npm run licenses
       - name: Advisories in the runtime closure
         run: npm audit --omit=dev --audit-level=high
+      - name: The generated API types are those of schemas/openapi.json
+        run: npm run generate:check
       - name: Type check
         run: npm run typecheck
       - name: Lint

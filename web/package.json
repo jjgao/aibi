@@ -8,6 +8,8 @@
   },
   "scripts": {
     "licenses": "node scripts/check-licenses.mjs package-lock.json",
+    "generate": "node scripts/generate-types.mjs",
+    "generate:check": "node scripts/generate-types.mjs --check",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint --max-warnings 0 .",
     "test": "vitest run",
@@ -29,6 +31,7 @@
     "@vitejs/plugin-react": "6.1.2",
     "eslint": "10.12.0",
     "jsdom": "29.1.1",
+    "openapi-typescript": "7.13.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.1",
     "vite": "8.3.2",
