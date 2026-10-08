@@ -44,11 +44,12 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 - `core/engine/`: canonicalisation, ids and counts, the reference evaluator, the SQL compiler
   (`sql.py`), the worker that runs a document's queries in a child process (the server's process
   never loads DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).
-- `core/analyses/`: the registry and applicability, phase 2 of canonicalisation (`views.py`),
-  result envelopes, charts, disclosure of predicate counts, and the analyses: `compare.existence`,
-  `summary.distribution`, `summary.members`, `compare.columns`, `survival.km`, `survival.cox` and a
-  pack's analyses (`packs.py`). Their statistical methods (`stats.py`, `timetoevent.py`, `coxfit.py`,
-  `coxph.py`, `cone.py`, `cox.py`) are held to R, with `ieee.py` doing their arithmetic as C does.
+- `core/analyses/`: the registry and applicability (a per-call index of the release, D420), phase 2
+  of canonicalisation (`views.py`), result envelopes, charts, disclosure of predicate counts, and
+  the analyses: `compare.existence`, `summary.distribution`, `summary.members`, `compare.columns`,
+  `survival.km`, `survival.cox` and a pack's analyses (`packs.py`). Their statistical methods
+  (`stats.py`, `timetoevent.py`, `coxfit.py`, `coxph.py`, `cone.py`, `cox.py`) are held to R, with
+  `ieee.py` doing their arithmetic as C does.
 - `packs/onco/`: the oncology pack (D407), installed by `[packs] modules`: its concepts, the `OncoTree`,
   `HGNC`, `NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet. It
   imports only the pack API (`aibi.core.schema.pack_api`).

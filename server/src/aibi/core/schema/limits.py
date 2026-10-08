@@ -53,6 +53,11 @@ MAX_DATASETS = 64
 """Datasets in one cross-dataset cohort, and entries in a ``via`` map by dataset."""
 MAX_PACKS = 16
 """Packs a document names."""
+MAX_PACK_REQUIREMENTS = 4_096
+"""Requirements of every installed pack's analyses together, each element of each ``requires``
+counted (those with only a predicate and those without a kind included), refused at
+registration (D420): applicability reads each once per call, so they bound its work with the
+release's descriptors (§9.4)."""
 MAX_VIEWS = 8
 MAX_PREDICATES = 16
 """Predicates of one view (``compare.existence``'s ``predicates``, D319): each is resolved and
