@@ -533,7 +533,7 @@ def _ruled(
         return ()
     found: set[RuledCaveat] = set()
     for rule in registry.caveat_rules(involved):
-        declared = registry.pack(rule.pack).caveat_codes
+        declared = registry.caveat_codes(rule.pack)
         codes = _rule_codes(rule, release, form, declared)
         if codes is None:
             return None

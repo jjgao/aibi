@@ -592,9 +592,11 @@ def test_a_schema_s_scalars_are_kept_as_plain_values() -> None:
 
 
 def test_a_dropped_schema_or_wording_still_has_its_other_problem_reported() -> None:
+    """A schema for a kind that is no release kind is named and neither copied nor checked
+    (D421: the site reads at most the release kinds); the pack's other schemas still are."""
     pack = replace(
         LIBRARY,
-        extension_schemas={"not_a_kind": {"x": math.nan}},
+        extension_schemas={"not_a_kind": {"x": math.nan}, "dataset": {"x": math.nan}},
         wording=cast(Any, {"NOT_A_CODE": 5}),
     )
     found = _problems_of(pack)

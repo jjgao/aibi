@@ -125,6 +125,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/tools/list_leaf_kinds": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** List Leaf Kinds */
+        readonly post: operations["list_leaf_kinds"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/tools/propose_descriptor": {
         readonly parameters: {
             readonly query?: never;
@@ -1528,6 +1545,33 @@ export interface components {
              */
             readonly status: "published" | "withdrawn";
         };
+        /**
+         * LeafKindEntry
+         * @description A registered leaf kind as ``list_leaf_kinds`` lists it (§7.3, §11.1, D421): its name
+         *     ``<pack id>.<name>``, its pack's id and version, and its schema as the pack had it when it
+         *     was registered. The schema is a pack's data, never an instruction (A6): the entry is marked
+         *     as data as a whole, and its names are typed by their patterns.
+         */
+        readonly LeafKindEntry: {
+            /** Kind */
+            readonly kind: string;
+            /** Leaf Schema */
+            readonly leaf_schema: {
+                readonly [key: string]: components["schemas"]["OutputJson"];
+            };
+            /** Pack */
+            readonly pack: string;
+            /** Pack Version */
+            readonly pack_version: string;
+        };
+        /**
+         * LeafKindListing
+         * @description What ``list_leaf_kinds`` gives (§11.1, D421): every registered leaf kind, by kind.
+         */
+        readonly LeafKindListing: {
+            /** Kinds */
+            readonly kinds: readonly components["schemas"]["LeafKindEntry"][];
+        };
         /** LibraryOut */
         readonly LibraryOut: {
             /** Name */
@@ -1558,6 +1602,11 @@ export interface components {
             /** Unit */
             readonly unit?: string;
         };
+        /**
+         * ListLeafKinds
+         * @description ``list_leaf_kinds``' request (§11.1, D421): it takes nothing.
+         */
+        readonly ListLeafKinds: Record<string, never>;
         /**
          * LoggedIssuance
          * @description One issuance as the log holds it, its request included: the document as written and the
@@ -3894,6 +3943,173 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AnalysisListing"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 401: {
+                headers: {
+                    /** @description The curator token's scheme */
+                    readonly "WWW-Authenticate"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 405: {
+                headers: {
+                    /** @description The methods the path takes */
+                    readonly Allow?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 408: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 411: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 415: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait */
+                    readonly "Retry-After"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly 503: {
+                headers: {
+                    /** @description Seconds to wait */
+                    readonly "Retry-After"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+            /** @description Refused (D265): the refusals, the status the first one's */
+            readonly default: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Refusals"];
+                };
+            };
+        };
+    };
+    readonly list_leaf_kinds: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ListLeafKinds"];
+            };
+        };
+        readonly responses: {
+            /** @description The answer */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LeafKindListing"];
                 };
             };
             /** @description Refused (D265): the refusals, the status the first one's */

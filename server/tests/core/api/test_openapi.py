@@ -578,7 +578,7 @@ def test_operator_headers_and_the_bearer_scheme(document: dict[str, Any]) -> Non
 
 def test_operation_ids_are_the_routes_own(document: dict[str, Any]) -> None:
     identifiers = [operation["operationId"] for _, _, operation in operations(document)]
-    assert len(identifiers) == len(set(identifiers)) == 31
+    assert len(identifiers) == len(set(identifiers)) == 32
     assert all(re.fullmatch(r"[a-z](?:[a-z0-9_]*[a-z0-9])?", found) for found in identifiers)
     by_body = {body.operation: body for body in OPERATOR_BODIES}
     for method, path, operation in operations(document):
@@ -781,7 +781,7 @@ def test_aibi_csrf_is_declared_where_the_server_requires_it(
                 admitted = codes(sent(client, method, filled, upload, {**base, "Aibi-CSRF": csrf}))
                 assert not {"CSRF_REQUIRED", "ORIGIN_NOT_ALLOWED"} & set(admitted), (method, path)
             checked += 1
-        assert checked == 31
+        assert checked == 32
 
 
 # --- The headers a response carries: one table, read by the server and by the document ----------
