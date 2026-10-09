@@ -51,6 +51,8 @@ from aibi.core.schema.entries import (
     AnalysisEntry,
     CrossDatasetOut,
     FieldsOut,
+    LeafKindEntry,
+    LeafKindListing,
     LibraryOut,
     RandomnessOut,
     RequirementOut,
@@ -447,6 +449,10 @@ class ListAnalyses(_Request):
         return self
 
 
+class ListLeafKinds(_Request):
+    """``list_leaf_kinds``' request (§11.1, D421): it takes nothing."""
+
+
 class AnalysisListing(Output):
     """What ``list_analyses`` gives (§9.1, §9.4, §11.1; D316): each registry entry, by id, and,
     for a dataset, each one's applicability."""
@@ -545,6 +551,7 @@ TOOL_MODELS: dict[str, tuple[type[BaseModel], type[Output]]] = {
     "count_cohort": (CountCohort, CohortCounts),
     "explain": (Explain, Explanation),
     "list_analyses": (ListAnalyses, AnalysisListing),
+    "list_leaf_kinds": (ListLeafKinds, LeafKindListing),
     "run_analysis": (RunAnalysis, AnalysisResults),
 }
 """Each tool's request and output models, from which every schema of the tool is generated."""
@@ -582,8 +589,11 @@ __all__ = [
     "FieldsOut",
     "GraphEdge",
     "HistogramOut",
+    "LeafKindEntry",
+    "LeafKindListing",
     "LibraryOut",
     "ListAnalyses",
+    "ListLeafKinds",
     "NoDistribution",
     "NoneReason",
     "OntologyCode",

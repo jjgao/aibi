@@ -40,6 +40,11 @@ export function list_analyses(): Route<"list_analyses"> {
     return route("list_analyses", "POST", `/api/tools/list_analyses`);
 }
 
+/** `POST /api/tools/list_leaf_kinds` */
+export function list_leaf_kinds(): Route<"list_leaf_kinds"> {
+    return route("list_leaf_kinds", "POST", `/api/tools/list_leaf_kinds`);
+}
+
 /** `POST /api/tools/propose_descriptor` */
 export function propose_descriptor(): Route<"propose_descriptor"> {
     return route("propose_descriptor", "POST", `/api/tools/propose_descriptor`);

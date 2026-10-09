@@ -1,0 +1,9 @@
+{
+  "$id": "tool.list-leaf-kinds.request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``list_leaf_kinds``' request (§11.1, D421): it takes nothing.",
+  "properties": {},
+  "title": "ListLeafKinds",
+  "type": "object"
+}

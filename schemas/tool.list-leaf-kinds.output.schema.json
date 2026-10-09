@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "LeafKindEntry": {
+      "additionalProperties": false,
+      "description": "A registered leaf kind as ``list_leaf_kinds`` lists it (§7.3, §11.1, D421): its name\n``<pack id>.<name>``, its pack's id and version, and its schema as the pack had it when it\nwas registered. The schema is a pack's data, never an instruction (A6): the entry is marked\nas data as a whole, and its names are typed by their patterns.",
+      "properties": {
+        "kind": {
+          "maxLength": 129,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "leaf_schema": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "title": "Leaf Schema",
+          "type": "object",
+          "x-aibi-data": true
+        },
+        "pack": {
+          "maxLength": 64,
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "__"
+              },
+              {
+                "enum": [
+                  "cohort",
+                  "compare",
+                  "core",
+                  "cov",
+                  "covered",
+                  "dataset",
+                  "drv",
+                  "ep",
+                  "exists",
+                  "ids",
+                  "iss",
+                  "leaf",
+                  "model",
+                  "rel",
+                  "sha256",
+                  "stat",
+                  "summary",
+                  "survival",
+                  "value"
+                ]
+              }
+            ]
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Pack",
+          "type": "string"
+        },
+        "pack_version": {
+          "maxLength": 64,
+          "pattern": "^(?:[0-9]+!)?[0-9]+(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:\\+[a-z0-9]+(?:\\.[a-z0-9]+)*)?$",
+          "title": "Pack Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "pack",
+        "pack_version",
+        "leaf_schema"
+      ],
+      "title": "LeafKindEntry",
+      "type": "object",
+      "x-aibi-data": true
+    },
+    "OutputJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    }
+  },
+  "$id": "tool.list-leaf-kinds.output.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What ``list_leaf_kinds`` gives (§11.1, D421): every registered leaf kind, by kind.",
+  "properties": {
+    "kinds": {
+      "items": {
+        "$ref": "#/$defs/LeafKindEntry"
+      },
+      "title": "Kinds",
+      "type": "array"
+    }
+  },
+  "required": [
+    "kinds"
+  ],
+  "title": "LeafKindListing",
+  "type": "object"
+}

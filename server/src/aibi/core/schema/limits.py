@@ -58,6 +58,38 @@ MAX_PACK_REQUIREMENTS = 4_096
 counted (those with only a predicate and those without a kind included), refused at
 registration (D420): applicability reads each once per call, so they bound its work with the
 release's descriptors (§9.4)."""
+MAX_PACK_ANALYSES = 1_000
+"""Analyses of every installed pack together, refused at registration (D421): applicability and
+``resources/list`` read each on every call."""
+MAX_PACK_CONCEPTS = 2_000
+"""Concepts of every installed pack together, refused at registration and counted before any is
+read (D421). What it bounds is the work of each call that reads them: every ``resources/list``
+and every concept ``resources/read`` deep-copies every pack's concepts
+(``PackRegistry.concepts()``, by ``Catalog._concepts``), and a concept not found is
+refused naming every id. It also limits what a future pack may bring: a vocabulary of tens of
+thousands of terms would not fit, and would need a lookup by id instead of a copy per call. The
+repository's one pack has 15."""
+MAX_LEAF_KINDS = 1_000
+"""Leaf kinds of every installed pack together, refused at registration (D421): each is given a
+checker at registration and listed by ``list_leaf_kinds``."""
+MAX_PACK_VALUES = 500_000
+"""JSON values of what a pack's registration copies of what it gave (its extension and leaf
+kinds' schemas, its concepts and its analyses' entries), together, each pack its own (the limit
+``pack_values``, D421)."""
+MAX_PACK_CHARACTERS = 8 * 2**20
+"""Characters of text, keys included, of those copies together, each pack its own (the limit
+``pack_characters``, D421)."""
+MAX_SERVED_VALUES = 200_000
+"""JSON values of each listing the server gives alike to every call (the entries of
+``list_analyses`` and ``list_leaf_kinds``), counted over its served form, every value of every
+member, containers included, the core's and every pack's (D421)."""
+MAX_SERVED_CONTAINERS = 20_000
+"""JSON objects and arrays of that listing's served form, among its values, every one counted at
+every depth: building, checking and dumping one costs 2 to 10 times a scalar (most for nested
+arrays and objects, D421), so they are bounded apart; the core's own listing has 4,509."""
+MAX_SERVED_BYTES = 4 * 2**20
+"""Bytes of that listing's form over MCP: its JSON body and the body again as one JSON string,
+as a tool's result carries it as ``structuredContent`` and as text (D421)."""
 MAX_VIEWS = 8
 MAX_PREDICATES = 16
 """Predicates of one view (``compare.existence``'s ``predicates``, D319): each is resolved and
@@ -209,6 +241,10 @@ PACK_LEAF_STEPS = "pack_leaf_steps"
 """Steps of evaluating a document's pack leaves against their kinds' schemas, together (D285)."""
 EXPANSION_VALUES = "expansion_values"
 """JSON values of the expansions of a document's pack leaves, together (D285)."""
+PACK_VALUES = "pack_values"
+"""JSON values of what a pack's registration copies, together (D421)."""
+PACK_CHARACTERS = "pack_characters"
+"""Characters of text of what a pack's registration copies, together (D421)."""
 PACK_OPTION_STEPS = "pack_option_steps"
 """Steps of evaluating a view's ``options`` against its pack analysis's ``params`` schema
 (D341)."""
@@ -466,6 +502,7 @@ __all__ = [
     "MAX_INPUT_CELLS",
     "MAX_KEEP_DAYS",
     "MAX_LANDMARKS",
+    "MAX_LEAF_KINDS",
     "MAX_LEAVES",
     "MAX_LIST",
     "MAX_LISTED",
@@ -473,7 +510,12 @@ __all__ = [
     "MAX_NAME",
     "MAX_OPEN_PROPOSALS",
     "MAX_PACKS",
+    "MAX_PACK_ANALYSES",
+    "MAX_PACK_CHARACTERS",
+    "MAX_PACK_CONCEPTS",
     "MAX_PACK_LEAVES",
+    "MAX_PACK_REQUIREMENTS",
+    "MAX_PACK_VALUES",
     "MAX_PARAMS",
     "MAX_PATH_STEPS",
     "MAX_POINTER",
@@ -486,6 +528,9 @@ __all__ = [
     "MAX_REFUSALS",
     "MAX_RESULT_CHARACTERS",
     "MAX_RESULT_VALUES",
+    "MAX_SERVED_BYTES",
+    "MAX_SERVED_CONTAINERS",
+    "MAX_SERVED_VALUES",
     "MAX_STRATA",
     "MAX_STRING",
     "MAX_SUMMARY_SEGMENTS",
@@ -502,9 +547,11 @@ __all__ = [
     "OPEN_PROPOSALS",
     "OPERATOR_REQUESTS",
     "PACKS",
+    "PACK_CHARACTERS",
     "PACK_LEAF_STEPS",
     "PACK_LEAVES",
     "PACK_OPTION_STEPS",
+    "PACK_VALUES",
     "PAGE_REQUESTS",
     "PARAMETERS",
     "PATH_SEARCH",

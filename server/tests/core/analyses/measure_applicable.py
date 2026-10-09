@@ -7,7 +7,7 @@
 
 It records, and asserts nothing of, the seconds per ``Analyses.applicable`` call (the least and
 the most of three) on releases of 50, 200 and 1,000 tables of 40 columns each, for the core's
-registry alone and for packs at the cap: 4,096 requirements over 1,008 analyses in 16 packs,
+registry alone and for packs at the cap: 4,096 requirements over 1,000 analyses in 16 packs,
 either drawn as a pack might (``plain``) or each of its own ``min`` over every requirement
 shape, with requirement predicates that hold in every pack (``distinct``), the adversary of
 the index; under *k* unset and 5. Also the copies of every entry that ``Analyses.all`` makes,
@@ -103,19 +103,22 @@ def distinct(chosen: random.Random, number: int) -> dict[str, Any]:
 
 
 def at_cap(make: Callable[[random.Random, int], dict[str, Any]], predicates: bool) -> PackRegistry:
-    """16 packs of 63 analyses (1,008), 4,096 requirements in all (64 analyses with 5, the
-    rest with 4); with ``predicates``, each analysis's first requirement also names one of its
-    pack's four requirement predicates, which hold (64 called per call)."""
+    """16 packs of 63 or 62 analyses (1,000, ``MAX_PACK_ANALYSES``; D420 measured 1,008, before
+    D421 capped them), 4,096 requirements in all (96 analyses with 5, the rest with 4); with
+    ``predicates``, each analysis's first requirement also names one of its pack's four
+    requirement predicates, which hold (64 called per call)."""
     chosen = random.Random(7)
     given: dict[str, list[list[dict[str, Any]]]] = {}
     held: dict[str, dict[str, Callable[[object], bool]]] = {}
     number = 0
+    count = 0
     for position in range(16):
         pack = f"p{position:02d}"
         analyses: list[list[dict[str, Any]]] = []
-        for analysis in range(63):
+        for analysis in range(63 if position < 8 else 62):
+            count += 1
             requires: list[dict[str, Any]] = []
-            for role in range(5 if position * 63 + analysis < 64 else 4):
+            for role in range(5 if count <= 96 else 4):
                 one = {"role": f"r{role}", **make(chosen, number)}
                 if predicates and role == 0:
                     one["predicate"] = f"{pack}.h{analysis % 4}"
@@ -124,7 +127,7 @@ def at_cap(make: Callable[[random.Random, int], dict[str, Any]], predicates: boo
             analyses.append(requires)
         given[pack] = analyses
         held[pack] = {f"h{one}": predicate(f"{pack}.h{one}", True) for one in range(4)}
-    assert number == 4_096
+    assert (number, count) == (4_096, 1_000)
     return registry_of(given, held if predicates else None)
 
 

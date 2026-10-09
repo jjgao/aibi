@@ -1223,7 +1223,7 @@ class _Resolver:
                     alternatives=self._installed(),
                 )
                 continue
-            version = registry.pack(pack_id).manifest.version
+            version = registry.manifest(pack_id).version
             if not SpecifierSet(specifier).contains(version, prereleases=True):
                 self.unavailable.add(pack_id)
                 self.refuse(
@@ -1242,7 +1242,7 @@ class _Resolver:
         if registry is None:
             return []
         return self.listed(
-            [f"{pack_id} {registry.pack(pack_id).manifest.version}" for pack_id in registry.ids]
+            [f"{pack_id} {registry.manifest(pack_id).version}" for pack_id in registry.ids]
         )
 
     def _dataset_packs(self, release: Release, at: Position) -> bool:
@@ -2386,7 +2386,7 @@ class _Resolver:
         key = canonical(leaf)
         if not self._schema_holds(registry, kind, leaf, key, at):
             return None
-        version = registry.pack(pack_id).manifest.version
+        version = registry.manifest(pack_id).version
         compiled = self._expansion(key, context.release, pack_id, version, compiler, at)
         summary = self._summary(key, summarising, at)
         if compiled is None or summary is None:

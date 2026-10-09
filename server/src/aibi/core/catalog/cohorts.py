@@ -338,7 +338,7 @@ def _formats(catalog: Catalog) -> list[str]:
     registry = catalog.registry
     if registry is None:
         return []
-    return sorted(name for pack_id in registry.ids for name in registry.pack(pack_id).translators)
+    return registry.formats()
 
 
 def _failed(message: str) -> Refusal:

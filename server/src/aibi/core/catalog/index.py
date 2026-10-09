@@ -112,7 +112,7 @@ def basis(manifest: str, floor: int | None, registry: PackRegistry | None) -> st
     """What an entry was built on: the release, the floor and the packs' versions."""
     packs: dict[str, JsonValue] = {}
     if registry is not None:
-        packs = {pack: registry.pack(pack).manifest.version for pack in registry.ids}
+        packs = {pack: registry.manifest(pack).version for pack in registry.ids}
     return hashlib.sha256(
         canonical({"manifest": manifest, "floor": floor, "packs": packs})
     ).hexdigest()

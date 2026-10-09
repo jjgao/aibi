@@ -21,7 +21,8 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
-    # The core tests take about 14 minutes; the job's limit leaves them and every other step room,
+    # The core tests take about 32 to 38 minutes (38.3 at M5.3-server-b1's first round), within
+    # their step's 45; the job's limit leaves them and every other step room,
     # and each test step's own limit leaves the annotations' step time to run when one is reached
     # (D340).
     timeout-minutes: 60

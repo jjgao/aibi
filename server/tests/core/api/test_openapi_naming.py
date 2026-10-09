@@ -74,7 +74,7 @@ def test_the_document_s_components_are_components_of_the_routes_models() -> None
     found: Any = openapi.document()
     assert found["components"]["schemas"] == openapi.components_of(models)
     sides = Counter(side for side, _ in models)
-    assert sides["response"] == 31
+    assert sides["response"] == 32
     assert sides["request"] > 20
 
 

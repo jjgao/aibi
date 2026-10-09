@@ -32,6 +32,12 @@ a failure takes no lock and writes nothing:
    (``PackRegistry(packs, core_version=…, labels=…)``): its ``PackError`` is the core's, and its
    ``SystemExit`` (a pack's code asked to exit while it was read) is the start's failure, naming
    the module being registered. Nothing else is caught: any other exception is a core bug.
+   Then, with the core's analyses, what the registry would serve alike to every call: the
+   entries of ``list_analyses`` and ``list_leaf_kinds``, each within ``MAX_SERVED_VALUES`` JSON
+   values and ``MAX_SERVED_BYTES`` bytes of its form over MCP (``served.served_problems``,
+   D421), the one check of them, which ``check`` and ``serve`` both reach here; over either,
+   the start fails naming the limit, the total and every share. The registry is not handed out
+   until both pass.
 
 Every problem is written to ``stderr`` at once and the start fails (``None``), so that a module
 left out never makes a registry that looks whole.
@@ -51,6 +57,7 @@ from typing import NoReturn, TextIO
 import aibi
 from aibi.core.api import logs
 from aibi.core.api.config import ServerConfig
+from aibi.core.catalog.served import served_problems
 from aibi.core.schema.guards import builtin_name, passed
 from aibi.core.schema.pack_api import (
     Pack,
@@ -200,19 +207,24 @@ def _pack_of(name: str, module: object) -> tuple[Pack | None, str | None]:
 
 
 def _registry(packs: list[Pack], names: list[str]) -> tuple[PackRegistry | None, list[str]]:
-    """Step 3: one registry of every pack, labelled by its module; its own ``PackError``'s
-    problems, or the one problem of a pack's code asking to exit, otherwise."""
+    """Step 3: one registry of every pack, labelled by its module, if what it would serve is
+    within its bounds (``served_problems``, D421); its own ``PackError``'s problems, the
+    problems of what it would serve, or the one problem of a pack's code asking to exit,
+    otherwise."""
     stops: list[str] = []
     problems: list[str] = []
     exited = False
     try:
-        return PackRegistry(
+        registry = PackRegistry(
             packs, core_version=aibi.__version__, labels=names, on_stop=stops.append
-        ), []
+        )
     except PackError as error:  # the registry's own, in the core's words (D402)
         problems = list(error.problems)
     except SystemExit:  # the registry's own, when a pack's code asked to exit (D402)
         exited = True
+    else:
+        served = served_problems(registry)
+        return (None, served) if served else (registry, [])
     if exited:
         stopped = stops[-1] if stops else "a module"
         return None, [
@@ -268,7 +280,7 @@ def listing(registry: PackRegistry) -> list[str]:
     N)``, escaped."""
     lines: list[str] = []
     for pack_id in registry.ids:
-        manifest = registry.pack(pack_id).manifest
+        manifest = registry.manifest(pack_id)
         lines.append(
             f"{quoted(manifest.id)} {quoted(manifest.version)} "
             f"(results {int(manifest.results_version)})"
