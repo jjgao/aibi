@@ -14,6 +14,7 @@ from them (D401).
 import hashlib
 import math
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -42,7 +43,7 @@ from aibi.core.schema.descriptors import (
     Descriptor,
 )
 from aibi.core.schema.document import Clause, PackKey, PackLeaf
-from aibi.core.schema.entries import analysis_entry
+from aibi.core.schema.entries import AnalysisEntry, analysis_entry, leaf_kind_entry
 from aibi.core.schema.errors import problem
 from aibi.core.schema.guards import (
     PASSED,
@@ -63,7 +64,14 @@ from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.jsonschemas import problems as schema_problems
 from aibi.core.schema.limits import (
     MAX_DEPTH,
+    MAX_LEAF_KINDS,
+    MAX_PACK_ANALYSES,
+    MAX_PACK_CHARACTERS,
+    MAX_PACK_CONCEPTS,
     MAX_PACK_REQUIREMENTS,
+    MAX_PACK_VALUES,
+    PACK_CHARACTERS,
+    PACK_VALUES,
     RESULT_CHARACTERS,
     RESULT_VALUES,
     TEXT_CHARACTERS,
@@ -605,6 +613,9 @@ def _namespaced(pack: str, name: str) -> bool:
 
 SHOWN_CHARACTERS = 200
 """How much of a pack's name or a schema pointer a registration problem quotes (D402)."""
+SHOWN_PROBLEMS = 8
+"""How many problems one site of a pack's registration words one by one (``_Site``); the rest
+are counted in one more (D421)."""
 
 
 def _shown(text: str, most: int = SHOWN_CHARACTERS) -> str:
@@ -682,10 +693,14 @@ class _Reads:
     ) -> tuple[bool, T | None]:
         """``read()``, guarded. With ``copy``, the allowance of a JSON copy that ``read`` makes,
         the copy's own refusal (``copy.refused``, by identity) is the problem that ``where`` (by
-        default the member) is not a JSON value, quoting the core's reason; any other exception,
-        of whatever type, is that the member could not be read."""
+        default the member) is not a JSON value, quoting the core's reason, and the copy's own
+        trip of its limits (``copy.tripped``, by identity) the problem that the pack gave more
+        than its registration copies (D421), once for the pack, since nothing more of it is
+        copied after it (``_registered``); any other exception, of whatever type, a
+        ``JsonTooLarge`` the pack's code raised included, is that the member could not be read."""
         passing: type[BaseException] | None = None
         refused = False
+        tripped: JsonTooLarge | None = None
         try:
             return True, read()
         except BaseException as error:  # every exception of the pack's is contained (D402)
@@ -693,11 +708,26 @@ class _Reads:
             # handled, so that a core bug there never has it as its context (D404).
             passing = passed(error)
             refused = copy is not None and error is copy.refused
+            if copy is not None and copy.tripped is not None and error is copy.tripped:
+                tripped = copy.tripped
         if passing is not None:
             self.raised = _Passing(passing)
             raise self.raised
+        if tripped is not None:
+            self.problems.append(self._passed(member, tripped))
+            return False, None
         self.problems.append(self._problem(member, copy if refused else None, where))
         return False, None
+
+    def _passed(self, member: str, tripped: JsonTooLarge) -> str:
+        """The problem of a pack whose registration passed its allowance at ``member``: the
+        limit by its name and value, never what the pack gave."""
+        unit = "JSON values" if tripped.name == PACK_VALUES else "characters of text"
+        return (
+            f"{self.label}: its {member} is beyond what a pack's registration copies: more than "
+            f"{tripped.most} {unit} of its schemas, concepts and analyses' entries together "
+            f"({tripped.name})"
+        )
 
     def _problem(self, member: str, refusal: _Allowance | None, where: str | None) -> str:
         """The problem of a member that could not be read, or, with the copy's own ``refusal``,
@@ -748,11 +778,15 @@ def _lossless(value: object, allowance: _Allowance) -> None:
     """Refuses (``allowance.refuse``) what a model's dump holds that its JSON text would not
     carry unchanged: a number that is not finite, which JSON writes as ``null``, and two keys of
     an object written as the same text, of which JSON keeps the last. It reads the dump's
-    containers by the built-in types' own methods, never a key's or a value's."""
+    containers by the built-in types' own methods, never a key's or a value's, and charges
+    ``allowance`` with each value and each string's characters, keys included, before it reads
+    further (D421)."""
+    allowance.value()
     if isinstance(value, dict):
         seen: set[str] = set()
         for key, member in _DICT_ITEMS(cast(dict[object, object], value)):
             if isinstance(key, str):
+                allowance.string(str.__len__(key))
                 text = str.__str__(key)
                 if text in seen:
                     raise allowance.refuse("two keys written as the same text")
@@ -764,6 +798,8 @@ def _lossless(value: object, allowance: _Allowance) -> None:
     elif isinstance(value, tuple):
         for item in _TUPLE_ITEMS(cast(tuple[object, ...], value)):
             _lossless(item, allowance)
+    elif isinstance(value, str):
+        allowance.string(str.__len__(value))
     elif isinstance(value, float) and not math.isfinite(float.__float__(value)):
         raise allowance.refuse("a number that is not finite")
 
@@ -815,19 +851,49 @@ def _manifest(given: Pack, reads: _Reads) -> PackManifest | None:
         return None
 
 
+class _Site:
+    """The problems one site of a pack's registration words about its items (D421): the first
+    ``SHOWN_PROBLEMS`` named one by one, the rest counted in one problem when the site closes, so
+    that a pack giving a million bad items makes nine problems, not a million. Each is worded
+    only when it is named (``named``), so that a problem not named costs no quoting. A problem of
+    a read (``_Reads``) is not the site's: there is one per read, and the reads a site makes item
+    by item are bounded by the count caps."""
+
+    def __init__(self, problems: list[str], label: str, what: str) -> None:
+        self.problems = problems
+        self.label = label
+        self.what = what
+        """What the site's items are, as the problem that counts the rest names them."""
+        self.found = 0
+
+    def named(self) -> bool:
+        """Counts one more problem of the site's; whether it is to be worded and named."""
+        self.found += 1
+        return self.found <= SHOWN_PROBLEMS
+
+    def close(self) -> None:
+        """The problem that counts those not named, if any."""
+        rest = self.found - SHOWN_PROBLEMS
+        if rest > 0:
+            counted = "1 more problem" if rest == 1 else f"{rest} more problems"
+            self.problems.append(f"{self.label}: {counted} with its {self.what}")
+
+
 def _keys(
-    given: list[tuple[object, object]], what: str, reads: _Reads, rule: str = "a name"
+    given: list[tuple[object, object]], what: str, site: _Site, rule: str = "a name"
 ) -> list[tuple[str, object]]:
     """The entries of a mapping a pack gave whose keys are exactly ``str`` of Unicode text,
-    each key once; a problem for any other (D402)."""
+    each key once; a problem of the ``site``'s for any other (D402, D421)."""
     kept: list[tuple[str, object]] = []
     seen: set[str] = set()
     for key, member in given:
         if type(key) is not str or not is_text(key):
-            reads.problems.append(f"{reads.label}: {what} {_named(key)} is not {rule}")
+            if site.named():
+                site.problems.append(f"{site.label}: {what} {_named(key)} is not {rule}")
             continue
         if key in seen:
-            reads.problems.append(f"{reads.label}: {what} {_shown(key)} is given twice")
+            if site.named():
+                site.problems.append(f"{site.label}: {what} {_shown(key)} is given twice")
             continue
         seen.add(key)
         kept.append((key, member))
@@ -844,13 +910,12 @@ def _object(given: Callable[[], object], allowance: _Allowance) -> dict[str, Jso
 
 
 def _schema(
-    given: Callable[[], object], member: str, where: str, reads: _Reads
+    given: Callable[[], object], member: str, where: str, reads: _Reads, allowance: _Allowance
 ) -> dict[str, JsonValue] | None:
     """A schema a pack gave, read by ``given`` and copied as plain JSON inside the member's
-    guard, which alone runs the pack's code, then checked as an extension schema is (D247,
-    D285) by the core's code outside it, so that the core's own failure is never the pack's; or
-    ``None`` with its problems."""
-    allowance = _Allowance.unbounded()
+    guard, which alone runs the pack's code, charged to the pack's ``allowance`` (D421), then
+    checked as an extension schema is (D247, D285) by the core's code outside it, so that the
+    core's own failure is never the pack's; or ``None`` with its problems."""
     unread = f"{reads.label}: {where} is not a JSON object"
     ok, copied = reads(member, lambda: _object(given, allowance), allowance, where)
     if not ok:
@@ -864,7 +929,10 @@ def _schema(
 def _kept_schema(kept: JsonValue, where: str, reads: _Reads) -> dict[str, JsonValue] | None:
     """A schema the core already holds (an entry's ``params`` or ``returns``, read back from
     JSON), copied and checked by the core's code alone, outside any guard: the copy's own
-    refusal is a problem, and any other failure is the core's, raised as it is (D402)."""
+    refusal is a problem, and any other failure is the core's, raised as it is (D402). It is
+    charged to no pack's allowance: the entry it is part of was charged when it was read, and a
+    trip here, outside every guard, would be no problem of the pack's but a failure of the
+    loader's (D421)."""
     allowance = _Allowance.unbounded()
     try:
         copied = _plain(kept, allowance)
@@ -1007,6 +1075,16 @@ class RegisteredAnalysis:
         """A copy of the entry as registered, which nothing can change."""
         return self._entry.model_copy(deep=True)
 
+    @property
+    def version(self) -> str:
+        """The entry's version, read without a copy of the entry."""
+        return self._entry.version
+
+    def listed(self) -> AnalysisEntry:
+        """The entry as ``list_analyses`` lists it, made anew from its dump (``analysis_entry``):
+        nothing of it is the registry's, and the entry is not deep-copied first (D417, D421)."""
+        return analysis_entry(self._entry)
+
 
 @dataclass(frozen=True)
 class PackInfo:
@@ -1069,25 +1147,108 @@ class _Kept:
     its id (D404)."""
     module: str | None = None
     """The module that gave it, when the registry was given labels (D404)."""
+    kinds: int = 0
+    """How many leaf kinds it gave, read or not (``_Room``)."""
+    given: int = 0
+    """How many analyses it gave, read or not (``_Room``)."""
+    ideas: int = 0
+    """How many concepts it gave, read or not (``_Room``)."""
+
+
+@dataclass
+class _Room:
+    """What the packs read so far leave of ``MAX_PACK_CONCEPTS``, ``MAX_LEAF_KINDS`` and
+    ``MAX_PACK_ANALYSES``: a pack whose concepts, leaf kinds or analyses would pass what is left
+    has none of them read (they are iterated, by ``_sequence`` or ``_items``, not read), so
+    that registration reads at most the caps' worth of each whatever the packs give; the
+    refusal still names every pack's share, by the lengths given (D421). A pack whose manifest
+    cannot be read is not kept and reads none of them (``_registered``), so it takes no room."""
+
+    concepts: int = MAX_PACK_CONCEPTS
+    kinds: int = MAX_LEAF_KINDS
+    analyses: int = MAX_PACK_ANALYSES
+
+    def take_concepts(self, count: int) -> bool:
+        """Whether ``count`` more concepts are read, taken from what is left if they are."""
+        if count > self.concepts:
+            return False
+        self.concepts -= count
+        return True
+
+    def take_kinds(self, count: int) -> bool:
+        """Whether ``count`` more leaf kinds are read, taken from what is left if they are."""
+        if count > self.kinds:
+            return False
+        self.kinds -= count
+        return True
+
+    def take_analyses(self, count: int) -> bool:
+        """Whether ``count`` more analyses are read, taken from what is left if they are."""
+        if count > self.analyses:
+            return False
+        self.analyses -= count
+        return True
+
+
+def _over(
+    kept: Sequence[_Kept],
+    share: Callable[[_Kept], int],
+    counted: tuple[str, str],
+    most: int,
+    name: str,
+) -> list[str]:
+    """The problem of packs that have more than ``most`` of something together (``counted``:
+    who has them, and what they are), ``share`` of each, naming the limit (``name``), the total
+    and each pack's share in pack id order, so that the order the packs were given in never
+    decides which is named (D420, D421)."""
+    shares = sorted((one.pack.id, one.label, share(one)) for one in kept if one.pack is not None)
+    total = sum(found for _, _, found in shares)
+    if total <= most:
+        return []
+    named = ", ".join(f"{label} has {found}" for _, label, found in shares)
+    return [
+        f"{counted[0]} {total} {counted[1]} in all, more than the {most} allowed ({name}): {named}"
+    ]
 
 
 def _too_many_requirements(kept: Sequence[_Kept]) -> list[str]:
     """The problem of packs whose analyses have more than ``MAX_PACK_REQUIREMENTS``
-    requirements together (D420), every element of every ``requires`` counted, naming the
-    limit, the total and each pack's share in pack id order, so that the order the packs were
-    given in never decides which is named."""
-    shares = sorted(
-        (one.pack.id, one.label, sum(len(found.entry.fields.requires) for found in one.analyses))
-        for one in kept
-        if one.pack is not None
+    requirements together (D420), every element of every ``requires`` counted."""
+    return _over(
+        kept,
+        lambda one: sum(len(found.entry.fields.requires) for found in one.analyses),
+        ("the packs' analyses have", "requirements"),
+        MAX_PACK_REQUIREMENTS,
+        "MAX_PACK_REQUIREMENTS",
     )
-    total = sum(share for _, _, share in shares)
-    if total <= MAX_PACK_REQUIREMENTS:
-        return []
-    named = ", ".join(f"{label} has {share}" for _, label, share in shares)
+
+
+def _too_many(kept: Sequence[_Kept]) -> list[str]:
+    """The problems of packs that have more than ``MAX_PACK_CONCEPTS`` concepts,
+    ``MAX_PACK_ANALYSES`` analyses or ``MAX_LEAF_KINDS`` leaf kinds together (D421), each pack's
+    share named: what it gave, read or not (``_Room``)."""
     return [
-        f"the packs' analyses have {total} requirements in all, more than the "
-        f"{MAX_PACK_REQUIREMENTS} allowed (MAX_PACK_REQUIREMENTS): {named}"
+        *_over(
+            kept,
+            lambda one: one.ideas,
+            ("the packs have", "concepts"),
+            MAX_PACK_CONCEPTS,
+            "MAX_PACK_CONCEPTS",
+        ),
+        *_over(
+            kept,
+            lambda one: one.given,
+            ("the packs have", "analyses"),
+            MAX_PACK_ANALYSES,
+            "MAX_PACK_ANALYSES",
+        ),
+        *_over(
+            kept,
+            lambda one: one.kinds,
+            ("the packs have", "leaf kinds"),
+            MAX_LEAF_KINDS,
+            "MAX_LEAF_KINDS",
+        ),
     ]
 
 
@@ -1097,11 +1258,47 @@ def _analysis_copy(analysis: RegisteredAnalysis) -> RegisteredAnalysis:
     return RegisteredAnalysis(analysis.entry, analysis.implementation)
 
 
-def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
+def _lists(kind: str, version: str, schema: JsonSchema) -> bool:
+    """Whether a leaf kind as registered lists, as ``list_leaf_kinds`` gives it (D421)."""
+    try:
+        leaf_kind_entry(kind, version, cast(JsonValue, schema))
+    except ValidationError:
+        return False
+    return True
+
+
+def pack_allowance() -> _Allowance:
+    """A pack's registration allowance, its own, never shared with another pack's (D421): at most
+    ``MAX_PACK_VALUES`` JSON values and ``MAX_PACK_CHARACTERS`` characters of text, keys
+    included, of what its registration copies of what it gave, counted before each is copied.
+    The sites it charges are ``CHARGED``; the re-copy of a schema the core already holds
+    (``_kept_schema``) is charged to none."""
+    return _Allowance(
+        MAX_PACK_VALUES,
+        MAX_PACK_CHARACTERS,
+        MAX_PACK_CHARACTERS,
+        (PACK_VALUES, PACK_CHARACTERS, PACK_CHARACTERS),
+    )
+
+
+CHARGED = (
+    "concepts",
+    "extension schemas",
+    "leaf kinds' schemas",
+    "analyses' entries",
+)
+"""What a pack's registration allowance is charged with (D421): its concepts and its analyses'
+entries as their dumps are read (``_read_back``), and its extension schemas and its leaf kinds'
+schemas as they are copied (``_schema``), each read inside its member's guard."""
+
+
+def _registered(given: Pack, core: Version, reads: _Reads, room: _Room) -> _Kept:
     """``given`` as the registry keeps it (D402): a ``Pack`` built by keyword from copies of
     the core's (its manifest, concepts, entries, schemas, names and wordings) and the pack's
     hook objects, kept by identity; each member read once inside its own guard. No pack when
-    its manifest cannot be read, its other members' problems still reported. Also the copies
+    its manifest cannot be read: its concepts, leaf kinds and analyses are then not read at all,
+    and its other members' problems are still reported. Each site's problems about its items are
+    named up to ``SHOWN_PROBLEMS`` and the rest counted (``_Site``). Also the copies
     of its leaf kinds' schemas and its analyses as registered, whose implementations are the
     pack's ``analyses``."""
     manifest = _manifest(given, reads)
@@ -1122,10 +1319,20 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
     ):
         problems.append(f"{label} requires core {_shown(manifest.requires_core)}, not {core}")
 
+    # The pack's registration allowance (D421), charged by each read below that copies what it
+    # gave (``CHARGED``); once it is passed, the pack is refused and nothing more is copied.
+    allowance = pack_allowance()
+    # A pack whose manifest cannot be read is not kept: none of its concepts, leaf kinds or
+    # analyses is read, so that it takes no room and reads nothing counted (D421). Nor is one of
+    # a pack that gives more than the cap leaves; the count refuses it (``_too_many``).
     concepts: list[ConceptDescriptor] = []
     ok, found = reads("concepts", lambda: _sequence(given.concepts))
+    ideas = len(found or [])
+    if manifest is None or not room.take_concepts(ideas):
+        found = []
     for position, concept in enumerate(found or [], 1):
-        allowance = _Allowance.unbounded()
+        if allowance.tripped is not None:
+            break
         ok, copy = reads(
             f"{_ordinal(position)} concept",
             lambda c=concept, a=allowance: _read_back(_CONCEPT, lambda: c, a),
@@ -1133,54 +1340,77 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         )
         if ok and copy is not None:
             concepts.append(copy)
-    if name is not None:
-        problems.extend(
-            f"{label}: concept {_shown(c.id)} is not in its namespace {space}:"
-            for c in concepts
-            if not c.id.startswith(f"{name}:")
-        )
-    ids = [c.id for c in concepts]
-    problems.extend(
-        f"{label}: concept {_shown(c)} is registered twice"
-        for c in sorted({c for c in ids if ids.count(c) > 1})
-    )
+    ideas_site = _Site(problems, label, "concepts")
+    for c in concepts:
+        if name is not None and not c.id.startswith(f"{name}:") and ideas_site.named():
+            problems.append(f"{label}: concept {_shown(c.id)} is not in its namespace {space}:")
+    counted = Counter(c.id for c in concepts)  # linear: ``list.count`` per id is quadratic
+    for c in sorted(c for c, times in counted.items() if times > 1):
+        if ideas_site.named():
+            problems.append(f"{label}: concept {_shown(c)} is registered twice")
+    ideas_site.close()
 
     systems: dict[str, OntologyValidator] = {}
+    systems_site = _Site(problems, label, "ontology systems")
     ok, items = reads("ontology systems", lambda: _items(given.ontology_systems))
     for system, validator in items or []:
         if type(system) is not str or not 0 < len(system) <= 200 or not is_text(system):
-            problems.append(
-                f"{label}: an ontology system name is empty, too long or not Unicode text"
-            )
+            if systems_site.named():
+                problems.append(
+                    f"{label}: an ontology system name is empty, too long or not Unicode text"
+                )
             continue
         if system in systems:
-            problems.append(f"{label}: ontology system {_shown(system)} is given twice")
+            if systems_site.named():
+                problems.append(f"{label}: ontology system {_shown(system)} is given twice")
             continue
         systems[system] = cast(OntologyValidator, validator)
+    systems_site.close()
 
     schemas: dict[str, JsonSchema] = {}
+    extension = _Site(problems, label, "extension schemas")
     ok, items = reads("extension schemas", lambda: _items(given.extension_schemas))
-    for kind, schema in _keys(items or [], "extension schema for", reads):
-        if kind not in RELEASE_KINDS:
+    # Only the release kinds' schemas are copied and checked, so the site reads at most
+    # ``len(RELEASE_KINDS)`` schemas (D421); every other key is iterated, never read, and is a
+    # problem of the site's.
+    known: list[tuple[object, object]] = []
+    for key, schema in items or []:
+        if type(key) is str and key in RELEASE_KINDS:
+            known.append((key, schema))
+        elif extension.named():
             problems.append(
-                f"{label}: extension schema for {_shown(kind)}, which is not a release "
+                f"{label}: extension schema for {_shown(key)}, which is not a release "
                 "descriptor kind"
+                if type(key) is str and is_text(key)
+                else f"{label}: extension schema for {_named(key)} is not a name"
             )
+    for kind, schema in _keys(known, "extension schema for", extension):
+        if allowance.tripped is not None:
+            break
         copied = _schema(
             lambda s=schema: s,
             f"extension schema for {_shown(kind)}",
             f"the extension schema for {_shown(kind)}",
             reads,
+            allowance,
         )
         if copied is not None:
             schemas[kind] = copied
+    extension.close()
 
     leaf_kinds: dict[str, LeafKind] = {}
     leaf_schemas: dict[str, JsonSchema] = {}
+    kinds_site = _Site(problems, label, "leaf kinds")
     ok, items = reads("leaf kinds", lambda: _items(given.leaf_kinds))
+    kinds = len(items or [])
+    if manifest is None or not room.take_kinds(kinds):
+        items = []
     rule = "<pack id>.<name>" if name is None else f"{space}.<name>"
-    for kind, leaf in _keys(items or [], "leaf kind", reads, rule):
-        if name is not None and not _namespaced(name, kind):
+    for kind, leaf in _keys(items or [], "leaf kind", kinds_site, rule):
+        if allowance.tripped is not None:
+            break
+        namespaced = name is not None and _namespaced(name, kind)
+        if name is not None and not namespaced and kinds_site.named():
             problems.append(f"{label}: leaf kind {_shown(kind)} is not {space}.<name>")
         leaf_kinds[kind] = cast(LeafKind, leaf)
         copied = _schema(
@@ -1188,21 +1418,41 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             f"leaf kind {_shown(kind)}'s schema",
             f"the schema of leaf kind {_shown(kind)}",
             reads,
+            allowance,
         )
         if copied is not None:
             leaf_schemas[kind] = copied
+            if (
+                manifest is not None
+                and namespaced
+                and not _lists(kind, manifest.version, copied)
+                and kinds_site.named()
+            ):
+                # Never the error's text: it quotes the value (A6, D402).
+                problems.append(
+                    f"{label}: leaf kind {_shown(kind)} cannot be listed: its name or its schema "
+                    "is beyond what list_leaf_kinds gives"
+                )
+    kinds_site.close()
 
     translators: dict[str, Translator] = {}
+    formats = _Site(problems, label, "translators")
     ok, items = reads("translators", lambda: _items(given.translators))
-    for format, translator in _keys(items or [], "translator format", reads, rule):
-        if name is not None and not _namespaced(name, format):
+    for format, translator in _keys(items or [], "translator format", formats, rule):
+        if name is not None and not _namespaced(name, format) and formats.named():
             problems.append(f"{label}: translator format {_shown(format)} is not {space}.<name>")
         translators[format] = cast(Translator, translator)
+    formats.close()
 
     analyses: list[tuple[AnalysisDescriptor, Analysis]] = []
+    entries = _Site(problems, label, "analyses")
     ok, found = reads("analyses", lambda: _sequence(given.analyses))
+    count = len(found or [])
+    if manifest is None or not room.take_analyses(count):
+        found = []
     for position, analysis in enumerate(found or [], 1):
-        allowance = _Allowance.unbounded()
+        if allowance.tripped is not None:
+            break
         ok, entry = reads(
             f"{_ordinal(position)} analysis's entry",
             lambda a=analysis, w=allowance: _read_back(_ENTRY, lambda: cast(Analysis, a).entry, w),
@@ -1210,7 +1460,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         )
         if not ok or entry is None:
             continue
-        if name is not None and not _namespaced(name, entry.id):
+        if name is not None and not _namespaced(name, entry.id) and entries.named():
             problems.append(f"{label}: analysis {_shown(entry.id)} is not {space}.<name>")
         for member, kept_schema in (
             ("params", entry.fields.params),
@@ -1225,57 +1475,78 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             analysis_entry(entry)
         except ValidationError:
             # Never the error's text: it quotes the value (A6, D402).
-            problems.append(
-                f"{label}: analysis {_shown(entry.id)} cannot be listed: a member of its entry "
-                "is beyond what list_analyses gives"
-            )
+            if entries.named():
+                problems.append(
+                    f"{label}: analysis {_shown(entry.id)} cannot be listed: a member of its "
+                    "entry is beyond what list_analyses gives"
+                )
         analyses.append((entry, cast(Analysis, analysis)))
+    entries.close()
     analysis_ids = [entry.id for entry, _ in analyses]
     if len(set(analysis_ids)) != len(analysis_ids):
         problems.append(f"{label}: an analysis id appears twice")
 
     predicates: dict[str, RequirementPredicate] = {}
+    predicates_site = _Site(problems, label, "requirement predicates")
     ok, items = reads("requirement predicates", lambda: _items(given.requirement_predicates))
     for predicate, function in items or []:
         if type(predicate) is not str or not is_identifier(predicate):
-            problems.append(
-                f"{label}: requirement predicate {_named(predicate)} is not an identifier"
-            )
+            if predicates_site.named():
+                problems.append(
+                    f"{label}: requirement predicate {_named(predicate)} is not an identifier"
+                )
             continue
         if predicate in predicates:
-            problems.append(f"{label}: requirement predicate {_shown(predicate)} is given twice")
+            if predicates_site.named():
+                problems.append(
+                    f"{label}: requirement predicate {_shown(predicate)} is given twice"
+                )
             continue
         predicates[predicate] = cast(RequirementPredicate, function)
+    predicates_site.close()
 
     codes: dict[str, Severity] = {}
+    codes_site = _Site(problems, label, "caveat codes")
     code_rule = "<pack id>.<CODE>" if name is None else f"{space}.<CODE>"
     ok, items = reads("caveat codes", lambda: _items(given.caveat_codes))
     for code, severity in items or []:
         if type(code) is not str or not is_text(code):
-            problems.append(f"{label}: caveat code {_named(code)} is not {code_rule}")
+            if codes_site.named():
+                problems.append(f"{label}: caveat code {_named(code)} is not {code_rule}")
             continue
-        if name is not None and (code.partition(".")[0] != name or not is_pack_code(code)):
+        if (
+            name is not None
+            and (code.partition(".")[0] != name or not is_pack_code(code))
+            and codes_site.named()
+        ):
             problems.append(f"{label}: caveat code {_shown(code)} is not {space}.<CODE>")
         member = _member(Severity, severity)
         if member is None:
-            problems.append(f"{label}: caveat code {_shown(code)} has no severity")
+            if codes_site.named():
+                problems.append(f"{label}: caveat code {_shown(code)} has no severity")
             continue
         if code in codes:
-            problems.append(f"{label}: caveat code {_shown(code)} is given twice")
+            if codes_site.named():
+                problems.append(f"{label}: caveat code {_shown(code)} is given twice")
             continue
         codes[code] = member
+    codes_site.close()
+    cited_site = _Site(problems, label, "analyses' caveats")
     for entry, _ in analyses:
         for cited in entry.fields.caveats:
             owner, dot, _ = cited.partition(".")
-            if (dot and owner == name and cited not in codes) or (
-                not dot and cited not in _CORE_CODES
-            ):
+            if (
+                (dot and owner == name and cited not in codes)
+                or (not dot and cited not in _CORE_CODES)
+            ) and cited_site.named():
                 problems.append(
                     f"{label}: analysis {_shown(entry.id)} cites {_shown(cited)}, "
                     "which is not declared"
                 )
+    cited_site.close()
 
     wording: dict[CaveatCode, str] = {}
+    wording_site = _Site(problems, label, "wording")
     ok, items = reads("wording", lambda: _items(given.wording))
     for code, template in items or []:
         core_code: CaveatCode | None = None
@@ -1283,20 +1554,21 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
             core_code = _member(CaveatCode, code)
         elif type(code) is str and code in _CORE_CODES:
             core_code = CaveatCode(code)
-        if core_code is None:
+        if core_code is None and wording_site.named():
             problems.append(f"{label}: wording for {_named(code)}, which is not a core caveat code")
-            shown = _named(code)
-        else:
-            shown = core_code.value
         if type(template) is not str or not template or not is_text(template):
-            problems.append(f"{label}: the wording for {shown} is not Unicode text")
+            if wording_site.named():
+                shown = _named(code) if core_code is None else core_code.value
+                problems.append(f"{label}: the wording for {shown} is not Unicode text")
             continue
         if core_code is None:
             continue
         if core_code in wording:
-            problems.append(f"{label}: the wording for {shown} is given twice")
+            if wording_site.named():
+                problems.append(f"{label}: the wording for {core_code.value} is given twice")
             continue
         wording[core_code] = template
+    wording_site.close()
 
     ok, importer = reads("importer", lambda: given.importer)
     ok, validator = reads("validator", lambda: given.validator)
@@ -1349,7 +1621,7 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
         requirement_predicates=tuple(predicates),
         analyses=tuple(analysis.entry.id for analysis in registered),
     )
-    return _Kept(kept, hooks, leaf_schemas, registered, label, reads.module)
+    return _Kept(kept, hooks, leaf_schemas, registered, label, reads.module, kinds, count, ideas)
 
 
 def _handed_out(pack: PackInfo) -> PackInfo:
@@ -1404,6 +1676,7 @@ class PackRegistry:
         kept: list[_Kept] = []
         leaf_schemas: dict[str, JsonSchema] = {}
         readers: list[_Reads] = []
+        room = _Room()
         passing: type[BaseException] | None = None
         stopped = ""
         reading = ""
@@ -1420,7 +1693,7 @@ class PackRegistry:
                     problems.append(f"{label} is not a Pack")
                     continue
                 readers.append(_Reads(label, problems, module))
-                found = _registered(given, core, readers[-1])
+                found = _registered(given, core, readers[-1], room)
                 leaf_schemas.update(found.leaf_schemas)
                 if found.pack is not None:
                     kept.append(found)
@@ -1473,6 +1746,7 @@ class PackRegistry:
                         f"{claim[0]} {_shown(claim[1])} is registered by {owner.label} and {label}"
                     )
         problems.extend(_too_many_requirements(kept))
+        problems.extend(_too_many(kept))
         if problems:
             raise PackError(problems)
         ordered = dict(sorted(by_id.items()))
@@ -1482,6 +1756,11 @@ class PackRegistry:
         self._hooks: Mapping[str, _Hooks] = MappingProxyType(
             {pack_id: one.hooks for pack_id, one in ordered.items()}
         )
+        self._labels: Mapping[str, str] = MappingProxyType(
+            {pack_id: one.label for pack_id, one in ordered.items()}
+        )
+        """How a problem names each pack: its id, escaped, or with labels its module's name and
+        its id (D404)."""
         sorts = {
             concept.id: concept.fields.sort
             for pack in self._packs.values()
@@ -1497,6 +1776,9 @@ class PackRegistry:
         self._analyses = {
             analysis.entry.id: analysis for one in ordered.values() for analysis in one.analyses
         }
+        self._leaf_schemas: Mapping[str, JsonSchema] = MappingProxyType(leaf_schemas)
+        """The copy of each leaf kind's schema as registered, in the order the packs gave them
+        (``leaf_schemas`` hands them out in kind order)."""
         self._leaf_checkers = {kind: Checker(schema) for kind, schema in leaf_schemas.items()}
         """The checker of each leaf kind's schema as registered."""
         self._analysis_checkers = {
@@ -1517,6 +1799,23 @@ class PackRegistry:
     def pack(self, pack_id: str) -> PackInfo:
         """The pack as registered, with copies of its concepts and schemas, and no hook."""
         return _handed_out(self._registered(pack_id))
+
+    def manifest(self, pack_id: str) -> PackManifest:
+        """A copy of the pack's manifest, and nothing else of it copied: what a call reads of a
+        pack once per analysis, leaf or rule must not copy its concepts and schemas each time
+        (D421)."""
+        return self._registered(pack_id).manifest.model_copy()
+
+    def label(self, pack_id: str) -> str:
+        """How a problem names the pack: its id, escaped, or, when the registry was given
+        labels, its module's name and its id (D404)."""
+        self._registered(pack_id)
+        return self._labels[pack_id]
+
+    def caveat_codes(self, pack_id: str) -> Mapping[str, Severity]:
+        """The caveat codes the pack declares, with their severities: read-only, so handed out
+        as kept, and nothing else of the pack copied (D421)."""
+        return self._registered(pack_id).caveat_codes
 
     def _registered(self, pack_id: str) -> PackInfo:
         try:
@@ -1622,6 +1921,20 @@ class PackRegistry:
         """Every registered leaf kind, sorted."""
         return sorted(self._leaf_checkers)
 
+    def leaf_schemas(self) -> dict[str, JsonSchema]:
+        """A copy of each registered leaf kind's schema as its pack had it when it was
+        registered (D285, D402), by kind, in kind order whatever order the packs gave them in:
+        changing what is handed out changes nothing registered (D421)."""
+        return {
+            kind: cast(dict[str, JsonValue], _copied(cast(JsonValue, self._leaf_schemas[kind])))
+            for kind in sorted(self._leaf_schemas)
+        }
+
+    def formats(self) -> list[str]:
+        """Every document format a registered pack translates, ``<pack id>.<name>``, sorted,
+        without copying any pack's concepts or schemas (D421)."""
+        return sorted(name for pack in self._packs.values() for name in pack.translators)
+
     def translator(self, format: str) -> "Hook[Translator] | None":
         """As ``leaf_kind``, for a document format ``<pack id>.<name>``."""
         return self._hooks_of(format.partition(".")[0]).translators.get(format)
@@ -1638,6 +1951,19 @@ class PackRegistry:
     def analyses(self) -> list[RegisteredAnalysis]:
         return [
             _analysis_copy(self._analyses[analysis_id]) for analysis_id in sorted(self._analyses)
+        ]
+
+    def analysis_entries(self) -> list[AnalysisEntry]:
+        """Each pack analysis's entry as ``list_analyses`` lists it, by id: each made anew from
+        the entry as registered by its dump (``analysis_entry``), so that nothing handed out is
+        the registry's, without a deep copy of the entry first (D417, D421)."""
+        return [self._analyses[analysis_id].listed() for analysis_id in sorted(self._analyses)]
+
+    def analysis_versions(self) -> list[tuple[str, str]]:
+        """Each pack analysis's id and version, by id, nothing of its entry copied (D421)."""
+        return [
+            (analysis_id, self._analyses[analysis_id].version)
+            for analysis_id in sorted(self._analyses)
         ]
 
     def analysis_checkers(self, analysis_id: str) -> tuple[Checker, Checker]:

@@ -1,8 +1,10 @@
 """A registry entry as an output (SPEC §9.1, §11.1; D417): ``list_analyses`` lists an analysis
-descriptor's members typed, so that the JSON is the descriptor's.
+descriptor's members typed, so that the JSON is the descriptor's; and a leaf kind as
+``list_leaf_kinds`` lists it (§7.3, D421).
 
 These models are kept apart from ``catalog`` so that the pack registry, which ``catalog``'s
-modules import, can check at registration that an entry it holds lists (``analysis_entry``).
+modules import, can check at registration that an entry and a leaf kind it holds list
+(``analysis_entry``, ``leaf_kind_entry``).
 """
 
 from typing import Annotated, Literal, cast
@@ -18,6 +20,7 @@ from aibi.core.schema.descriptors import (
     SemVer,
     Text,
 )
+from aibi.core.schema.document import PackKey
 from aibi.core.schema.ids import AnalysisId, Identifier, PackName
 from aibi.core.schema.limits import ENTRIES, MAX_ENTRIES, LimitName, map_cap
 from aibi.core.schema.output import (
@@ -27,6 +30,7 @@ from aibi.core.schema.output import (
     FiniteJsonObject,
     Output,
 )
+from aibi.core.schema.results import Pep440
 
 
 class RequirementOut(Output):
@@ -110,6 +114,39 @@ class AnalysisEntry(Output):
     fields: FieldsOut
 
 
+class LeafKindEntry(Output):
+    """A registered leaf kind as ``list_leaf_kinds`` lists it (§7.3, §11.1, D421): its name
+    ``<pack id>.<name>``, its pack's id and version, and its schema as the pack had it when it
+    was registered. The schema is a pack's data, never an instruction (A6): the entry is marked
+    as data as a whole, and its names are typed by their patterns."""
+
+    model_config = ConfigDict(json_schema_extra=DATA_MARK)
+
+    kind: PackName
+    pack: PackKey
+    pack_version: Pep440
+    leaf_schema: Annotated[FiniteJsonObject, Field(json_schema_extra=DATA_MARK)]
+
+
+class LeafKindListing(Output):
+    """What ``list_leaf_kinds`` gives (§11.1, D421): every registered leaf kind, by kind."""
+
+    kinds: list[LeafKindEntry]
+
+
+def leaf_kind_entry(kind: str, pack_version: str, schema: JsonValue) -> LeafKindEntry:
+    """A leaf kind as ``list_leaf_kinds`` lists it, its pack the kind's namespace. Raises
+    ``ValidationError`` when a type of the entry is narrower than what the registry holds."""
+    return LeafKindEntry.model_validate(
+        {
+            "kind": kind,
+            "pack": kind.partition(".")[0],
+            "pack_version": pack_version,
+            "leaf_schema": schema,
+        }
+    )
+
+
 def analysis_entry(descriptor: AnalysisDescriptor) -> AnalysisEntry:
     """A registry entry as ``list_analyses`` gives it: the descriptor's own members, typed, so
     that the JSON is the descriptor's (D417). Raises ``ValidationError`` when a type of the
@@ -122,8 +159,11 @@ __all__ = [
     "AnalysisEntry",
     "CrossDatasetOut",
     "FieldsOut",
+    "LeafKindEntry",
+    "LeafKindListing",
     "LibraryOut",
     "RandomnessOut",
     "RequirementOut",
     "analysis_entry",
+    "leaf_kind_entry",
 ]

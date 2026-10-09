@@ -103,6 +103,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.document import DocModel
+from aibi.core.schema.entries import AnalysisEntry, analysis_entry
 from aibi.core.schema.guards import PackFailed
 from aibi.core.schema.ids import CORE_ANALYSIS_FAMILIES
 from aibi.core.schema.jsonschemas import Checker
@@ -358,7 +359,7 @@ class Analyses:
     def _pack_analysis(self, found: RegisteredAnalysis) -> Registered:
         assert self.packs is not None, "a pack's analysis is of an installed pack"
         entry = found.entry
-        manifest = self.packs.pack(entry.id.partition(".")[0]).manifest
+        manifest = self.packs.manifest(entry.id.partition(".")[0])
         version = PackVersion(version=manifest.version, results_version=manifest.results_version)
         return Registered(entry, manifest.id, None, version)
 
@@ -406,6 +407,22 @@ class Analyses:
 
     def ids(self) -> list[str]:
         return [analysis.id for analysis in self.all()]
+
+    def entries(self) -> list[AnalysisEntry]:
+        """Every analysis's entry as ``list_analyses`` lists it, by id: each made anew from the
+        core's or the registry's entry by its dump (``analysis_entry``), never a copy of it made
+        first, so that what is handed out is no one's and costs one dump each (D417, D421)."""
+        found = [analysis_entry(analysis.entry) for analysis in CORE.values()]
+        if self.packs is not None:
+            found += self.packs.analysis_entries()
+        return sorted(found, key=lambda entry: entry.id)
+
+    def versions(self) -> list[tuple[str, str]]:
+        """Every analysis's id and version, by id, nothing of an entry copied (D421)."""
+        found = [(analysis.entry.id, analysis.entry.version) for analysis in CORE.values()]
+        if self.packs is not None:
+            found += self.packs.analysis_versions()
+        return sorted(found)
 
     def applicable(
         self,
