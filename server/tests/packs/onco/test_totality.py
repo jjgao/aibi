@@ -446,18 +446,7 @@ LABELS = list(
 """The families, by label."""
 READ_TARGETS = ("meta_study", "meta_sample", "hostile_meta")
 """The swap targets ``discover`` reads: a meta file is read, a data file or another entry never."""
-GAP = [f"swap_{target}_directory" for target in READ_TARGETS]
-"""The cases the core's reader is not total for: a file that became a directory after the listing
-is opened (``os.open`` succeeds on a directory) and then ``os.fdopen`` raises ``IsADirectoryError``,
-out of ``Confinement.read`` and as the pack's failure through the core's checks; its descriptor is
-not closed either (issue #94). Each is ``xfail(strict)``, so that it fails the day the
-reader refuses it: remove the marks then."""
 CASES = [(name, label) for name in NAMES for label in LABELS]
-GAPPED = pytest.mark.xfail(
-    strict=True,
-    raises=IsADirectoryError,
-    reason="Confinement.read on a file that became a directory (issue #94)",
-)
 ROOT = os.geteuid() == 0
 UNREAD = pytest.mark.skipif(ROOT, reason="mode 000 does not bite for root")
 """A mode-000 family: the owner's mode does not stop root from reading, so the case would pass
@@ -466,7 +455,6 @@ without holding anything."""
 
 def marks(label: str) -> list[pytest.MarkDecorator]:
     return [
-        *([GAPPED] if label in GAP else []),
         *([UNREAD] if label.startswith("mode_") else []),
     ]
 
@@ -488,17 +476,24 @@ def test_discover_is_total_over_hostile_directories(
 def test_the_set_is_the_size_it_is_said_to_be() -> None:
     """The generated set: 14 names in 61 families, each at 3 limits, each run twice."""
     assert (len(NAMES), len(LABELS), len(CASES)) == (14, 61, 14 * 61)
-    assert len(GAP) == 3
 
 
+@pytest.mark.parametrize("swap", [*SWAPS, "unwatched_fifo"])
 @pytest.mark.parametrize("target", READ_TARGETS)
-def test_a_file_replaced_after_the_listing_is_not_the_one_listed(
-    target: str, totality: Totality, base: Any, kinds: Any
+def test_a_file_swapped_after_the_listing_is_not_the_one_listed(
+    target: str, swap: str, totality: Totality, base: Any, kinds: Any
 ) -> None:
-    """A meta file that is another file after the listing is refused by the reader's identity
-    check, at every limit and both ways (the new file has its own inode: it is made under another
-    name and moved over the old one, as a remove then a create would hand the freed inode back)."""
-    case = families(base, kinds, HOSTILE["ff"])[f"swap_{target}_replaced"]
+    """A meta file that is another file, a directory, a symlink, a FIFO (with a writer or without
+    one) or gone after the listing is refused by the reader, as ``PATH_NOT_CONFINED``, at every
+    limit and both ways (a new file has its own inode: it is made under another name and moved
+    over the old one, as a remove then a create would hand the freed inode back; a directory or a
+    FIFO may take the freed inode, and is refused for its kind)."""
+    signal.alarm(10)  # a FIFO nothing writes to must be refused, not waited for
+    names = {"unwatched_fifo": "fifo"}
+    case = families(base, kinds, HOSTILE["ff"])[f"swap_{target}_{names.get(swap, swap)}"]
+    if swap == "unwatched_fifo":
+        assert case.plan is not None
+        case = Case(case.label, case.tree, plan=(case.plan[0], "unwatched_fifo"))
     for import_bytes in IMPORT_BYTES:
         assert totality.agree(case, import_bytes) == ("refused", str(RefusalCode.PATH_NOT_CONFINED))
 
@@ -509,7 +504,7 @@ def test_an_outcome_is_not_always_one_thing(totality: Totality, base: Any, kinds
     seen: dict[str, set[Outcome]] = {}
     for name in ("ff", "fffe", "sentinel_ff"):
         for label, case in families(base, kinds, HOSTILE[name]).items():
-            if label in GAP or (ROOT and label.startswith("mode_")):
+            if ROOT and label.startswith("mode_"):
                 continue
             for import_bytes in IMPORT_BYTES:
                 seen.setdefault(label, set()).add(totality.agree(case, import_bytes))
@@ -538,9 +533,7 @@ file_names = st.binary(min_size=1, max_size=60).filter(
 )
 @given(
     name=file_names,
-    label=st.sampled_from(
-        [label for label in LABELS if label not in GAP and not (ROOT and label.startswith("mode_"))]
-    ),
+    label=st.sampled_from([label for label in LABELS if not (ROOT and label.startswith("mode_"))]),
     import_bytes=st.sampled_from(IMPORT_BYTES),
 )
 def test_discover_is_total_over_generated_names(
@@ -553,21 +546,3 @@ def test_discover_is_total_over_generated_names(
 ) -> None:
     case = families(base, kinds, name)[label]
     totality.agree(case, import_bytes)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=Hung,
-    reason="Confinement.read opens a FIFO that replaced a file, and waits for a writer (issue #94)",
-)
-def test_a_file_swapped_for_a_fifo_with_no_writer_is_refused_not_waited_for(
-    totality: Totality, base: Any, kinds: Any
-) -> None:
-    """The core's reader opens without ``O_NONBLOCK``: a listed file that becomes a FIFO blocks
-    the import until something opens it for writing. Known, and the core's (not the pack's):
-    the case waits 3 seconds and ends as ``Hung``. With a writer, as the ``fifo`` swaps have,
-    the reader refuses the file."""
-    signal.alarm(3)
-    case = families(base, kinds, HOSTILE["ff"])["swap_meta_study_fifo"]
-    swapped = Case(case.label, case.tree, plan=(b"meta_study.txt", "unwatched_fifo"))
-    totality.direct(totality.build(swapped), IMPORT_BYTES[0], swapped.plan)
