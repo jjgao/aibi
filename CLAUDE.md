@@ -57,11 +57,20 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   imports only the pack API (`aibi.core.schema.pack_api`).
 - `web/` (D418): the web bundle's package (React, react-router's hash router, Vite 8), so far a
   skeleton of fixed words: the catalogue entry (`src/catalogue/`, with a lazy not-found screen)
-  and the operator entry (`src/operator/`, which reads nothing from its URL), the end-to-end
-  harness's stub (`src/harness/`, in `dist-e2e/` alone), the build's gate (`plugins/gate.ts`: no
-  harness in production, an allow-list for the operator entry's graph), `scripts/check-bundle.mjs`
-  (names, hashes, caps, the budget, then the real loader) and `scripts/check-licenses.mjs`, and
-  the policy matrix (`e2e/`: Playwright against the built bundles served by the real server).
+  and the operator entry (`src/operator/`, which reads nothing from its URL: the token's shell,
+  the forget action, the confirmation step), the operator's client (`src/api/curator.ts`; the
+  page's one, `src/api/operator.ts`, which the index never re-exports; the token, the CSRF token
+  and handles in its closure alone, the epoch, the idle lock: read D423 before touching it; the lint
+  takes the page's objects, `window`, `location`, `history`, `navigator` and `document`, by member
+  access alone, by name and by type (`aibi/page-objects`, whatever a value is called, its lists held against `lib.dom` by
+  `tests/gates/page-types.test.ts`), and bans the channels out of the page's memory), the
+  end-to-end harness (`src/harness/`, in `dist-e2e/` alone, never showing a secret), the build's
+  gate (`plugins/gate.ts`: no harness in production, an allow-list for the operator entry's graph,
+  no operator module in the catalogue's), `scripts/check-bundle.mjs` (names, hashes, caps, the
+  budget, then the real loader) and `scripts/check-licenses.mjs`, and the policy and operator
+  matrices (`e2e/`: Playwright against the built bundles served by the real server; a token is
+  entered with `locator.evaluate`, never `fill`, whose step title holds the value, and
+  `scan-reporter.ts` fails the run on a secret in the report or in the run's output).
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.
@@ -178,7 +187,9 @@ OpenAPI document (`schemas/openapi.json`), not written by hand, but for the one 
 §12.4 records: three JSON-value types and `ServerNumber`, which the generated types reach through
 the document's `x-aibi-json` and `x-aibi-server-number` marks (`src/api/json.ts`, `src/api/box.ts`;
 D416, D419). After changing the document, run `npm run generate`; after changing a result envelope,
-`uv run python scripts/export_envelopes.py` in `server/` (CI fails while either is stale).
+`uv run python scripts/export_envelopes.py` in `server/`, and after changing the operator name's
+rules (`auth.valid_name`, `encode_operator`), `uv run python scripts/export_operator_names.py`
+(CI fails while any is stale).
 Node is pinned in `web/.nvmrc` and every package exactly in `package.json` and its lockfile (v3);
 install scripts never run. From `web/` (the matrix starts the real server from `server/.venv`, so
 run `uv sync` in `server/` first):

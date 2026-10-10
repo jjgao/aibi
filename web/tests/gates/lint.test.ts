@@ -223,7 +223,7 @@ describe("ordinary code passes, so that a flag is the rule's", () => {
     ["a call of setAttribute", "export const f = (el: Element) => { el.setAttribute(\"class\", 'x'); };"],
     ["names that only contain a sink's", "export const f = (el: any) => { const scripts = el.scripts; const innerHTMLs = 1; const description = 2; return [scripts, innerHTMLs, description]; };"],
     ["computed access to an ordinary object", "export const f = (a: string[], i: number) => a[i];"],
-    ["the global object, by name", "export const f = () => window.location.pathname + globalThis.name + self.name;"],
+    ["the global object, by name", "export const f = () => window.location.pathname + globalThis.origin + self.origin;"],
     ["words that are not sinks", "export const f = (x: unknown) => typeof x === 'function' && 'script tag' + 'reflect' + 'Function';"],
   ])("%s", async (_form, code) => {
     expect(await flagged(code)).toEqual([]);

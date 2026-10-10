@@ -71,8 +71,14 @@ describe("in src/api/ but client.ts, the I/O names and not the number names", ()
 });
 
 describe("client.ts names I/O, and no tooling is refused, but every other file is", () => {
-  it.each(IO_NAMES)("%s in client.ts", async (name) => {
+  // The Cache API is refused in client.ts too (D423: a cache keeps a request and its response, a
+  // secret among them, beyond the page): it is I/O's name and a storage name.
+  it.each(IO_NAMES.filter((name) => name !== "caches" && name !== "CacheStorage"))("%s in client.ts", async (name) => {
     expect(await flagged(`export const f = (): unknown => ${name};\n`, "src/api/client.ts")).toBe(false);
+  });
+
+  it.each(["caches", "CacheStorage"])("%s in client.ts is refused", async (name) => {
+    expect(await flagged(`export const f = (): unknown => ${name};\n`, "src/api/client.ts")).toBe(true);
   });
 
   it.each(["scripts/probe.ts", "tests/probe.ts", "e2e/probe.ts", "plugins/probe.ts"])("no name in the tooling, %s", async (file) => {

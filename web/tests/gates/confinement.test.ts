@@ -440,7 +440,7 @@ describe("graphProblems on a graph (the rule's own cells)", () => {
   it("holds the importers of an internal to the table, statically and dynamically apart", () => {
     const graph = graphOf(root, { ...base, "src/a.ts": { imports: ["src/api/box.ts"] }, "src/b.ts": { dynamicImports: ["src/api/box.ts"] } });
     expect(graphProblems(root, graph)).toEqual([
-      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts)'),
+      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts, src/api/curator.ts)'),
       expect.stringContaining('src/api/box.ts is imported dynamically: the importer "/w/src/b.ts"'),
     ]);
   });
@@ -577,7 +577,7 @@ describe("the table API_MODULES is the real graph's", () => {
   });
 
   it("states, for each importer the table lists, a reason", () => {
-    expect(API_MODULES.size).toBe(7);
+    expect(API_MODULES.size).toBe(9);
   });
 });
 
@@ -606,5 +606,80 @@ describe("the real builds' chunks hold the oracle's counter where only the harne
     const operator = e2e.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/operator.html") === true);
     expect(operator?.moduleIds.some((id) => id.endsWith("/src/api/oracle.ts"))).toBe(false);
     expect(operator?.code).not.toContain("decodedCount");
+  });
+  it("never put an operator module in a chunk the catalogue entry loads, in either build (D423)", async () => {
+    for (const mode of ["production", "e2e"] as const) {
+      const chunks = await chunksOf(mode);
+      const byName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
+      const entry = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/index.html") === true);
+      expect(entry, mode).toBeDefined();
+      const loaded = new Set<string>();
+      const pending = entry === undefined ? [] : [entry.fileName];
+      for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
+        const chunk = byName.get(name);
+        if (!loaded.has(name) && chunk !== undefined) {
+          loaded.add(name);
+          pending.push(...chunk.imports, ...chunk.dynamicImports);
+        }
+      }
+      const held = [...loaded].flatMap((name) => byName.get(name)?.moduleIds ?? []).filter((id) => /\/src\/(?:api\/(?:operator|curator)\.ts$|operator\/)/u.test(id));
+      expect(held, mode).toEqual([]);
+      const operator = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/operator.html") === true);
+      expect(operator?.moduleIds.some((id) => id.endsWith("/src/api/operator.ts")), mode).toBe(true);
+    }
+  });
+});
+
+describe("the catalogue entry holds no operator module (gate (e), D423)", () => {
+  const root = "/w";
+  const D423 = (problems: string[]): string[] => problems.filter((problem) => problem.includes("(D423)"));
+
+  it.each([
+    ["the page's operator client", "src/api/operator.ts"],
+    ["its factory", "src/api/curator.ts"],
+    ["the token's shell", "src/operator/Shell.tsx"],
+    ["any module under src/operator/", "src/operator/deep/x.ts"],
+  ])("refuses %s in index.html's graph, imported statically or dynamically, at any depth", (_case, file) => {
+    for (const how of ["imports", "dynamicImports"] as const) {
+      const graph = graphOf(root, {
+        "index.html": { imports: ["src/a.ts"] },
+        "src/a.ts": { [how]: ["src/c.ts"] },
+        "src/c.ts": { [how]: [file] },
+        "operator.html": { imports: ["src/b.ts"] },
+      });
+      expect(D423(graphProblems(root, graph)), how).toEqual([`in index.html's graph: the operator module ${JSON.stringify(file)} (D423)`]);
+    }
+  });
+
+  it("admits them in operator.html's graph, and a module whose path only begins like one in index.html's", () => {
+    const graph = graphOf(root, {
+      "index.html": { imports: ["src/operatorish.ts", "src/api/operators.ts", "src/operator.ts"] },
+      "operator.html": { imports: ["src/operator/Shell.tsx"] },
+      "src/operator/Shell.tsx": { imports: ["src/api/operator.ts"] },
+      "src/api/operator.ts": { imports: ["src/api/curator.ts"] },
+    });
+    expect(D423(graphProblems(root, graph))).toEqual([]);
+  });
+
+  it("holds in the real builds: index.html's closure has none of them, operator.html's has the client (the control)", async () => {
+    for (const mode of ["production", "e2e"] as const) {
+      const graph = await realGraph(mode);
+      const closure = (document: string): string[] => {
+        const seen = new Set<string>();
+        const pending = [path.join(realpathSync(WEB), document)];
+        for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+          const module = graph.get(id);
+          if (!seen.has(id) && module !== undefined) {
+            seen.add(id);
+            pending.push(...module.imports, ...module.dynamicImports);
+          }
+        }
+        return [...seen].map((id) => path.relative(realpathSync(WEB), id));
+      };
+      const catalogue = closure("index.html");
+      expect(catalogue.filter((id) => id === "src/api/operator.ts" || id === "src/api/curator.ts" || id.startsWith("src/operator/")), mode).toEqual([]);
+      expect(catalogue, mode).toContain("src/api/client.ts");
+      expect(closure("operator.html"), mode).toEqual(expect.arrayContaining(["src/api/operator.ts", "src/api/curator.ts", "src/operator/Shell.tsx"]));
+    }
   });
 });

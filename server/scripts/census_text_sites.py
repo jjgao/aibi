@@ -46,7 +46,7 @@ imports nothing of aibi; the test imports it as a module by its path, and nothin
 import ast
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -261,7 +261,7 @@ def _arguments(
                 yield keyword.arg or "", keyword.value
 
 
-def _imports(trees: dict[str, ast.AST]) -> dict[str, set[str]]:
+def _imports(trees: Mapping[str, ast.AST]) -> dict[str, set[str]]:
     """The names each file imports from another: ``from x import name as alias``."""
     return {
         file: {
@@ -274,7 +274,7 @@ def _imports(trees: dict[str, ast.AST]) -> dict[str, set[str]]:
     }
 
 
-def segment_makers(trees: dict[str, ast.AST]) -> set[str]:
+def segment_makers(trees: Mapping[str, ast.AST]) -> set[str]:
     """Functions that return a segment or a message, by their annotation (``shown``, ``_name``)."""
     found = set(SEGMENTS)
     for tree in trees.values():
@@ -302,7 +302,7 @@ def _holes(argument: ast.expr, makers: set[str]) -> list[ast.expr]:
     return [argument]
 
 
-def wrappers(trees: dict[str, ast.AST], makers: set[str]) -> dict[str, Wrapper]:
+def wrappers(trees: Mapping[str, ast.AST], makers: set[str]) -> dict[str, Wrapper]:
     """The fixpoint. A name is a wrapper if any function or class of the name is one (the census
     errs toward more sites); ``AMBIGUOUS`` names the wrappers that some other function of the
     name is not, which the review of the list either confirms or puts in ``NOT_WRAPPERS``."""
@@ -345,7 +345,7 @@ def wrappers(trees: dict[str, ast.AST], makers: set[str]) -> dict[str, Wrapper]:
     return found
 
 
-def _caught(trees: dict[str, ast.AST], found: dict[str, Wrapper]) -> set[str]:
+def _caught(trees: Mapping[str, ast.AST], found: dict[str, Wrapper]) -> set[str]:
     """The exception classes caught where the exception's ``str`` goes to a wrapper."""
     classes: set[str] = set()
     imports = _imports(trees)
@@ -468,7 +468,7 @@ HOLE = "{}"
 """What a template holds where its argument is not a literal."""
 
 
-def _constants(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
+def _constants(trees: Mapping[str, ast.AST]) -> dict[str, list[str]]:
     """The strings of each module constant made of literals (a string, or a dict, tuple or list
     of them), by its name, in every file: a name two files define holds both's."""
     found: dict[str, list[str]] = {}
