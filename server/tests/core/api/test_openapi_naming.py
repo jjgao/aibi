@@ -1248,6 +1248,10 @@ ALLOWED: dict[str, dict[tuple[str, str, str], tuple[int, str]]] = {
         ("", "call", "NewType"): (1, "MarkedSchema's declaration"),
         ("", "call", "Path"): (2, "where the schemas are written"),
         ("write", "call", "build"): (1, "a schema builder, written to its own file"),
+        ("write", "call", "vocabulary.document"): (
+            1,
+            "the form vocabulary's lists, written to its own file (D422): text, no map",
+        ),
         ("render", "call", "json.dumps"): (1, "text, no map"),
         ("canonical", "call", "json.dumps"): (1, "text, no map"),
         ("_vet", "call", "math.isfinite"): (1, "a test of a number"),

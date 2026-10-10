@@ -80,11 +80,12 @@ addopts = [
     "--strict-config",
     "--import-mode=importlib",
     "-m",
-    "not million",
+    "not million and not measurement",
 ]
 xfail_strict = true
 markers = [
     "million: a thread-count determinism test over a million rows (SPEC §9.3, D372); run with -m million",
+    "measurement: records what a page load's calls cost (SPEC D422); run by hand with -m measurement",
     "databases: needs a Postgres or MySQL server, named by AIBI_TEST_POSTGRES_URL or AIBI_TEST_MYSQL_URL",
 ]
 filterwarnings = [

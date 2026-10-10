@@ -24,6 +24,7 @@ from typing import Any, cast
 import jsonschema
 import pytest
 from pydantic import BaseModel
+from tests.core import pins
 
 from aibi.core.schema import output
 from aibi.core.schema.output import DataSegment, Segment, TextSegment
@@ -33,6 +34,11 @@ _loaded: list[str] = []
 _pruning: list[str] = []
 PRUNING = "aibi-log-pruning"
 """The name of a derivation log's pruning thread (``DerivationLog.start_pruning``)."""
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """The guard of the tests SPEC D422 cites as pins (``tests/core/pins.py``)."""
+    config.pluginmanager.register(pins.Guard(), "aibi-pins")
 
 
 def _only_core_tests_collected(config: pytest.Config) -> bool:
