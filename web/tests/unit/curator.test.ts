@@ -1358,6 +1358,27 @@ describe("an unlock can be cancelled, and then holds nothing (m10)", () => {
     expect(sent).toEqual([]);
   });
 
+  it.each([
+    ["a forget", (made: Rig) => { made.client.forget(); }],
+    ["a pagehide", (made: Rig) => { made.window.fire("pagehide"); }],
+    ["a pageshow from the cache", (made: Rig) => { made.window.fire("pageshow", { persisted: true }); }],
+    ["a second unlock", (made: Rig) => { void made.client.unlock(OTHER_TOKEN, NAME); }],
+  ])("%s during a cancellable unlock aborts its request, as it aborts every request in flight", async (_case, event) => {
+    handler = hanging;
+    const made = rig();
+    const cancel = new AbortController();
+    const pending = made.client.unlock(TOKEN, NAME, cancel.signal);
+    await vi.waitFor(() => {
+      expect(sent.length).toBe(1);
+    });
+    expect(sent[0]?.signal?.aborted).toBe(false);
+    event(made);
+    expect(sent[0]?.signal?.aborted).toBe(true);
+    expect(cancel.signal.aborted).toBe(false);
+    expect(await pending).toEqual({ kind: "unknown", reason: "aborted" });
+    expect(made.client.holds("d")).toBe(false);
+  });
+
   it("a cancel after the unlock is done changes nothing", async () => {
     const { client } = rig();
     const cancel = new AbortController();

@@ -4,7 +4,7 @@ import path from "node:path";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CURATE_PATH, forgetAddress } from "../../src/operator/url";
+import { forgetAddress } from "../../src/operator/url";
 import { freshReaders, words } from "./render";
 
 const OPERATOR = "aibi operator Enter your name and the curator token to begin. Your name Curator token Unlock The operator screens are not built yet. The catalogue";
@@ -64,13 +64,21 @@ describe("the operator entry", () => {
     },
   );
 
-  it("forgets the address by replacing it with the fixed path, state null", () => {
+  it("forgets the address by replacing it with the fixed path, written out as /curate, state null", () => {
     window.history.replaceState({ held: 1 }, "", "/curate#/withdraw?x");
     const before = window.history.length;
     forgetAddress();
-    expect(window.location.href).toBe(`${ORIGIN}${CURATE_PATH}`);
+    expect(window.location.href).toBe(`${ORIGIN}/curate`);
     expect(window.history.length).toBe(before);
     expect(window.history.state).toBeNull();
+  });
+
+  it("is nothing but one function and one call whose path is the literal /curate, state null, title empty", () => {
+    const source = readFileSync(path.join(import.meta.dirname, "../../src/operator/url.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//gu, "")
+      .replace(/\/\/.*$/gmu, "")
+      .trim();
+    expect(source).toBe('export function forgetAddress(): void {\n  history.replaceState(null, "", "/curate");\n}');
   });
 
   it("reads nothing from its URL: its source names no part of the location", () => {

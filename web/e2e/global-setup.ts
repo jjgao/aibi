@@ -22,6 +22,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { guardInterrupts } from "./interrupt.mjs";
 import { otherOrigin } from "./other-origin";
 import { type Bundle, SCANNING_VARIABLE, SERVERS_VARIABLE, type Servers } from "./servers";
 
@@ -176,47 +177,16 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       rmSync(secrets, { recursive: true, force: true });
     }
   };
-  // The secrets directory holds the curator token (mode 0600). The scan reporter removes it when a
-  // run ends. When none does (an interrupt), the process leaves nothing behind: a SIGTERM or a
-  // SIGHUP, which Playwright's main process does not handle and which would kill it with no event at
-  // all, stops the servers, removes both directories and exits; and whatever ends the process (those,
-  // a SIGINT, which is Playwright's, ending the run, a forced exit, a second Ctrl-C), its `exit` event
-  // kills a server still alive and removes the directories, a failed start's scratch directory aside
-  // (its `serve.log` is named by the error).
-  let closing = false;
+  // The secrets directory holds the curator token (mode 0600): `interrupt.mjs` says what an
+  // interrupted run leaves behind, which is nothing.
   let keepScratch = false;
-  const running = (): ChildProcess[] => children.filter((child) => child.exitCode === null && child.signalCode === null);
-  const forgetSecrets = (): void => {
-    rmSync(secrets, { recursive: true, force: true });
-  };
-  const lastResort = (): void => {
-    for (const child of running()) {
-      child.kill("SIGKILL");
-    }
-    if (!keepScratch && process.env["AIBI_E2E_KEEP"] === undefined) {
-      rmSync(scratch, { recursive: true, force: true });
-    }
-    forgetSecrets();
-  };
-  const interrupted = (signal: "SIGTERM" | "SIGHUP"): void => {
-    closing = true;
-    forgetSecrets();
-    void (async () => {
-      while (running().length > 0) {
-        await teardown();
-      }
-      await teardown();
-    })().finally(() => process.exit(128 + os.constants.signals[signal]));
-  };
-  const onTerm = (): void => {
-    interrupted("SIGTERM");
-  };
-  const onHangup = (): void => {
-    interrupted("SIGHUP");
-  };
-  process.once("exit", lastResort);
-  process.once("SIGTERM", onTerm);
-  process.once("SIGHUP", onHangup);
+  const guard = guardInterrupts({
+    secrets,
+    scratch,
+    running: () => children.filter((child) => child.exitCode === null && child.signalCode === null),
+    teardown: () => teardown(),
+    keepScratch: () => keepScratch || process.env["AIBI_E2E_KEEP"] !== undefined,
+  });
   try {
     const { token, hash } = newToken();
     const tokenFile = path.join(secrets, "token");
@@ -225,7 +195,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     writeFileSync(secretsFile, "", { mode: 0o600 });
     const start = async (name: string, bundle: Bundle, rates: Rates): Promise<{ served: { origin: string; dir: string; port: number }; pid: number }> => {
       const port = await freePort();
-      if (closing) {
+      if (guard.closing()) {
         throw new Error("The end-to-end setup was interrupted");
       }
       const config = configuration(scratch, name, bundle, port, hash, rates);
@@ -251,17 +221,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     const found: Servers = { bundles, limits, mortal: { ...mortal.served, pid: mortal.pid }, otherPort, tokenFile, secretsFile };
     process.env[SERVERS_VARIABLE] = JSON.stringify(found);
   } catch (error) {
-    process.off("SIGTERM", onTerm);
-    process.off("SIGHUP", onHangup);
     // The error names a serve.log under the scratch directory (the log holds the token's hash,
     // never the token): a failed start keeps it.
-    keepScratch = !closing;
+    keepScratch = !guard.closing();
     await teardown(keepScratch);
+    guard.release();
     throw error;
   }
   return async () => {
-    process.off("SIGTERM", onTerm);
-    process.off("SIGHUP", onHangup);
     await teardown();
+    guard.release();
   };
 }

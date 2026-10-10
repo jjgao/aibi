@@ -4,9 +4,16 @@
  * sees a secret wherever a page can keep one (storage, the origin private file system, the Cache
  * API), a failing API call's error holds no credential, and the report scan reads the run's output.
  */
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import type { FullResult, TestCase, TestError, TestResult, TestStep } from "@playwright/test/reporter";
+
 import { expect, test, unexplained, Watcher } from "./fixtures";
 import { api, occurrences, pageTexts, redacted } from "./operator-kit";
-import { outputFindings } from "./scan-reporter";
+import ScanReporter, { errorTexts, outputFindings } from "./scan-reporter";
 
 test("the recorder catches what the policy refuses: a Trusted Types sink, inline style and script", async ({ page, origin, watcher }) => {
   await page.goto(`${origin}/`);
@@ -237,4 +244,166 @@ test("the report scan reads the run's output: a secret, a shape, or a secret spl
   expect(outputFindings("out", [secret.slice(0, 10), secret.slice(10)], [secret])).toEqual(["out: 1 secret(s), 0 shape(s)"]);
   expect(outputFindings("out", [`Authorization: Bearer ${shaped}`], [secret])).toEqual(["out: 0 secret(s), 1 shape(s)"]);
   expect(outputFindings("out", [secret, "\n", shaped], [secret])).toEqual(["out: 1 secret(s), 1 shape(s)"]);
+});
+
+/** A reporter driven by hand: it looks for `SECRET` in an empty directory, and writes nowhere. */
+function reporter(): { readonly scan: ScanReporter; readonly done: () => void } {
+  const root = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-selftest-"));
+  const scan = new ScanReporter({ secrets: [SECRET], root, write: () => undefined });
+  return { scan, done: () => { rmSync(root, { recursive: true, force: true }); } };
+}
+
+const SECRET = "selftest-secret-e17b4c-in-the-run-output";
+const PASSED: FullResult = { status: "passed", startTime: new Date(), duration: 1 };
+const TEST = {} as TestCase;
+const RESULT = (errors: TestError[]): TestResult => ({ errors }) as unknown as TestResult;
+
+test("the report scan's reporter fails the run on a secret in each place the run printed one (its wiring)", async () => {
+  const cycle: TestError = { message: "a cycle" };
+  cycle.cause = cycle;
+  const deep: TestError = { message: "outer", cause: { message: "middle", cause: { message: "inner", cause: { stack: `the stack of the root cause: ${SECRET}` } } } };
+  const places: readonly (readonly [string, (given: ScanReporter) => void])[] = [
+    ["stdout", (given) => { given.onStdOut(`worker said ${SECRET}\n`); }],
+    ["stdout, a buffer", (given) => { given.onStdOut(Buffer.from(`worker said ${SECRET}\n`)); }],
+    ["stderr", (given) => { given.onStdErr(`worker said ${SECRET}\n`); }],
+    ["a secret split across two chunks", (given) => { given.onStdOut(SECRET.slice(0, 12)); given.onStdOut(SECRET.slice(12)); }],
+    ["a test's error message", (given) => { given.onTestEnd(TEST, RESULT([{ message: `failed with ${SECRET}` }])); }],
+    ["a test's error stack", (given) => { given.onTestEnd(TEST, RESULT([{ stack: `at ${SECRET}` }])); }],
+    ["a test's error snippet", (given) => { given.onTestEnd(TEST, RESULT([{ snippet: SECRET }])); }],
+    ["a test's thrown value", (given) => { given.onTestEnd(TEST, RESULT([{ value: SECRET }])); }],
+    ["a test's error cause", (given) => { given.onTestEnd(TEST, RESULT([{ message: "wrapped", cause: { message: SECRET } }])); }],
+    ["a test's error cause's cause", (given) => { given.onTestEnd(TEST, RESULT([deep])); }],
+    ["a test's error, the second of two", (given) => { given.onTestEnd(TEST, RESULT([{ message: "clean" }, { message: SECRET }])); }],
+    ["a step's error", (given) => { given.onStepEnd(TEST, RESULT([]), { error: { message: SECRET } } as TestStep); }],
+    ["a step's error cause", (given) => { given.onStepEnd(TEST, RESULT([]), { error: { message: "wrapped", cause: { message: SECRET } } } as TestStep); }],
+    ["the runner's error", (given) => { given.onError({ message: SECRET }); }],
+    ["the runner's error cause", (given) => { given.onError({ message: "wrapped", cause: { stack: SECRET } }); }],
+  ];
+  for (const [place, print] of places) {
+    const { scan, done } = reporter();
+    print(scan);
+    expect(await scan.onEnd(PASSED), `a secret in ${place} fails the run`).toEqual({ status: "failed" });
+    done();
+  }
+  const clean = reporter();
+  clean.scan.onStdOut("nothing\n");
+  clean.scan.onStdErr("nothing\n");
+  clean.scan.onTestEnd(TEST, RESULT([{ message: "an error", cause: { message: "its cause" } }, cycle]));
+  expect(await clean.scan.onEnd(PASSED)).toBeUndefined();
+  expect(await clean.scan.onEnd({ ...PASSED, status: "failed" })).toEqual({ status: "failed" });
+  clean.done();
+});
+
+test("an error's causes are read to a bounded depth, a cycle once", () => {
+  const cycle: TestError = { message: "a" };
+  cycle.cause = { message: "b", cause: cycle };
+  expect(errorTexts(cycle).filter((text) => text === "a" || text === "b")).toEqual(["a", "b"]);
+  let chain: TestError = { message: "bottom" };
+  for (let depth = 0; depth < 100; depth += 1) {
+    chain = { message: `level ${String(depth)}`, cause: chain };
+  }
+  const texts = errorTexts(chain);
+  expect(texts.length).toBeLessThan(200);
+  expect(texts).toContain("level 99");
+});
+
+interface Held {
+  readonly scratch: string;
+  readonly secrets: string;
+  readonly server: number;
+}
+
+/** What a signalled process did: how it ended, what it left, how many times it stopped its servers,
+ * and whether the secrets directory was already gone `early` milliseconds after the first signal. */
+interface Interrupted {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly left: string[];
+  readonly teardowns: number;
+  readonly secretsGoneEarly: boolean | null;
+}
+
+/** Run `interrupt-child.mjs`, signal it as `signals` say (each after its delay, in milliseconds), and
+ * give how it ended and what it left: its directories, and its server (alive, as a process id). */
+async function interrupted(mode: "wait" | "exit", signals: readonly (readonly [NodeJS.Signals, number])[], early = 0): Promise<Interrupted> {
+  const child = spawn(process.execPath, [path.join(import.meta.dirname, "interrupt-child.mjs"), mode], { stdio: ["ignore", "pipe", "inherit"] });
+  let output = "";
+  let announce: (held: Held) => void = () => undefined;
+  const held = new Promise<Held>((resolve) => {
+    announce = resolve;
+  });
+  child.stdout.on("data", (chunk: Buffer) => {
+    output += chunk.toString();
+    const first = output.indexOf("\n");
+    if (first !== -1) {
+      announce(JSON.parse(output.slice(0, first)) as Held);
+    }
+  });
+  const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once("exit", (code, signal) => {
+      resolve({ code, signal });
+    });
+  });
+  const given = await held;
+  let secretsGoneEarly: boolean | null = null;
+  for (const [index, [signal, after]] of signals.entries()) {
+    await new Promise((resolve) => setTimeout(resolve, after));
+    child.kill(signal);
+    if (index === 0 && early > 0) {
+      await new Promise((resolve) => setTimeout(resolve, early));
+      secretsGoneEarly = !existsSync(given.secrets) && alive(given.server);
+    }
+  }
+  const how = await ended;
+  // A killed process is reaped a moment after its parent is gone.
+  for (let waited = 0; waited < 40 && alive(given.server); waited += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const left = [existsSync(given.scratch) ? "the scratch directory" : "", existsSync(given.secrets) ? "the secrets directory" : "", alive(given.server) ? "the server" : ""].filter((name) => name !== "");
+  // Whatever it left is removed here, so that a failure leaves nothing either.
+  rmSync(given.scratch, { recursive: true, force: true });
+  rmSync(given.secrets, { recursive: true, force: true });
+  if (alive(given.server)) {
+    process.kill(given.server, "SIGKILL");
+  }
+  return { ...how, left, teardowns: output.split("\n").filter((line) => line === "teardown").length, secretsGoneEarly };
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test.describe("an interrupted run leaves nothing behind (m12b, m6)", () => {
+  test.beforeEach(({ bundle }) => {
+    test.skip(bundle !== "prod", "a process of its own, the same for both builds");
+  });
+
+  test("a SIGTERM stops the server, removes both directories and exits 143", async () => {
+    expect(await interrupted("wait", [["SIGTERM", 400]])).toMatchObject({ code: 143, signal: null, left: [], teardowns: 2 });
+  });
+
+  test("a SIGHUP does the same and exits 129", async () => {
+    expect(await interrupted("wait", [["SIGHUP", 400]])).toMatchObject({ code: 129, signal: null, left: [], teardowns: 2 });
+  });
+
+  test("the secrets directory goes first, while the server is still being stopped", async () => {
+    expect(await interrupted("wait", [["SIGTERM", 400]], 300)).toMatchObject({ secretsGoneEarly: true, left: [] });
+  });
+
+  test("a second SIGTERM, a second SIGHUP, while the first signal is being handled (a server slow to stop), cut nothing and start no second cleanup", async () => {
+    expect(await interrupted("wait", [["SIGTERM", 400], ["SIGTERM", 300], ["SIGHUP", 300], ["SIGHUP", 100]])).toMatchObject({ code: 143, signal: null, left: [], teardowns: 2 });
+  });
+
+  test("a SIGHUP twice, the first being handled", async () => {
+    expect(await interrupted("wait", [["SIGHUP", 400], ["SIGHUP", 300]])).toMatchObject({ code: 129, signal: null, left: [], teardowns: 2 });
+  });
+
+  test("a forced exit removes both directories and kills the server", async () => {
+    expect(await interrupted("exit", [])).toMatchObject({ code: 3, signal: null, left: [], teardowns: 0 });
+  });
 });

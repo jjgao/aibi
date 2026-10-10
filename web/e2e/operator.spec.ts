@@ -85,6 +85,24 @@ test.describe("the token's shell", () => {
   });
 });
 
+test.describe("the page's own wiring", () => {
+  test("locks when the page is left (pagehide) and when it is restored from the cache (pageshow, persisted), and not on a pageshow that is not", async ({ page, origin, watcher }) => {
+    expectOperator(watcher, origin, [], []);
+    await page.goto(`${origin}/curate`);
+    await unlock(page, curatorToken());
+    await expect(status(page)).toHaveText(UNLOCKED);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: false })));
+    await expect(status(page)).toHaveText(UNLOCKED);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+    await expect(status(page)).toHaveText(SHELL.page);
+    await unlock(page, curatorToken());
+    await expect(status(page)).toHaveText(UNLOCKED);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    await expect(status(page)).toHaveText(SHELL.restored);
+    watcher.clean();
+  });
+});
+
 test.describe("the operator client, driven by the harness", () => {
   test.beforeEach(({ bundle }) => {
     test.skip(bundle !== "e2e", "the harness is in the end-to-end build alone");

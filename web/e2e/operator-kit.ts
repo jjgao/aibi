@@ -16,6 +16,8 @@ export const SHELL = {
   idle: "Locked after ten minutes without input. Enter the token again to go on.",
   token: "The server refused the token. Enter it again to go on.",
   failures: "Too many refused tokens from this address. Wait a minute, then enter the token again.",
+  page: "Locked when the page was left. Enter the token again to go on.",
+  restored: "Locked: the page was restored from the browser's cache. Enter the token again to go on.",
   unlocked: "Unlocked. The token is held by this page alone, until you forget it, leave the page or stop for ten minutes.",
 } as const;
 

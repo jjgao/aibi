@@ -61,8 +61,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   the forget action, the confirmation step), the operator's client (`src/api/curator.ts`; the
   page's one, `src/api/operator.ts`, which the index never re-exports; the token, the CSRF token
   and handles in its closure alone, the epoch, the idle lock: read D423 before touching it; the lint
-  takes the page's objects, `window`, `location`, `history`, `navigator` and `document`, by direct
-  member access alone, and bans the channels out of the page's memory by name), the
+  takes the page's objects, `window`, `location`, `history`, `navigator` and `document`, by member
+  access alone, by name and by type (`aibi/page-objects`, whatever a value is called), and bans the
+  channels out of the page's memory), the
   end-to-end harness (`src/harness/`, in `dist-e2e/` alone, never showing a secret), the build's
   gate (`plugins/gate.ts`: no harness in production, an allow-list for the operator entry's graph,
   no operator module in the catalogue's), `scripts/check-bundle.mjs` (names, hashes, caps, the

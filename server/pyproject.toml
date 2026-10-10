@@ -67,7 +67,7 @@ allowed-confusables = ["–", "−"]
 ban-relative-imports = "all"
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 strict = ["src/aibi/core"]

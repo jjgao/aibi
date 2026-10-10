@@ -75,22 +75,29 @@
  * time on whatever it is called as. `import.meta.glob`, which resolves a module the source never
  * names, is refused in all of `src/` (the gate checks the graph it makes).
  *
- * **No channel out of the page's memory (D423).** The storages and the Cache API (`STORAGE_NAMES`)
- * in every position, and by name the channels that carry a value out of the page (`CHANNEL_SYNTAX`:
- * `navigator.storage`, `navigator.clipboard`, `history.pushState` and `replaceState`, a write to
- * `location` or a member of it, `location.replace`, `assign`, `hash` and `href`, a write to
- * `document.title`, `window.open` and the window's `name`). The page's objects (`PAGE_OBJECTS`:
- * `window`, `globalThis`, `self`, `top`, `parent`, `frames`, `opener`, `location`, `history`,
- * `navigator`, `document`) are used by direct member access alone (`ALIAS_SYNTAX`: no alias, no
- * destructuring from one, none passed as an argument, no computed member), so that the rules by
- * name see every use. `history.replaceState` stands in `src/operator/url.ts` alone, in its one call
- * (`URL_SYNTAX`). What it does not see is D419's residual: a computed name on an alias reached any
- * other way (`ownerDocument.defaultView`), a `declare` that lies, another realm, a patched builtin.
- * `tests/gates/operator.test.ts` holds each channel in each position.
+ * **No channel out of the page's memory (D423).** Two layers. By name: the storages and the Cache
+ * API (`STORAGE_NAMES`) in every position, the channels (`CHANNEL_SYNTAX`: `navigator.storage`,
+ * `navigator.clipboard`, `history.pushState` and `replaceState`, a write to `location` or a member
+ * of it, `location.replace`, `assign`, `hash` and `href`, a write to `document.title`,
+ * `window.open` and the window's `name`), and the page's objects (`PAGE_OBJECTS`) by direct member
+ * access alone (`ALIAS_SYNTAX`). By type (`aibi/page-objects`, `pageObjects` below, the checker the
+ * lint already loads): whatever a value is called, one of the types of `PAGE_TYPES` (or one that
+ * holds one) may stand only as the object of a member access that is no channel of its type, no
+ * member of one is written, and a member that reaches one (`REACHERS`: `defaultView`,
+ * `ownerDocument`, `view`, ...) is refused, so that `const l = window.location`, `el.ownerDocument`,
+ * `event.view` and a returned value are seen. `history.replaceState` stands in `src/operator/url.ts`
+ * alone, which is nothing but one function and its one call, the path a literal (`URL_SYNTAX`,
+ * `URL_FILE_SYNTAX`, the rule's option); `src/operator/` has no module-level `let` or `var`
+ * (`OPERATOR_SYNTAX`). What it does not see is D419's residual: a value the checker types `any`, a
+ * `declare` or an assertion that lies, another realm, a patched builtin, and the channels that are no
+ * page object's member (an anchor's `href` and `click()`, a form's `submit()`, `<meta refresh>`,
+ * `img.src`, ...: D423 lists them). `tests/gates/operator.test.ts` holds each channel in each
+ * position and a generated table of every type, reacher, position and channel.
  */
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
+import ts from "typescript";
 
 import { SCRIPT_EXTENSIONS, TOOLING_PATTERNS } from "./scripts/tooling.mjs";
 
@@ -265,6 +272,9 @@ const everywhere = (names, message) => [
 ];
 
 const STORE = "No storage, cookie or message to another context in src/: a secret lives in the operator client's closure alone (D423).";
+/** The page's own constructors, which no code tests a value against. */
+const PAGE_CONSTRUCTORS = ["Window", "Location", "Navigator", "Document", "HTMLDocument", "History", "Storage", "StorageManager", "Clipboard", "CacheStorage", "Cache", "ShadowRoot"];
+
 const ALIAS =
   "No alias of window, globalThis, self, top, parent, frames, opener, location, history, navigator or document, no destructuring from one and none passed as an argument: each is used by direct member access alone (D423).";
 const CHANNEL = "No channel out of the page's memory in src/ (the address, the history, the title, the window's name, the clipboard, a new window, the origin private file system): a secret lives in the operator client's closure alone (D423).";
@@ -314,6 +324,8 @@ const ALIAS_SYNTAX = [
     message: ALIAS,
   },
   { selector: `MemberExpression[computed=true]:matches([object.name=${exactly(PAGE_OBJECTS)}], [object.property.name=${exactly(PAGE_OBJECTS)}])`, message: ALIAS },
+  // A test against the page's own constructors (`e.currentTarget instanceof Window`).
+  { selector: `BinaryExpression[operator='instanceof'][right.name=${exactly(PAGE_CONSTRUCTORS)}]`, message: ALIAS },
 ];
 
 /** The storage rules (D423): the names in every position; `cookie` as a member or a destructured
@@ -331,16 +343,41 @@ const STORAGE_SYNTAX = [
 
 /** The storage rules of `src/operator/url.ts`, the one file that calls `history.replaceState`
  * (D412: the operator entry takes nothing from its URL and replaces it by its fixed path): its one
- * call states `null`, `""` and `CURATE_PATH`, and no other use of the name stands. @type {Restriction[]} */
+ * call states `null`, `""` and `"/curate"`, written out (a literal, no binding), and no other use of
+ * the name stands; the type-aware rule (`aibi/page-objects`) holds the rest (the global `history`,
+ * the one exported function, once). @type {Restriction[]} */
 const URL_SYNTAX = [
   ...STORAGE_SYNTAX.filter(({ selector }) => !selector.includes("pushState|replaceState")),
   { selector: "Identifier[name='pushState']", message: CHANNEL },
   { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
   {
     selector:
-      "Identifier[name='replaceState']:not(CallExpression[arguments.length=3][arguments.0.raw='null'][arguments.1.value=''][arguments.2.name='CURATE_PATH'] > MemberExpression.callee[object.name='history'] > Identifier.property)",
+      "Identifier[name='replaceState']:not(CallExpression[arguments.length=3][arguments.0.raw='null'][arguments.1.type='Literal'][arguments.1.value=''][arguments.2.type='Literal'][arguments.2.value='/curate'] > MemberExpression.callee[object.name='history'] > Identifier.property)",
     message: CHANNEL,
   },
+];
+
+const URL_FILE = "src/operator/url.ts is one exported function, forgetAddress, with no parameter, whose body is its one call of history.replaceState (D412, D423).";
+
+/** `src/operator/url.ts` is nothing but `export function forgetAddress(): void { history.replaceState(null, "", "/curate"); }`:
+ * no import, no binding, no second statement, no parameter. @type {Restriction[]} */
+const URL_FILE_SYNTAX = [
+  { selector: "Program[body.length!=1]", message: URL_FILE },
+  { selector: "Program > :not(ExportNamedDeclaration[declaration.type='FunctionDeclaration'][declaration.id.name='forgetAddress'])", message: URL_FILE },
+  { selector: "FunctionDeclaration[params.length>0]", message: URL_FILE },
+  { selector: "FunctionDeclaration[async=true], FunctionDeclaration[generator=true]", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement[body.length!=1]", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement > :not(ExpressionStatement)", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement > ExpressionStatement > :not(CallExpression)", message: URL_FILE },
+];
+
+const MUTABLE =
+  "No mutable module binding (let, var) in src/operator/: a value kept in module scope outlives the call that handed it over and no test of the React tree sees it (D423).";
+
+/** The operator entry's modules hold no mutable module binding. @type {Restriction[]} */
+const OPERATOR_SYNTAX = [
+  { selector: "Program > VariableDeclaration[kind!='const']", message: MUTABLE },
+  { selector: "Program > ExportNamedDeclaration > VariableDeclaration[kind!='const']", message: MUTABLE },
 ];
 
 /** The I/O rules: the names, and every `.json` (D419). @type {Restriction[]} */
@@ -447,6 +484,308 @@ const properties = (sealing) => [
  * @param {...[readonly string[], string]} tables @returns {["error", ...object[]]} */
 const globals = (...tables) => ["error", ...tables.flatMap(([names, message]) => names.map((name) => ({ name, message })))];
 
+// ---------------------------------------------------------------------------------------------
+// The page's objects by type (D423). The rules above match names; this one matches what a value IS,
+// with the type checker the lint already loads (`projectService`, `strictTypeChecked`), so that an
+// alias reached through a member (`window.navigator`, `document.defaultView`, `el.ownerDocument`,
+// `event.view`, a return value, a parameter) is seen as the page's object it is.
+
+/** What a type of the page's is refused to give: `*` for every member, else those named. */
+const EVERY = "*";
+
+/** The page's object types of the DOM library (`lib.dom.d.ts`; `globalThis` for the global object's
+ * own type) and the members of each that are channels out of the page's memory (D423). A value of
+ * one of these types, or of a type that contains one (a union, an intersection, a generic's
+ * constraint, a subtype), may stand only as the object of a member access that is no channel. */
+const PAGE_TYPES = new Map(/** @type {[string, string | string[]][]} */ ([
+  ["Window", ["name", "open", "caches", "localStorage", "sessionStorage", "indexedDB", "postMessage"]],
+  ["globalThis", ["name", "open", "caches", "localStorage", "sessionStorage", "indexedDB", "postMessage"]],
+  ["Location", ["hash", "href", "replace", "assign"]],
+  ["Navigator", ["storage", "clipboard"]],
+  ["Document", ["cookie"]],
+  ["ShadowRoot", []],
+  ["History", ["pushState", "replaceState"]],
+  ["Storage", EVERY],
+  ["StorageManager", EVERY],
+  ["Clipboard", EVERY],
+  ["CacheStorage", EVERY],
+  ["Cache", EVERY],
+]));
+
+/** The members that give a page object from another value (`el.ownerDocument`, `event.view`,
+ * `window.window`): refused wherever they give one, whatever the value they are read from. */
+const REACHERS = new Set(["defaultView", "ownerDocument", "view", "window", "self", "top", "parent", "frames", "opener"]);
+
+const PAGE_OBJECT = "A page object (a window, an address, a navigator, a document, a history, a storage) is used by member access alone: not bound, destructured, spread, passed, returned or tested (D423).";
+const PAGE_CHANNEL = "A channel out of the page's memory, on a value of the page's own type, whatever it is called (D423).";
+const PAGE_WRITE = "No write to a member of a page object (D423).";
+const PAGE_REACHER = "A member that reaches a page object (defaultView, ownerDocument, view, window, self, top, parent, frames, opener) is refused (D423).";
+const PAGE_COMPUTED = "No computed member of a page object (D423).";
+const PAGE_ONCE = "history.replaceState stands once, in the one function that is allowed it (D423).";
+
+/** The names of the nodes that are no value: a key or a property name, a specifier, a label.
+ * @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null;
+
+/** @param {unknown} node @returns {string} */
+const kindOf = (node) => (isRecord(node) && typeof node["type"] === "string" ? node["type"] : "");
+
+/** A node's field.
+ * @param {unknown} node @param {string} key @returns {unknown} */
+const fieldOf = (node, key) => (isRecord(node) ? node[key] : undefined);
+
+/** The nodes whose key or name is a name the syntax gives, not a value: a key, a declared type's name. */
+const NAMING_NODES = [
+  "Property",
+  "PropertyDefinition",
+  "MethodDefinition",
+  "TSPropertySignature",
+  "TSMethodSignature",
+  "AccessorProperty",
+  "TSEnumMember",
+  "TSTypeAliasDeclaration",
+  "TSInterfaceDeclaration",
+  "TSEnumDeclaration",
+  "TSModuleDeclaration",
+  "TSTypeParameter",
+];
+
+/** Whether an Identifier stands as a value or a binding (it has a type to read), not as a name a
+ * syntax gives: a property of a member, a key, a specifier, a label.
+ * @param {unknown} node */
+function namesAValue(node) {
+  const parent = fieldOf(node, "parent");
+  const kind = kindOf(parent);
+  const computed = fieldOf(parent, "computed") === true;
+  if (kind === "MemberExpression" && fieldOf(parent, "property") === node && !computed) {
+    return false;
+  }
+  if (kind === "Property" && fieldOf(parent, "shorthand") === true) {
+    return true;
+  }
+  const named = fieldOf(parent, "key") === node || fieldOf(parent, "id") === node || fieldOf(parent, "name") === node;
+  if (named && !computed && NAMING_NODES.includes(kind)) {
+    return false;
+  }
+  return !["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier", "ExportSpecifier", "LabeledStatement", "BreakStatement", "ContinueStatement", "MetaProperty"].includes(kind);
+}
+
+/** The page's type a type is or holds, by name, or `null`: a union's or an intersection's
+ * constituents, a generic's constraint, an instantiation's target, a subtype's bases.
+ * @param {import("typescript").TypeChecker} checker @param {import("typescript").Program} program
+ * @param {import("typescript").Type | undefined} type @param {Set<unknown>} seen @param {number} depth
+ * @returns {string | null} */
+function pageTypeOf(checker, program, type, seen = new Set(), depth = 0) {
+  if (type === undefined || depth > 8 || seen.has(type)) {
+    return null;
+  }
+  seen.add(type);
+  if (type.isUnionOrIntersection()) {
+    for (const part of type.types) {
+      const found = pageTypeOf(checker, program, part, seen, depth + 1);
+      if (found !== null) {
+        return found;
+      }
+    }
+    return null;
+  }
+  if ((type.flags & ts.TypeFlags.TypeParameter) !== 0) {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint === type ? null : pageTypeOf(checker, program, constraint, seen, depth + 1);
+  }
+  for (const symbol of [type.getSymbol(), type.aliasSymbol]) {
+    const name = symbol?.getName();
+    if (symbol !== undefined && name !== undefined && PAGE_TYPES.has(name)) {
+      const own = name === "globalThis" || (symbol.declarations ?? []).some((declaration) => program.isSourceFileDefaultLibrary(declaration.getSourceFile()));
+      if (own) {
+        return name;
+      }
+    }
+  }
+  if (type.isClassOrInterface()) {
+    for (const base of checker.getBaseTypes(type)) {
+      const found = pageTypeOf(checker, program, base, seen, depth + 1);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+  if ((type.flags & ts.TypeFlags.Object) !== 0 && ((/** @type {import("typescript").ObjectType} */ (type)).objectFlags & ts.ObjectFlags.Reference) !== 0) {
+    const target = (/** @type {import("typescript").TypeReference} */ (type)).target;
+    return target === type ? null : pageTypeOf(checker, program, target, seen, depth + 1);
+  }
+  return null;
+}
+
+/** The rule `aibi/page-objects` (D423). Every value whose type is a page object's may stand only as
+ * the object of a member access, and that member is no channel of the type; no member of one is
+ * written; a member that reaches a page object is refused; a computed member of one is refused. The
+ * option `{ replaceState: "<function>" }` lets exactly one `history.replaceState(null, "", "/curate")`
+ * stand, in the exported function of that name, and nowhere else.
+ * @type {import("eslint").Rule.RuleModule} */
+const pageObjects = {
+  meta: {
+    type: "problem",
+    schema: [{ type: "object", properties: { replaceState: { type: "string" } }, additionalProperties: false }],
+    messages: { object: PAGE_OBJECT, channel: PAGE_CHANNEL, write: PAGE_WRITE, reacher: PAGE_REACHER, computed: PAGE_COMPUTED, once: PAGE_ONCE },
+  },
+  create(context) {
+    const given = /** @type {unknown} */ (context.sourceCode.parserServices);
+    const services = /** @type {{ program?: import("typescript").Program | null, esTreeNodeToTSNodeMap?: WeakMap<object, import("typescript").Node> }} */ (given);
+    const { program, esTreeNodeToTSNodeMap: nodes } = services;
+    if (program === null || program === undefined || nodes === undefined) {
+      throw new Error("aibi/page-objects needs type information (parserOptions.projectService)");
+    }
+    const checker = program.getTypeChecker();
+    const option = /** @type {unknown} */ (context.options[0]);
+    const options = /** @type {{ replaceState?: string } | undefined} */ (option);
+    let replaceStates = 0;
+
+    /** @param {unknown} node @returns {string | null} */
+    const pageType = (node) => {
+      const found = isRecord(node) ? nodes.get(node) : undefined;
+      return found === undefined ? null : pageTypeOf(checker, program, checker.getTypeAtLocation(found));
+    };
+
+    /** Whether a node stands as the object of a member access, through a non-null assertion or an
+     * optional chain's wrapper.
+     * @param {import("eslint").Rule.Node} node */
+    const isMemberObject = (node) => {
+      /** @type {unknown} */
+      let at = node;
+      let up = fieldOf(at, "parent");
+      while (["TSNonNullExpression", "ChainExpression"].includes(kindOf(up))) {
+        at = up;
+        up = fieldOf(at, "parent");
+      }
+      return kindOf(up) === "MemberExpression" && fieldOf(up, "object") === at;
+    };
+
+    /** @param {import("eslint").Rule.Node} node */
+    const isWritten = (node) => {
+      const parent = fieldOf(node, "parent");
+      const kind = kindOf(parent);
+      return (
+        (kind === "AssignmentExpression" && fieldOf(parent, "left") === node) ||
+        (kind === "UpdateExpression" && fieldOf(parent, "argument") === node) ||
+        (kind === "UnaryExpression" && fieldOf(parent, "operator") === "delete")
+      );
+    };
+
+    /** Whether `history.replaceState(null, "", "/curate")` stands here: a call of exactly that, on the
+     * global `history`, in the exported function the option names, once.
+     * @param {import("eslint").Rule.Node} member */
+    const allowedReplaceState = (member) => {
+      const name = options?.replaceState;
+      const call = fieldOf(member, "parent");
+      const args = fieldOf(call, "arguments");
+      const object = fieldOf(member, "object");
+      if (name === undefined || kindOf(call) !== "CallExpression" || fieldOf(call, "callee") !== member || !Array.isArray(args) || args.length !== 3) {
+        return false;
+      }
+      const state = fieldOf(args, "0");
+      const title = fieldOf(args, "1");
+      const address = fieldOf(args, "2");
+      if (fieldOf(state, "raw") !== "null" || fieldOf(title, "value") !== "" || fieldOf(address, "value") !== "/curate" || kindOf(address) !== "Literal" || kindOf(title) !== "Literal") {
+        return false;
+      }
+      if (kindOf(object) !== "Identifier" || fieldOf(object, "name") !== "history") {
+        return false;
+      }
+      /** @type {import("eslint").Scope.Scope | null} */
+      let scope = context.sourceCode.getScope(member);
+      for (; scope !== null; scope = scope.upper) {
+        if ((scope.set.get("history")?.defs.length ?? 0) > 0) {
+          return false;
+        }
+      }
+      /** @type {unknown} */
+      let at = fieldOf(member, "parent");
+      while (isRecord(at) && !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(kindOf(at))) {
+        at = fieldOf(at, "parent");
+      }
+      const wrapper = fieldOf(at, "parent");
+      return kindOf(at) === "FunctionDeclaration" && kindOf(wrapper) === "ExportNamedDeclaration" && fieldOf(fieldOf(at, "id"), "name") === name;
+    };
+
+    /** @param {import("eslint").Rule.Node} node */
+    const checkValue = (node) => {
+      if (pageType(node) !== null && !isMemberObject(node)) {
+        context.report({ node, messageId: "object" });
+      }
+    };
+
+    return {
+      /** @param {import("eslint").Rule.Node} node */
+      Identifier(node) {
+        if (!namesAValue(node)) {
+          return;
+        }
+        const tsNode = nodes.get(node);
+        for (let up = tsNode?.parent; up !== undefined; up = up.parent) {
+          if (ts.isTypeNode(up)) {
+            return;
+          }
+          if (ts.isStatement(up)) {
+            break;
+          }
+        }
+        checkValue(node);
+      },
+      /** A value tested against a page object's own constructor (`x instanceof Window`).
+       * @param {import("eslint").Rule.Node} node */
+      BinaryExpression(node) {
+        const right = fieldOf(node, "right");
+        const found = isRecord(right) ? nodes.get(right) : undefined;
+        const prototype = fieldOf(node, "operator") === "instanceof" && found !== undefined ? checker.getTypeAtLocation(found).getProperty("prototype") : undefined;
+        if (found !== undefined && prototype !== undefined && pageTypeOf(checker, program, checker.getTypeOfSymbolAtLocation(prototype, found)) !== null) {
+          context.report({ node, messageId: "object" });
+        }
+      },
+      /** @param {import("eslint").Rule.Node} node */
+      CallExpression: checkValue,
+      /** @param {import("eslint").Rule.Node} node */
+      NewExpression: checkValue,
+      /** @param {import("eslint").Rule.Node} node */
+      ThisExpression: checkValue,
+      /** @param {import("eslint").Rule.Node} node */
+      MemberExpression(node) {
+        const owner = pageType(fieldOf(node, "object"));
+        const property = fieldOf(node, "property");
+        const computed = fieldOf(node, "computed") === true;
+        const literal = kindOf(property) === "Literal" ? fieldOf(property, "value") : undefined;
+        const name = computed ? (typeof literal === "string" ? literal : null) : kindOf(property) === "Identifier" ? fieldOf(property, "name") : null;
+        if (owner !== null) {
+          /** @type {string | string[]} */
+          const refused = PAGE_TYPES.get(owner) ?? [];
+          if (name === null) {
+            context.report({ node, messageId: "computed" });
+          } else if (typeof name === "string" && (refused === EVERY || refused.includes(name))) {
+            if (owner === "History" && name === "replaceState" && allowedReplaceState(node)) {
+              replaceStates += 1;
+              if (replaceStates > 1) {
+                context.report({ node, messageId: "once" });
+              }
+            } else {
+              context.report({ node, messageId: "channel" });
+            }
+          }
+          if (isWritten(node)) {
+            context.report({ node, messageId: "write" });
+          }
+        }
+        if (typeof name === "string" && REACHERS.has(name) && pageType(node) !== null) {
+          context.report({ node, messageId: "reacher" });
+        }
+        checkValue(node);
+      },
+    };
+  },
+};
+
+/** The inline plugin of the lint's own rules. */
+const aibi = { rules: { "page-objects": pageObjects } };
+
 /** The syntax rules of a file of `src/` outside `src/api/`, given its storage rules.
  * @param {Restriction[]} storage @returns {Restriction[]} */
 const appSyntax = (storage) => [
@@ -479,6 +818,7 @@ export default defineConfig(
   {
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" },
   },
+  { plugins: { aibi } },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
@@ -513,6 +853,7 @@ export default defineConfig(
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
       "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX)],
+      "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }] }],
     },
@@ -522,6 +863,7 @@ export default defineConfig(
     // which the index does not re-export (its listeners would follow it into the catalogue).
     files: ["src/operator/**"],
     rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX), ...OPERATOR_SYNTAX],
       "@typescript-eslint/no-restricted-imports": [
         "error",
         { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }] },
@@ -531,7 +873,10 @@ export default defineConfig(
   {
     // The one file that calls `history.replaceState` (D412: the entry's address is its fixed path).
     files: ["src/operator/url.ts"],
-    rules: { "no-restricted-syntax": ["error", ...appSyntax(URL_SYNTAX)] },
+    rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(URL_SYNTAX), ...OPERATOR_SYNTAX, ...URL_FILE_SYNTAX],
+      "aibi/page-objects": ["error", { replaceState: "forgetAddress" }],
+    },
   },
   {
     // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`), and
@@ -552,6 +897,7 @@ export default defineConfig(
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
       "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
     },
@@ -575,6 +921,7 @@ export default defineConfig(
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(true),
       "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "aibi/page-objects": "error",
     },
   },
   {

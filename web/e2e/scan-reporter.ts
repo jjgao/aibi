@@ -106,9 +106,29 @@ export function outputFindings(place: string, chunks: readonly string[], secrets
   return held + shapes > 0 ? [`${place}: ${String(held)} secret(s), ${String(shapes)} shape(s)`] : [];
 }
 
-/** The texts of an error (message, stack, the code snippet beside it). */
-function errorTexts(error: TestError): string[] {
-  return [error.message ?? "", error.stack ?? "", error.snippet ?? "", error.value ?? ""];
+/** The deepest chain of causes the scan follows. */
+const CAUSE_DEPTH = 16;
+
+/** The texts of an error: its message, its stack, the code snippet beside it, the value thrown, and
+ * those of its `cause`, and the cause's cause, to a bounded depth, a cycle read once (the list
+ * reporter prints `[cause]: ...`, and a cause holds whatever the error it wraps held).
+ * @param seen the errors already read */
+export function errorTexts(error: TestError, seen: Set<TestError> = new Set(), depth = 0): string[] {
+  if (seen.has(error) || depth > CAUSE_DEPTH) {
+    return [];
+  }
+  seen.add(error);
+  const own = [error.message ?? "", error.stack ?? "", error.snippet ?? "", error.value ?? "", "\n"];
+  return error.cause === undefined ? own : [...own, ...errorTexts(error.cause, seen, depth + 1)];
+}
+
+/** What a scan is given when a test drives it: the secrets to look for (else the run's, read from the
+ * files `global-setup.ts` made, which the scan removes), where the report is (else the package's)
+ * and where it writes. */
+export interface ScanOptions {
+  readonly secrets?: readonly string[];
+  readonly root?: string;
+  readonly write?: (text: string) => void;
 }
 
 export default class ScanReporter implements Reporter {
@@ -116,7 +136,10 @@ export default class ScanReporter implements Reporter {
    * step errors and the runner's own. */
   private readonly printed: string[] = [];
 
-  constructor() {
+  private readonly options: ScanOptions;
+
+  constructor(options?: ScanOptions) {
+    this.options = options ?? {};
     process.env[SCANNING_VARIABLE] = "1";
   }
 
@@ -130,18 +153,18 @@ export default class ScanReporter implements Reporter {
 
   onStepEnd(_test: TestCase, _result: TestResult, step: TestStep): void {
     if (step.error !== undefined) {
-      this.printed.push(...errorTexts(step.error), "\n");
+      this.printed.push(...errorTexts(step.error));
     }
   }
 
   onTestEnd(_test: TestCase, result: TestResult): void {
     for (const error of result.errors) {
-      this.printed.push(...errorTexts(error), "\n");
+      this.printed.push(...errorTexts(error));
     }
   }
 
   onError(error: TestError): void {
-    this.printed.push(...errorTexts(error), "\n");
+    this.printed.push(...errorTexts(error));
   }
 
   printsToStdio(): boolean {
@@ -155,23 +178,32 @@ export default class ScanReporter implements Reporter {
   }
 
   private scan(result: FullResult): { status?: FullResult["status"] } | undefined {
-    const given = process.env[SERVERS_VARIABLE];
-    if (given === undefined) {
+    const write = this.options.write ?? ((text: string) => process.stderr.write(text));
+    const secrets = this.options.secrets === undefined ? readSecrets() : [...this.options.secrets];
+    if (secrets === undefined) {
       return undefined;
     }
-    const { tokenFile, secretsFile } = JSON.parse(given) as Servers;
-    let secrets: string[];
-    try {
-      secrets = [readFileSync(tokenFile, "utf8"), ...readFileSync(secretsFile, "utf8").split("\n")].filter((secret) => secret.length >= 16);
-    } finally {
-      rmSync(path.dirname(tokenFile), { recursive: true, force: true });
-    }
-    const found = [...findings(WEB, secrets), ...outputFindings("the run's stdout, stderr and errors", this.printed, secrets)];
+    const found = [...findings(this.options.root ?? WEB, secrets), ...outputFindings("the run's stdout, stderr and errors", this.printed, secrets)];
     if (found.length > 0) {
-      process.stderr.write(`The report holds a secret (D423):\n${found.join("\n")}\n`);
+      write(`The report holds a secret (D423):\n${found.join("\n")}\n`);
       return { status: "failed" };
     }
-    process.stderr.write(`The report's scan: ${String(secrets.length)} secrets and the token's and handle's shapes, in none of ${SCANNED.join(", ")}, nor in the run's output (D423).\n`);
+    write(`The report's scan: ${String(secrets.length)} secrets and the token's and handle's shapes, in none of ${SCANNED.join(", ")}, nor in the run's output (D423).\n`);
     return result.status === "passed" ? undefined : { status: result.status };
+  }
+}
+
+/** The secrets of the run: the token and every one the tests saw, read from the files
+ * `global-setup.ts` made, whose directory is then removed; `undefined` if no server was started. */
+function readSecrets(): string[] | undefined {
+  const given = process.env[SERVERS_VARIABLE];
+  if (given === undefined) {
+    return undefined;
+  }
+  const { tokenFile, secretsFile } = JSON.parse(given) as Servers;
+  try {
+    return [readFileSync(tokenFile, "utf8"), ...readFileSync(secretsFile, "utf8").split("\n")].filter((secret) => secret.length >= 16);
+  } finally {
+    rmSync(path.dirname(tokenFile), { recursive: true, force: true });
   }
 }
