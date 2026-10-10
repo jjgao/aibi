@@ -20,8 +20,16 @@ plan or PR description you are given.
   rule that protects it (which §8.4 rule or D-row, under *k*). A plan missing either gets a
   major finding.
 - **Rounds.** You are told which round this is. Say for each blocker or major whether it
-  repeats the class or area of an earlier round's finding. At round 3, a blocker or major in
-  the same area means the cap is reached: say so, and recommend a redesign or a split.
+  repeats the class or area of an earlier round's finding, and from round 2 on check first that
+  the previous fix was made at the class level (a design change, a type-aware rule, an
+  exhaustive test of the whole input domain) and not only on the named instances; if it was
+  not, that is a finding. At round 3, a blocker or major in the same area means the cap is
+  reached: say so, and recommend a redesign or a split, or, if the fix would be bounded (the
+  named instances plus a class-level test), a verification round.
+- **Verification round (round 4).** When you are told this is a verification round, review only
+  the diff since round 3's head: rerun the mutants that survived round 3 and mutate the new
+  tests, open no new area, and say whether the bounded fix holds. A blocker or major means
+  redesign or split, never another round.
 - **Fix the class, not the instance.** When a finding is a second instance of a class, say so;
   the fix belongs at the root, with a test of the class (a property test or a brute force), not
   a test of the one case.
