@@ -5,8 +5,13 @@
  * The token field is an **uncontrolled** `<input type="password" autocomplete="off">`, read by
  * its ref when the form is sent and emptied at once: a controlled one (`value={state}`) is written
  * by React into the input's `value` attribute, where the token would stand in the DOM. Nothing
- * here holds the token beyond the call that hands it to the client; nothing shows a name, a token
- * or any text a request or an answer carried.
+ * here holds the token beyond the call that hands it to the client (a test walks the React tree
+ * for it); nothing shows a name, a token or any text a request or an answer carried. While an unlock
+ * is pending, Cancel aborts its request: the client stays locked and holds nothing.
+ *
+ * `autocomplete="off"` and the password managers' opt-out attributes (`data-1p-ignore`,
+ * `data-lpignore`, `data-bwignore`) are requests, not a barrier: Chrome may still offer to save the
+ * token once the form is gone (a residual of D423, which the person consents to).
  */
 import { type SyntheticEvent, useRef, useState, useSyncExternalStore } from "react";
 
@@ -31,7 +36,9 @@ export function unlockWords(outcome: Unlocked): string | null {
         ? "The name is not one the server accepts: 1 to 200 characters, with no control, line-break or bidi formatting character and no token in it."
         : "The token is not in its form: aibi_ and 43 characters.";
     case "unknown":
-      return "The server could not be reached, or its answer could not be read. Nothing is known of the outcome: try again.";
+      return outcome.reason === "aborted"
+        ? "Unlocking was cancelled. Nothing is held. Enter the token again to go on."
+        : "The server could not be reached, or its answer could not be read. Nothing is known of the outcome: try again.";
     case "refused":
       return "The server refused the request.";
     case "unlocked":
@@ -49,6 +56,7 @@ export function Shell() {
   const state = useSyncExternalStore(subscribe, view);
   const name = useRef<HTMLInputElement>(null);
   const token = useRef<HTMLInputElement>(null);
+  const cancel = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false);
   const [words, setWords] = useState<string | null>(null);
 
@@ -76,9 +84,12 @@ export function Shell() {
     if (field !== null) {
       field.value = "";
     }
+    const controller = new AbortController();
+    cancel.current = controller;
     setPending(true);
     setWords(null);
-    void operator.unlock(given, name.current?.value ?? "").then((outcome) => {
+    void operator.unlock(given, name.current?.value ?? "", controller.signal).then((outcome) => {
+      cancel.current = null;
       setPending(false);
       setWords(unlockWords(outcome));
     });
@@ -92,11 +103,31 @@ export function Shell() {
           Your name <input ref={name} name="operator" type="text" autoComplete="off" spellCheck={false} />
         </label>
         <label>
-          Curator token <input ref={token} name="token" type="password" autoComplete="off" spellCheck={false} />
+          Curator token{" "}
+          <input
+            ref={token}
+            name="token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-bwignore="true"
+          />
         </label>
         <button type="submit" disabled={pending}>
           Unlock
         </button>
+        {pending ? (
+          <button
+            type="button"
+            onClick={() => {
+              cancel.current?.abort();
+            }}
+          >
+            Cancel
+          </button>
+        ) : null}
       </form>
       {words === null ? null : <p role="alert">{words}</p>}
     </section>

@@ -74,6 +74,19 @@
  * type argument (`import.meta.glob<T>(...)`, `JSON.parse<T>`) stays accepted: the box throws at run
  * time on whatever it is called as. `import.meta.glob`, which resolves a module the source never
  * names, is refused in all of `src/` (the gate checks the graph it makes).
+ *
+ * **No channel out of the page's memory (D423).** The storages and the Cache API (`STORAGE_NAMES`)
+ * in every position, and by name the channels that carry a value out of the page (`CHANNEL_SYNTAX`:
+ * `navigator.storage`, `navigator.clipboard`, `history.pushState` and `replaceState`, a write to
+ * `location` or a member of it, `location.replace`, `assign`, `hash` and `href`, a write to
+ * `document.title`, `window.open` and the window's `name`). The page's objects (`PAGE_OBJECTS`:
+ * `window`, `globalThis`, `self`, `top`, `parent`, `frames`, `opener`, `location`, `history`,
+ * `navigator`, `document`) are used by direct member access alone (`ALIAS_SYNTAX`: no alias, no
+ * destructuring from one, none passed as an argument, no computed member), so that the rules by
+ * name see every use. `history.replaceState` stands in `src/operator/url.ts` alone, in its one call
+ * (`URL_SYNTAX`). What it does not see is D419's residual: a computed name on an alias reached any
+ * other way (`ownerDocument.defaultView`), a `declare` that lies, another realm, a patched builtin.
+ * `tests/gates/operator.test.ts` holds each channel in each position.
  */
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
@@ -126,11 +139,32 @@ const SINK_GLOBALS = ["Function", "Reflect", "DOMParser"];
 /** The names of I/O, `src/api/client.ts`'s alone (matched exactly). */
 const IO_NAMES = ["fetch", "XMLHttpRequest", "Response", "Request", "EventSource", "WebSocket", "caches", "CacheStorage", "serviceWorker", "sendBeacon"];
 
-/** The places a page can keep or pass a value beyond its own memory (D423): storage, cookies,
- * another context's messages. Refused in every position in all of `src/`, so that a secret (the
- * curator token, a handle, the CSRF token, or a copy of one, `btoa(token)`) has nowhere to go
- * but the client's closure (matched exactly). */
-const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel"];
+/** The places a page can keep or pass a value beyond its own memory (D423): storage, the Cache
+ * API, cookies, another context's messages. Refused in every position in all of `src/`, so that a
+ * secret (the curator token, a handle, the CSRF token, or a copy of one, `btoa(token)`) has nowhere
+ * to go but the client's closure (matched exactly). */
+const STORAGE_NAMES = [
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+  "IDBFactory",
+  "cookieStore",
+  "BroadcastChannel",
+  "postMessage",
+  "SharedWorker",
+  "MessageChannel",
+  "caches",
+  "CacheStorage",
+];
+
+/** The global object, and the names that lead to it (`defaultView` is a member that gives the
+ * window of a document). */
+const GLOBAL_OBJECTS = ["globalThis", "window", "self", "top", "parent", "frames", "opener"];
+
+/** What the page's channels hang on: the global object and the objects of it that carry a secret
+ * out of the page's memory (the address, the history, the navigator, the document). Used by direct
+ * member access alone: `window.history.length`, never `const h = history`. */
+const PAGE_OBJECTS = [...GLOBAL_OBJECTS, "location", "history", "navigator", "document"];
 
 /** The names of the prototype chain, `src/api/`'s alone (matched exactly). */
 const PROTOTYPE_NAMES = ["prototype", "getPrototypeOf", "setPrototypeOf", "__proto__"];
@@ -231,11 +265,59 @@ const everywhere = (names, message) => [
 ];
 
 const STORE = "No storage, cookie or message to another context in src/: a secret lives in the operator client's closure alone (D423).";
+const ALIAS =
+  "No alias of window, globalThis, self, top, parent, frames, opener, location, history, navigator or document, no destructuring from one and none passed as an argument: each is used by direct member access alone (D423).";
+const CHANNEL = "No channel out of the page's memory in src/ (the address, the history, the title, the window's name, the clipboard, a new window, the origin private file system): a secret lives in the operator client's closure alone (D423).";
 
-/** The storage rules (D423): the names in every position; `history.pushState` in any form, and
- * `history.replaceState` with a state that is not `null` written out, since an entry's state
- * outlives the page (the URL each takes is the operator entry's fixed path, `url.ts`); `cookie` as
- * a member or a destructured key; and the global object's `name`, which outlives a navigation.
+/** A member expression whose object is one of `names`, written out (`navigator.x`) or reached as a
+ * member of that name (`window.navigator.x`, `self.navigator.x`); the global object's names are
+ * also reached by `defaultView`.
+ * @param {readonly string[]} names */
+const onObject = (names) =>
+  `MemberExpression:matches([object.name=${exactly(names)}], [object.property.name=${exactly(names)}]${names.includes("window") ? ", [object.property.name='defaultView']" : ""})`;
+
+/** The channel rules (D423), by name and by position. The page's objects are used by direct member
+ * access alone (`ALIAS_SYNTAX`: no alias, no destructuring, no argument, no computed member), so
+ * that these rules see every use of a channel; a channel is then refused as a member of its
+ * object, wherever it stands (a call, an assignment, an optional chain, a read). @type {Restriction[]} */
+const CHANNEL_SYNTAX = [
+  // The origin private file system (`navigator.storage.getDirectory`), as persistent as `indexedDB`.
+  { selector: `${onObject(["navigator"])}[property.name='storage']`, message: CHANNEL },
+  // The clipboard outlives the page and is read by whatever the person pastes into.
+  { selector: `${onObject(["navigator"])}[property.name='clipboard']`, message: CHANNEL },
+  // `history.pushState` and `history.replaceState` take a state that outlives the page and a URL;
+  // `src/operator/url.ts` alone calls `replaceState`, with a fixed state and path (`URL_SYNTAX`).
+  { selector: "Identifier[name=/^(pushState|replaceState)$/]", message: CHANNEL },
+  { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
+  // The address: written (`location = x`, `window.location = x`, `location.x = y`), navigated
+  // (`replace`, `assign`) or carrying a secret in its `hash` or `href`, read or written.
+  { selector: "AssignmentExpression:matches([left.name='location'], [left.property.name='location'])", message: CHANNEL },
+  { selector: "AssignmentExpression:matches([left.object.name='location'], [left.object.property.name='location'])", message: CHANNEL },
+  { selector: `${onObject(["location"])}[property.name=/^(replace|assign|hash|href)$/]`, message: CHANNEL },
+  // The title is kept in session history.
+  {
+    selector: "AssignmentExpression[left.property.name='title']:matches([left.object.name='document'], [left.object.property.name='document'])",
+    message: CHANNEL,
+  },
+  // A new window's address, and the window's name, which outlives a navigation.
+  { selector: `${onObject(GLOBAL_OBJECTS)}[property.name='open']`, message: CHANNEL },
+  { selector: "CallExpression[callee.name='open']", message: CHANNEL },
+  { selector: `${onObject(GLOBAL_OBJECTS)}:matches([property.name='name'], [property.value='name'])`, message: CHANNEL },
+];
+
+/** The page's objects by direct member access alone (D423): no reference to one that is not the
+ * object of a member (an alias, an argument, a returned value, a destructuring's source, a
+ * binding of the name), and no computed member of one or of a member of that name. @type {Restriction[]} */
+const ALIAS_SYNTAX = [
+  {
+    selector: `Identifier[name=${exactly(PAGE_OBJECTS)}]:not(MemberExpression > Identifier.object):not(MemberExpression[computed=false] > Identifier.property):not(:matches(Property, PropertyDefinition, TSPropertySignature, MethodDefinition, TSMethodSignature, AccessorProperty)[computed=false] > Identifier.key)`,
+    message: ALIAS,
+  },
+  { selector: `MemberExpression[computed=true]:matches([object.name=${exactly(PAGE_OBJECTS)}], [object.property.name=${exactly(PAGE_OBJECTS)}])`, message: ALIAS },
+];
+
+/** The storage rules (D423): the names in every position; `cookie` as a member or a destructured
+ * key; the channels by name; the page's objects by direct member access alone.
  * @type {Restriction[]} */
 const STORAGE_SYNTAX = [
   ...everywhere(STORAGE_NAMES, STORE),
@@ -243,12 +325,22 @@ const STORAGE_SYNTAX = [
   // generated types name every operation's `cookie` parameters, which are `never`.
   { selector: "MemberExpression:matches([property.name='cookie'], [property.value='cookie'])", message: STORE },
   { selector: "ObjectPattern > Property:matches([key.name='cookie'], [key.value='cookie'])", message: STORE },
-  { selector: "Identifier[name='pushState']", message: STORE },
-  { selector: "Literal[value='pushState']", message: STORE },
-  { selector: `${called("replaceState")}:not([arguments.0.type='Literal'][arguments.0.raw='null'])`, message: STORE },
-  { selector: "MemberExpression[property.name='replaceState']:not(CallExpression > MemberExpression.callee)", message: STORE },
-  { selector: "MemberExpression[computed=true][property.value='replaceState']", message: STORE },
-  { selector: "MemberExpression[object.name=/^(window|self|globalThis|top|parent|frames|opener)$/]:matches([property.name='name'], [property.value='name'])", message: STORE },
+  ...CHANNEL_SYNTAX,
+  ...ALIAS_SYNTAX,
+];
+
+/** The storage rules of `src/operator/url.ts`, the one file that calls `history.replaceState`
+ * (D412: the operator entry takes nothing from its URL and replaces it by its fixed path): its one
+ * call states `null`, `""` and `CURATE_PATH`, and no other use of the name stands. @type {Restriction[]} */
+const URL_SYNTAX = [
+  ...STORAGE_SYNTAX.filter(({ selector }) => !selector.includes("pushState|replaceState")),
+  { selector: "Identifier[name='pushState']", message: CHANNEL },
+  { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
+  {
+    selector:
+      "Identifier[name='replaceState']:not(CallExpression[arguments.length=3][arguments.0.raw='null'][arguments.1.value=''][arguments.2.name='CURATE_PATH'] > MemberExpression.callee[object.name='history'] > Identifier.property)",
+    message: CHANNEL,
+  },
 ];
 
 /** The I/O rules: the names, and every `.json` (D419). @type {Restriction[]} */
@@ -355,6 +447,21 @@ const properties = (sealing) => [
  * @param {...[readonly string[], string]} tables @returns {["error", ...object[]]} */
 const globals = (...tables) => ["error", ...tables.flatMap(([names, message]) => names.map((name) => ({ name, message })))];
 
+/** The syntax rules of a file of `src/` outside `src/api/`, given its storage rules.
+ * @param {Restriction[]} storage @returns {Restriction[]} */
+const appSyntax = (storage) => [
+  ...SINK_SYNTAX,
+  ...storage,
+  ...IO_SYNTAX,
+  ...JSON_READER_SYNTAX,
+  ...GLOB_SYNTAX,
+  ...AMBIENT_SYNTAX,
+  ...REQUIRE_SYNTAX,
+  ...PATCH_SYNTAX,
+  ...CHAIN_SYNTAX,
+  ...NUMBER_SYNTAX,
+];
+
 /** The rules every file of `src/` has, whichever its layer.
  * @type {Record<string, import("eslint").Linter.RuleEntry>} */
 const SOURCE_RULES = {
@@ -405,18 +512,7 @@ export default defineConfig(
       "no-bitwise": "error",
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": [
-        "error",
-        ...SINK_SYNTAX,
-        ...STORAGE_SYNTAX,
-        ...IO_SYNTAX,
-        ...JSON_READER_SYNTAX,
-        ...GLOB_SYNTAX,
-        ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX,
-        ...PATCH_SYNTAX,
-        ...CHAIN_SYNTAX,
-        ...NUMBER_SYNTAX,
-      ],
+      "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX)],
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }] }],
     },
@@ -431,6 +527,11 @@ export default defineConfig(
         { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }] },
       ],
     },
+  },
+  {
+    // The one file that calls `history.replaceState` (D412: the entry's address is its fixed path).
+    files: ["src/operator/url.ts"],
+    rules: { "no-restricted-syntax": ["error", ...appSyntax(URL_SYNTAX)] },
   },
   {
     // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`), and

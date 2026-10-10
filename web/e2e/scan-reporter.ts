@@ -4,8 +4,11 @@
  * failure leaves; the HTML report's data is a zip archive embedded as base64, which is read
  * unzipped) for the curator token, every session handle and CSRF token the tests saw
  * (`servers.ts`'s `remember`), and any token's or handle's shape, and fails the run if one is
- * there, naming the file and how many it holds, never the secret. It then removes the directory
- * that held the token (the global teardown leaves it for this scan while this reporter runs).
+ * there, naming the file and how many it holds, never the secret. It reads what the run printed too
+ * (m5): the stdout and stderr of the workers, and every error and step error the other reporters
+ * print (Playwright's API-call errors carry the request's headers, the token among them), joined
+ * so that a secret split across two chunks is found. It then removes the directory that held the
+ * token (the global teardown leaves it for this scan while this reporter runs).
  * Playwright 1.63 titles a `fill`, `type` or `insertText` step with the value typed, which is why
  * the matrix enters the token with `locator.evaluate`; this scan is what holds that.
  */
@@ -13,7 +16,7 @@ import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
 
-import type { FullResult, Reporter } from "@playwright/test/reporter";
+import type { FullResult, Reporter, TestCase, TestError, TestResult, TestStep } from "@playwright/test/reporter";
 
 import { SCANNING_VARIABLE, SERVERS_VARIABLE, type Servers } from "./servers";
 
@@ -93,9 +96,52 @@ export function findings(root: string, secrets: readonly string[]): string[] {
   return found;
 }
 
+/** How many of `secrets` and of the shapes the texts hold, as a finding for `place`, or none: the
+ * texts are joined (a secret split across two chunks is found) and the secrets are counted, never
+ * shown. */
+export function outputFindings(place: string, chunks: readonly string[], secrets: readonly string[]): string[] {
+  const joined = chunks.join("");
+  const held = secrets.filter((secret) => joined.includes(secret)).length;
+  const shapes = SHAPES.filter((shape) => shape.test(joined)).length;
+  return held + shapes > 0 ? [`${place}: ${String(held)} secret(s), ${String(shapes)} shape(s)`] : [];
+}
+
+/** The texts of an error (message, stack, the code snippet beside it). */
+function errorTexts(error: TestError): string[] {
+  return [error.message ?? "", error.stack ?? "", error.snippet ?? "", error.value ?? ""];
+}
+
 export default class ScanReporter implements Reporter {
+  /** What the run printed or reported as an error: the workers' stdout and stderr, test errors,
+   * step errors and the runner's own. */
+  private readonly printed: string[] = [];
+
   constructor() {
     process.env[SCANNING_VARIABLE] = "1";
+  }
+
+  onStdOut(chunk: string | Buffer): void {
+    this.printed.push(chunk.toString());
+  }
+
+  onStdErr(chunk: string | Buffer): void {
+    this.printed.push(chunk.toString());
+  }
+
+  onStepEnd(_test: TestCase, _result: TestResult, step: TestStep): void {
+    if (step.error !== undefined) {
+      this.printed.push(...errorTexts(step.error), "\n");
+    }
+  }
+
+  onTestEnd(_test: TestCase, result: TestResult): void {
+    for (const error of result.errors) {
+      this.printed.push(...errorTexts(error), "\n");
+    }
+  }
+
+  onError(error: TestError): void {
+    this.printed.push(...errorTexts(error), "\n");
   }
 
   printsToStdio(): boolean {
@@ -120,12 +166,12 @@ export default class ScanReporter implements Reporter {
     } finally {
       rmSync(path.dirname(tokenFile), { recursive: true, force: true });
     }
-    const found = findings(WEB, secrets);
+    const found = [...findings(WEB, secrets), ...outputFindings("the run's stdout, stderr and errors", this.printed, secrets)];
     if (found.length > 0) {
       process.stderr.write(`The report holds a secret (D423):\n${found.join("\n")}\n`);
       return { status: "failed" };
     }
-    process.stderr.write(`The report's scan: ${String(secrets.length)} secrets and the token's and handle's shapes, in none of ${SCANNED.join(", ")} (D423).\n`);
+    process.stderr.write(`The report's scan: ${String(secrets.length)} secrets and the token's and handle's shapes, in none of ${SCANNED.join(", ")}, nor in the run's output (D423).\n`);
     return result.status === "passed" ? undefined : { status: result.status };
   }
 }

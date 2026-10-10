@@ -5,7 +5,7 @@
  * (`request.postData()` is the oracle for a body); and counting secrets where none may be (a count,
  * never the value, so that a failing assertion prints no secret).
  */
-import type { BrowserContext, Locator, Page, Request } from "@playwright/test";
+import type { APIRequestContext, APIResponse, BrowserContext, Locator, Page, Request } from "@playwright/test";
 
 import { expect, type Watcher } from "./fixtures";
 import { remember } from "./servers";
@@ -53,14 +53,31 @@ export interface Shown {
   readonly decoded: string;
 }
 
-/** Run one of the harness's operations over its fields, and read the outcome it wrote. */
-export async function run(page: Page, operation: string, fields: { dataset?: string; manifest?: string; descriptor?: string } = {}): Promise<Shown> {
+/** Run one of the harness's operations over its fields, and read the outcome it wrote. `input`
+ * says how its button is pressed: `trusted`, a click as a person makes it (a trusted pointer
+ * event, which is activity for the idle lock), or `script`, the page's own `click()` (an event
+ * that is no activity), for the tests of what is and is not activity. */
+export async function run(
+  page: Page,
+  operation: string,
+  fields: { dataset?: string; manifest?: string; descriptor?: string } = {},
+  input: "trusted" | "script" = "trusted",
+): Promise<Shown> {
   const output = page.locator('output[aria-label="outcome"]');
   const before = Number(await output.getAttribute("data-runs"));
   for (const [name, value] of Object.entries(fields)) {
     await page.locator(`input[aria-label="${name}"]`).fill(value);
   }
-  await page.getByRole("button", { name: operation, exact: true }).click();
+  const button = page.getByRole("button", { name: operation, exact: true });
+  if (input === "trusted") {
+    await button.click();
+  } else {
+    await button.evaluate((element) => {
+      if (element instanceof HTMLElement) {
+        element.click();
+      }
+    });
+  }
   await expect(output).toHaveAttribute("data-runs", String(before + 1));
   const read = async (name: string): Promise<string> => (await output.getAttribute(`data-${name}`)) ?? "";
   return {
@@ -144,7 +161,9 @@ export function occurrences(texts: readonly string[], secrets: readonly string[]
 }
 
 /** The places a page could keep or show a secret: its markup, every field's value, storage,
- * cookies, the databases, its address, its history and its window's name. */
+ * cookies, the databases, the origin private file system (every file's name and content), the Cache
+ * API (every cache's name, request and response), its address, its history and its window's name.
+ * `stored` counts what is kept at all. */
 export async function pageTexts(page: Page): Promise<{ texts: string[]; stored: number }> {
   const found = await page.evaluate(async () => {
     const texts = [document.documentElement.outerHTML, window.location.href, JSON.stringify(window.history.state), window.name, document.cookie, document.title];
@@ -159,10 +178,84 @@ export async function pageTexts(page: Page): Promise<{ texts: string[]; stored: 
       }
     }
     const databases = await window.indexedDB.databases();
-    return { texts, stored: stores.reduce((sum, store) => sum + store.length, 0) + databases.length + (document.cookie === "" ? 0 : 1) };
+    // The origin private file system: the tree under its root, each name and each file's content.
+    let files = 0;
+    const walk = async (directory: FileSystemDirectoryHandle, path: string): Promise<void> => {
+      // (`entries` is in the DOM's async-iterable typings, which the package's libraries do not name.)
+      const listed = (directory as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries();
+      for await (const [name, handle] of listed) {
+        files += 1;
+        texts.push(`${path}${name}`);
+        if (handle instanceof FileSystemFileHandle) {
+          texts.push(await (await handle.getFile()).text());
+        } else if (handle instanceof FileSystemDirectoryHandle) {
+          await walk(handle, `${path}${name}/`);
+        }
+      }
+    };
+    await walk(await navigator.storage.getDirectory(), "/");
+    // The Cache API: each cache's name, and each entry's request (URL, headers) and response (headers,
+    // body, read through its stream: the client seals the page's `Response.text()`, D419).
+    const bodyOf = async (response: Response): Promise<string> => {
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      for (let read = await reader?.read(); read !== undefined && !read.done; read = await reader?.read()) {
+        text += decoder.decode(read.value, { stream: true });
+      }
+      return text + decoder.decode();
+    };
+    let cached = 0;
+    for (const name of await caches.keys()) {
+      texts.push(name);
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        cached += 1;
+        texts.push(request.url, JSON.stringify([...request.headers]));
+        const response = await cache.match(request);
+        if (response !== undefined) {
+          texts.push(JSON.stringify([...response.headers]), await bodyOf(response));
+        }
+      }
+    }
+    return { texts, stored: stores.reduce((sum, store) => sum + store.length, 0) + databases.length + files + cached + (document.cookie === "" ? 0 : 1) };
   });
   const cookies = await page.context().cookies();
   return { texts: [...found.texts, JSON.stringify(cookies)], stored: found.stored + cookies.length };
+}
+
+/** A text with every credential in it replaced: an `Authorization: Bearer` value, an `Aibi-CSRF`
+ * value, any token's or handle's shape, and each of `secrets`. Playwright's `APIRequestContext`
+ * errors carry a call log with the request's headers (1.63), `Authorization` among them. */
+export function redacted(text: string, secrets: readonly string[] = []): string {
+  let found = text
+    .replace(/(authorization:\s*bearer\s+)\S+/giu, "$1[redacted]")
+    .replace(/(aibi-csrf:\s*)\S+/giu, "$1[redacted]")
+    .replace(/(?<![A-Za-z0-9_-])(?:aibi|ses)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/gu, "[redacted]");
+  for (const secret of secrets) {
+    if (secret !== "") {
+      found = found.replaceAll(secret, "[redacted]");
+    }
+  }
+  return found;
+}
+
+/** The options of a Playwright API request. */
+type ApiOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
+
+/** A request of the matrix's own through Playwright's API context (the CLI's stand-in, a client
+ * that is no browser): a failure is rethrown with its message and its stack redacted (the call
+ * log holds the `Authorization` header), and nothing else changed. Every such call goes through
+ * here. */
+export async function api(request: APIRequestContext, method: "GET" | "POST", url: string, options: ApiOptions = {}): Promise<APIResponse> {
+  try {
+    return await request.fetch(url, { ...options, method });
+  } catch (error) {
+    const failure = new Error(redacted(error instanceof Error ? error.message : "the request failed"));
+    failure.name = error instanceof Error ? error.name : "Error";
+    failure.stack = redacted(error instanceof Error ? (error.stack ?? "") : "");
+    throw failure;
+  }
 }
 
 /** No secret in the page, its storage, its console, and nothing stored at all; the address is

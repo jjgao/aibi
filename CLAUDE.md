@@ -60,14 +60,16 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   and the operator entry (`src/operator/`, which reads nothing from its URL: the token's shell,
   the forget action, the confirmation step), the operator's client (`src/api/curator.ts`; the
   page's one, `src/api/operator.ts`, which the index never re-exports; the token, the CSRF token
-  and handles in its closure alone, the epoch, the idle lock: read D423 before touching it), the
+  and handles in its closure alone, the epoch, the idle lock: read D423 before touching it; the lint
+  takes the page's objects, `window`, `location`, `history`, `navigator` and `document`, by direct
+  member access alone, and bans the channels out of the page's memory by name), the
   end-to-end harness (`src/harness/`, in `dist-e2e/` alone, never showing a secret), the build's
   gate (`plugins/gate.ts`: no harness in production, an allow-list for the operator entry's graph,
   no operator module in the catalogue's), `scripts/check-bundle.mjs` (names, hashes, caps, the
   budget, then the real loader) and `scripts/check-licenses.mjs`, and the policy and operator
   matrices (`e2e/`: Playwright against the built bundles served by the real server; a token is
   entered with `locator.evaluate`, never `fill`, whose step title holds the value, and
-  `scan-reporter.ts` fails the run on a secret in the report).
+  `scan-reporter.ts` fails the run on a secret in the report or in the run's output).
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.

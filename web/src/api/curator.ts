@@ -129,11 +129,17 @@ export interface Timers {
   readonly clear: (timer: unknown) => void;
 }
 
+/** What the client listens with: the page's `addEventListener`, not the object itself (the lint
+ * refuses an alias of the window or the document, D423). */
+export interface Listens {
+  addEventListener(type: string, listener: (event: Event) => void, options?: AddEventListenerOptions): void;
+}
+
 /** Where the client listens: the window (input, `pagehide`, `pageshow`) and the document
  * (`visibilitychange`). */
 export interface Targets {
-  readonly window: EventTarget;
-  readonly document: EventTarget;
+  readonly window: Listens;
+  readonly document: Listens;
 }
 
 const PAGE_CLOCKS: Clocks = { wall: () => Date.now(), monotonic: () => performance.now() };
@@ -319,12 +325,33 @@ function refusals(body: JsonOut): { readonly codes: readonly string[]; readonly 
   return { codes, limits };
 }
 
-/** A body without its `handle` member: what `open` gives a caller. */
-function withoutHandle(body: JsonOut): JsonOut {
-  if (!isRecord(body)) {
-    return body;
+/** The members of an `open` answer that reach the caller (`SessionOpened`, but its `handle`): an
+ * allow-list, so that a member the schema gains is not given until it is read here. */
+const OPENED_MEMBERS: readonly string[] = ["dataset", "session", "base", "draft"];
+
+/** A copy of the members of a record that `keep` names, each without a `handle` at any depth. */
+function copied(record: JsonRecord, keep: (key: string) => boolean): JsonOut {
+  const members: [string, JsonOut][] = [];
+  for (const [key, found] of Object.entries(record)) {
+    if (keep(key)) {
+      members.push([key, scrubbed(found)]);
+    }
   }
-  return Object.freeze(Object.fromEntries(Object.entries(body).filter(([key]) => key !== "handle")));
+  return Object.freeze(Object.fromEntries(members));
+}
+
+/** A value without any member named `handle`, at any depth (a number's box is no record here). */
+function scrubbed(value: JsonOut): JsonOut {
+  if (isList(value)) {
+    return Object.freeze(value.map(scrubbed));
+  }
+  return isRecord(value) ? copied(value, (key) => key !== "handle") : value;
+}
+
+/** What `open` gives a caller: a frozen copy of the answer's allow-listed members, each without a
+ * `handle` at any depth; anything else, the `handle` included, is dropped. */
+function withoutHandle(body: JsonOut): JsonOut {
+  return isRecord(body) ? copied(body, (key) => OPENED_MEMBERS.includes(key)) : body;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -415,8 +442,10 @@ interface Session {
 
 export interface Curator {
   /** Unlock with a token and a name: the token is checked for its form, the name encoded, and
-   * the CSRF token fetched with them; neither is kept unless the server accepts the token. */
-  unlock(token: string, name: string): Promise<Unlocked>;
+   * the CSRF token fetched with them; neither is kept unless the server accepts the token.
+   * `cancel` aborts the request (an unknown outcome, `aborted`) and leaves the client locked,
+   * holding nothing. */
+  unlock(token: string, name: string, cancel?: AbortSignal): Promise<Unlocked>;
   /** Forget the token, the CSRF token and every handle, and abort every request in flight. */
   forget(): void;
   /** What the shell shows. */
@@ -540,6 +569,10 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
     if (sent.kind === "unknown") {
       return sent;
     }
+    if (signal.aborted) {
+      // Cancelled (`unlock`'s `cancel`) after the answer came, before it was written: not kept.
+      return { kind: "unknown", reason: "aborted" };
+    }
     const outcome = settled(sent.answer.status, sent.answer.body);
     if (outcome.kind !== "answer") {
       return outcome;
@@ -576,11 +609,17 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (attempt > 0 || status !== 403 || !refusals(body).codes.includes("CSRF_REQUIRED")) {
         return commit(settled(status, body));
       }
+      if (checkIdle()) {
+        return { kind: "locked", reason: current.reason ?? "start" };
+      }
       const fresh = await fetchCsrf(found, at, signal, (csrf) => {
         found.csrf = csrf;
       });
       if (typeof fresh !== "string") {
         return fresh;
+      }
+      if (checkIdle()) {
+        return { kind: "locked", reason: current.reason ?? "start" };
       }
       sent = await send(route, credentialsOf(found, fresh), signal, ...given);
     }
@@ -637,7 +676,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
   }
 
   return {
-    async unlock(token, name) {
+    async unlock(token, name, cancel) {
       lock("forgotten");
       if (!TOKEN_FORM.test(token)) {
         return { kind: "invalid", what: "token" };
@@ -646,7 +685,8 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (operator === null) {
         return { kind: "invalid", what: "name" };
       }
-      const fresh = await fetchCsrf({ token, operator }, epoch, controller.signal, (csrf) => {
+      const signal = cancel === undefined ? controller.signal : AbortSignal.any([controller.signal, cancel]);
+      const fresh = await fetchCsrf({ token, operator }, epoch, signal, (csrf) => {
         held = { token, operator, csrf };
         lastWall = clocks.wall();
         lastMonotonic = clocks.monotonic();
@@ -658,7 +698,8 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (typeof fresh !== "string") {
         return fresh.kind === "answer" ? { kind: "unknown", reason: "undecodable" } : fresh.kind === "refused" ? { kind: "refused", status: fresh.status, codes: fresh.codes } : fresh;
       }
-      return { kind: "unlocked" };
+      // A subscriber told of the unlock may have locked (or forgotten) in turn: it holds nothing.
+      return held === null ? { kind: "locked", reason: current.reason ?? "start" } : { kind: "unlocked" };
     },
     forget() {
       lock("forgotten");

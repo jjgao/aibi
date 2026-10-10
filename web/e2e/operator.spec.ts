@@ -17,7 +17,7 @@
 import net from "node:net";
 
 import { expect, test } from "./fixtures";
-import { checkCredentials, consoleOf, expectOperator, IDLE_LIMIT_MS, noSecrets, record, run, SHELL, status, unlock, WRONG_TOKEN } from "./operator-kit";
+import { api, checkCredentials, consoleOf, expectOperator, IDLE_LIMIT_MS, noSecrets, record, run, SHELL, status, unlock, WRONG_TOKEN } from "./operator-kit";
 import { curatorToken, remember, servers } from "./servers";
 
 const UNLOCKED = SHELL.unlocked;
@@ -131,7 +131,7 @@ test.describe("the operator client, driven by the harness", () => {
   test("withdraws a release by its manifest, never a label", async ({ page, context, origin, watcher, request }) => {
     const token = curatorToken();
     const headers = { Authorization: `Bearer ${token}`, "Aibi-Operator": "e2e" };
-    const state = (await (await request.get(`${origin}/operator/datasets/withdrawn`, { headers })).json()) as { labels: { manifest: string; status: string }[] };
+    const state = (await (await api(request, "GET", `${origin}/operator/datasets/withdrawn`, { headers })).json()) as { labels: { manifest: string; status: string }[] };
     const manifest = state.labels[0]?.manifest ?? "";
     const recorded = record(context);
     expectOperator(watcher, origin, [], ["/operator/datasets/withdrawn/withdraw"]);
@@ -139,7 +139,7 @@ test.describe("the operator client, driven by the harness", () => {
     await unlock(page, token);
     await expect(status(page)).toHaveText(UNLOCKED);
     expect(await run(page, "withdraw", { dataset: "withdrawn", manifest })).toMatchObject({ kind: "answer", status: "200" });
-    const after = (await (await request.get(`${origin}/operator/datasets/withdrawn`, { headers })).json()) as { labels: { status: string }[] };
+    const after = (await (await api(request, "GET", `${origin}/operator/datasets/withdrawn`, { headers })).json()) as { labels: { status: string }[] };
     expect(after.labels.map((label) => label.status)).toEqual(["withdrawn"]);
     const records = await recorded.all();
     checkCredentials(records, origin, token);
@@ -180,7 +180,8 @@ test.describe("the operator client, driven by the harness", () => {
     await unlock(page, token);
     await expect(status(page)).toHaveText(UNLOCKED);
     expect(await run(page, "open", { dataset: "conflict" })).toMatchObject({ kind: "answer", holds: "yes" });
-    const taken = await request.post(`${origin}${base}/session/take-over`, { headers: { Authorization: `Bearer ${token}`, "Aibi-Operator": "cli" }, data: {} });
+    const cli = { Authorization: `Bearer ${token}`, "Aibi-Operator": "cli" };
+    const taken = await api(request, "POST", `${origin}${base}/session/take-over`, { headers: cli, data: {} });
     expect(taken.status()).toBe(200);
     const { handle } = (await taken.json()) as { handle: string };
     remember(handle);
@@ -189,7 +190,8 @@ test.describe("the operator client, driven by the harness", () => {
     expect(await run(page, "confirm")).toMatchObject({ kind: "invalid", what: "session" });
     expect((await recorded.all()).length).toBe(before);
     checkCredentials(await recorded.all(), origin, token);
-    const discarded = await request.post(`${origin}${base}/session/discard`, { headers: { Authorization: `Bearer ${token}`, "Aibi-Operator": "cli" }, data: { handle, expected: (await (await request.get(`${origin}${base}`, { headers: { Authorization: `Bearer ${token}`, "Aibi-Operator": "cli" } })).json() as { session: { draft: string } }).session.draft } });
+    const draft = ((await (await api(request, "GET", `${origin}${base}`, { headers: cli })).json()) as { session: { draft: string } }).session.draft;
+    const discarded = await api(request, "POST", `${origin}${base}/session/discard`, { headers: cli, data: { handle, expected: draft } });
     expect(discarded.status()).toBe(200);
     watcher.clean();
   });
@@ -246,7 +248,7 @@ test.describe("the operator client, driven by the harness", () => {
     watcher.clean();
   });
 
-  test("the idle lock before a request: a trusted input is activity, a synthetic one is not, a request is not", async ({ page, context, origin, watcher }) => {
+  test("the idle lock before a request: a trusted input is activity; a synthetic input and a request are not", async ({ page, context, origin, watcher }) => {
     const recorded = record(context);
     expectOperator(watcher, origin, [], ["/operator/datasets"]);
     await page.clock.install();
@@ -254,17 +256,24 @@ test.describe("the operator client, driven by the harness", () => {
     const start = await page.evaluate(() => Date.now());
     await unlock(page, curatorToken());
     await expect(status(page)).toHaveText(UNLOCKED);
-    // Nine minutes, a trusted click, nine more: the request goes.
-    await page.clock.setSystemTime(start + 9 * 60_000);
+    const minutes = (count: number) => start + count * 60_000;
+    // Every request below is pressed by the page's own `click()` (an event that is no activity), so
+    // that the only activity is what the test makes. Nine minutes, a trusted click, nine more: the
+    // request goes, nine minutes after the input (and eighteen after the unlock).
+    await page.clock.setSystemTime(minutes(9));
     await page.mouse.click(2, 2);
-    await page.clock.setSystemTime(start + 18 * 60_000);
-    expect(await run(page, "datasets")).toMatchObject({ kind: "answer" });
-    // Nine minutes, a request and a synthetic key press, two more: locked, and nothing is sent.
-    await page.clock.setSystemTime(start + 27 * 60_000);
+    await page.clock.setSystemTime(minutes(18));
+    expect(await run(page, "datasets", {}, "script")).toMatchObject({ kind: "answer" });
+    // Half a minute on, a synthetic key press (no activity: the client is still inside the limit, so
+    // that a synthetic input that counted would extend it), and one minute later a request: 10.5
+    // minutes after the trusted input, 1.5 after the earlier request, 1 after the synthetic one. A
+    // request that counted as activity, or a synthetic input, would keep the client unlocked; it is
+    // locked.
+    await page.clock.setSystemTime(minutes(18.5));
     await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })));
-    await page.clock.setSystemTime(start + 29 * 60_000);
+    await page.clock.setSystemTime(minutes(19.5));
     const before = (await recorded.all()).length;
-    expect(await run(page, "datasets")).toMatchObject({ kind: "locked", reason: "idle" });
+    expect(await run(page, "datasets", {}, "script")).toMatchObject({ kind: "locked", reason: "idle" });
     expect((await recorded.all()).length).toBe(before);
     await expect(status(page)).toHaveText(SHELL.idle);
     watcher.clean();
@@ -288,7 +297,49 @@ test.describe("the operator client, driven by the harness", () => {
     watcher.clean();
   });
 
-  test("a server killed while a request is on its way: an unknown outcome, never sent again", async ({ page, context, watcher }) => {
+  test("a request that reached the server, held, and a lock that follows: the abort is real, the outcome unknown, the request sent once", async ({ page, context, origin, watcher }) => {
+    const recorded = record(context);
+    const held = "/operator/datasets";
+    expectOperator(watcher, origin, [], [held]);
+    const failures: string[] = [];
+    page.on("requestfailed", (request) => failures.push(`${request.url()} ${request.failure()?.errorText ?? ""}`));
+    await page.goto(`${origin}/curate`);
+    await unlock(page, curatorToken());
+    await expect(status(page)).toHaveText(UNLOCKED);
+    let reached = (): void => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(`${origin}${held}`, async (route) => {
+      const answer = await route.fetch();
+      reached();
+      await released;
+      try {
+        await route.fulfill({ response: answer });
+      } catch {
+        // the page aborted the request meanwhile: that is the case under test
+      }
+    });
+    const output = page.locator('output[aria-label="outcome"]');
+    const runs = Number(await output.getAttribute("data-runs"));
+    await page.getByRole("button", { name: "datasets", exact: true }).click();
+    // The server has the request and has answered it; the page has not seen the answer.
+    await arrived;
+    await page.getByRole("button", { name: "Forget the token" }).click();
+    await expect(output).toHaveAttribute("data-runs", String(runs + 1));
+    expect({ kind: await output.getAttribute("data-kind"), reason: await output.getAttribute("data-reason") }).toEqual({ kind: "unknown", reason: "aborted" });
+    await expect(status(page)).toHaveText(SHELL.forgotten);
+    release();
+    await expect.poll(() => failures.filter((failure) => failure.startsWith(`${origin}${held} `))).toEqual([`${origin}${held} net::ERR_ABORTED`]);
+    expect((await recorded.all()).filter((request) => request.url.endsWith(held)).length).toBe(1);
+    watcher.clean();
+  });
+
+  test("a server killed before a request is sent: a refused connection is an unknown outcome (network), the request sent once", async ({ page, context, watcher }) => {
     const { origin, port, pid } = servers().mortal;
     const recorded = record(context);
     watcher.expect(`${origin}/favicon.ico`, 404);

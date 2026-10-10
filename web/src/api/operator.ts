@@ -15,4 +15,17 @@ export { IDLE_LIMIT_MS, NAME_LIMIT } from "./curator";
 /** The page's operator client. */
 export const operator = createCurator();
 
-operator.install({ window, document });
+// The page's objects are used by direct member access alone (the lint, D423), so the client is
+// given what it listens with, not the objects.
+operator.install({
+  window: {
+    addEventListener: (type, listener, options) => {
+      window.addEventListener(type, listener, options);
+    },
+  },
+  document: {
+    addEventListener: (type, listener, options) => {
+      document.addEventListener(type, listener, options);
+    },
+  },
+});

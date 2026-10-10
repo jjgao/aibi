@@ -2,14 +2,21 @@
  * The operator client's gates (D423), over the lint and the type checker:
  *
  * - **Storage (m15).** `localStorage`, `sessionStorage`, `indexedDB`, `IDBFactory`, `cookieStore`,
- *   `BroadcastChannel`, `postMessage`, `SharedWorker` and `MessageChannel` are refused in every
- *   position in every layer of `src/` (the client's and `client.ts` included), as are `cookie` as
- *   a member or a destructured key, `history.pushState` in any form, `history.replaceState` with a
- *   state that is not `null` written out, and the global object's `name`: a secret, or an encoded
- *   copy of one (`btoa(token)`), has nowhere to go but the client's closure. The generated types'
- *   `cookie` parameters (a type's key) are not refused, and neither is `forgetAddress`'s
- *   `replaceState(null, "", path)`. The names are written out here, not read from the
- *   configuration, so that a name dropped from it fails a cell.
+ *   `BroadcastChannel`, `postMessage`, `SharedWorker`, `MessageChannel`, `caches` and
+ *   `CacheStorage` are refused in every position in every layer of `src/` (the client's and
+ *   `client.ts` included), as are `cookie` as a member or a destructured key: a secret, or an
+ *   encoded copy of one (`btoa(token)`), has nowhere to go but the client's closure. The generated
+ *   types' `cookie` parameters (a type's key) are not refused. The names are written out here, not
+ *   read from the configuration, so that a name dropped from it fails a cell.
+ * - **The channels, by position (M1).** `navigator.storage`, `navigator.clipboard`,
+ *   `history.pushState` and `replaceState`, a write to `location` or one of its members,
+ *   `location.replace`, `assign`, `hash` and `href`, a write to `document.title`, `window.open` and
+ *   the window's `name` are each refused in each position (a call, an assignment, a destructuring,
+ *   an alias, an argument, an optional chain, a member of the window, a computed name): the table
+ *   `CHANNELS` fails if a cell is accepted. The page's objects are used by direct member access
+ *   alone (`ALIASES`: no alias, no destructuring, no argument, no computed member), so that the
+ *   table sees every use. `history.replaceState` stands in `src/operator/url.ts` alone, in its one
+ *   call (`replaceState(null, "", CURATE_PATH)`, D412).
  * - **Imports.** The page's operator client (`src/api/operator.ts`) is imported by the operator
  *   entry and the harness alone; inside `src/api/`, `send` by `curator.ts` alone and
  *   `createCurator` by `operator.ts` alone.
@@ -50,7 +57,7 @@ async function ids(code: string, file: string): Promise<string[]> {
 
 const flagged = async (code: string, file: string): Promise<boolean> => (await ids(code, file)).length > 0;
 
-const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel"];
+const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel", "caches", "CacheStorage"];
 
 const POSITIONS: readonly [string, string][] = [
   ["a reference", "export const f = (): unknown => @N@;"],
@@ -109,7 +116,6 @@ describe("storage, cookies and messages to another context, refused in every lay
   });
 
   it.each([
-    ["forgetAddress's replaceState", "export const f = (h: Pick<History, 'replaceState'>) => { h.replaceState(null, '', '/curate'); };"],
     ["a type's cookie key, as the generated types write it", "export interface P { readonly cookie?: never; readonly query?: never }\nexport const f = (p: P) => p.query;"],
     ["a name of an ordinary object", "export const f = (x: { name: string }) => x.name;"],
     ["a word that only contains a name", "export const f = (x: { localStorageKey: string; postMessages: number }) => [x.localStorageKey, x.postMessages];"],
@@ -123,6 +129,215 @@ describe("storage, cookies and messages to another context, refused in every lay
     for (const file of ["scripts/probe.ts", "tests/probe.ts", "e2e/probe.ts"]) {
       expect(await flagged("export const f = () => [localStorage, document.cookie, window.name];\n", file), file).toBe(false);
     }
+  });
+});
+
+const POSITION_NAMES = ["call", "assignment", "destructure", "alias", "argument", "optional chain", "member of the window", "computed name"] as const;
+type PositionName = (typeof POSITION_NAMES)[number];
+
+/** A channel's cells: the code of each position, or `n/a: why` where the position is no use of the
+ * channel (a syntax error, or a use that is no channel). */
+type Cells = Readonly<Record<PositionName, string>>;
+
+/** The body of a snippet: `t` is the secret, `use` takes whatever it is given. */
+const snippet = (body: string): string => `export const f = (t: string, use: (x: unknown) => void) => { ${body} };`;
+
+/** A channel that is any member of an object: `R.M` called, assigned, destructured, aliased, passed,
+ * chained and computed, and as a member of the window. */
+function member(root: string, name: string, call: string): Cells {
+  return {
+    call: snippet(call),
+    assignment: snippet(`${root}.${name} = t;`),
+    destructure: snippet(`const { ${name}: a } = ${root}; use(a);`),
+    alias: snippet(`const a = ${root}; use(a.${name});`),
+    argument: snippet(`use(${root});`),
+    "optional chain": snippet(`use(${root}?.${name});`),
+    "member of the window": snippet(`use(window.${root}.${name});`),
+    "computed name": snippet(`use(${root}['${name}']);`),
+  };
+}
+
+/** The channels that are a write alone (`document.title = t`, `location = t`): reading one is no
+ * channel, and an optional chain cannot be assigned to. */
+function written(root: string, name: string, own: string): Cells {
+  return {
+    call: `n/a: ${root}.${name} is no function`,
+    assignment: snippet(own),
+    destructure: snippet(`const { ${name}: a } = ${root}; use(a);`),
+    alias: snippet(`const a = ${root}; a.${name} = t;`),
+    argument: snippet(`use(${root});`),
+    "optional chain": `n/a: an optional chain cannot be assigned to`,
+    "member of the window": snippet(`window.${root}.${name} = t;`),
+    "computed name": snippet(`${root}['${name}'] = t;`),
+  };
+}
+
+/** Each channel out of the page's memory (D423), in each position. A cell is refused in every
+ * layer of `src/`; the table fails if one is accepted. */
+const CHANNELS: Readonly<Record<string, Cells>> = {
+  "navigator.storage (the origin private file system)": member("navigator", "storage", "navigator.storage.getDirectory();"),
+  "navigator.clipboard": member("navigator", "clipboard", "void navigator.clipboard.writeText(t);"),
+  "history.pushState": member("history", "pushState", "history.pushState(null, '', '/curate#' + t);"),
+  "history.replaceState": member("history", "replaceState", "history.replaceState(null, '', '/curate#' + t);"),
+  "location.replace": member("location", "replace", "location.replace('/curate#' + t);"),
+  "location.assign": member("location", "assign", "location.assign('/curate?' + t);"),
+  "location.hash": member("location", "hash", "location.hash = t;"),
+  "location.href": member("location", "href", "location.href = '/curate#' + t;"),
+  "window.open": member("window", "open", "window.open('/curate?' + t);"),
+  "window.name": member("window", "name", "window.name = t;"),
+  "location written": written("window", "location", "location = t;"),
+  "a member of location written": written("location", "search", "location.search = t;"),
+  "document.title written": written("document", "title", "document.title = t;"),
+};
+
+const CHANNEL_LAYERS = ["src/probe.tsx", "src/api/probe.ts", "src/api/client.ts", "src/operator/probe.tsx"];
+
+describe("the channels out of the page's memory, by position (M1)", () => {
+  it("has a cell for every channel in every position, each code or a stated n/a", () => {
+    for (const [name, cells] of Object.entries(CHANNELS)) {
+      expect(Object.keys(cells).sort(), name).toEqual([...POSITION_NAMES].sort());
+      for (const cell of Object.values(cells)) {
+        expect(cell.startsWith("export const f = ") || cell.startsWith("n/a: "), name).toBe(true);
+      }
+    }
+    expect(Object.keys(CHANNELS)).toHaveLength(13);
+  });
+
+  it.each(
+    Object.entries(CHANNELS).flatMap(([name, cells]) =>
+      Object.entries(cells)
+        .filter(([, code]) => code.startsWith("export"))
+        .map(([position, code]) => [name, position, code] as const),
+    ),
+  )("%s, as a %s, is refused in every layer", async (_name, _position, code) => {
+    for (const file of CHANNEL_LAYERS) {
+      expect(await flagged(code, file), file).toBe(true);
+    }
+  });
+
+  it.each([
+    ["a bare window.name assignment through an alias of the global object", "export const f = (t: string) => { const w = window; w.name = t; };"],
+    ["self.location written", "export const f = (t: string) => { self.location = t; };"],
+    ["a string naming pushState, on any object", "export const f = (o: Record<string, unknown>) => o['pushState'];"],
+    ["a string naming replaceState, on any object", "export const f = (o: Record<string, unknown>) => o['replaceState'];"],
+    ["top.location written (no builtin rule sees it)", "export const f = (t: string) => { top.location = t; };"],
+    ["parent.location written", "export const f = (t: string) => { parent.location = t; };"],
+    ["opener.location written", "export const f = (t: string) => { opener.location = t; };"],
+    ["document.location written", "export const f = (t: string) => { document.location = t; };"],
+    ["top.name written", "export const f = (t: string) => { parent.name = t; top.name = t; };"],
+    ["parent.open", "export const f = (t: string) => { parent.open(t); };"],
+    ["top.location.hash written", "export const f = (t: string) => { top.location.hash = t; };"],
+    ["window.location.hash written", "export const f = (t: string) => { window.location.hash = t; };"],
+    ["document.defaultView.name written", "export const f = (t: string) => { document.defaultView.name = t; };"],
+    ["document.defaultView.open", "export const f = (t: string) => { document.defaultView.open(t); };"],
+    ["globalThis.navigator.storage", "export const f = () => globalThis.navigator.storage.getDirectory();"],
+    ["window.document.title written", "export const f = (t: string) => { window.document.title = t; };"],
+    ["a bare open", "export const f = (t: string) => { open('/curate#' + t); };"],
+    ["a title in a compound assignment", "export const f = (t: string) => { document.title += t; };"],
+    ["location.href read", "export const f = () => location.href;"],
+    ["location.hash read", "export const f = () => window.location.hash;"],
+    ["window.caches", "export const f = () => window.caches.open('x');"],
+    ["a Cache storage", "export const f = (c: CacheStorage) => c;"],
+  ])("refuses %s, in every layer", async (_case, code) => {
+    for (const file of CHANNEL_LAYERS) {
+      expect(await flagged(code, file), file).toBe(true);
+    }
+  });
+
+  it.each([
+    ["a read of document.title", "export const f = () => document.title;"],
+    ["a read of history.length", "export const f = () => history.length;"],
+    ["a read of location.origin", "export const f = () => window.location.origin;"],
+    ["the navigator's language", "export const f = () => navigator.language;"],
+    ["a listener on the window", "export const f = (g: () => void) => { window.addEventListener('pagehide', g); };"],
+    ["an element of the document", "export const f = () => document.getElementById('root');"],
+    ["a member named like a page object", "export const f = (x: { window: unknown; document: unknown; history: number }) => [x.window, x.document, x.history];"],
+    ["an object key named like a page object", "export const f = (a: unknown) => ({ window: a, document: a, location: a, navigator: a });"],
+    ["a type key named like a page object", "export interface T { readonly window: string; readonly document: string }\nexport const f = (t: T) => t.window + t.document;"],
+    ["an ordinary open, name, title and storage", "export const f = (x: { open(): void; name: string; title: string; storage: string }) => { x.open(); x.name = x.title + x.storage; };"],
+    ["a method named like a page object", "export class C {\n  window(): void {}\n  history = 1;\n}"],
+  ])("lets %s pass, so that a flag is the rule's", async (_case, code) => {
+    for (const file of CHANNEL_LAYERS) {
+      expect(await ids(code, file), file).toEqual([]);
+    }
+  });
+});
+
+const ALIASED = ["window", "globalThis", "self", "top", "parent", "frames", "opener", "location", "history", "navigator", "document"];
+
+/** Each position a page object can stand in, but as the object of a member (`G` is the object). */
+const ALIASES: readonly (readonly [string, string])[] = [
+  ["a variable's initialiser", "const a = @G@; use(a);"],
+  ["a destructuring's source", "const { name: a } = @G@; use(a);"],
+  ["an assignment's right side", "let a: unknown; a = @G@; use(a);"],
+  ["an argument", "use(@G@);"],
+  ["a returned value", "return @G@;"],
+  ["an array element", "use([@G@]);"],
+  ["an object's value", "use({ a: @G@ });"],
+  ["a shorthand member", "const @G@ = 1; use({ @G@ });"],
+  ["a spread", "use({ ...@G@ });"],
+  ["a conditional", "use(t === '' ? @G@ : null);"],
+  ["a logical operand", "use(@G@ ?? null);"],
+  ["an awaited value", "await use(@G@);"],
+  ["a default value", "((a = @G@) => use(a))();"],
+  ["a template's substitution", "use(`${@G@}`);"],
+  ["a computed member", "use(@G@[t]);"],
+  ["a computed key", "use(t[@G@]);"],
+  ["a computed member of a member", "use(window.@G@[t]);"],
+  ["a binding", "const @G@ = 1; use(@G@);"],
+];
+
+describe("the page's objects are used by direct member access alone (M1)", () => {
+  it.each(ALIASED.flatMap((name) => ALIASES.map(([position, body]) => [name, position, body.replaceAll("@G@", name)] as const)))(
+    "%s, as %s, is refused in every layer",
+    async (_name, _position, body) => {
+      const code = `export const f = async (t: string, use: (x: unknown) => unknown): Promise<unknown> => { ${body} return undefined; };`;
+      for (const file of CHANNEL_LAYERS) {
+        expect(await flagged(code, file), file).toBe(true);
+      }
+    },
+  );
+
+  it("refuses none of the channels and aliases in the tooling", async () => {
+    const code = "export const f = (t: string) => { const w = window; w.name = t; location.hash = t; document.title = t; void navigator.storage; };\n";
+    for (const file of ["scripts/probe.ts", "tests/probe.ts", "e2e/probe.ts"]) {
+      expect(await flagged(code, file), file).toBe(false);
+    }
+  });
+});
+
+describe("history.replaceState stands in src/operator/url.ts alone, in its one call (D412, M1)", () => {
+  const URL_FILE = "src/operator/url.ts";
+  const ONE = "export function forgetAddress(): void { history.replaceState(null, '', CURATE_PATH); }";
+
+  it("accepts the one call there", async () => {
+    expect(await ids(`const CURATE_PATH = '/curate';\n${ONE}`, URL_FILE)).toEqual([]);
+  });
+
+  it.each(["src/probe.tsx", "src/api/probe.ts", "src/operator/probe.tsx", "src/harness/probe.tsx", "src/api/client.ts"])("refuses the same call in %s", async (file) => {
+    expect(await flagged(`const CURATE_PATH = '/curate';\n${ONE}`, file)).toBe(true);
+  });
+
+  it.each([
+    ["a state", "history.replaceState({ t: 1 }, '', CURATE_PATH);"],
+    ["undefined for its state", "history.replaceState(undefined, '', CURATE_PATH);"],
+    ["another path", "history.replaceState(null, '', '/curate#x');"],
+    ["a built path", "history.replaceState(null, '', CURATE_PATH + '#x');"],
+    ["a title", "history.replaceState(null, 'x', CURATE_PATH);"],
+    ["a fourth argument", "history.replaceState(null, '', CURATE_PATH, 1);"],
+    ["a fourth argument through a cast", "(history.replaceState as (...a: unknown[]) => void)(null, '', CURATE_PATH, 1);"],
+    ["no argument", "history.replaceState();"],
+    ["no argument through a cast", "(history.replaceState as (...a: unknown[]) => void)();"],
+    ["window.history", "window.history.replaceState(null, '', CURATE_PATH);"],
+    ["a held function", "const r = history.replaceState; void r;"],
+    ["a computed name", "history['replaceState'](null, '', CURATE_PATH);"],
+    ["pushState", "history.pushState(null, '', CURATE_PATH);"],
+    ["pushState by a string", "history['pushState'](null, '', CURATE_PATH);"],
+    ["a string naming replaceState, on any object", "const o: Record<string, unknown> = {}; void o['replaceState'];"],
+    ["location.replace", "location.replace(CURATE_PATH);"],
+    ["location.hash", "location.hash = '';"],
+  ])("refuses %s there", async (_case, body) => {
+    expect(await flagged(`const CURATE_PATH = '/curate';\nexport function f(): void { ${body} }`, URL_FILE)).toBe(true);
   });
 });
 

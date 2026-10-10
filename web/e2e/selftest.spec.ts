@@ -1,8 +1,12 @@
 /**
- * The matrix's own checks, tested: the recorder catches a page that breaks the policy, and the
- * expected-refusal matcher explains a refusal only by its URL and its status, both.
+ * The matrix's own checks, tested: the recorder catches a page that breaks the policy, the
+ * expected-refusal matcher explains a refusal only by its URL and its status, both, the page scan
+ * sees a secret wherever a page can keep one (storage, the origin private file system, the Cache
+ * API), a failing API call's error holds no credential, and the report scan reads the run's output.
  */
 import { expect, test, unexplained, Watcher } from "./fixtures";
+import { api, occurrences, pageTexts, redacted } from "./operator-kit";
+import { outputFindings } from "./scan-reporter";
 
 test("the recorder catches what the policy refuses: a Trusted Types sink, inline style and script", async ({ page, origin, watcher }) => {
   await page.goto(`${origin}/`);
@@ -143,4 +147,94 @@ test("a violation alone fails the watcher, even with no console line", () => {
   expect(() => {
     watcher.clean();
   }).toThrow("policy violations");
+});
+
+/** A seed the page scan is asked to find: no token's shape (the report's scan would fail the run
+ * on one), and held by no real server. */
+const SEED = "selftest-seed-9f3a1c-for-the-page-scan";
+
+test("the page scan sees a secret kept in storage, the origin private file system or the Cache API", async ({ page, origin }) => {
+  await page.goto(`${origin}/curate`);
+  const clean = await pageTexts(page);
+  expect(occurrences(clean.texts, [SEED])).toBe(0);
+  expect(clean.stored).toBe(0);
+  const places = ["localStorage", "opfs file name", "opfs file content", "opfs nested file content", "cache name", "cache request", "cache response"] as const;
+  for (const place of places) {
+    await page.evaluate(
+      async ([where, seed]) => {
+        if (where === "localStorage") {
+          window.localStorage.setItem("k", seed);
+        } else if (where.startsWith("opfs")) {
+          let directory = await navigator.storage.getDirectory();
+          if (where === "opfs nested file content") {
+            directory = await directory.getDirectoryHandle("nested", { create: true });
+          }
+          const name = where === "opfs file name" ? seed : "seed.txt";
+          const file = await directory.getFileHandle(name, { create: true });
+          const writable = await file.createWritable();
+          await writable.write(where === "opfs file name" ? "x" : seed);
+          await writable.close();
+        } else {
+          const cache = await caches.open(where === "cache name" ? seed : "seed");
+          await cache.put(where === "cache request" ? `/${seed}` : "/seeded", new Response(where === "cache response" ? seed : "x"));
+        }
+      },
+      [place, SEED] as const,
+    );
+    const seen = await pageTexts(page);
+    expect(occurrences(seen.texts, [SEED]), `the scan sees a seed kept in ${place}`).toBeGreaterThan(0);
+    expect(seen.stored, `the scan counts what is kept in ${place}`).toBeGreaterThan(0);
+    await page.evaluate(async () => {
+      window.localStorage.clear();
+      const root = await navigator.storage.getDirectory();
+      for await (const [name] of (root as unknown as { entries(): AsyncIterable<[string, unknown]> }).entries()) {
+        await root.removeEntry(name, { recursive: true });
+      }
+      for (const name of await caches.keys()) {
+        await caches.delete(name);
+      }
+    });
+    expect(occurrences((await pageTexts(page)).texts, [SEED])).toBe(0);
+  }
+});
+
+test("a failing API call does not print its credential, in its message or its stack", async ({ request }) => {
+  const bearer = "selftest-bearer-7d41c2-not-a-token";
+  const closed = "http://127.0.0.1:1/operator/datasets";
+  const headers = { Authorization: `Bearer ${bearer}`, "Aibi-CSRF": "selftest-csrf-0b5e" };
+  // What Playwright prints, unwrapped: the call log holds the header (the reason for the wrapper).
+  const raw = await request.get(closed, { headers, timeout: 5000 }).then(
+    () => null,
+    (error: unknown) => (error instanceof Error ? error : null),
+  );
+  expect(raw !== null && `${raw.message}\n${raw.stack ?? ""}`.includes(bearer)).toBe(true);
+  const wrapped = await api(request, "GET", closed, { headers, timeout: 5000 }).then(
+    () => null,
+    (error: unknown) => (error instanceof Error ? error : null),
+  );
+  expect(wrapped).not.toBeNull();
+  const printed = `${wrapped?.name ?? ""}\n${wrapped?.message ?? ""}\n${wrapped?.stack ?? ""}`;
+  expect(printed.includes(bearer)).toBe(false);
+  expect(printed.includes("selftest-csrf-0b5e")).toBe(false);
+  expect(printed).toContain("[redacted]");
+  expect(printed).toContain("ECONNREFUSED");
+});
+
+test("redaction removes a bearer value, a CSRF value, the shapes and the named secrets, in any case", () => {
+  const token = `aibi_${"a".repeat(43)}`;
+  const handle = `ses_${"b".repeat(43)}`;
+  const text = `  - authorization: BEARER ${token}\n  - Aibi-CSRF: abc123\n  body ${handle} and named-secret-1234`;
+  const clean = redacted(text, ["named-secret-1234"]);
+  expect([token, handle, "abc123", "named-secret-1234"].map((secret) => clean.includes(secret))).toEqual([false, false, false, false]);
+  expect(redacted("nothing to hide: GET /operator/datasets")).toBe("nothing to hide: GET /operator/datasets");
+});
+
+test("the report scan reads the run's output: a secret, a shape, or a secret split across two chunks", () => {
+  const secret = "selftest-secret-5c0d8e-of-the-run";
+  const shaped = `aibi_${"c".repeat(43)}`;
+  expect(outputFindings("out", ["a clean line\n", "another\n"], [secret])).toEqual([]);
+  expect(outputFindings("out", [`before ${secret} after`], [secret])).toEqual(["out: 1 secret(s), 0 shape(s)"]);
+  expect(outputFindings("out", [secret.slice(0, 10), secret.slice(10)], [secret])).toEqual(["out: 1 secret(s), 0 shape(s)"]);
+  expect(outputFindings("out", [`Authorization: Bearer ${shaped}`], [secret])).toEqual(["out: 0 secret(s), 1 shape(s)"]);
+  expect(outputFindings("out", [secret, "\n", shaped], [secret])).toEqual(["out: 1 secret(s), 1 shape(s)"]);
 });

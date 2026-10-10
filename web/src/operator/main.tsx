@@ -6,7 +6,7 @@ import { rootElement } from "../root";
 import { Operator } from "./Operator";
 import { forgetAddress } from "./url";
 
-forgetAddress(window.history);
+forgetAddress();
 
 // The harness exists in the end-to-end build alone: `__AIBI_E2E__` is the constant `false` in
 // production, so this import is folded away and the build's gate refuses any module

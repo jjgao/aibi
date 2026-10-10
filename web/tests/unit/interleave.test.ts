@@ -83,8 +83,8 @@ function server(request: Request): Response {
 }
 
 class Target {
-  readonly listeners = new Map<string, ((event: unknown) => void)[]>();
-  addEventListener(type: string, listener: (event: unknown) => void): void {
+  readonly listeners = new Map<string, ((event: Event) => void)[]>();
+  addEventListener(type: string, listener: (event: Event) => void): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
   removeEventListener(): void {
@@ -95,7 +95,7 @@ class Target {
   }
   fire(type: string): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener({ type, isTrusted: false });
+      listener({ type, isTrusted: false } as unknown as Event);
     }
   }
 }

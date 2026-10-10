@@ -8,10 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isServerNumber } from "../../src/api/box";
 import { ClientError, REFUSALS, RESPONSE_CAP_BYTES, send } from "../../src/api/client";
-import { ACTIVITY_EVENTS, createCurator, type Curator, EDIT_LIMIT, type Edit, IDLE_CHECK_MS, IDLE_LIMIT_MS, type Outcome, type Targets } from "../../src/api/curator";
+import { ACTIVITY_EVENTS, createCurator, type Curator, EDIT_LIMIT, type Edit, IDLE_CHECK_MS, IDLE_LIMIT_MS, NAME_LIMIT, type Outcome, type Targets } from "../../src/api/curator";
 import type { components } from "../../src/api/generated/openapi";
 import * as routes from "../../src/api/generated/routes";
 import type { JsonOut } from "../../src/api/json";
+import { route } from "../../src/api/route";
 
 const TOKEN = `aibi_${"T0k-_n".repeat(7)}Q`;
 const OTHER_TOKEN = `aibi_${"0therT".repeat(7)}W`;
@@ -157,8 +158,8 @@ class FakeTimers {
 /** A target that records listeners and calls them with any object (a trusted event cannot be
  * made in jsdom: `isTrusted` is unforgeable there). */
 class FakeTarget {
-  readonly listeners = new Map<string, ((event: unknown) => void)[]>();
-  addEventListener(type: string, listener: (event: unknown) => void): void {
+  readonly listeners = new Map<string, ((event: Event) => void)[]>();
+  addEventListener(type: string, listener: (event: Event) => void): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
   removeEventListener(): void {
@@ -169,7 +170,7 @@ class FakeTarget {
   }
   fire(type: string, event: Record<string, unknown> = {}): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener({ type, isTrusted: false, ...event });
+      listener({ type, isTrusted: false, ...event } as unknown as Event);
     }
   }
 }
@@ -1075,5 +1076,361 @@ describe("REFUSALS", () => {
     expect(bodies().every((body) => body === "" || body.startsWith("{"))).toBe(true);
     const value: JsonOut = null;
     expect(value).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Cold code round 1 (PR #107).
+
+describe("a change mixing valid and invalid edits is refused whole (m1)", () => {
+  const good = (index: number): Edit => ({ op: "confirm", descriptor: `t${String(index)}` });
+  const INVALID: readonly (readonly [string, unknown])[] = [
+    ["a set", { op: "set", descriptor: "t", pointer: "/label", value: 1 }],
+    ["a put", { op: "put", descriptor: { id: "t" } }],
+    ["an accept", { op: "accept", proposal: 1 }],
+    ["an extra member", { op: "remove_descriptor", descriptor: "t", pointer: "/a" }],
+    ["a number", 1],
+    ["null", null],
+    ["a number for a string", { op: "remove_descriptor", descriptor: 1 }],
+  ];
+  const cells = [1, 2, 3, 4].flatMap((valid) => Array.from({ length: valid + 1 }, (_, position) => [valid, position] as const));
+
+  it.each(INVALID.flatMap(([kind, edit]) => cells.map(([valid, position]) => [kind, valid, position, edit] as const)))(
+    "%s among %i valid edits, at position %i, is refused, and not even the valid ones are sent",
+    async (_kind, valid, position, edit) => {
+      const { client } = await withSession();
+      routesTo["POST /operator/datasets/d/session/change"] = () => json(200, { draft: DRAFT_2 });
+      const edits: unknown[] = Array.from({ length: valid }, (_, index) => good(index));
+      edits.splice(position, 0, edit);
+      sent = [];
+      expect(await client.change("d", edits as readonly Edit[])).toEqual({ kind: "invalid", what: "edits" });
+      expect(sent).toEqual([]);
+    },
+  );
+
+  it("sends the same valid edits when none is invalid", async () => {
+    const { client } = await withSession();
+    routesTo["POST /operator/datasets/d/session/change"] = () => json(200, { draft: DRAFT_2 });
+    sent = [];
+    expect((await client.change("d", [good(0), good(1), good(2)])).kind).toBe("answer");
+    expect(JSON.parse(sent[0]?.body ?? "{}")).toMatchObject({ edits: [good(0), good(1), good(2)] });
+  });
+});
+
+describe("send sends to a URL under /operator/ that no parser can move (m2)", () => {
+  const credentials = { token: TOKEN, operator: "Ada", csrf: null };
+  const signal = new AbortController().signal;
+
+  it.each([
+    ["a relative path", "operator/datasets"],
+    ["a protocol-relative URL", "//h/operator/x"],
+    ["a protocol-relative URL that ends under /operator/", "//operator/x"],
+    ["another origin", "https://elsewhere.example/operator/x"],
+    ["another scheme", "javascript:/operator/x"],
+    ["a path that climbs out", "/operator/../api/health"],
+    ["a path that climbs out, encoded", "/operator/%2e%2e/api/health"],
+    ["a path that climbs out, encoded in upper case", "/operator/%2E%2E/api/health"],
+    ["a path that climbs out, half encoded", "/operator/.%2e/api/health"],
+    ["a path that climbs out, half encoded the other way", "/operator/%2E./api/health"],
+    ["a path with a dot segment", "/operator/./datasets"],
+    ["a path with an encoded dot segment", "/operator/%2e/datasets"],
+    ["a path that climbs at its end", "/operator/datasets/.."],
+    ["a path that climbs before a query", "/operator/datasets/..?q=1"],
+    ["a path that climbs before a fragment", "/operator/datasets/%2e%2e#x"],
+    ["a doubled slash", "/operator//datasets"],
+    ["a doubled slash in the query", "/operator/datasets?next=http://elsewhere.example"],
+    ["a backslash", "/operator/\\elsewhere"],
+    ["an encoded-looking backslash raw", "/operator/a\\b"],
+    ["a space", "/operator/a b"],
+    ["a tab, which a parser removes", "/operator/.\t./x"],
+    ["a newline, which a parser removes", "/operator/.\n./x"],
+    ["a non-ASCII character", "/operator/é"],
+    ["a path outside /operator/", "/api/health"],
+    ["the bare /operator", "/operator"],
+    ["another case", "/OPERATOR/datasets"],
+    ["an empty URL", ""],
+  ])("refuses %s, sending nothing", async (_case, url) => {
+    await expect(send(route("datasets", "GET", url), credentials, signal)).rejects.toThrow(new ClientError("notARoute"));
+    expect(sent).toEqual([]);
+  });
+
+  it.each([
+    ["a plain path", "/operator/datasets"],
+    ["a path ending in a slash", "/operator/datasets/"],
+    ["an encoded segment", "/operator/datasets/a%20b"],
+    ["three dots", "/operator/datasets/..."],
+    ["three encoded dots", "/operator/datasets/%2e%2e%2e"],
+    ["an encoded percent before dots", "/operator/datasets/%252e%252e"],
+    ["dots inside a segment", "/operator/datasets/a..b"],
+    ["dots in a query", "/operator/datasets?path=../x"],
+  ])("sends %s", async (_case, url) => {
+    expect((await send(route("datasets", "GET", url), credentials, signal)).kind).toBe("answer");
+    expect(sent.map((request) => request.url)).toEqual([url]);
+  });
+});
+
+describe("an open answer's members are an allow-list, and no handle is nested in one (m6)", () => {
+  const OPENED = { dataset: "d", session: 7, base: MANIFEST, draft: DRAFT };
+  const opening = async (extra: Record<string, unknown>): Promise<{ client: Curator; outcome: Outcome }> => {
+    routesTo["POST /operator/datasets/d/session/open"] = () => json(200, { ...OPENED, handle: HANDLE, ...extra });
+    const { client } = await unlocked();
+    return { client, outcome: await client.open("d") };
+  };
+  const keysOf = (outcome: Outcome): string[] => (outcome.kind === "answer" && typeof outcome.body === "object" && outcome.body !== null ? Object.keys(outcome.body).sort() : []);
+
+  it.each([
+    ["a nested handle", { nested: { handle: HANDLE_2 } }],
+    ["a deeper nested handle", { nested: { a: [{ b: { handle: HANDLE_2 } }] } }],
+    ["a handle in a list", { listed: [{ handle: HANDLE_2 }, "x"] }],
+    ["a member the schema does not have", { extra: "x", other: 1 }],
+    ["a handle-shaped value in another member", { token_like: HANDLE_2 }],
+    ["an empty extra", {}],
+  ])("gives only dataset, session, base and draft, whatever else it holds: %s", async (_case, extra) => {
+    const { client, outcome } = await opening(extra);
+    expect(keysOf(outcome)).toEqual(["base", "dataset", "draft", "session"]);
+    expect(occurrences(outcome)).toBe(0);
+    expect(client.holds("d")).toBe(true);
+  });
+
+  it.each([
+    ["an object", { k: { handle: HANDLE_2, kept: "x" } }, { k: { kept: "x" } }],
+    ["a list", [{ handle: HANDLE_2 }, { v: [{ handle: HANDLE_2 }] }], [{}, { v: [{}] }]],
+  ])("drops a handle nested in an allowed member: %s", async (_case, base, expected) => {
+    const { outcome } = await opening({ base });
+    expect(outcome.kind === "answer" && typeof outcome.body === "object" && outcome.body !== null ? (outcome.body as Record<string, unknown>)["base"] : "no").toEqual(expected);
+    expect(occurrences(outcome)).toBe(0);
+  });
+
+  it("gives a frozen copy", async () => {
+    const { outcome } = await opening({ nested: { handle: HANDLE_2 } });
+    expect(outcome.kind === "answer" && Object.isFrozen(outcome.body)).toBe(true);
+  });
+});
+
+describe("the client object's members are pinned, and no member's result holds a secret (m7)", () => {
+  const MEMBERS = ["change", "datasets", "dataset", "discard", "forget", "holds", "install", "open", "publish", "queue", "subscribe", "unlock", "view", "withdraw"].sort();
+
+  it("has exactly these own members, plain methods, on a plain object", () => {
+    const { client } = rig();
+    expect(Reflect.ownKeys(client).sort()).toEqual(MEMBERS);
+    expect(Object.getPrototypeOf(client)).toBe(Object.prototype);
+    for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(client))) {
+      expect([name, typeof descriptor.value, Reflect.has(descriptor, "get")]).toEqual([name, "function", false]);
+    }
+  });
+
+  const STATES: readonly (readonly [string, () => Promise<Rig>])[] = [
+    ["a client never unlocked", async () => Promise.resolve(rig())],
+    ["an unlocked client", unlocked],
+    ["a client with an open session", withSession],
+    [
+      "a forgotten client",
+      async () => {
+        const made = await withSession();
+        made.client.forget();
+        return made;
+      },
+    ],
+    [
+      "a client locked by a 401",
+      async () => {
+        const made = await withSession();
+        routesTo["GET /operator/datasets"] = () => json(401, refusal("TOKEN_REQUIRED"));
+        await made.client.datasets();
+        return made;
+      },
+    ],
+    [
+      "a client locked when idle",
+      async () => {
+        const made = await withSession();
+        made.clocks.advance(IDLE_LIMIT_MS);
+        await made.client.datasets();
+        return made;
+      },
+    ],
+  ];
+  const CALLS: readonly (readonly unknown[])[] = [
+    [],
+    ["d"],
+    ["d", MANIFEST],
+    ["d", [{ op: "confirm", descriptor: "t" }]],
+    [TOKEN, NAME],
+    [OTHER_TOKEN, NAME],
+    [() => undefined],
+    [{ window: new FakeTarget(), document: new FakeTarget() }],
+  ];
+
+  /** The names of the members a client has, found, not listed: a member added is called here too. */
+  const FOUND = Reflect.ownKeys(createCurator()).filter((key): key is string => typeof key === "string");
+
+  it.each(STATES.flatMap(([state, make]) => FOUND.map((member) => [state, member, make] as const)))("%s: %s, called every way, gives no secret", async (_state, member, make) => {
+    for (const call of CALLS) {
+      const { client } = await make();
+      const fn: unknown = Reflect.get(client, member);
+      expect(typeof fn).toBe("function");
+      let result: unknown;
+      try {
+        result = await Reflect.apply(fn as () => unknown, client, call);
+      } catch (error) {
+        result = error instanceof Error ? [error.name, error.message, error.stack ?? ""] : error;
+      }
+      expect(occurrences([result, typeof result === "function" ? [String(result), Object.keys(result)] : []])).toBe(0);
+      expect(occurrences([client.view(), JSON.stringify(client), Object.keys(client)])).toBe(0);
+    }
+  });
+});
+
+describe("an unlock can be cancelled, and then holds nothing (m10)", () => {
+  /** A fetch that never answers, rejecting when its request is aborted (as a real one does). */
+  const hanging: Handler = (request) =>
+    new Promise<Response>((_resolve, reject) => {
+      if (request.signal?.aborted === true) {
+        reject(new DOMException("aborted", "AbortError"));
+      }
+      request.signal?.addEventListener("abort", () => {
+        reject(new DOMException("aborted", "AbortError"));
+      });
+    });
+
+  it("a hanging unlock is cancelled: unknown (aborted), locked, holding nothing, sending nothing more", async () => {
+    handler = hanging;
+    const { client, timers } = rig();
+    const cancel = new AbortController();
+    const pending = client.unlock(TOKEN, NAME, cancel.signal);
+    await vi.waitFor(() => {
+      expect(sent.length).toBe(1);
+    });
+    cancel.abort();
+    expect(await pending).toEqual({ kind: "unknown", reason: "aborted" });
+    expect(client.view()).toEqual({ locked: true, reason: "forgotten" });
+    expect(timers.live()).toEqual([]);
+    expect(sent[0]?.signal?.aborted).toBe(true);
+    sent = [];
+    expect(await client.datasets()).toEqual({ kind: "locked", reason: "forgotten" });
+    expect(await client.open("d")).toEqual({ kind: "locked", reason: "forgotten" });
+    expect(client.holds("d")).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("a cancelled unlock does not poison the next one", async () => {
+    handler = hanging;
+    const { client } = rig();
+    const cancel = new AbortController();
+    const pending = client.unlock(TOKEN, NAME, cancel.signal);
+    await vi.waitFor(() => {
+      expect(sent.length).toBe(1);
+    });
+    cancel.abort();
+    await pending;
+    handler = server;
+    expect(await client.unlock(TOKEN, NAME)).toEqual({ kind: "unlocked" });
+  });
+
+  it("a signal aborted before the unlock starts cancels it", async () => {
+    handler = hanging;
+    const { client } = rig();
+    const cancel = new AbortController();
+    cancel.abort();
+    expect(await client.unlock(TOKEN, NAME, cancel.signal)).toEqual({ kind: "unknown", reason: "aborted" });
+    expect(client.view().locked).toBe(true);
+  });
+
+  it("an answer that comes after the cancel, from a server that ignores the abort, is not kept", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    handler = () =>
+      new Promise<Response>((done) => {
+        answer = done;
+      });
+    const { client, timers } = rig();
+    const cancel = new AbortController();
+    const pending = client.unlock(TOKEN, NAME, cancel.signal);
+    await vi.waitFor(() => {
+      expect(sent.length).toBe(1);
+    });
+    cancel.abort();
+    answer(json(200, { csrf: CSRF }));
+    expect(await pending).toEqual({ kind: "unknown", reason: "aborted" });
+    expect(client.view()).toEqual({ locked: true, reason: "forgotten" });
+    expect(timers.live()).toEqual([]);
+    sent = [];
+    expect((await client.datasets()).kind).toBe("locked");
+    expect(sent).toEqual([]);
+  });
+
+  it("a cancel after the unlock is done changes nothing", async () => {
+    const { client } = rig();
+    const cancel = new AbortController();
+    expect(await client.unlock(TOKEN, NAME, cancel.signal)).toEqual({ kind: "unlocked" });
+    cancel.abort();
+    expect(client.view()).toEqual({ locked: false, reason: null });
+    expect((await client.datasets()).kind).toBe("refused");
+  });
+});
+
+describe("the idle check runs before the CSRF re-fetch and before the resend (m11)", () => {
+  it("a first answer that comes after the limit, with no timer run, locks: no re-fetch, no resend", async () => {
+    const { client, clocks } = await unlocked();
+    routesTo["GET /operator/datasets"] = () => {
+      clocks.advance(IDLE_LIMIT_MS);
+      return json(403, refusal("CSRF_REQUIRED"));
+    };
+    sent = [];
+    expect(await client.datasets()).toEqual({ kind: "locked", reason: "idle" });
+    expect(sent.map((request) => request.url)).toEqual(["/operator/datasets"]);
+    expect(client.view()).toEqual({ locked: true, reason: "idle" });
+  });
+
+  it("a CSRF answer that comes after the limit, with no timer run, locks: no resend", async () => {
+    const { client, clocks } = await unlocked();
+    routesTo["GET /operator/datasets"] = () => json(403, refusal("CSRF_REQUIRED"));
+    routesTo["GET /operator/csrf"] = () => {
+      clocks.advance(IDLE_LIMIT_MS);
+      return json(200, { csrf: CSRF_2 });
+    };
+    sent = [];
+    expect(await client.datasets()).toEqual({ kind: "locked", reason: "idle" });
+    expect(sent.map((request) => request.url)).toEqual(["/operator/datasets", "/operator/csrf"]);
+    expect(client.view()).toEqual({ locked: true, reason: "idle" });
+  });
+
+  it("and sends both when the limit is one millisecond away", async () => {
+    const { client, clocks } = await unlocked();
+    let calls = 0;
+    routesTo["GET /operator/datasets"] = () => {
+      calls += 1;
+      clocks.advance(calls === 1 ? IDLE_LIMIT_MS - 2 : 0);
+      return calls === 1 ? json(403, refusal("CSRF_REQUIRED")) : json(200, {});
+    };
+    routesTo["GET /operator/csrf"] = () => json(200, { csrf: CSRF_2 });
+    sent = [];
+    expect((await client.datasets()).kind).toBe("answer");
+    expect(sent.map((request) => request.url)).toEqual(["/operator/datasets", "/operator/csrf", "/operator/datasets"]);
+  });
+});
+
+describe("an unlock a subscriber locked does not report unlocked (m12a)", () => {
+  it("returns locked, and holds nothing, when a listener forgets during the unlock's own change of view", async () => {
+    const { client, timers } = rig();
+    client.subscribe(() => {
+      if (!client.view().locked) {
+        client.forget();
+      }
+    });
+    expect(await client.unlock(TOKEN, NAME)).toEqual({ kind: "locked", reason: "forgotten" });
+    expect(client.view()).toEqual({ locked: true, reason: "forgotten" });
+    expect(timers.live()).toEqual([]);
+    sent = [];
+    expect((await client.datasets()).kind).toBe("locked");
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("the idle constants are pinned (m12c)", () => {
+  it("are ten minutes, fifteen seconds, 200 code points and the four trusted inputs", () => {
+    expect(IDLE_LIMIT_MS).toBe(600_000);
+    expect(IDLE_CHECK_MS).toBe(15_000);
+    expect(NAME_LIMIT).toBe(200);
+    expect([...ACTIVITY_EVENTS]).toEqual(["keydown", "pointerdown", "wheel", "touchstart"]);
   });
 });

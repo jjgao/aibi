@@ -67,7 +67,7 @@ describe("the operator entry", () => {
   it("forgets the address by replacing it with the fixed path, state null", () => {
     window.history.replaceState({ held: 1 }, "", "/curate#/withdraw?x");
     const before = window.history.length;
-    forgetAddress(window.history);
+    forgetAddress();
     expect(window.location.href).toBe(`${ORIGIN}${CURATE_PATH}`);
     expect(window.history.length).toBe(before);
     expect(window.history.state).toBeNull();

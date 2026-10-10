@@ -283,6 +283,18 @@ export type Sent<O extends OperationId = OperationId> =
   | { readonly kind: "answer"; readonly answer: Answer<O> }
   | { readonly kind: "unknown"; readonly reason: Unknown };
 
+/** Whether a route's URL is a path under this origin's `/operator/` that no URL parser can move
+ * (D423, defence in depth: `routes.ts` makes only such URLs): a single-slash absolute path of
+ * printable ASCII, with no backslash, no `//` and no dot segment, plain or percent-encoded (`.`,
+ * `..`, `%2e` in any case and mixes of them, which `fetch` removes or climbs). */
+function underOperator(url: string): boolean {
+  if (!/^\/operator\/[\x21-\x5b\x5d-\x7e]*$/u.test(url) || url.includes("//")) {
+    return false;
+  }
+  const path = url.split(/[?#]/u, 1)[0] ?? "";
+  return !path.split("/").some((part) => /^(?:\.|%2e){1,2}$/iu.test(part));
+}
+
 /** Send an operator request (D423): to a route `routes.ts` made under this origin's `/operator/`
  * alone, with the credentials as headers (each refused unsent if it is not in its form, in fixed
  * words that hold none of it), aborted with `signal`. Never throws once the request may have
@@ -296,7 +308,7 @@ export async function send<O extends OperationId>(
   signal: AbortSignal,
   ...given: BodyArgument<O>
 ): Promise<Sent<O>> {
-  if (!isRoute(route) || !/^\/operator\/[^\\]*$/u.test(route.url) || route.url.includes("//")) {
+  if (!isRoute(route) || !underOperator(route.url)) {
     throw new ClientError("notARoute");
   }
   const { token, operator, csrf } = credentials;
