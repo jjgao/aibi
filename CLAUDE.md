@@ -156,7 +156,7 @@ OpenAPI schema, not written by hand.
 - Subagents are defined in `.claude/agents/`, each with its model and tools: `cold-reviewer`
   (Opus) for every cold review of a plan or code, carrying issue #2's rules (a cold plan review
   before code; probes and a mutation pass in every round for security, disclosure, erasure or
-  untrusted input; the round cap); `fixer` (Sonnet) for applying settled decisions, restacks and
+  untrusted input; the round cap and the verification round after it); `fixer` (Sonnet) for applying settled decisions, restacks and
   gates; `surveyor` (Sonnet) for surveys. Don't override their `model` per call. Their tools
   include no GitHub write tool, but they keep Bash and Write, so "never push, post or merge"
   (and, for the reviewer and the surveyor, "edit nothing tracked") holds by instruction. The
