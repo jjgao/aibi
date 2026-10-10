@@ -1,0 +1,573 @@
+"""The erasure module as it was before coverage and scope tables were scanned (5409a4e, before
+D408), vendored for the identity property of tests/core/store/test_erasure_cover_class.py: the
+person's rows, ``holds``, ``terms`` and ``Naming`` must be the same with the scan as without it
+(only rows withdraw). It imports nothing from ``aibi.core.store.links``; never edit it to follow
+the module it copies."""
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+
+from pydantic import JsonValue
+
+from aibi.core.engine.data import PRESENT, KeyPart, Release, key_part
+from aibi.core.schema.refusals import RefusalCode
+from aibi.core.store.blobs import MissingBlobError
+from aibi.core.store.cells import ColumnCells
+from aibi.core.store.redaction import ERASE_ACTION, Naming, Terms, normal
+from aibi.core.store.sources import SourceValue, canonical_string
+from aibi.core.store.store import Store, StoreRefused
+
+Key = tuple[KeyPart, ...]
+Canonical = tuple[str, ...]
+"""A key as its values' canonical strings, compared across releases."""
+Row = tuple[str, int]
+
+
+def _canonical(key: Key) -> Canonical:
+    return tuple(canonical_string(value) or "" for _, value in key)
+
+
+@dataclass(frozen=True)
+class Erased:
+    withdrawn: tuple[int, ...]
+    """The labels withdrawn."""
+    terms: int
+    """How many distinct terms were redacted."""
+    redacted: bool
+    """Whether the app DB was redacted and its WAL checkpointed now; otherwise that happens once
+    no pin blocks the redaction and no reader the checkpoint."""
+    uploads_pending: bool = False
+    """Whether the dataset's upload area is still to be deleted, an erasure's ``uploads`` having
+    failed: erasing again with ``uploads`` deletes it (with ``redact_only`` once the redaction
+    has run)."""
+
+
+def erase(
+    store: Store,
+    dataset: str,
+    table: str,
+    key: Sequence[SourceValue],
+    by: str,
+    *,
+    uploads: Callable[[str], None] | None = None,
+    redact_only: bool = False,
+) -> Erased:
+    """Erase the person whose row in ``table`` has ``key`` (its primary key's values, in the
+    key's order, typed by its columns' datatypes). With ``redact_only``, a key that no live
+    release holds is redacted from the app DB alone, rather than refused, if the dataset has a
+    withdrawn release. Raises ``StoreRefused``. It first waits for the store's housekeeping
+    thread (``Store.housekept``), so that the pins tool calls released before it began count as
+    released, as their releases would otherwise count them (D300)."""
+    store.housekept()
+    with store.exclusive(dataset, "erase"):
+        return _erase(store, dataset, table, key, by, uploads=uploads, redact_only=redact_only)
+
+
+def _erase(
+    store: Store,
+    dataset: str,
+    table: str,
+    key: Sequence[SourceValue],
+    by: str,
+    *,
+    uploads: Callable[[str], None] | None,
+    redact_only: bool,
+) -> Erased:
+    person = _Person(table, _live(store, dataset), key)
+    with store.lock:
+        if any(session.open for session in store.db.sessions(dataset)):
+            raise StoreRefused(
+                RefusalCode.ERASURE_BLOCKED,
+                "A curation session is open on the dataset: its draft may hold the row; end it "
+                "first",
+            )
+        latest = store.latest(dataset)
+        if latest is None:
+            raise StoreRefused(RefusalCode.UNKNOWN_RELEASE, "The dataset has no release")
+        manifests = _published(store, dataset)
+        if manifests != [*person.releases]:
+            loaded = {
+                m: person.releases[m] if m in person.releases else store.load(m) for m in manifests
+            }
+            person = _Person(table, loaded, key)
+        if person.holds(latest.manifest):
+            raise StoreRefused(
+                RefusalCode.ERASURE_BLOCKED,
+                "The latest release still holds the row, a row below it, or a row whose foreign "
+                "key names one of them: re-import from a source without them first",
+            )
+        holding = [manifest for manifest in manifests if person.holds(manifest)]
+        if holding:
+            terms, mode = person.terms(), "withdraw"
+        else:
+            waiting = _waiting(store, dataset, person)
+            if waiting:
+                return _again(store, dataset, waiting, uploads)
+            withdrawn_before = any(label.withdrawn for label in store.labels(dataset))
+            if not redact_only or not withdrawn_before:
+                reason = person.unheld(store, dataset, withdrawn_before, redact_only)
+                raise StoreRefused(RefusalCode.INVALID_KEY, reason)
+            terms, mode = _redact_only(store, dataset, person), "redact_only"
+        withdrawn: list[int] = []
+        with store.db.transaction() as db:
+            for manifest in holding:
+                withdrawn.extend(store.record_withdrawal(db, dataset, manifest, by))
+            detail: JsonValue = {
+                "mode": mode,
+                "table": table,
+                "withdrawn": [*sorted(withdrawn)],
+                "terms": len(terms),
+            }
+            store.db.audit(db, store.now(), dataset, by, ERASE_ACTION, detail)
+            request = store.request_redaction(db, dataset, terms, holding)
+            if uploads is not None:
+                store.db.add_pending_upload(db, dataset)
+        store.withdrawn(holding)
+    _delete_uploads(store, dataset, uploads)
+    store.run_pending_redactions()
+    return Erased(
+        tuple(sorted(withdrawn)),
+        len(terms),
+        store.redacted([request]),
+        store.db.upload_pending(dataset),
+    )
+
+
+def _published(store: Store, dataset: str) -> list[str]:
+    return sorted({label.manifest for label in store.labels(dataset) if not label.withdrawn})
+
+
+def _live(store: Store, dataset: str) -> dict[str, Release]:
+    """The dataset's published releases, loaded without the store's lock; one withdrawn and swept
+    meanwhile is left out. No pin is needed: a blob is whole or missing, and one that is missing
+    was a withdrawn release's, since the sweep deletes no live release's blobs. (A pin's release
+    would run the redaction an erasure again is to recognise.)"""
+    loaded: dict[str, Release] = {}
+    for manifest in _published(store, dataset):
+        try:
+            loaded[manifest] = store.load(manifest)
+        except MissingBlobError:
+            continue
+    return loaded
+
+
+def _waiting(store: Store, dataset: str, person: "_Person") -> dict[int, Terms]:
+    """The dataset's waiting redactions whose person terms hold the key: the erasures that erasing
+    the key again finishes."""
+    wanted = frozenset(normal(term) for term in person.key_terms())
+    return {
+        request: terms
+        for request, terms in store.pending_redactions(dataset).items()
+        if wanted and wanted <= terms.person
+    }
+
+
+def _again(
+    store: Store, dataset: str, waiting: Mapping[int, Terms], uploads: Callable[[str], None] | None
+) -> Erased:
+    """Finish an erasure whose transaction committed and whose redaction still waits."""
+    _delete_uploads(store, dataset, uploads)
+    store.run_pending_redactions()
+    count = max(len(terms) for terms in waiting.values())
+    return Erased((), count, store.redacted(list(waiting)), store.db.upload_pending(dataset))
+
+
+def _redact_only(store: Store, dataset: str, person: "_Person") -> Terms:
+    """The key alone, as the person's terms: typed by the latest published release that has the
+    person's table, or, if none has it, the given values' canonical strings (as ``key_terms``
+    takes them when no release types the key)."""
+    for label in reversed(store.labels(dataset)):
+        release = person.releases.get(label.manifest)
+        if label.withdrawn or release is None or release.table(person.table) is None:
+            continue
+        typed = person.keys[label.manifest]
+        if typed is None:
+            raise StoreRefused(
+                RefusalCode.INVALID_KEY,
+                f"The latest release with a table {person.table} has no key of those values' "
+                "number and datatypes",
+            )
+        values: Sequence[SourceValue] = [value for _, value in typed]
+        break
+    else:
+        values = person.given
+    texts = [(text, value) for value in values if (text := canonical_string(value))]
+    terms = Terms(
+        [text for text, _ in texts],
+        numbers=[text for text, value in texts if _number(value)],
+    )
+    if not terms:
+        raise StoreRefused(RefusalCode.INVALID_KEY, "The key has no value to redact")
+    return terms
+
+
+def _delete_uploads(store: Store, dataset: str, uploads: Callable[[str], None] | None) -> None:
+    if uploads is not None:
+        uploads(dataset)
+        store.db.uploads_deleted(dataset)
+
+
+@dataclass(frozen=True, order=True)
+class _Link:
+    """A relationship's tables and columns, as some published release declares it: the same
+    relationship whatever its id, and whichever release declares it."""
+
+    child: str
+    child_columns: tuple[str, ...]
+    parent: str
+    parent_columns: tuple[str, ...]
+
+    def applies(self, release: Release) -> bool:
+        """Whether the release's child table has the relationship's columns."""
+        return release.table(self.child) is not None and set(self.child_columns) <= set(
+            release.columns(self.child)
+        )
+
+
+def _links(releases: Mapping[str, Release]) -> tuple[_Link, ...]:
+    """The relationships every published release declares, each once, its column pairs in
+    order of the child's columns."""
+    found: set[_Link] = set()
+    for release in releases.values():
+        for relationship in release.relationships:
+            fields = relationship.fields
+            pairs = sorted(zip(fields.child_columns, fields.parent_columns, strict=True))
+            found.add(
+                _Link(
+                    fields.child_table,
+                    tuple(child for child, _ in pairs),
+                    fields.parent_table,
+                    tuple(parent for _, parent in pairs),
+                )
+            )
+    return tuple(sorted(found))
+
+
+@dataclass(frozen=True)
+class _Index:
+    """One relationship's rows in one release: each child's parent (``None`` for an orphan or a
+    null key), each parent's children, and the orphans by their foreign key, canonical."""
+
+    parent: tuple[int | None, ...]
+    children: Mapping[int, tuple[int, ...]]
+    orphans: Mapping[Canonical, tuple[int, ...]]
+
+
+def _index(release: Release, link: _Link) -> _Index:
+    parents: dict[Key, int] = {}
+    for row in range(len(release.rows(link.parent))):
+        key = release.key(link.parent, row, link.parent_columns)
+        if key is not None:
+            parents.setdefault(key, row)
+    found: list[int | None] = []
+    children: dict[int, list[int]] = {}
+    orphans: dict[Canonical, list[int]] = {}
+    for row in range(len(release.rows(link.child))):
+        key = release.key(link.child, row, link.child_columns)
+        parent = None if key is None else parents.get(key)
+        found.append(parent)
+        if parent is not None:
+            children.setdefault(parent, []).append(row)
+        elif key is not None:
+            orphans.setdefault(_canonical(key), []).append(row)
+    return _Index(
+        tuple(found),
+        {p: tuple(rows) for p, rows in children.items()},
+        {k: tuple(rows) for k, rows in orphans.items()},
+    )
+
+
+@dataclass(repr=False)
+class _Person:
+    """The person's rows in each release (see the module's docstring). Its ``repr`` names its
+    table and releases, never the key or the rows (D269)."""
+
+    table: str
+    releases: Mapping[str, Release]
+    given: Sequence[SourceValue]
+    keys: dict[str, Key | None] = field(init=False)
+    """The key, typed by each release's datatypes; ``None`` where it is not of them."""
+    links: dict[str, dict[_Link, _Index]] = field(init=False)
+    """By release: the relationships of every published release whose child table it has with
+    their columns, each with its rows there."""
+    rows: dict[str, set[Row]] = field(init=False)
+    """By release: the person's rows (the person's row being the one in ``table``)."""
+    known: dict[_Link, set[Canonical]] = field(init=False)
+    """By relationship: the keys its parent columns have in the person's rows, in any release."""
+
+    def __post_init__(self) -> None:
+        self.keys = {
+            m: _typed(release, self.table, self.given) for m, release in self.releases.items()
+        }
+        every = _links(self.releases)
+        self.links = {
+            m: {link: _index(release, link) for link in every if link.applies(release)}
+            for m, release in self.releases.items()
+        }
+        self.rows = {manifest: set() for manifest in self.releases}
+        self.known = {}
+        found: list[tuple[str, Row]] = []
+        for manifest, release in self.releases.items():
+            key, columns = self.keys[manifest], release.primary_key(self.table)
+            if key is None or columns is None:
+                continue
+            found.extend(
+                (manifest, (self.table, row))
+                for row in range(len(release.rows(self.table)))
+                if release.key(self.table, row, columns) == key
+            )
+            for link in self.links[manifest]:
+                own = self._own_key(manifest, link)
+                if own is not None and self._descends(release, link):
+                    found.extend(self._orphaned(manifest, link, own))
+        while found:
+            manifest, row = found.pop()
+            if row not in self.rows[manifest]:
+                self.rows[manifest].add(row)
+                found.extend(self._below(manifest, row))
+
+    def __repr__(self) -> str:
+        return f"_Person(table={self.table!r}, releases={sorted(self.releases)!r})"
+
+    def _below(self, manifest: str, row: Row) -> list[tuple[str, Row]]:
+        """The rows a row of the person's reaches: its children in its own release, and the
+        orphans in every release whose foreign key holds one of its keys that is new."""
+        release, (current, index) = self.releases[manifest], row
+        reached: list[tuple[str, Row]] = []
+        for link, rows in self.links[manifest].items():
+            if link.parent != current:
+                continue
+            if self._descends(release, link):
+                reached.extend(
+                    (manifest, (link.child, child)) for child in rows.children.get(index, ())
+                )
+            typed = release.key(current, index, link.parent_columns)
+            known = self.known.setdefault(link, set())
+            value = None if typed is None else _canonical(typed)
+            if value is None or value in known:
+                continue
+            known.add(value)
+            for other, elsewhere in self.releases.items():
+                if link in self.links[other] and self._descends(elsewhere, link):
+                    reached.extend(self._orphaned(other, link, value))
+        return reached
+
+    def _orphaned(self, manifest: str, link: _Link, value: Canonical) -> list[tuple[str, Row]]:
+        rows = self.links[manifest][link].orphans.get(value, ())
+        return [(manifest, (link.child, row)) for row in rows]
+
+    def _named(self, manifest: str, link: _Link, value: Canonical) -> bool:
+        """Whether an orphan's foreign key through the relationship names the person: a key of
+        the person's rows in any release, or the person's own key."""
+        return value in self.known.get(link, ()) or value == self._own_key(manifest, link)
+
+    def holds(self, manifest: str) -> bool:
+        """Whether the release holds one of the person's rows, or a row whose foreign key names
+        one of them through any relationship (another member's ``referred_by``, say): a child
+        of a row of theirs, which is a row of theirs or names one, or an orphan."""
+        if self.rows[manifest]:
+            return True
+        for link, rows in self.links[manifest].items():
+            if any(self._named(manifest, link, value) for value in rows.orphans):
+                return True
+        return False
+
+    def _names(self, manifest: str, link: _Link, row: int) -> bool:
+        """Whether a row's foreign key through the relationship names one of the person's rows:
+        its parent in the release, or, for an orphan, a key of theirs."""
+        release = self.releases[manifest]
+        parent = self.links[manifest][link].parent[row]
+        if parent is not None:
+            return (link.parent, parent) in self.rows[manifest]
+        value = release.key(link.child, row, link.child_columns)
+        return value is not None and self._named(manifest, link, _canonical(value))
+
+    def _own_key(self, manifest: str, link: _Link) -> Canonical | None:
+        """The person's key as a foreign key through the relationship holds it, if the
+        relationship is into the person's key in this release: its columns in the relationship's
+        order, since a relationship leads to its parent's key in any order (§5.6)."""
+        release, key = self.releases[manifest], self.keys[manifest]
+        columns = release.primary_key(self.table)
+        if key is None or columns is None or link.parent != self.table:
+            return None
+        if sorted(columns) != sorted(link.parent_columns):
+            return None
+        parts = dict(zip(columns, key, strict=True))
+        return _canonical(tuple(parts[column] for column in link.parent_columns))
+
+    def _descends(self, release: Release, link: _Link) -> bool:
+        """Whether the person's rows go on through the relationship: not into the person's own
+        table, nor into another table of things (other people)."""
+        descriptor = release.table(link.child)
+        return (
+            link.child != self.table
+            and descriptor is not None
+            and descriptor.fields.role != "entity"
+        )
+
+    def terms(self) -> Terms:
+        """The person's terms and those below them, with what the releases say of the places
+        whose constants may name the person's rows (``redaction.Naming``, D290): the keys of
+        the person's rows by table, the values of their identifier columns by column, and the
+        releases' keys, foreign keys, identifier columns and units."""
+        person: set[str] = set(self.key_terms())
+        below: set[str] = set()
+        numbers: set[str] = set()
+        text: set[str] = set()
+        keys: dict[str, set[Canonical]] = {}
+        identifiers, key_columns, names, units = self._schema()
+        identifying: set[str] = set()
+        for manifest, release in self.releases.items():
+            own = self.keys[manifest]
+            if own is not None:
+                keys.setdefault(self.table, set()).add(_canonical(own))
+                identifying.update(
+                    text
+                    for text, (_, value) in zip(_canonical(own), own, strict=True)
+                    if text and not _number(value)
+                )
+            for current, index in sorted(self.rows[manifest]):
+                columns = release.primary_key(current)
+                typed = None if columns is None else release.key(current, index, columns)
+                if typed is not None:
+                    keys.setdefault(current, set()).add(_canonical(typed))
+                for column, found in self._identifying(manifest, current, index).items():
+                    (person if current == self.table else below).update(found)
+                    for term, number in found.items():
+                        (numbers if number else text).add(term)
+                    marked = identifiers.get(f"{current}.{column}")
+                    if marked is not None:
+                        marked.update(found)
+                        identifying.update(term for term, number in found.items() if not number)
+        naming = Naming.of(
+            keys=keys,
+            key_columns=key_columns,
+            names=names,
+            identifiers=identifiers,
+            identifying=identifying,
+            units=units,
+        )
+        return Terms(person, below, numbers=numbers - text, naming=naming)
+
+    def _schema(
+        self,
+    ) -> tuple[
+        dict[str, set[str]], dict[str, set[tuple[str, ...]]], dict[str, set[str]], dict[str, str]
+    ]:
+        """What every published release declares of its columns (D290): the identifier columns,
+        each with no values yet; each table's key's columns; each key or foreign key column,
+        with the tables whose rows it names by itself (its table's for its table's key of one
+        column, the table it points into for a foreign key of one, none for a part of more);
+        and each column's units."""
+        identifiers: dict[str, set[str]] = {}
+        key_columns: dict[str, set[tuple[str, ...]]] = {}
+        names: dict[str, set[str]] = {}
+        units: dict[str, str] = {}
+        for manifest, release in self.releases.items():
+            for table in release.table_ids:
+                columns = release.primary_key(table) or ()
+                if columns:
+                    key_columns.setdefault(table, set()).add(columns)
+                for column in columns:
+                    named = names.setdefault(f"{table}.{column}", set())
+                    named.update({table} if len(columns) == 1 else ())
+                for column in release.columns(table):
+                    descriptor = release.column(table, column)
+                    if descriptor is None:
+                        continue
+                    if descriptor.fields.identifier:
+                        identifiers.setdefault(descriptor.id, set())
+                    if descriptor.fields.units is not None:
+                        units[descriptor.id] = str(descriptor.fields.units)
+            for link in self.links[manifest]:
+                for column in link.child_columns:
+                    named = names.setdefault(f"{link.child}.{column}", set())
+                    named.update({link.parent} if len(link.child_columns) == 1 else ())
+        return identifiers, key_columns, names, units
+
+    def key_terms(self) -> frozenset[str]:
+        """The canonical strings of the key's values, as the releases that type it type them,
+        or as given if none does."""
+        typed = [key for key in self.keys.values() if key is not None]
+        values = [value for key in typed for _, value in key] if typed else self.given
+        return frozenset(text for value in values if (text := canonical_string(value)))
+
+    def _identifying(self, manifest: str, table: str, row: int) -> dict[str, dict[str, bool]]:
+        """A row's values in its key and identifier columns, by column, each PRESENT item of a
+        list, except its foreign keys to rows that are not the person's (a book they borrowed,
+        say, even when it is part of a link table's key), each with whether it is a number by
+        its column's datatype (D290). A foreign key to a row of theirs holds that row's key, a
+        term already."""
+        release = self.releases[manifest]
+        columns = set(release.primary_key(table) or ())
+        for column in release.columns(table):
+            descriptor = release.column(table, column)
+            if descriptor is not None and descriptor.fields.identifier:
+                columns.add(column)
+        for link in self.links[manifest]:
+            if link.child == table and not self._names(manifest, link, row):
+                columns.difference_update(link.child_columns)
+        found: dict[str, dict[str, bool]] = {}
+        for column in sorted(columns):
+            cell = release.rows(table).cell(row, column)
+            items = cell.value if isinstance(cell.value, tuple) else (cell,)
+            for item in items if cell.state is PRESENT else ():
+                if item.state is not PRESENT or item.value is None or isinstance(item.value, tuple):
+                    continue
+                text = canonical_string(item.value)
+                if text:
+                    values = found.setdefault(column, {})
+                    values[text] = values.get(text, True) and _number(item.value)
+        return found
+
+    def unheld(self, store: Store, dataset: str, withdrawn_before: bool, redact_only: bool) -> str:
+        """Why no release holds the key; ``redact_only`` is suggested only where it could do,
+        the dataset having a withdrawn release that may have held the person."""
+        keyed = [
+            columns
+            for release in self.releases.values()
+            if (columns := release.primary_key(self.table)) is not None
+        ]
+        if keyed and all(len(columns) != len(self.given) for columns in keyed):
+            return f"The key has {len(self.given)} values; the table's key has {len(keyed[-1])}"
+        if keyed and all(key is None for key in self.keys.values()):
+            return "The key's values are not of its columns' datatypes"
+        if keyed:
+            reason = "No published release holds that row, and no erasure of it waits"
+        else:
+            reason = f"No published release has a table {self.table} with a key"
+        if not withdrawn_before:
+            if redact_only:
+                reason += "; redact_only needs a release withdrawn earlier, and there is none"
+            return reason
+        reason += (
+            ": check the key; if only a release withdrawn earlier held the person, erase with "
+            "redact_only"
+        )
+        if store.db.upload_pending(dataset):
+            reason += " and uploads, to delete the upload area still to delete"
+        return reason
+
+
+def _number(value: SourceValue) -> bool:
+    """Whether a value is a number, as an integer or number column holds one, a boolean not
+    (D290)."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _typed(release: Release, table: str, key: Sequence[SourceValue]) -> Key | None:
+    """The key typed by the release's key columns' datatypes, as cells are (``ColumnCells``);
+    ``None`` if the release has no such table or key, or a value is not of its datatype."""
+    columns = release.primary_key(table)
+    if release.table(table) is None or columns is None or len(columns) != len(key):
+        return None
+    parts: list[KeyPart] = []
+    for column, value in zip(columns, key, strict=True):
+        cell = ColumnCells(release.datatype(table, column), None).cell(value)
+        if cell.state is not PRESENT or cell.value is None or isinstance(cell.value, tuple):
+            return None
+        parts.append(key_part(cell.value))
+    return tuple(parts)
+
+
+__all__ = ["Erased", "erase"]

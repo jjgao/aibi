@@ -34,7 +34,7 @@ converted below).
 | core/schema/loading.py | _loaded_request | text | `problem.message` |
 | core/schema/loading.py | load_descriptor | text | `problem.message` |
 | core/store/edits.py | _Draft._validated | text | `error.message` |
-Census: 6 sites of 391; 32 wrappers
+Census: 6 sites of 396; 32 wrappers
 <!-- census:end -->
 
 All six are library messages that pass as text; A2 converts them.
