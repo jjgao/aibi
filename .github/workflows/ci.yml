@@ -127,3 +127,67 @@ jobs:
         env:
           OUTCOMES: "Determinism tests=${{ steps.million.outcome }}"
         run: python3 ../.github/scripts/annotations.py
+
+  web:
+    name: Web checks
+    # The web package (D418): its licences and advisories, types, lint and tests, both builds
+    # through the build's gate and check-bundle (which runs the real loader), and the policy
+    # matrix in Chromium against the built bundles served by the real server.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python and the server, which check-bundle and the matrix run
+        working-directory: server
+        run: |
+          uv python install
+          uv sync --locked
+      - name: Install dependencies (no install scripts)
+        run: npm ci --ignore-scripts
+      - name: Licences, from the committed lockfile
+        run: npm run licenses
+      - name: Advisories in the runtime closure
+        run: npm audit --omit=dev --audit-level=high
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit and build tests
+        run: npm test
+      - name: Build dist/ and check it (production)
+        run: npm run build
+      - name: Build dist-e2e/ and check it (end-to-end)
+        run: npm run build:e2e
+      - name: Playwright's version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "${GITHUB_OUTPUT}"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: The policy matrix
+        run: npm run e2e
+      - name: Playwright's report, on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
