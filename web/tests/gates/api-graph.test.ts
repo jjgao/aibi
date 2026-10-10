@@ -29,7 +29,9 @@ const SRC = path.join(WEB, "src");
 const API = path.join(SRC, "api");
 const INDEX = path.join(API, "index.ts");
 const ORACLE = path.join(API, "oracle.ts");
+const OPERATOR = path.join(API, "operator.ts");
 const HARNESS = path.join(SRC, "harness");
+const OPERATOR_ENTRY = path.join(SRC, "operator");
 
 let program: ts.Program;
 let checker: ts.TypeChecker;
@@ -124,19 +126,25 @@ function namers(declaration: ts.Declaration): string[] {
   return [...found].sort();
 }
 
-/** What a file outside `src/api/` may import of it: the index, and for the harness the oracle. */
+/** What a file outside `src/api/` may import of it: the index; for the operator entry the page's
+ * operator client too (D423), and for the harness the oracle and the operator client. */
 function allowedTargets(file: string): string[] {
-  return file.startsWith(`${HARNESS}/`) ? [INDEX, ORACLE] : [INDEX];
+  if (file.startsWith(`${HARNESS}/`)) {
+    return [INDEX, ORACLE, OPERATOR];
+  }
+  return file.startsWith(`${OPERATOR_ENTRY}/`) ? [INDEX, OPERATOR] : [INDEX];
 }
 
 describe("outside src/api/, the client is reached through its index alone", () => {
-  it("lets the harness, and no other file, reach the oracle's counter too", () => {
-    expect(allowedTargets(path.join(HARNESS, "Harness.tsx"))).toEqual([INDEX, ORACLE]);
-    expect(allowedTargets(path.join(SRC, "operator", "main.tsx"))).toEqual([INDEX]);
+  it("lets the harness, and no other file, reach the oracle's counter too, and the operator entry and the harness alone the operator client", () => {
+    expect(allowedTargets(path.join(HARNESS, "Harness.tsx"))).toEqual([INDEX, ORACLE, OPERATOR]);
+    expect(allowedTargets(path.join(SRC, "operator", "main.tsx"))).toEqual([INDEX, OPERATOR]);
+    expect(allowedTargets(path.join(SRC, "operators", "x.ts"))).toEqual([INDEX]);
+    expect(allowedTargets(path.join(SRC, "catalogue", "main.tsx"))).toEqual([INDEX]);
     expect(allowedTargets(path.join(SRC, "harnessed", "x.ts"))).toEqual([INDEX]);
   });
 
-  it("every specifier that resolves into src/api/ resolves to index.ts (the harness's also to oracle.ts)", () => {
+  it("every specifier that resolves into src/api/ resolves to index.ts (the harness's also to oracle.ts, the operator entry's and the harness's to operator.ts)", () => {
     const wrong: string[] = [];
     let reached = 0;
     for (const file of sources()) {
@@ -186,6 +194,9 @@ describe("the internals are named where they belong alone", () => {
     ["decode.ts", "decode", ["src/api/client.ts", "src/api/decode.ts"]],
     ["decode.ts", "revive", ["src/api/decode.ts"]],
     ["decode.ts", "decodedCount", ["src/api/decode.ts", "src/api/oracle.ts", "src/harness/Harness.tsx"]],
+    ["client.ts", "send", ["src/api/client.ts", "src/api/curator.ts"]],
+    ["curator.ts", "createCurator", ["src/api/curator.ts", "src/api/operator.ts"]],
+    ["operator.ts", "operator", ["src/api/operator.ts", "src/harness/Harness.tsx", "src/operator/Shell.tsx"]],
   ])("%s's %s", (file, name, allowed) => {
     expect(namers(declared(file, name))).toEqual(allowed);
   });
@@ -294,6 +305,58 @@ describe("src/api/index.ts", () => {
     });
     expect(takers).toEqual([]);
     expect(functions).toBeGreaterThan(30);
+  });
+
+  /** The ServerNumber-takers among the call signatures of a value's type and of its members' types
+   * (a client object's methods), with how many signatures were looked at. */
+  function memberTakers(type: ts.Type, name: string): { takers: string[]; signatures: number } {
+    const takers: string[] = [];
+    let signatures = 0;
+    const look = (found: ts.Type, label: string): void => {
+      for (const signature of [...found.getCallSignatures(), ...found.getConstructSignatures()]) {
+        signatures += 1;
+        for (const parameter of signature.getParameters()) {
+          if (holdsServerNumber(checker.getTypeOfSymbol(parameter))) {
+            takers.push(`${label}(${parameter.name})`);
+          }
+        }
+      }
+    };
+    look(type, name);
+    for (const property of checker.getPropertiesOfType(type)) {
+      look(checker.getTypeOfSymbol(property), `${name}.${property.name}`);
+    }
+    return { takers, signatures };
+  }
+
+  it("re-exports nothing of the operator client: no specifier of index.ts resolves to operator.ts or curator.ts (D423)", () => {
+    const source = program.getSourceFile(INDEX);
+    expect(source).toBeDefined();
+    const targets = source === undefined ? [] : specifiers(source).map((specifier) => resolved(specifier, INDEX));
+    expect(targets).not.toContain(OPERATOR);
+    expect(targets).not.toContain(path.join(API, "curator.ts"));
+    expect(targets).toContain(path.join(API, "client.ts"));
+  });
+
+  it("src/api/operator.ts exports the reviewed list, and nothing it exports, the client's methods included, takes anything a ServerNumber can be (D423)", () => {
+    const source = program.getSourceFile(OPERATOR);
+    const symbol = source === undefined ? undefined : checker.getSymbolAtLocation(source);
+    if (symbol === undefined) {
+      throw new Error("no operator.ts");
+    }
+    const found = checker.getExportsOfModule(symbol);
+    expect(found.map((one) => one.name).sort()).toEqual(["Edit", "IDLE_LIMIT_MS", "LockReason", "NAME_LIMIT", "Outcome", "Unlocked", "View", "operator"]);
+    const client = found.find((one) => one.name === "operator");
+    if (client === undefined) {
+      throw new Error("no operator");
+    }
+    const { takers, signatures } = memberTakers(checker.getTypeOfSymbol(client), "operator");
+    expect(takers).toEqual([]);
+    expect(signatures).toBeGreaterThanOrEqual(14);
+  });
+
+  it("would see a function that takes one (the member walk's own control; its members are counted above)", () => {
+    expect(memberTakers(checker.getTypeOfSymbol(exported("box.ts", "textOf")), "textOf").takers).toEqual(["textOf(number)"]);
   });
 
   it("would see a function that takes one (the check's own control)", () => {

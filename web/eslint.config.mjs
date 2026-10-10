@@ -74,11 +74,33 @@
  * type argument (`import.meta.glob<T>(...)`, `JSON.parse<T>`) stays accepted: the box throws at run
  * time on whatever it is called as. `import.meta.glob`, which resolves a module the source never
  * names, is refused in all of `src/` (the gate checks the graph it makes).
+ *
+ * **No channel out of the page's memory (D423).** Two layers. By name: the storages and the Cache
+ * API (`STORAGE_NAMES`) in every position, the channels (`CHANNEL_SYNTAX`: `navigator.storage`,
+ * `navigator.clipboard`, `history.pushState` and `replaceState`, a write to `location` or a member
+ * of it, `location.replace`, `assign`, `hash` and `href`, a write to `document.title`,
+ * `window.open` and the window's `name`), and the page's objects (`PAGE_OBJECTS`) by direct member
+ * access alone (`ALIAS_SYNTAX`). By type (`aibi/page-objects`, `scripts/page-objects.mjs`, the checker
+ * the lint already loads; the window's channels that are globals, `open` or `postMessage`, are refused
+ * by the symbol they resolve to): whatever a value is called, one of the types of `PAGE_TYPES` (or one that
+ * holds one) may stand only as the object of a member access that is no channel of its type, no
+ * member of one is written, and a member that reaches one (`REACHERS`: `defaultView`,
+ * `ownerDocument`, `view`, ...) is refused, so that `const l = window.location`, `el.ownerDocument`,
+ * `event.view` and a returned value are seen. `history.replaceState` stands in `src/operator/url.ts`
+ * alone, which is nothing but one function and its one call, the path a literal (`URL_SYNTAX`,
+ * `URL_FILE_SYNTAX`, the rule's option); `src/operator/` has no module-level `let` or `var`
+ * (`OPERATOR_SYNTAX`). What it does not see is D419's residual: a value the checker types `any`, a
+ * `declare` or an assertion that lies, another realm, a patched builtin, and the channels that are no
+ * page object's member (an anchor's `href` and `click()`, a form's `submit()`, `<meta refresh>`,
+ * `img.src`, ...: D423 lists them). `tests/gates/operator.test.ts` holds each channel in each
+ * position and a generated table of every type, reacher, position and channel;
+ * `tests/gates/page-types.test.ts` holds the rule's lists against what the DOM library declares.
  */
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
+import { pageObjects } from "./scripts/page-objects.mjs";
 import { SCRIPT_EXTENSIONS, TOOLING_PATTERNS } from "./scripts/tooling.mjs";
 
 const SINK = "No HTML or script sink: the policy refuses one (D411).";
@@ -125,6 +147,34 @@ const SINK_GLOBALS = ["Function", "Reflect", "DOMParser"];
 
 /** The names of I/O, `src/api/client.ts`'s alone (matched exactly). */
 const IO_NAMES = ["fetch", "XMLHttpRequest", "Response", "Request", "EventSource", "WebSocket", "caches", "CacheStorage", "serviceWorker", "sendBeacon"];
+
+/** The places a page can keep or pass a value beyond its own memory (D423): storage, the Cache
+ * API, cookies, another context's messages. Refused in every position in all of `src/`, so that a
+ * secret (the curator token, a handle, the CSRF token, or a copy of one, `btoa(token)`) has nowhere
+ * to go but the client's closure (matched exactly). */
+const STORAGE_NAMES = [
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+  "IDBFactory",
+  "cookieStore",
+  "BroadcastChannel",
+  "postMessage",
+  "SharedWorker",
+  "MessageChannel",
+  "Worker",
+  "caches",
+  "CacheStorage",
+];
+
+/** The global object, and the names that lead to it (`defaultView` is a member that gives the
+ * window of a document). */
+const GLOBAL_OBJECTS = ["globalThis", "window", "self", "top", "parent", "frames", "opener"];
+
+/** What the page's channels hang on: the global object and the objects of it that carry a secret
+ * out of the page's memory (the address, the history, the navigator, the document). Used by direct
+ * member access alone: `window.history.length`, never `const h = history`. */
+const PAGE_OBJECTS = [...GLOBAL_OBJECTS, "location", "history", "navigator", "document"];
 
 /** The names of the prototype chain, `src/api/`'s alone (matched exactly). */
 const PROTOTYPE_NAMES = ["prototype", "getPrototypeOf", "setPrototypeOf", "__proto__"];
@@ -224,6 +274,119 @@ const everywhere = (names, message) => [
   { selector: `ObjectPattern > Property[key.value=${exactly(names)}]`, message },
 ];
 
+const STORE = "No storage, cookie or message to another context in src/: a secret lives in the operator client's closure alone (D423).";
+/** The page's own constructors, which no code tests a value against. */
+const PAGE_CONSTRUCTORS = ["Window", "Location", "Navigator", "Document", "HTMLDocument", "History", "Storage", "StorageManager", "Clipboard", "CacheStorage", "Cache", "ShadowRoot"];
+
+const ALIAS =
+  "No alias of window, globalThis, self, top, parent, frames, opener, location, history, navigator or document, no destructuring from one and none passed as an argument: each is used by direct member access alone (D423).";
+const CHANNEL = "No channel out of the page's memory in src/ (the address, the history, the title, the window's name, the clipboard, a new window, the origin private file system): a secret lives in the operator client's closure alone (D423).";
+
+/** A member expression whose object is one of `names`, written out (`navigator.x`) or reached as a
+ * member of that name (`window.navigator.x`, `self.navigator.x`); the global object's names are
+ * also reached by `defaultView`.
+ * @param {readonly string[]} names */
+const onObject = (names) =>
+  `MemberExpression:matches([object.name=${exactly(names)}], [object.property.name=${exactly(names)}]${names.includes("window") ? ", [object.property.name='defaultView']" : ""})`;
+
+/** The channel rules (D423), by name and by position. The page's objects are used by direct member
+ * access alone (`ALIAS_SYNTAX`: no alias, no destructuring, no argument, no computed member), so
+ * that these rules see every use of a channel; a channel is then refused as a member of its
+ * object, wherever it stands (a call, an assignment, an optional chain, a read). @type {Restriction[]} */
+const CHANNEL_SYNTAX = [
+  // The origin private file system (`navigator.storage.getDirectory`), as persistent as `indexedDB`.
+  { selector: `${onObject(["navigator"])}[property.name='storage']`, message: CHANNEL },
+  // The clipboard outlives the page and is read by whatever the person pastes into; a lock's name is
+  // read by every context of the origin (`navigator.locks.query()`, the class of `BroadcastChannel`);
+  // a protocol handler keeps a URL in the browser's settings; the media session shows text to the system.
+  { selector: `${onObject(["navigator"])}[property.name=/^(clipboard|locks|registerProtocolHandler|mediaSession)$/]`, message: CHANNEL },
+  // `document.open(url, name, features)` opens a window, as `window.open` does.
+  { selector: `${onObject(["document"])}[property.name='open']`, message: CHANNEL },
+  // `history.pushState` and `history.replaceState` take a state that outlives the page and a URL;
+  // `src/operator/url.ts` alone calls `replaceState`, with a fixed state and path (`URL_SYNTAX`).
+  { selector: "Identifier[name=/^(pushState|replaceState)$/]", message: CHANNEL },
+  { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
+  // The address: written (`location = x`, `window.location = x`, `location.x = y`), navigated
+  // (`replace`, `assign`) or carrying a secret in its `hash` or `href`, read or written.
+  { selector: "AssignmentExpression:matches([left.name='location'], [left.property.name='location'])", message: CHANNEL },
+  { selector: "AssignmentExpression:matches([left.object.name='location'], [left.object.property.name='location'])", message: CHANNEL },
+  { selector: `${onObject(["location"])}[property.name=/^(replace|assign|hash|href)$/]`, message: CHANNEL },
+  // The title is kept in session history.
+  {
+    selector: "AssignmentExpression[left.property.name='title']:matches([left.object.name='document'], [left.object.property.name='document'])",
+    message: CHANNEL,
+  },
+  // A new window's address, and the window's name, which outlives a navigation.
+  { selector: `${onObject(GLOBAL_OBJECTS)}[property.name='open']`, message: CHANNEL },
+  { selector: "CallExpression[callee.name='open']", message: CHANNEL },
+  { selector: `${onObject(GLOBAL_OBJECTS)}:matches([property.name='name'], [property.value='name'])`, message: CHANNEL },
+];
+
+/** The page's objects by direct member access alone (D423): no reference to one that is not the
+ * object of a member (an alias, an argument, a returned value, a destructuring's source, a
+ * binding of the name), and no computed member of one or of a member of that name. @type {Restriction[]} */
+const ALIAS_SYNTAX = [
+  {
+    selector: `Identifier[name=${exactly(PAGE_OBJECTS)}]:not(MemberExpression > Identifier.object):not(MemberExpression[computed=false] > Identifier.property):not(:matches(Property, PropertyDefinition, TSPropertySignature, MethodDefinition, TSMethodSignature, AccessorProperty)[computed=false] > Identifier.key)`,
+    message: ALIAS,
+  },
+  { selector: `MemberExpression[computed=true]:matches([object.name=${exactly(PAGE_OBJECTS)}], [object.property.name=${exactly(PAGE_OBJECTS)}])`, message: ALIAS },
+  // A test against the page's own constructors (`e.currentTarget instanceof Window`).
+  { selector: `BinaryExpression[operator='instanceof'][right.name=${exactly(PAGE_CONSTRUCTORS)}]`, message: ALIAS },
+];
+
+/** The storage rules (D423): the names in every position; `cookie` as a member or a destructured
+ * key; the channels by name; the page's objects by direct member access alone.
+ * @type {Restriction[]} */
+const STORAGE_SYNTAX = [
+  ...everywhere(STORAGE_NAMES, STORE),
+  // `cookie` as a member or a destructured key (`document.cookie`), not as a type's key: the
+  // generated types name every operation's `cookie` parameters, which are `never`.
+  { selector: "MemberExpression:matches([property.name='cookie'], [property.value='cookie'])", message: STORE },
+  { selector: "ObjectPattern > Property:matches([key.name='cookie'], [key.value='cookie'])", message: STORE },
+  ...CHANNEL_SYNTAX,
+  ...ALIAS_SYNTAX,
+];
+
+/** The storage rules of `src/operator/url.ts`, the one file that calls `history.replaceState`
+ * (D412: the operator entry takes nothing from its URL and replaces it by its fixed path): its one
+ * call states `null`, `""` and `"/curate"`, written out (a literal, no binding), and no other use of
+ * the name stands; the type-aware rule (`aibi/page-objects`) holds the rest (the global `history`,
+ * the one exported function, once). @type {Restriction[]} */
+const URL_SYNTAX = [
+  ...STORAGE_SYNTAX.filter(({ selector }) => !selector.includes("pushState|replaceState")),
+  { selector: "Identifier[name='pushState']", message: CHANNEL },
+  { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
+  {
+    selector:
+      "Identifier[name='replaceState']:not(CallExpression[arguments.length=3][arguments.0.raw='null'][arguments.1.type='Literal'][arguments.1.value=''][arguments.2.type='Literal'][arguments.2.value='/curate'] > MemberExpression.callee[object.name='history'] > Identifier.property)",
+    message: CHANNEL,
+  },
+];
+
+const URL_FILE = "src/operator/url.ts is one exported function, forgetAddress, with no parameter, whose body is its one call of history.replaceState (D412, D423).";
+
+/** `src/operator/url.ts` is nothing but `export function forgetAddress(): void { history.replaceState(null, "", "/curate"); }`:
+ * no import, no binding, no second statement, no parameter. @type {Restriction[]} */
+const URL_FILE_SYNTAX = [
+  { selector: "Program[body.length!=1]", message: URL_FILE },
+  { selector: "Program > :not(ExportNamedDeclaration[declaration.type='FunctionDeclaration'][declaration.id.name='forgetAddress'])", message: URL_FILE },
+  { selector: "FunctionDeclaration[params.length>0]", message: URL_FILE },
+  { selector: "FunctionDeclaration[async=true], FunctionDeclaration[generator=true]", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement[body.length!=1]", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement > :not(ExpressionStatement)", message: URL_FILE },
+  { selector: "FunctionDeclaration > BlockStatement > ExpressionStatement > :not(CallExpression)", message: URL_FILE },
+];
+
+const MUTABLE =
+  "No mutable module binding (let, var) in src/operator/: a value kept in module scope outlives the call that handed it over and no test of the React tree sees it (D423).";
+
+/** The operator entry's modules hold no mutable module binding. @type {Restriction[]} */
+const OPERATOR_SYNTAX = [
+  { selector: "Program > VariableDeclaration[kind!='const']", message: MUTABLE },
+  { selector: "Program > ExportNamedDeclaration > VariableDeclaration[kind!='const']", message: MUTABLE },
+];
+
 /** The I/O rules: the names, and every `.json` (D419). @type {Restriction[]} */
 const IO_SYNTAX = everywhere(IO_NAMES, IO);
 
@@ -291,6 +454,26 @@ const NUMBER_SYNTAX = [
   { selector: "ImportExpression:not([source.type='Literal'])", message: IMPORT },
 ];
 
+/** The internals of `src/api/`: each module's names that its owner alone imports, within
+ * `src/api/` (outside it, every import is of the index, or of the modules the operator entry and
+ * the harness name). */
+const API_INTERNALS = [
+  { module: "box", names: ["box", "textOf"], owners: ["src/api/decode.ts"], message: "box and textOf are decode.ts's alone (D419)." },
+  { module: "decode", names: ["decode", "revive"], owners: ["src/api/client.ts"], message: "decode is client.ts's alone (D419)." },
+  { module: "client", names: ["send"], owners: ["src/api/curator.ts"], message: "send, which sets the operator's credentials, is curator.ts's alone (D423)." },
+  { module: "curator", names: ["createCurator"], owners: ["src/api/operator.ts"], message: "createCurator is operator.ts's alone: the page has one operator client (D423)." },
+];
+
+/** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns.
+ * @param {string | null} owner */
+const internals = (owner) => ({
+  patterns: API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
+    regex: `(^|/)${module}(\\.ts)?$`,
+    importNames: names,
+    message,
+  })),
+});
+
 /** The properties no file of `src/` names, but those `client.ts` needs to seal the readers.
  * @param {boolean} sealing @returns {["error", ...object[]]} */
 const properties = (sealing) => [
@@ -307,6 +490,24 @@ const properties = (sealing) => [
 /** `no-restricted-globals` from tables of names.
  * @param {...[readonly string[], string]} tables @returns {["error", ...object[]]} */
 const globals = (...tables) => ["error", ...tables.flatMap(([names, message]) => names.map((name) => ({ name, message })))];
+
+/** The inline plugin of the lint's own rules (the rule: `scripts/page-objects.mjs`). */
+const aibi = { rules: { "page-objects": pageObjects } };
+
+/** The syntax rules of a file of `src/` outside `src/api/`, given its storage rules.
+ * @param {Restriction[]} storage @returns {Restriction[]} */
+const appSyntax = (storage) => [
+  ...SINK_SYNTAX,
+  ...storage,
+  ...IO_SYNTAX,
+  ...JSON_READER_SYNTAX,
+  ...GLOB_SYNTAX,
+  ...AMBIENT_SYNTAX,
+  ...REQUIRE_SYNTAX,
+  ...PATCH_SYNTAX,
+  ...CHAIN_SYNTAX,
+  ...NUMBER_SYNTAX,
+];
 
 /** The rules every file of `src/` has, whichever its layer.
  * @type {Record<string, import("eslint").Linter.RuleEntry>} */
@@ -325,6 +526,7 @@ export default defineConfig(
   {
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" },
   },
+  { plugins: { aibi } },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
@@ -356,30 +558,42 @@ export default defineConfig(
     rules: {
       ...SOURCE_RULES,
       "no-bitwise": "error",
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": [
-        "error",
-        ...SINK_SYNTAX,
-        ...IO_SYNTAX,
-        ...JSON_READER_SYNTAX,
-        ...GLOB_SYNTAX,
-        ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX,
-        ...PATCH_SYNTAX,
-        ...CHAIN_SYNTAX,
-        ...NUMBER_SYNTAX,
-      ],
+      "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX)],
+      "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }] }],
     },
   },
   {
-    // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`).
+    // The operator entry: the importer of the page's operator client (`src/api/operator.ts`, D423),
+    // which the index does not re-export (its listeners would follow it into the catalogue).
+    files: ["src/operator/**"],
+    rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX), ...OPERATOR_SYNTAX],
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }] },
+      ],
+    },
+  },
+  {
+    // The one file that calls `history.replaceState` (D412: the entry's address is its fixed path).
+    files: ["src/operator/url.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(URL_SYNTAX), ...OPERATOR_SYNTAX, ...URL_FILE_SYNTAX],
+      "aibi/page-objects": ["error", { replaceState: "forgetAddress" }],
+    },
+  },
+  {
+    // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`), and
+    // a driver of the page's operator client.
     files: ["src/harness/**"],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
-        { patterns: [{ regex: "(^|/)api/(?!(index|oracle)(\\.ts)?$)", message: IMPORT }] },
+        { patterns: [{ regex: "(^|/)api/(?!(index|oracle|operator)(\\.ts)?$)", message: IMPORT }] },
       ],
     },
   },
@@ -388,55 +602,34 @@ export default defineConfig(
     files: ["src/api/**"],
     rules: {
       ...SOURCE_RULES,
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              regex: "(^|/)box(\\.ts)?$",
-             
-              importNames: ["box", "textOf"],
-              message: "box and textOf are decode.ts's alone (D419).",
-            },
-            {
-              regex: "(^|/)decode(\\.ts)?$",
-             
-              importNames: ["decode", "revive"],
-              message: "decode is client.ts's alone (D419).",
-            },
-          ],
-        },
-      ],
+      "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
     },
   },
   {
-    // The decoder and the box: the one type assertion each, and `box` for the decoder.
+    // The decoder and the box: the one type assertion each.
     files: ["src/api/decode.ts", "src/api/box.ts"],
     rules: {
       "@typescript-eslint/consistent-type-assertions": "off",
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        { patterns: [{ regex: "(^|/)decode(\\.ts)?$",
-              importNames: ["decode", "revive"], message: "decode is client.ts's alone (D419)." }] },
-      ],
     },
   },
+  // Each internal's owner imports it (`API_INTERNALS`).
+  ...API_INTERNALS.flatMap(({ owners }) => owners).map((owner) => ({
+    files: [owner],
+    rules: { "@typescript-eslint/no-restricted-imports": /** @type {["error", object]} */ (["error", internals(owner)]) },
+  })),
   {
     // The one place of I/O, which seals the body readers.
     files: ["src/api/client.ts"],
     rules: {
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(true),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        { patterns: [{ regex: "(^|/)box(\\.ts)?$",
-              importNames: ["box", "textOf"], message: "box and textOf are decode.ts's alone (D419)." }] },
-      ],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "aibi/page-objects": "error",
     },
   },
   {
