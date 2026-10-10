@@ -10,18 +10,23 @@ and anything whose real path is outside every root. It records the device and in
 confined. A hard link is the file it links, wherever its other names are: it is accepted, as any
 file an operator put inside a root is (D232).
 
-``read`` opens the real path once, with ``O_NOFOLLOW``, checks through that descriptor that it
-is the regular file confined (the same device and inode) and reads it into memory under a limit,
-which a file that grows while it is read cannot pass. Everything after works on those bytes, so
-nothing is opened twice and no file can be swapped between the check and the use. ``files``
-lists a directory in the same way: it opens the real path once, with ``O_DIRECTORY`` and
-``O_NOFOLLOW``, checks through that descriptor that it is the directory confined, and lists and
-classifies (``lstat``) each entry directly inside it through the descriptor, by its own name,
-before anything is resolved, so a directory swapped after it was confined is refused rather than
-listed. A regular file is confined in its turn (an entry's name is a name, never a glob), and
-must be the file listed; a symlink is never followed, and it, a directory, any other kind of
-entry and a file that cannot be confined (one swapped while it is listed) are returned for the
-importer to skip and note (D225), so that none of them refuses the whole directory.
+``read`` opens the real path once, with ``O_NOFOLLOW``, ``O_NOCTTY`` and ``O_NONBLOCK``, so
+that opening never waits: a FIFO that replaced the file waits for no writer, and a file under
+another process's write lease is refused at once (``PATH_NOT_CONFINED``, saying that the file is
+locked and opening does not wait). It checks through that descriptor that it is the file confined
+(the same device and inode, else "changed after it was confined") and a regular file (else "not a
+regular file": a directory or a FIFO), closing the descriptor on every refusal, clears
+``O_NONBLOCK`` and reads it into memory under a limit, which a file that grows while it is read
+cannot pass. Everything after works on those bytes, so nothing is opened twice and no file can
+be swapped between the check and the use. ``files`` lists a directory in the same way: it opens
+the real path once, with ``O_DIRECTORY`` and ``O_NOFOLLOW``, checks through that descriptor that
+it is the directory confined, and lists and classifies (``lstat``) each entry directly inside it
+through the descriptor, by its own name, before anything is resolved, so a directory swapped
+after it was confined is refused rather than listed. A regular file is confined in its turn (an
+entry's name is a name, never a glob), and must be the file listed; a symlink is never followed,
+and it, a directory, any other kind of entry and a file that cannot be confined (one swapped
+while it is listed) are returned for the importer to skip and note (D225), so that none of them
+refuses the whole directory.
 """
 
 import os
@@ -112,14 +117,29 @@ class Confinement:
     def read(self, path: ConfinedPath, limit: int) -> bytes:
         """The bytes of the regular file confined at ``path``, at most ``limit`` of them."""
         identity = self._identity(path)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOCTTY
         try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            descriptor = os.open(path, flags)
+        except BlockingIOError:
+            raise _not_confined(
+                "The file is locked by another process, and opening it does not wait: ", str(path)
+            ) from None
         except OSError:
             raise _not_confined("The file cannot be opened as confined: ", str(path)) from None
-        with os.fdopen(descriptor, "rb") as file:
-            status = os.fstat(file.fileno())
-            if (status.st_dev, status.st_ino) != identity or not stat.S_ISREG(status.st_mode):
+        adopted = False
+        try:
+            status = os.fstat(descriptor)
+            if (status.st_dev, status.st_ino) != identity:
                 raise _not_confined("The file changed after it was confined: ", str(path))
+            if not stat.S_ISREG(status.st_mode):
+                raise _not_confined("Not a regular file: ", str(path))
+            os.set_blocking(descriptor, True)
+            file = os.fdopen(descriptor, "rb")
+            adopted = True
+        finally:
+            if not adopted:
+                os.close(descriptor)
+        with file:
             if status.st_size > limit:
                 raise self._too_large(limit)
             chunks: list[bytes] = []
