@@ -21,11 +21,11 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
-    # The core tests take about 32 to 38 minutes (38.3 at M5.3-server-b1's first round), within
-    # their step's 45; the job's limit leaves them and every other step room,
+    # The core tests take about 30 to 41 minutes (43.8 for the whole job at M5.3-server-b2's head),
+    # within their step's 55; the job's limit leaves them and every other step room,
     # and each test step's own limit leaves the annotations' step time to run when one is reached
     # (D340).
-    timeout-minutes: 60
+    timeout-minutes: 70
     defaults:
       run:
         working-directory: server
@@ -75,7 +75,7 @@ jobs:
         run: uv run lint-imports
       - name: Core tests, which must load no pack (SPEC P8)
         id: core
-        timeout-minutes: 45
+        timeout-minutes: 55
         run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
       - name: Other tests
         id: other

@@ -16,8 +16,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 
 - `core/schema/`: the models of M0 (identifiers, analysis documents, descriptors, results, cohort
   counts, caveats, refusals, the pack API, whose `PackRegistry` keeps core-made copies of what a pack
-  gives and hands out `Hook`s, one guard (`guards.py`, `copiers.py`) for every call of a pack's code)
-  and `digests.py`, which hashes and digests.
+  gives and hands out `Hook`s, one guard (`guards.py`, `copiers.py`) for each call of pack code),
+  `digests.py`, which hashes and digests, and `vocabulary.py`, the form renderer's partition of the
+  2020-12 keywords (`schemas/vocabulary.json`, D422).
 - `core/store/`: blobs, raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure,
   the validation gate, the release lifecycle (operation slots, curation sessions with handles, the
   proposal and curation queues), the checks of every descriptor write against the installed packs
@@ -138,10 +139,11 @@ uv run lint-imports      # core must not import packs; the service layers no web
 uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
 uv run pytest tests/core/determinism -m million  # a million rows: about 5 minutes and 4 GB
+uv run pytest tests/core/measurement -m measurement -s  # by hand: page-load costs, ~4 minutes
 ```
 
-`addopts` deselects the `million` tests, so without `-m million` that directory selects nothing
-(pytest exits 5).
+`addopts` deselects the `million` and `measurement` tests, so without `-m million` that directory
+selects nothing (pytest exits 5).
 
 Keep command output out of the context. Run each gate above quietly and read only the end, keeping
 pytest's exit status (a pipe to `tail` would hide it):

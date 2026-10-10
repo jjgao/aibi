@@ -1,0 +1,176 @@
+{
+  "dialect": "https://json-schema.org/draft/2020-12/schema",
+  "outside": [
+    "$recursiveAnchor",
+    "$recursiveRef",
+    "definitions",
+    "dependencies"
+  ],
+  "refused": [
+    "$anchor",
+    "$dynamicAnchor",
+    "$dynamicRef",
+    "$vocabulary",
+    "contains",
+    "contentEncoding",
+    "contentMediaType",
+    "contentSchema",
+    "dependentSchemas",
+    "maxContains",
+    "minContains",
+    "prefixItems",
+    "unevaluatedItems",
+    "unevaluatedProperties"
+  ],
+  "rendered": [
+    "$comment",
+    "$defs",
+    "$id",
+    "$ref",
+    "$schema",
+    "additionalProperties",
+    "allOf",
+    "anyOf",
+    "const",
+    "default",
+    "dependentRequired",
+    "deprecated",
+    "description",
+    "else",
+    "enum",
+    "examples",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "format",
+    "if",
+    "items",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "maximum",
+    "minItems",
+    "minLength",
+    "minProperties",
+    "minimum",
+    "multipleOf",
+    "not",
+    "oneOf",
+    "pattern",
+    "patternProperties",
+    "properties",
+    "propertyNames",
+    "readOnly",
+    "required",
+    "then",
+    "title",
+    "type",
+    "uniqueItems",
+    "writeOnly"
+  ],
+  "rule": "A form renderer draws a form from the rendered keywords (annotations and format are shown, never applied; a root $id and $schema are ignored) and refuses a schema that holds any other: a refused one, one of those outside the vocabulary (outside), or one in no list (unlisted).",
+  "unlisted": "refused",
+  "vocabularies": {
+    "applicator": {
+      "id": "https://json-schema.org/draft/2020-12/meta/applicator",
+      "refused": [
+        "contains",
+        "dependentSchemas",
+        "prefixItems"
+      ],
+      "rendered": [
+        "additionalProperties",
+        "allOf",
+        "anyOf",
+        "else",
+        "if",
+        "items",
+        "not",
+        "oneOf",
+        "patternProperties",
+        "properties",
+        "propertyNames",
+        "then"
+      ]
+    },
+    "content": {
+      "id": "https://json-schema.org/draft/2020-12/meta/content",
+      "refused": [
+        "contentEncoding",
+        "contentMediaType",
+        "contentSchema"
+      ],
+      "rendered": []
+    },
+    "core": {
+      "id": "https://json-schema.org/draft/2020-12/meta/core",
+      "refused": [
+        "$anchor",
+        "$dynamicAnchor",
+        "$dynamicRef",
+        "$vocabulary"
+      ],
+      "rendered": [
+        "$comment",
+        "$defs",
+        "$id",
+        "$ref",
+        "$schema"
+      ]
+    },
+    "format-annotation": {
+      "id": "https://json-schema.org/draft/2020-12/meta/format-annotation",
+      "refused": [],
+      "rendered": [
+        "format"
+      ]
+    },
+    "meta-data": {
+      "id": "https://json-schema.org/draft/2020-12/meta/meta-data",
+      "refused": [],
+      "rendered": [
+        "default",
+        "deprecated",
+        "description",
+        "examples",
+        "readOnly",
+        "title",
+        "writeOnly"
+      ]
+    },
+    "unevaluated": {
+      "id": "https://json-schema.org/draft/2020-12/meta/unevaluated",
+      "refused": [
+        "unevaluatedItems",
+        "unevaluatedProperties"
+      ],
+      "rendered": []
+    },
+    "validation": {
+      "id": "https://json-schema.org/draft/2020-12/meta/validation",
+      "refused": [
+        "maxContains",
+        "minContains"
+      ],
+      "rendered": [
+        "const",
+        "dependentRequired",
+        "enum",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "maxItems",
+        "maxLength",
+        "maxProperties",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minProperties",
+        "minimum",
+        "multipleOf",
+        "pattern",
+        "required",
+        "type",
+        "uniqueItems"
+      ]
+    }
+  }
+}
