@@ -40,7 +40,8 @@ def _steps(ci: str, job: str) -> list[list[str]]:
 
 
 def test_the_million_row_tests_are_deselected_by_default_and_run_by_a_ci_job_of_their_own() -> None:
-    """D372: ``addopts`` deselects the ``million`` marker, which is registered; every module
+    """D372: ``addopts`` deselects the ``million`` marker (and D422's ``measurement``, a run by
+    hand), which is registered; every module
     under ``tests/core/determinism`` but its conftests carries it at its top level (pytest
     collects ``*_test.py`` too, and subdirectories); CI's ``determinism`` job runs them with
     ``-m million`` in a step that always runs and fails the job, and a later step checks its
@@ -49,7 +50,7 @@ def test_the_million_row_tests_are_deselected_by_default_and_run_by_a_ci_job_of_
     ``-m``."""
     options = tomllib.loads((SERVER / "pyproject.toml").read_text())["tool"]["pytest"]
     given = options["ini_options"]["addopts"]
-    assert given[given.index("-m") + 1] == "not million"
+    assert given[given.index("-m") + 1] == "not million and not measurement"
     assert any(marker.startswith("million:") for marker in options["ini_options"]["markers"])
     modules = sorted((SERVER / "tests" / "core" / "determinism").rglob("*.py"))
     tests = [module for module in modules if module.name not in ("conftest.py", "__init__.py")]

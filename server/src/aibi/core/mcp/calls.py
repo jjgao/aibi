@@ -11,11 +11,12 @@ wall-clock limit, ``TOOL_SECONDS``, from when its body was received, waiting and
 own reading of the body included (``ends``): one that gets no place within it is answered
 ``LIMIT_EXCEEDED`` naming ``client_tool_calls`` or ``tool_calls``, and one that gets a place but
 has not ended by then is answered ``LIMIT_EXCEEDED`` naming ``tool_seconds``, its thread, which
-cannot be stopped, finishing in the background with its place (all 503 over HTTP). A call
-answered before its thread began gives its place back at once, and its function never runs. The
-thread runs with the call's deadline in ``catalog.service.DEADLINE``, so that what it starts
-(a query worker's run, D301) ends by it and what it records it records only while it can still
-be answered (D300).
+cannot be stopped, finishing in the background with its place (what a client is
+answered differs by transport: a 503 over JSON, a tool error in a 200 for an MCP tool call;
+see D422 and #106 for the rest). A call answered before its thread began gives its place
+back at once, and its function never runs. The thread runs with the call's deadline in
+``catalog.service.DEADLINE``, so that what it starts (a query worker's run, D301) ends by it and
+what it records it records only while it can still be answered (D300).
 
 A call's body is received within its deadlines (``bodies.Deadlines``, ``Calls.deadlines``): the
 public body's idle time, ``body_idle_seconds`` (``[server] tool_body_idle_seconds``, 10 s by

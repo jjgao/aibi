@@ -42,7 +42,7 @@ from aibi.core.api.tools import TOOLS_PREFIX
 from aibi.core.operator import auth, router
 from aibi.core.operator.auth import encode_operator, hash_token, new_token
 from aibi.core.operator.router import OPERATOR_BODIES, UPLOAD_OPERATION, OperatorBody
-from aibi.core.schema import export
+from aibi.core.schema import export, vocabulary
 from aibi.core.schema.catalog import TOOL_MODELS
 from aibi.core.schema.limits import MAX_BODY_BYTES
 from aibi.core.schema.operator import Refusals
@@ -229,7 +229,7 @@ def test_the_checked_in_document_is_current() -> None:
 
 def test_schemas_holds_exactly_what_the_two_commands_write() -> None:
     written = {path.name for path in SCHEMA_DIR.iterdir()}
-    assert written == {*export.SCHEMAS, openapi.DOCUMENT}
+    assert written == {*export.SCHEMAS, openapi.DOCUMENT, vocabulary.VOCABULARY_FILE}
 
 
 def test_the_document_is_openapi_3_1_whose_schemas_are_valid(document: dict[str, Any]) -> None:

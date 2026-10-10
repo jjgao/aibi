@@ -24,6 +24,7 @@ from typing import Any, cast
 import jsonschema
 import pytest
 from pydantic import BaseModel
+from tests.core.pins import pytest_runtest_makereport  # noqa: F401
 
 from aibi.core.schema import output
 from aibi.core.schema.output import DataSegment, Segment, TextSegment
