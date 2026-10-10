@@ -1,5 +1,6 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { vi } from "vitest";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
@@ -59,4 +60,34 @@ export async function render(node: ReactNode, container?: HTMLElement): Promise<
       host.remove();
     },
   };
+}
+
+/** Stand-ins for `Response` and `Request` whose body readers are still configurable: the seal is
+ * for good, and a copy of the client (a module reloaded for a test) knows only the readers it
+ * installed itself (D419), so each test that loads an entry or the client afresh seals prototypes
+ * of its own. `vi.unstubAllGlobals()` puts the real ones back. */
+export function freshReaders(): void {
+  for (const name of ["Response", "Request"]) {
+    class Stand {
+      json(): unknown {
+        return undefined;
+      }
+      text(): unknown {
+        return undefined;
+      }
+      arrayBuffer(): unknown {
+        return undefined;
+      }
+      blob(): unknown {
+        return undefined;
+      }
+      bytes(): unknown {
+        return undefined;
+      }
+      formData(): unknown {
+        return undefined;
+      }
+    }
+    vi.stubGlobal(name, Stand);
+  }
 }
