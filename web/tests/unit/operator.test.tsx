@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CURATE_PATH, forgetAddress } from "../../src/operator/url";
 import { freshReaders, words } from "./render";
 
-const OPERATOR = "aibi operator The operator screens are not built yet.";
+const OPERATOR = "aibi operator Enter your name and the curator token to begin. Your name Curator token Unlock The operator screens are not built yet. The catalogue";
 const ORIGIN = window.location.origin;
 
 /** A fresh document body with its `<div id="root">`, and fresh modules, as a page load gives. */

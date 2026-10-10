@@ -3,7 +3,8 @@
  * `aibi-server` (`e2e/global-setup.ts`), never Vite's dev server, which injects an inline
  * preamble. Two projects run the same tests: `prod` serves `dist/`, the bundle that ships, and
  * `e2e` serves `dist-e2e/`, the same source with the harness. No traces, screenshots or videos:
- * a trace holds request headers, where M5.1c-1c's token travels.
+ * a trace holds request headers, where the curator token travels (D423), and the report's scan
+ * (`e2e/scan-reporter.ts`) fails the run if the report or the test results hold a secret.
  *
  * Locally, `AIBI_CHROMIUM` names a Chromium to run instead of the one `playwright install`
  * downloads (CI downloads its own).
@@ -21,7 +22,8 @@ export default defineConfig<{ bundle: Bundle }>({
   retries: 0,
   workers: 4,
   timeout: 30_000,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
+  // The scan runs last: it reads what the others wrote (D423).
+  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }], ["./e2e/scan-reporter.ts"]],
   use: {
     ...devices["Desktop Chrome"],
     trace: "off",

@@ -2,8 +2,9 @@
  * The app's one place of I/O (D419): `fetch`, `Response` and `Request` are named here alone (the
  * lint refuses them, `XMLHttpRequest`, `EventSource`, `WebSocket` and every `.json()` anywhere
  * else in `src/`), and every response body the app reads goes through `readCapped` and then
- * `decode`, the one decoder. M5.1c-1c builds the operator's client (the token, sessions, CSRF) on
- * `exchange`.
+ * `decode`, the one decoder. `exchange` sends without a credential; `send` is the operator's
+ * client's (`curator.ts`, D423), the one function that sets the curator token, the operator's name
+ * and the CSRF token, on this origin's `/operator/` alone.
  *
  * **The cap.** The server bounds no response (only requests, `max_body_bytes`), and
  * `response.text()` buffers the whole body before any bound applies, so the client states its
@@ -33,7 +34,7 @@
  * engine without JSON source text (`context.source`) or `JSON.rawJSON`, which the client needs to
  * read and send numbers exactly.
  */
-import { decode, sourceTextSupported } from "./decode";
+import { decode, DecodeError, sourceTextSupported } from "./decode";
 import type { operations } from "./generated/openapi";
 import type { JsonOut } from "./json";
 import { isRoute, type OperationId, type Route } from "./route";
@@ -49,15 +50,23 @@ export const REFUSALS = {
   interrupted: "The server's answer was cut off before its end.",
   notARoute: "A request goes to a route the client made, on this origin.",
   notFinite: "A request holds a number that is not finite.",
+  notCredential: "A credential the operator's client sends is not in its form; it was not sent.",
   sealed: "A body is read by the client's decoder alone (D419).",
   unsupported:
     "This browser cannot read the server's numbers exactly (it lacks JSON source text access). Use a current Chromium, Edge or Chrome.",
 } as const;
 
+export type Refusal = keyof typeof REFUSALS;
+
+/** A refusal of the client's own: its words are `REFUSALS[refusal]`, fixed, and `refusal` names
+ * which (what `send` decides on: never the words). */
 export class ClientError extends Error {
-  constructor(words: string) {
-    super(words);
+  readonly refusal: Refusal;
+
+  constructor(refusal: Refusal) {
+    super(REFUSALS[refusal]);
     this.name = "ClientError";
+    this.refusal = refusal;
   }
 }
 
@@ -120,7 +129,7 @@ export async function readCapped(response: Response, cap: number = RESPONSE_CAP_
   const declared = response.headers.get("Content-Length");
   if (declared !== null && /^[0-9]{1,16}$/u.test(declared) && Number(declared) > cap) {
     await body?.cancel();
-    throw new ClientError(REFUSALS.tooLarge);
+    throw new ClientError("tooLarge");
   }
   if (body === null) {
     return "";
@@ -132,7 +141,7 @@ export async function readCapped(response: Response, cap: number = RESPONSE_CAP_
   try {
     for (;;) {
       const read = await reader.read().catch(() => {
-        throw new ClientError(REFUSALS.interrupted);
+        throw new ClientError("interrupted");
       });
       if (read.done) {
         break;
@@ -140,7 +149,7 @@ export async function readCapped(response: Response, cap: number = RESPONSE_CAP_
       total += read.value.byteLength;
       if (total > cap) {
         await reader.cancel();
-        throw new ClientError(REFUSALS.tooLarge);
+        throw new ClientError("tooLarge");
       }
       text += utf8(decoder, read.value, { stream: true });
     }
@@ -159,7 +168,7 @@ function utf8(decoder: TextDecoder, bytes?: Uint8Array, options?: TextDecodeOpti
   try {
     return decoder.decode(bytes, options);
   } catch {
-    throw new ClientError(REFUSALS.notUtf8);
+    throw new ClientError("notUtf8");
   }
 }
 
@@ -168,14 +177,14 @@ function utf8(decoder: TextDecoder, bytes?: Uint8Array, options?: TextDecodeOpti
 function encode(body: unknown): string {
   return JSON.stringify(body, (_key, value: unknown) => {
     if (typeof value === "number" && !Number.isFinite(value)) {
-      throw new ClientError(REFUSALS.notFinite);
+      throw new ClientError("notFinite");
     }
     return value;
   });
 }
 
 /** The JSON body an operation takes, as the generated types say (`never`: it takes none, or one
- * that is no JSON, such as an upload's, which is M5.1c-1c's). */
+ * that is no JSON, such as an upload's, which no client sends yet: D423). */
 export type RequestBody<O extends OperationId> = operations[O] extends {
   readonly requestBody: { readonly content: { readonly "application/json": infer B } };
 }
@@ -193,29 +202,133 @@ export interface Answer<O extends OperationId = OperationId> {
   readonly body: JsonOut;
 }
 
-/** Send a request to a route `routes.ts` made, with the operation's JSON body (its type the
- * generated one: a request integer is a JS number, which no `ServerNumber` is) or none, and read
- * the answer through the cap and the decoder. No ambient credential goes with it (`omit`: the
- * server sets no cookie and asks no HTTP authentication of a browser; the curator token,
- * M5.1c-1c's, is a header the client sets), no redirect is followed, nothing is cached. An answer
- * that is not JSON (by its type) is refused unread. */
-export async function exchange<O extends OperationId>(route: Route<O>, ...given: BodyArgument<O>): Promise<Answer<O>> {
-  if (!isRoute(route) || !/^\/(?:api|operator)\/[^\\]*$/u.test(route.url) || route.url.includes("//")) {
-    throw new ClientError(REFUSALS.notARoute);
-  }
-  const headers = new Headers({ Accept: "application/json" });
+/** A request's `RequestInit`: the method, no ambient credential (`omit`: the server sets no
+ * cookie and asks no HTTP authentication of a browser), no redirect followed, nothing cached, and
+ * the JSON body encoded here, as a string made afresh for each request (a refused number is
+ * refused before anything is sent). */
+function prepared(route: Route, headers: Headers, body: unknown): RequestInit {
+  headers.set("Accept", "application/json");
   const init: RequestInit = { method: route.method, headers, credentials: "omit", cache: "no-store", redirect: "error" };
-  const [body] = given;
   if (body !== undefined) {
     headers.set("Content-Type", "application/json");
     init.body = encode(body);
   }
-  const response = await fetch(route.url, init);
+  return init;
+}
+
+/** The answer to a sent request: refused unread if it is not JSON (by its type), else read
+ * through the cap and the decoder. */
+async function received<O extends OperationId>(route: Route<O>, response: Response): Promise<Answer<O>> {
   const type = response.headers.get("Content-Type");
   if (type === null || !/^application\/json\s*(?:;|$)/iu.test(type)) {
     await response.body?.cancel();
-    throw new ClientError(REFUSALS.notJson);
+    throw new ClientError("notJson");
   }
   const text = await readCapped(response);
   return { operation: route.operation, status: response.status, body: decode(text) };
+}
+
+/** Send a request to a route `routes.ts` made, with the operation's JSON body (its type the
+ * generated one: a request integer is a JS number, which no `ServerNumber` is) or none, and read
+ * the answer through the cap and the decoder. No credential goes with it: the curator token, the
+ * operator's name and the CSRF token are `send`'s alone, which the operator's client
+ * (`curator.ts`) calls and nothing else may (the lint, the import-graph test and the build's
+ * gate). An answer that is not JSON (by its type) is refused unread. */
+export async function exchange<O extends OperationId>(route: Route<O>, ...given: BodyArgument<O>): Promise<Answer<O>> {
+  if (!isRoute(route) || !/^\/(?:api|operator)\/[^\\]*$/u.test(route.url) || route.url.includes("//")) {
+    throw new ClientError("notARoute");
+  }
+  const [body] = given;
+  const init = prepared(route, new Headers(), body);
+  return received(route, await fetch(route.url, init));
+}
+
+/** What the operator's client sends beside a request (D423): the curator token (as
+ * `Authorization: Bearer`), the operator's name as the `Aibi-Operator` header carries it
+ * (percent-encoded, `curator.ts`'s `operatorHeader`), and the CSRF token (`Aibi-CSRF`; `null` for
+ * `GET /operator/csrf`, which needs none). */
+export interface Credentials {
+  readonly token: string;
+  readonly operator: string;
+  readonly csrf: string | null;
+}
+
+/** The curator token's form (D261): `aibi_` and 43 base64url characters. */
+export const TOKEN_FORM = /^aibi_[A-Za-z0-9_-]{43}$/u;
+
+/** An `Aibi-Operator` value's form (D262), upper-case hexadecimal alone (the one encoding the
+ * server accepts). */
+export const OPERATOR_FORM = /^(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+$/u;
+
+/** A CSRF token's form (D263): base64url of an HMAC-SHA256, 43 characters. */
+export const CSRF_FORM = /^[A-Za-z0-9_-]{43}$/u;
+
+/** Why the outcome of a request that may have reached the server is unknown (D423): its `fetch`
+ * failed (`network`: no answer came, which says nothing of whether the server acted), the client
+ * aborted it (`aborted`: a lock or a forget), or its answer could not be read (`interrupted`,
+ * `tooLarge`, `notJson`, `notUtf8`, `undecodable`). The operator's client never sends such a
+ * request again by itself; the person reads the state afresh. */
+export type Unknown = "network" | "aborted" | "interrupted" | "tooLarge" | "notJson" | "notUtf8" | "undecodable";
+
+/** The refusals of the client's own that come from reading an answer: an unknown outcome each. */
+const UNREAD: ReadonlyMap<Refusal, Unknown> = new Map([
+  ["interrupted", "interrupted"],
+  ["tooLarge", "tooLarge"],
+  ["notJson", "notJson"],
+  ["notUtf8", "notUtf8"],
+]);
+
+/** What `send` gives: the answer, or why the outcome is unknown. */
+export type Sent<O extends OperationId = OperationId> =
+  | { readonly kind: "answer"; readonly answer: Answer<O> }
+  | { readonly kind: "unknown"; readonly reason: Unknown };
+
+/** Send an operator request (D423): to a route `routes.ts` made under this origin's `/operator/`
+ * alone, with the credentials as headers (each refused unsent if it is not in its form, in fixed
+ * words that hold none of it), aborted with `signal`. Never throws once the request may have
+ * left: a failed `fetch`, an abort and an answer that cannot be read are an unknown outcome,
+ * `{kind: "unknown"}`, which the caller never sends again by itself. A route elsewhere, a
+ * credential not in its form and a body with a number that is not finite throw, sending
+ * nothing. The body is encoded afresh on each call. */
+export async function send<O extends OperationId>(
+  route: Route<O>,
+  credentials: Credentials,
+  signal: AbortSignal,
+  ...given: BodyArgument<O>
+): Promise<Sent<O>> {
+  if (!isRoute(route) || !/^\/operator\/[^\\]*$/u.test(route.url) || route.url.includes("//")) {
+    throw new ClientError("notARoute");
+  }
+  const { token, operator, csrf } = credentials;
+  if (!TOKEN_FORM.test(token) || !OPERATOR_FORM.test(operator) || (csrf !== null && !CSRF_FORM.test(csrf))) {
+    throw new ClientError("notCredential");
+  }
+  const headers = new Headers({ Authorization: `Bearer ${token}`, "Aibi-Operator": operator });
+  if (csrf !== null) {
+    headers.set("Aibi-CSRF", csrf);
+  }
+  const [body] = given;
+  const init = prepared(route, headers, body);
+  init.signal = signal;
+  let response: Response;
+  try {
+    response = await fetch(route.url, init);
+  } catch {
+    return { kind: "unknown", reason: signal.aborted ? "aborted" : "network" };
+  }
+  try {
+    return { kind: "answer", answer: await received(route, response) };
+  } catch (error) {
+    if (signal.aborted) {
+      return { kind: "unknown", reason: "aborted" };
+    }
+    if (error instanceof DecodeError) {
+      return { kind: "unknown", reason: "undecodable" };
+    }
+    const unread = error instanceof ClientError ? UNREAD.get(error.refusal) : undefined;
+    if (unread !== undefined) {
+      return { kind: "unknown", reason: unread };
+    }
+    throw error;
+  }
 }

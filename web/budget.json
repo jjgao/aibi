@@ -1,4 +1,4 @@
 {
-  "prod": { "bytes": 362011, "files": 5 },
-  "e2e": { "bytes": 365766, "files": 7 }
+  "prod": { "bytes": 381826, "files": 6 },
+  "e2e": { "bytes": 384816, "files": 7 }
 }

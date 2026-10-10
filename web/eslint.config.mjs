@@ -126,6 +126,12 @@ const SINK_GLOBALS = ["Function", "Reflect", "DOMParser"];
 /** The names of I/O, `src/api/client.ts`'s alone (matched exactly). */
 const IO_NAMES = ["fetch", "XMLHttpRequest", "Response", "Request", "EventSource", "WebSocket", "caches", "CacheStorage", "serviceWorker", "sendBeacon"];
 
+/** The places a page can keep or pass a value beyond its own memory (D423): storage, cookies,
+ * another context's messages. Refused in every position in all of `src/`, so that a secret (the
+ * curator token, a handle, the CSRF token, or a copy of one, `btoa(token)`) has nowhere to go
+ * but the client's closure (matched exactly). */
+const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel"];
+
 /** The names of the prototype chain, `src/api/`'s alone (matched exactly). */
 const PROTOTYPE_NAMES = ["prototype", "getPrototypeOf", "setPrototypeOf", "__proto__"];
 
@@ -224,6 +230,27 @@ const everywhere = (names, message) => [
   { selector: `ObjectPattern > Property[key.value=${exactly(names)}]`, message },
 ];
 
+const STORE = "No storage, cookie or message to another context in src/: a secret lives in the operator client's closure alone (D423).";
+
+/** The storage rules (D423): the names in every position; `history.pushState` in any form, and
+ * `history.replaceState` with a state that is not `null` written out, since an entry's state
+ * outlives the page (the URL each takes is the operator entry's fixed path, `url.ts`); `cookie` as
+ * a member or a destructured key; and the global object's `name`, which outlives a navigation.
+ * @type {Restriction[]} */
+const STORAGE_SYNTAX = [
+  ...everywhere(STORAGE_NAMES, STORE),
+  // `cookie` as a member or a destructured key (`document.cookie`), not as a type's key: the
+  // generated types name every operation's `cookie` parameters, which are `never`.
+  { selector: "MemberExpression:matches([property.name='cookie'], [property.value='cookie'])", message: STORE },
+  { selector: "ObjectPattern > Property:matches([key.name='cookie'], [key.value='cookie'])", message: STORE },
+  { selector: "Identifier[name='pushState']", message: STORE },
+  { selector: "Literal[value='pushState']", message: STORE },
+  { selector: `${called("replaceState")}:not([arguments.0.type='Literal'][arguments.0.raw='null'])`, message: STORE },
+  { selector: "MemberExpression[property.name='replaceState']:not(CallExpression > MemberExpression.callee)", message: STORE },
+  { selector: "MemberExpression[computed=true][property.value='replaceState']", message: STORE },
+  { selector: "MemberExpression[object.name=/^(window|self|globalThis|top|parent|frames|opener)$/]:matches([property.name='name'], [property.value='name'])", message: STORE },
+];
+
 /** The I/O rules: the names, and every `.json` (D419). @type {Restriction[]} */
 const IO_SYNTAX = everywhere(IO_NAMES, IO);
 
@@ -291,6 +318,26 @@ const NUMBER_SYNTAX = [
   { selector: "ImportExpression:not([source.type='Literal'])", message: IMPORT },
 ];
 
+/** The internals of `src/api/`: each module's names that its owner alone imports, within
+ * `src/api/` (outside it, every import is of the index, or of the modules the operator entry and
+ * the harness name). */
+const API_INTERNALS = [
+  { module: "box", names: ["box", "textOf"], owners: ["src/api/decode.ts"], message: "box and textOf are decode.ts's alone (D419)." },
+  { module: "decode", names: ["decode", "revive"], owners: ["src/api/client.ts"], message: "decode is client.ts's alone (D419)." },
+  { module: "client", names: ["send"], owners: ["src/api/curator.ts"], message: "send, which sets the operator's credentials, is curator.ts's alone (D423)." },
+  { module: "curator", names: ["createCurator"], owners: ["src/api/operator.ts"], message: "createCurator is operator.ts's alone: the page has one operator client (D423)." },
+];
+
+/** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns.
+ * @param {string | null} owner */
+const internals = (owner) => ({
+  patterns: API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
+    regex: `(^|/)${module}(\\.ts)?$`,
+    importNames: names,
+    message,
+  })),
+});
+
 /** The properties no file of `src/` names, but those `client.ts` needs to seal the readers.
  * @param {boolean} sealing @returns {["error", ...object[]]} */
 const properties = (sealing) => [
@@ -356,11 +403,12 @@ export default defineConfig(
     rules: {
       ...SOURCE_RULES,
       "no-bitwise": "error",
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
       "no-restricted-syntax": [
         "error",
         ...SINK_SYNTAX,
+        ...STORAGE_SYNTAX,
         ...IO_SYNTAX,
         ...JSON_READER_SYNTAX,
         ...GLOB_SYNTAX,
@@ -374,12 +422,24 @@ export default defineConfig(
     },
   },
   {
-    // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`).
+    // The operator entry: the importer of the page's operator client (`src/api/operator.ts`, D423),
+    // which the index does not re-export (its listeners would follow it into the catalogue).
+    files: ["src/operator/**"],
+    rules: {
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }] },
+      ],
+    },
+  },
+  {
+    // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`), and
+    // a driver of the page's operator client.
     files: ["src/harness/**"],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
-        { patterns: [{ regex: "(^|/)api/(?!(index|oracle)(\\.ts)?$)", message: IMPORT }] },
+        { patterns: [{ regex: "(^|/)api/(?!(index|oracle|operator)(\\.ts)?$)", message: IMPORT }] },
       ],
     },
   },
@@ -388,55 +448,32 @@ export default defineConfig(
     files: ["src/api/**"],
     rules: {
       ...SOURCE_RULES,
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              regex: "(^|/)box(\\.ts)?$",
-             
-              importNames: ["box", "textOf"],
-              message: "box and textOf are decode.ts's alone (D419).",
-            },
-            {
-              regex: "(^|/)decode(\\.ts)?$",
-             
-              importNames: ["decode", "revive"],
-              message: "decode is client.ts's alone (D419).",
-            },
-          ],
-        },
-      ],
+      "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
     },
   },
   {
-    // The decoder and the box: the one type assertion each, and `box` for the decoder.
+    // The decoder and the box: the one type assertion each.
     files: ["src/api/decode.ts", "src/api/box.ts"],
     rules: {
       "@typescript-eslint/consistent-type-assertions": "off",
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        { patterns: [{ regex: "(^|/)decode(\\.ts)?$",
-              importNames: ["decode", "revive"], message: "decode is client.ts's alone (D419)." }] },
-      ],
     },
   },
+  // Each internal's owner imports it (`API_INTERNALS`).
+  ...API_INTERNALS.flatMap(({ owners }) => owners).map((owner) => ({
+    files: [owner],
+    rules: { "@typescript-eslint/no-restricted-imports": /** @type {["error", object]} */ (["error", internals(owner)]) },
+  })),
   {
     // The one place of I/O, which seals the body readers.
     files: ["src/api/client.ts"],
     rules: {
-      "no-restricted-globals": globals([SINK_GLOBALS, SINK]),
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(true),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
-      "@typescript-eslint/no-restricted-imports": [
-        "error",
-        { patterns: [{ regex: "(^|/)box(\\.ts)?$",
-              importNames: ["box", "textOf"], message: "box and textOf are decode.ts's alone (D419)." }] },
-      ],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
     },
   },
   {

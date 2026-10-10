@@ -8,7 +8,8 @@
  * response of status 400 or more, that does not match a refusal the test said it expects, by
  * URL **and** status (Chromium logs "Failed to load resource: … status of 404" for every refusal
  * a page meets, so an expected refusal is named, never a status alone); (d) a request that
- * failed without a response. Every watcher expects the origin's `/favicon.ico` 404: Chromium
+ * failed without a response (and the console's `net::ERR_...` line for it), unless the test
+ * expected it to fail, by its URL. Every watcher expects the origin's `/favicon.ico` 404: Chromium
  * asks for an icon the documents never name.
  */
 import { readFileSync } from "node:fs";
@@ -52,7 +53,12 @@ export function unexplained(logged: readonly Logged[], expected: readonly Expect
         if (event.kind === "requestfailed") {
           return refusal.status === "failed";
         }
-        return event.kind === "console" && event.text.includes(`status of ${String(refusal.status)}`);
+        if (event.kind !== "console") {
+          return false;
+        }
+        // A request expected to fail without a response is logged as `net::ERR_...` (an abort,
+        // a reset, a refused connection: the operator matrix's unknown outcomes, D423).
+        return refusal.status === "failed" ? /^Failed to load resource: net::ERR_[A-Z_]+$/u.test(event.text) : event.text.includes(`status of ${String(refusal.status)}`);
       }),
   );
 }
@@ -166,7 +172,7 @@ export const WORDS = {
   home: "aibi The catalogue opens here. Curate",
   notFound: "aibi Nothing is here. The catalogue",
   failure: "aibi This screen failed to load. Reload the page to try again.",
-  operator: "aibi operator The operator screens are not built yet.",
+  operator: "aibi operator Enter your name and the curator token to begin. Your name Curator token Unlock The operator screens are not built yet. The catalogue",
   harness: "aibi-e2e-harness-1b6f0c",
 } as const;
 

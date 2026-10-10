@@ -126,6 +126,16 @@ test("a request that failed without a response fails the watcher, unless it was 
   }).toThrow();
 });
 
+test("a console line of a request that failed is explained by its URL expected as failed, and by nothing else", () => {
+  const url = "http://127.0.0.1:1/operator/datasets";
+  const line = { kind: "console", text: "Failed to load resource: net::ERR_CONNECTION_REFUSED", url, status: null } as const;
+  expect(unexplained([line], [{ url, status: "failed" }])).toEqual([]);
+  expect(unexplained([line], [{ url, status: 404 }])).toHaveLength(1);
+  expect(unexplained([line], [{ url: `${url}/x`, status: "failed" }])).toHaveLength(1);
+  expect(unexplained([{ ...line, text: "Failed to load resource: the server responded with a status of 401 ()" }], [{ url, status: "failed" }])).toHaveLength(1);
+  expect(unexplained([{ ...line, text: "Uncaught net::ERR_FAILED" }], [{ url, status: "failed" }])).toHaveLength(1);
+});
+
 test("a violation alone fails the watcher, even with no console line", () => {
   const watcher = new Watcher();
   watcher.clean();
