@@ -42,6 +42,7 @@ from aibi.core.schema.descriptors import (
     Descriptor,
 )
 from aibi.core.schema.document import Clause, PackKey, PackLeaf
+from aibi.core.schema.entries import analysis_entry
 from aibi.core.schema.errors import problem
 from aibi.core.schema.guards import (
     PASSED,
@@ -1198,6 +1199,14 @@ def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
                 cast(JsonValue, kept_schema),
                 f"the {member} schema of analysis {_shown(entry.id)}",
                 reads,
+            )
+        try:
+            analysis_entry(entry)
+        except ValidationError:
+            # Never the error's text: it quotes the value (A6, D402).
+            problems.append(
+                f"{label}: analysis {_shown(entry.id)} cannot be listed: a member of its entry "
+                "is beyond what list_analyses gives"
             )
         analyses.append((entry, cast(Analysis, analysis)))
     analysis_ids = [entry.id for entry, _ in analyses]
