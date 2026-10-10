@@ -5,7 +5,7 @@
  * API), a failing API call's error holds no credential, and the report scan reads the run's output.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -13,7 +13,9 @@ import type { FullResult, TestCase, TestError, TestResult, TestStep } from "@pla
 
 import { expect, test, unexplained, Watcher } from "./fixtures";
 import { api, occurrences, pageTexts, redacted } from "./operator-kit";
-import ScanReporter, { errorTexts, outputFindings } from "./scan-reporter";
+import ScanReporter, { errorTexts, findings, outputFindings } from "./scan-reporter";
+import { guardInterrupts } from "./interrupt.mjs";
+import { SERVERS_VARIABLE } from "./servers";
 
 test("the recorder catches what the policy refuses: a Trusted Types sink, inline style and script", async ({ page, origin, watcher }) => {
   await page.goto(`${origin}/`);
@@ -246,11 +248,16 @@ test("the report scan reads the run's output: a secret, a shape, or a secret spl
   expect(outputFindings("out", [secret, "\n", shaped], [secret])).toEqual(["out: 1 secret(s), 1 shape(s)"]);
 });
 
-/** A reporter driven by hand: it looks for `SECRET` in an empty directory, and writes nowhere. */
-function reporter(): { readonly scan: ScanReporter; readonly done: () => void } {
+/** A reporter driven by hand: it looks for `SECRET` in an empty directory (or the one `seed` fills),
+ * and writes nowhere; the directory is removed whatever the expectations say. */
+async function withReporter(run: (scan: ScanReporter, root: string) => Promise<void> | void, seed?: (root: string) => void): Promise<void> {
   const root = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-selftest-"));
-  const scan = new ScanReporter({ secrets: [SECRET], root, write: () => undefined });
-  return { scan, done: () => { rmSync(root, { recursive: true, force: true }); } };
+  try {
+    seed?.(root);
+    await run(new ScanReporter({ secrets: [SECRET], root, write: () => undefined }), root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 const SECRET = "selftest-secret-e17b4c-in-the-run-output";
@@ -280,31 +287,171 @@ test("the report scan's reporter fails the run on a secret in each place the run
     ["the runner's error cause", (given) => { given.onError({ message: "wrapped", cause: { stack: SECRET } }); }],
   ];
   for (const [place, print] of places) {
-    const { scan, done } = reporter();
-    print(scan);
-    expect(await scan.onEnd(PASSED), `a secret in ${place} fails the run`).toEqual({ status: "failed" });
-    done();
+    await withReporter(async (scan) => {
+      print(scan);
+      expect(await scan.onEnd(PASSED), `a secret in ${place} fails the run`).toEqual({ status: "failed" });
+    });
   }
-  const clean = reporter();
-  clean.scan.onStdOut("nothing\n");
-  clean.scan.onStdErr("nothing\n");
-  clean.scan.onTestEnd(TEST, RESULT([{ message: "an error", cause: { message: "its cause" } }, cycle]));
-  expect(await clean.scan.onEnd(PASSED)).toBeUndefined();
-  expect(await clean.scan.onEnd({ ...PASSED, status: "failed" })).toEqual({ status: "failed" });
-  clean.done();
+  await withReporter(async (scan) => {
+    scan.onStdOut("nothing\n");
+    scan.onStdErr("nothing\n");
+    scan.onTestEnd(TEST, RESULT([{ message: "an error", cause: { message: "its cause" } }, cycle]));
+    expect(await scan.onEnd(PASSED)).toBeUndefined();
+    expect(await scan.onEnd({ ...PASSED, status: "failed" })).toEqual({ status: "failed" });
+  });
 });
 
-test("an error's causes are read to a bounded depth, a cycle once", () => {
+/** A zip archive of stored entries, as `scan-reporter.ts`'s `unzipped` reads it (central directory). */
+function zipOf(entries: Record<string, string>): Buffer {
+  const parts: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(entries)) {
+    const nameBytes = Buffer.from(name);
+    const data = Buffer.from(content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(20, 4);
+    entry.writeUInt16LE(20, 6);
+    entry.writeUInt32LE(data.length, 20);
+    entry.writeUInt32LE(data.length, 24);
+    entry.writeUInt16LE(nameBytes.length, 28);
+    entry.writeUInt32LE(offset, 42);
+    central.push(entry, nameBytes);
+    parts.push(local, nameBytes, data);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(entries).length, 8);
+  end.writeUInt16LE(Object.keys(entries).length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, directory, end]);
+}
+
+test("the report scan reads the files of the report: plain, in a zip, in the HTML report's embedded zip, by secret and by shape", async () => {
+  const shaped = `aibi_${"d".repeat(43)}`;
+  const place = (where: string, how: (root: string) => void): [string, (root: string) => void] => [where, how];
+  const cases: readonly (readonly [string, (root: string) => void, string])[] = [
+    [...place("a plain file of test-results", (root) => { mkdirs(root, "test-results/a"); writeFileSync(path.join(root, "test-results/a/log.txt"), `x ${SECRET} y`); }), "test-results/a/log.txt: 1 secret(s), 0 shape(s)"],
+    [...place("a plain file of the report", (root) => { mkdirs(root, "playwright-report/data"); writeFileSync(path.join(root, "playwright-report/data/step.json"), SECRET); }), "playwright-report/data/step.json: 1 secret(s), 0 shape(s)"],
+    [...place("a zip in test-results", (root) => { mkdirs(root, "test-results/b"); writeFileSync(path.join(root, "test-results/b/trace.zip"), zipOf({ "trace.network": `GET ${SECRET}` })); }), "test-results/b/trace.zip: 1 secret(s), 0 shape(s)"],
+    [...place("the HTML report's embedded zip", (root) => { mkdirs(root, "playwright-report"); writeFileSync(path.join(root, "playwright-report/index.html"), `<script>window.data = "data:application/zip;base64,${zipOf({ "report.json": SECRET }).toString("base64")}";</script>`); }), "playwright-report/index.html: 1 secret(s), 0 shape(s)"],
+    [...place("a token's shape, no secret", (root) => { mkdirs(root, "test-results/c"); writeFileSync(path.join(root, "test-results/c/out.txt"), `Authorization: Bearer ${shaped}`); }), "test-results/c/out.txt: 0 secret(s), 1 shape(s)"],
+    [...place("a shape in a zip", (root) => { mkdirs(root, "test-results/d"); writeFileSync(path.join(root, "test-results/d/t.zip"), zipOf({ "a.txt": shaped })); }), "test-results/d/t.zip: 0 secret(s), 1 shape(s)"],
+  ];
+  for (const [where, seed, finding] of cases) {
+    await withReporter(async (scan, root) => {
+      expect(findings(root, [SECRET]), where).toEqual([finding]);
+      expect(await scan.onEnd(PASSED), `${where} fails the run`).toEqual({ status: "failed" });
+    }, seed);
+  }
+  await withReporter(async (scan, root) => {
+    expect(findings(root, [SECRET])).toEqual([]);
+    expect(await scan.onEnd(PASSED)).toBeUndefined();
+  }, (root) => {
+    mkdirs(root, "test-results/e");
+    writeFileSync(path.join(root, "test-results/e/clean.txt"), "nothing to see");
+    writeFileSync(path.join(root, "outside.txt"), SECRET);
+  });
+});
+
+function mkdirs(root: string, relative: string): void {
+  mkdirSync(path.join(root, relative), { recursive: true });
+}
+
+test("the report scan reads the run's secrets from the files the setup made, and removes the token's directory", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-secrets-"));
+  const token = "selftest-token-4b7a-not-a-real-token";
+  const seen = "selftest-handle-9c2e-seen-by-a-test";
+  const was = process.env[SERVERS_VARIABLE];
+  try {
+    writeFileSync(path.join(directory, "token"), token, { mode: 0o600 });
+    writeFileSync(path.join(directory, "seen"), `${seen}\nshort\n`, { mode: 0o600 });
+    process.env[SERVERS_VARIABLE] = JSON.stringify({ tokenFile: path.join(directory, "token"), secretsFile: path.join(directory, "seen") });
+    for (const [which, secret] of [["the token", token], ["a secret a test saw", seen]] as const) {
+      writeFileSync(path.join(directory, "token"), token, { mode: 0o600 });
+      writeFileSync(path.join(directory, "seen"), `${seen}\nshort\n`, { mode: 0o600 });
+      const root = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-root-"));
+      try {
+        mkdirSync(path.join(root, "test-results"));
+        writeFileSync(path.join(root, "test-results/log.txt"), `printed ${secret}`);
+        const written: string[] = [];
+        const result = await new ScanReporter({ root, write: (text) => written.push(text) }).onEnd(PASSED);
+        expect(result, `${which} in the report fails the run`).toEqual({ status: "failed" });
+        expect(written.join("")).toContain("1 secret(s)");
+        expect(written.join("").includes(secret), "the finding names no secret").toBe(false);
+        expect(existsSync(directory), `the token's directory is removed (${which})`).toBe(false);
+        mkdirSync(directory);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+    // The reporter, once it has removed the token's directory, releases the guard held for it.
+    {
+      const listeners = () => ["exit", "SIGTERM", "SIGHUP", "SIGINT"].map((name) => process.listenerCount(name));
+      const before = listeners();
+      writeFileSync(path.join(directory, "token"), token, { mode: 0o600 });
+      writeFileSync(path.join(directory, "seen"), `${seen}\nshort\n`, { mode: 0o600 });
+      const guard = guardInterrupts({ secrets: directory, scratch: path.join(directory, "none"), running: () => [], teardown: () => Promise.resolve(), keepScratch: () => false });
+      guard.releaseWhenScanned(true);
+      expect(listeners()).toEqual(before.map((count) => count + 1));
+      const root = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-root-"));
+      try {
+        await new ScanReporter({ root, write: () => undefined }).onEnd(PASSED);
+        expect(listeners(), "the guard is released once the reporter has finished").toEqual(before);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        guard.release();
+        mkdirSync(directory, { recursive: true });
+      }
+    }
+    // A run that is clean also removes it, and says how many secrets it looked for: the token and the one seen (a short line is none).
+    writeFileSync(path.join(directory, "token"), token, { mode: 0o600 });
+    writeFileSync(path.join(directory, "seen"), `${seen}\nshort\n`, { mode: 0o600 });
+    const root = mkdtempSync(path.join(os.tmpdir(), "aibi-scan-root-"));
+    try {
+      const written: string[] = [];
+      expect(await new ScanReporter({ root, write: (text) => written.push(text) }).onEnd(PASSED)).toBeUndefined();
+      expect(written.join("")).toContain("2 secrets");
+      expect(existsSync(directory), "the token's directory is removed after a clean run").toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    if (was === undefined) {
+      Reflect.deleteProperty(process.env, SERVERS_VARIABLE);
+    } else {
+      process.env[SERVERS_VARIABLE] = was;
+    }
+  }
+});
+
+test("an error's causes are read to a depth of 64, a cycle once", () => {
   const cycle: TestError = { message: "a" };
   cycle.cause = { message: "b", cause: cycle };
   expect(errorTexts(cycle).filter((text) => text === "a" || text === "b")).toEqual(["a", "b"]);
-  let chain: TestError = { message: "bottom" };
-  for (let depth = 0; depth < 100; depth += 1) {
-    chain = { message: `level ${String(depth)}`, cause: chain };
-  }
-  const texts = errorTexts(chain);
-  expect(texts.length).toBeLessThan(200);
-  expect(texts).toContain("level 99");
+  const chain = (length: number, secretAt: number): TestError => {
+    let error: TestError = { message: "bottom" };
+    for (let depth = length; depth >= 0; depth -= 1) {
+      error = { message: depth === secretAt ? SECRET : `level ${String(depth)}`, cause: error };
+    }
+    return error;
+  };
+  // A secret at depth 60, as Playwright prints a chain without a bound, is read; one far below is not (the walk is bounded).
+  expect(errorTexts(chain(70, 60)).join("")).toContain(SECRET);
+  expect(errorTexts(chain(70, 64)).join("")).toContain(SECRET);
+  expect(errorTexts(chain(300, 250)).join("")).not.toContain(SECRET);
+  expect(errorTexts(chain(300, 250)).length).toBeLessThan(600);
 });
 
 interface Held {
@@ -321,11 +468,13 @@ interface Interrupted {
   readonly left: string[];
   readonly teardowns: number;
   readonly secretsGoneEarly: boolean | null;
+  /** What it printed besides the first line and its teardown notices. */
+  readonly printed: string[];
 }
 
 /** Run `interrupt-child.mjs`, signal it as `signals` say (each after its delay, in milliseconds), and
  * give how it ended and what it left: its directories, and its server (alive, as a process id). */
-async function interrupted(mode: "wait" | "exit", signals: readonly (readonly [NodeJS.Signals, number])[], early = 0): Promise<Interrupted> {
+async function interrupted(mode: string, signals: readonly (readonly [NodeJS.Signals, number])[], early = 0): Promise<Interrupted> {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "interrupt-child.mjs"), mode], { stdio: ["ignore", "pipe", "inherit"] });
   let output = "";
   let announce: (held: Held) => void = () => undefined;
@@ -366,7 +515,8 @@ async function interrupted(mode: "wait" | "exit", signals: readonly (readonly [N
   if (alive(given.server)) {
     process.kill(given.server, "SIGKILL");
   }
-  return { ...how, left, teardowns: output.split("\n").filter((line) => line === "teardown").length, secretsGoneEarly };
+  const lines = output.split("\n").slice(1).filter((line) => line !== "");
+  return { ...how, left, teardowns: lines.filter((line) => line === "teardown").length, secretsGoneEarly, printed: lines.filter((line) => line !== "teardown") };
 }
 
 function alive(pid: number): boolean {
@@ -405,5 +555,60 @@ test.describe("an interrupted run leaves nothing behind (m12b, m6)", () => {
 
   test("a forced exit removes both directories and kills the server", async () => {
     expect(await interrupted("exit", [])).toMatchObject({ code: 3, signal: null, left: [], teardowns: 0 });
+  });
+
+  test("a forced exit keeps the scratch directory when it is to be kept (a failed start's serve.log), and removes the rest", async () => {
+    const outcome = await interrupted("exit-keep", []);
+    expect(outcome).toMatchObject({ code: 3, signal: null });
+    expect(outcome.left).toEqual(["the scratch directory"]);
+  });
+
+  test("a forced exit through the guard as global-setup.ts holds it keeps the scratch directory when it is asked to be kept (AIBI_E2E_KEEP)", async () => {
+    const outcome = await interrupted("run-exit-keep", []);
+    expect(outcome).toMatchObject({ code: 3, signal: null });
+    expect(outcome.left).toEqual(["the scratch directory"]);
+  });
+
+  test("an interrupt whose teardown does nothing, servers alive, does not spin: bounded rounds, then exit, which kills them", async () => {
+    const started = Date.now();
+    const outcome = await interrupted("stuck", [["SIGTERM", 400]]);
+    expect(outcome).toMatchObject({ code: 143, signal: null, left: [] });
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  test("a SIGTERM in the window between the run's teardown and the scan (the guard held for the reporter) still removes the token's directory", async () => {
+    expect(await interrupted("scanned", [["SIGTERM", 400]])).toMatchObject({ code: 143, signal: null, left: [] });
+    expect(await interrupted("scanned", [["SIGHUP", 400]])).toMatchObject({ code: 129, signal: null, left: [] });
+    expect(await interrupted("scanned", [["SIGINT", 400]])).toMatchObject({ code: 130, signal: null, left: [] });
+  });
+
+  test("the same, through the guard as global-setup.ts holds it: servers stopped by the run's end, the token's directory kept for the scan, then a SIGTERM", async () => {
+    const outcome = await interrupted("run-scanned", [["SIGTERM", 1500]]);
+    expect(outcome).toMatchObject({ code: 143, signal: null, left: [] });
+    expect(outcome.printed).toContain("finished");
+  });
+
+  test("a SIGTERM during the run, through the guard as global-setup.ts holds it, stops the servers and removes both directories", async () => {
+    expect(await interrupted("run", [["SIGTERM", 400]])).toMatchObject({ code: 143, signal: null, left: [], teardowns: 2 });
+  });
+
+  test("the run's end without the reporter releases the guard at once; with it, only when the reporter has finished", async () => {
+    const without = await interrupted("finish", []);
+    expect(without.printed).toEqual([JSON.stringify({ held: [0, 0, 0], after: [0, 0, 0] })]);
+    expect(without.left).toEqual([]);
+    const scanned = await interrupted("finish-scanned", []);
+    expect(scanned.printed).toEqual([JSON.stringify({ held: [1, 1, 1], after: [0, 0, 0] })]);
+    // The token's directory stays for the reporter (which removes it in its `onEnd`); the scratch directory and the server do not.
+    expect(scanned.left).toEqual(["the secrets directory"]);
+  });
+
+  test("global-setup.ts holds the guard through guardRun with its own directories, servers and teardown, and nothing else", () => {
+    const text = readFileSync(path.join(import.meta.dirname, "global-setup.ts"), "utf8");
+    expect(text).toContain("const run = guardRun({\n    scratch,\n    secrets,\n    children,\n    teardown,\n");
+    expect(text).toContain('scanning: () => process.env[SCANNING_VARIABLE] === "1",');
+    expect(text).toContain("if (run.closing()) {");
+    expect(text).toContain("    await run.failed();\n    throw error;");
+    expect(text).toContain("  return () => run.finish();");
+    expect(text).not.toMatch(/guardInterrupts|\.release\(\)/u);
   });
 });

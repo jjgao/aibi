@@ -18,6 +18,7 @@ import { inflateRawSync } from "node:zlib";
 
 import type { FullResult, Reporter, TestCase, TestError, TestResult, TestStep } from "@playwright/test/reporter";
 
+import { runPendingReleases } from "./interrupt.mjs";
 import { SCANNING_VARIABLE, SERVERS_VARIABLE, type Servers } from "./servers";
 
 const WEB = path.join(import.meta.dirname, "..");
@@ -107,10 +108,10 @@ export function outputFindings(place: string, chunks: readonly string[], secrets
 }
 
 /** The deepest chain of causes the scan follows. */
-const CAUSE_DEPTH = 16;
+const CAUSE_DEPTH = 64;
 
 /** The texts of an error: its message, its stack, the code snippet beside it, the value thrown, and
- * those of its `cause`, and the cause's cause, to a bounded depth, a cycle read once (the list
+ * those of its `cause`, and the cause's cause, to a bounded depth (64: Playwright prints a chain without a bound, and a cycle stops it), a cycle read once (the list
  * reporter prints `[cause]: ...`, and a cause holds whatever the error it wraps held).
  * @param seen the errors already read */
 export function errorTexts(error: TestError, seen: Set<TestError> = new Set(), depth = 0): string[] {
@@ -178,6 +179,15 @@ export default class ScanReporter implements Reporter {
   }
 
   private scan(result: FullResult): { status?: FullResult["status"] } | undefined {
+    try {
+      return this.scanned(result);
+    } finally {
+      // The token's directory is gone (`readSecrets`): the interrupt guard, kept for this window, goes.
+      runPendingReleases();
+    }
+  }
+
+  private scanned(result: FullResult): { status?: FullResult["status"] } | undefined {
     const write = this.options.write ?? ((text: string) => process.stderr.write(text));
     const secrets = this.options.secrets === undefined ? readSecrets() : [...this.options.secrets];
     if (secrets === undefined) {

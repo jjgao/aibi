@@ -113,7 +113,7 @@ describe("every one-character name, U+0000 to U+10FFFF", () => {
     }
     expect(differs).toBe(0);
     expect(digest.digest("hex")).toBe(VECTORS.headers_sha256);
-  });
+  }, 120_000); // 1.1 million names: seconds alone, more on a loaded machine (the default is 5 s)
 });
 
 describe("the boundary names", () => {

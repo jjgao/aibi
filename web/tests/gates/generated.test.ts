@@ -24,7 +24,7 @@
  *
  * Beside them, the generator's own refusals and `--check`.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -601,23 +601,27 @@ describe("the generated files are current", () => {
 
   it("--check fails, writing nothing, while a file differs from the document; a run writes it", async () => {
     const scratch = mkdtempSync(path.join(os.tmpdir(), "aibi-generate-"));
-    const changed = structuredClone(document);
-    const paths = changed["paths"] as Json;
-    paths["/api/extra"] = { get: { operationId: "extra", responses: {} } };
-    const files = {
-      document: path.join(scratch, "openapi.json"),
-      outputs: { openapi: path.join(scratch, "openapi.ts"), routes: path.join(scratch, "routes.ts") },
-    };
-    writeFileSync(files.document, JSON.stringify(changed));
-    writeFileSync(files.outputs.openapi, readFileSync(OUTPUTS.openapi, "utf8"));
-    writeFileSync(files.outputs.routes, readFileSync(OUTPUTS.routes, "utf8"));
-    const said: string[] = [];
-    expect(await main(["--check"], (line) => said.push(line), files)).toBe(1);
-    expect(said).toEqual([expect.stringContaining("openapi.ts is stale"), expect.stringContaining("routes.ts is stale")]);
-    expect(readFileSync(files.outputs.routes, "utf8")).toBe(readFileSync(OUTPUTS.routes, "utf8"));
-    expect(await main([], () => undefined, files)).toBe(0);
-    expect(readFileSync(files.outputs.routes, "utf8")).toContain("export function extra(): Route<\"extra\">");
-    expect(await main(["--check"], () => undefined, files)).toBe(0);
+    try {
+      const changed = structuredClone(document);
+      const paths = changed["paths"] as Json;
+      paths["/api/extra"] = { get: { operationId: "extra", responses: {} } };
+      const files = {
+        document: path.join(scratch, "openapi.json"),
+        outputs: { openapi: path.join(scratch, "openapi.ts"), routes: path.join(scratch, "routes.ts") },
+      };
+      writeFileSync(files.document, JSON.stringify(changed));
+      writeFileSync(files.outputs.openapi, readFileSync(OUTPUTS.openapi, "utf8"));
+      writeFileSync(files.outputs.routes, readFileSync(OUTPUTS.routes, "utf8"));
+      const said: string[] = [];
+      expect(await main(["--check"], (line) => said.push(line), files)).toBe(1);
+      expect(said).toEqual([expect.stringContaining("openapi.ts is stale"), expect.stringContaining("routes.ts is stale")]);
+      expect(readFileSync(files.outputs.routes, "utf8")).toBe(readFileSync(OUTPUTS.routes, "utf8"));
+      expect(await main([], () => undefined, files)).toBe(0);
+      expect(readFileSync(files.outputs.routes, "utf8")).toContain("export function extra(): Route<\"extra\">");
+      expect(await main(["--check"], () => undefined, files)).toBe(0);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }, 120_000);
 
   it("exits 2 on a usage error", async () => {

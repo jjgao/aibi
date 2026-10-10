@@ -22,8 +22,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { guardInterrupts } from "./interrupt.mjs";
 import { otherOrigin } from "./other-origin";
+import { guardRun } from "./run-guard.mjs";
 import { type Bundle, SCANNING_VARIABLE, SERVERS_VARIABLE, type Servers } from "./servers";
 
 const WEB = path.join(import.meta.dirname, "..");
@@ -178,14 +178,14 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
   };
   // The secrets directory holds the curator token (mode 0600): `interrupt.mjs` says what an
-  // interrupted run leaves behind, which is nothing.
-  let keepScratch = false;
-  const guard = guardInterrupts({
-    secrets,
+  // interrupted run leaves behind, which is nothing, and `run-guard.mjs` how a run holds it.
+  const run = guardRun({
     scratch,
-    running: () => children.filter((child) => child.exitCode === null && child.signalCode === null),
-    teardown: () => teardown(),
-    keepScratch: () => keepScratch || process.env["AIBI_E2E_KEEP"] !== undefined,
+    secrets,
+    children,
+    teardown,
+    scanning: () => process.env[SCANNING_VARIABLE] === "1",
+    keepAsked: () => process.env["AIBI_E2E_KEEP"] !== undefined,
   });
   try {
     const { token, hash } = newToken();
@@ -195,7 +195,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     writeFileSync(secretsFile, "", { mode: 0o600 });
     const start = async (name: string, bundle: Bundle, rates: Rates): Promise<{ served: { origin: string; dir: string; port: number }; pid: number }> => {
       const port = await freePort();
-      if (guard.closing()) {
+      if (run.closing()) {
         throw new Error("The end-to-end setup was interrupted");
       }
       const config = configuration(scratch, name, bundle, port, hash, rates);
@@ -223,13 +223,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   } catch (error) {
     // The error names a serve.log under the scratch directory (the log holds the token's hash,
     // never the token): a failed start keeps it.
-    keepScratch = !guard.closing();
-    await teardown(keepScratch);
-    guard.release();
+    await run.failed();
     throw error;
   }
-  return async () => {
-    await teardown();
-    guard.release();
-  };
+  return () => run.finish();
 }

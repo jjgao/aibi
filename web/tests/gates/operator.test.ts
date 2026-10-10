@@ -29,12 +29,12 @@
  *   and `accept` (a proposal's id) are not edits the client's `change` takes: each is a type
  *   error, and the three it takes compile.
  */
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { PAGE_TYPES } from "../../scripts/page-objects.mjs";
 import { type Checked, check, WEB } from "./program";
 
 const PARSER = {
@@ -80,7 +80,7 @@ async function idsNames(code: string, file: string): Promise<string[]> {
 
 const flaggedNames = async (code: string, file: string): Promise<boolean> => (await idsNames(code, file)).length > 0;
 
-const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel", "caches", "CacheStorage"];
+const STORAGE_NAMES = ["localStorage", "sessionStorage", "indexedDB", "IDBFactory", "cookieStore", "BroadcastChannel", "postMessage", "SharedWorker", "MessageChannel", "Worker", "caches", "CacheStorage"];
 
 const POSITIONS: readonly [string, string][] = [
   ["a reference", "export const f = (): unknown => @N@;"],
@@ -206,6 +206,10 @@ const CHANNELS: Readonly<Record<string, Cells>> = {
   "location.assign": member("location", "assign", "location.assign('/curate?' + t);"),
   "location.hash": member("location", "hash", "location.hash = t;"),
   "location.href": member("location", "href", "location.href = '/curate#' + t;"),
+  "navigator.locks": member("navigator", "locks", "void navigator.locks.request('session:' + t, () => undefined);"),
+  "navigator.registerProtocolHandler": member("navigator", "registerProtocolHandler", "navigator.registerProtocolHandler('web+x', '/c?%s' + t);"),
+  "navigator.mediaSession": member("navigator", "mediaSession", "use(navigator.mediaSession.metadata);"),
+  "document.open": member("document", "open", "document.open('/curate?' + t, '', '');"),
   "window.open": member("window", "open", "window.open('/curate?' + t);"),
   "window.name": member("window", "name", "window.name = t;"),
   "location written": written("window", "location", "location = t;"),
@@ -223,7 +227,7 @@ describe("the channels out of the page's memory, by position (M1)", () => {
         expect(cell.startsWith("export const f = ") || cell.startsWith("n/a: "), name).toBe(true);
       }
     }
-    expect(Object.keys(CHANNELS)).toHaveLength(13);
+    expect(Object.keys(CHANNELS)).toHaveLength(17);
   });
 
   it.each(
@@ -408,6 +412,9 @@ const TYPED: readonly Typed[] = [
     channels: [
       { name: "storage", write: null, read: (x, q) => `void ${x}${q}storage;` },
       { name: "clipboard", write: null, read: (x, q) => `void ${x}${q}clipboard;` },
+      { name: "locks", write: null, read: (x, q) => `void ${x}${q}locks;` },
+      { name: "registerProtocolHandler", write: null, read: (x, q) => `${x}${q}registerProtocolHandler('web+x', '/c?%s' + t);` },
+      { name: "mediaSession", write: null, read: (x, q) => `void ${x}${q}mediaSession;` },
     ],
   },
   {
@@ -424,6 +431,9 @@ const TYPED: readonly Typed[] = [
     channels: [
       { name: "title", write: "@X@.title = t;", read: null },
       { name: "cookie", write: "@X@.cookie = t;", read: (x, q) => `use(${x}${q}cookie);` },
+      { name: "open", write: null, read: (x, q) => `use(${x}${q}open('/c?' + t, '', ''));` },
+      { name: "write", write: null, read: (x, q) => `${x}${q}write(t);` },
+      { name: "writeln", write: null, read: (x, q) => `${x}${q}writeln(t);` },
     ],
   },
   {
@@ -577,7 +587,7 @@ const TYPED_CELLS: readonly (readonly [string, string, string, string])[] = TYPE
 /** Constructors that need `Window`'s own global, in a position that names no instance (`el instanceof ShadowRoot` is fine in lib.dom). */
 describe("the page's objects by type: a generated table (M1, round 2)", () => {
   it("is generated from the rule's own list of types (the self-check)", () => {
-    const configured = [...readFileSync(path.join(WEB, "eslint.config.mjs"), "utf8").matchAll(/^ {2}\["([A-Za-z]+)", (?:EVERY|\[[^\]]*\])\],$/gmu)].map((found) => found[1] ?? "");
+    const configured = [...PAGE_TYPES.keys()];
     expect(configured.length).toBeGreaterThan(0);
     const covered = new Set(TYPED.map((entry) => entry.type));
     // `globalThis` is the type of the global object itself, reached by `globalThis` in the Window rows.
