@@ -25,6 +25,13 @@ port = 8000
 #                                  # this long is cut off
 # tool_body_idle_seconds = 10      # a tool call's body (no token) that sends nothing this long
 #                                  # is refused
+# web_bundle = "web/dist"          # a built web UI (Vite): served at /, /datasets/<id>, /curate
+#                                  # and /assets/ in the catalogue page's place, at the origin
+#                                  # root only; never inside the data or an import directory.
+#                                  # Read once at start: restart after a new build. Refused
+#                                  # if group or others can write a file or directory of it,
+#                                  # or another user than the server's or root owns one, or
+#                                  # others could swap the way to it (as for this file)
 
 # [server.rates]
 # operator = { per_minute = 600, burst = 50 }
@@ -32,6 +39,7 @@ port = 8000
 # token_failures = { per_minute = 10, burst = 10 }
 # proposals = { per_minute = 30, burst = 10 }   # propose_descriptor calls a client makes
 # page = { per_minute = 120, burst = 30 }       # requests to the catalogue page's paths
+# assets = { per_minute = 600, burst = 100 }    # requests to the web bundle's files (/assets)
 
 [curator]
 # Replace with the hash `aibi-server new-token` prints; no token hashes to this one.

@@ -12,17 +12,23 @@ page's paths, where it is a page (D311): at least one refusal, and all of a chan
 - 409 ``DATASET_BUSY``, ``CONFLICT``, ``NO_SESSION``, ``NO_CHANGE``, ``DATASET_EXISTS``,
   ``RELEASE_WITHDRAWN`` and ``ERASURE_BLOCKED``; 411 ``LENGTH_REQUIRED``;
 - ``LIMIT_EXCEEDED``: 408 naming ``upload_idle_seconds``, ``tool_body_idle_seconds`` or
-  ``upload_seconds``, 413 naming ``request_bytes``, 429 naming a rate (``proposal_requests``
-  included) and 503 naming ``concurrent_imports``, ``tool_calls``, ``client_tool_calls`` or
-  ``tool_seconds`` (with ``Retry-After``), and 422 naming any other limit;
+  ``upload_seconds``, 413 naming ``request_bytes``, 429 naming a rate (``operator_requests``,
+  ``api_requests``, ``page_requests``, ``asset_requests``, ``token_failures`` and
+  ``proposal_requests``) and 503 naming ``concurrent_imports``, ``tool_calls``,
+  ``client_tool_calls`` or ``tool_seconds`` (with ``Retry-After``), and 422 naming any other
+  limit;
 - 415 ``UNSUPPORTED_MEDIA_TYPE``; 500 ``INTERNAL_ERROR``, which says nothing more;
 - 422 every other code, a pack's included.
 
 ``install`` registers the handlers that turn the core's refusals, FastAPI's validation errors
 (of path and query parameters: bodies are read by ``load_request``), Starlette's own 404 and 405
 and any other exception into refusals. With the catalogue page served (``pages``), a refusal at a
-page path (``chrome.page_path``) is a page instead, ``refused_page``: the same refusals and
-status, as HTML, with the pages' policy and ``Cache-Control: no-store`` (D311, D313). No response
+page path is a page instead, ``refused_page``: the same refusals and status, as HTML, with the
+pages' policy and ``Cache-Control: no-store`` (D311, D313), its links from the server's root
+path. Whether a request is at a page path, and that root, are what request protection recorded
+in its scope (``classify``, D414), never classified here again: a mount's scope holds the mount's
+path and root, so a refusal inside a mount at ``/m/datasets`` is JSON, as protection's own would
+be, and an unusable root path raises (D312). No response
 quotes the request: a parameter is named, not echoed, and ``refused`` and ``refused_page``, which
 every handler answers through, write each refusal with anything of a token's or a handle's shape
 blanked (``blank_secrets``), whichever service raised it.
@@ -36,11 +42,13 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from aibi.core.api.chrome import PAGE_HEADERS, page_path, refusal_document, root_of, route_path
+from aibi.core.api.chrome import PAGE_HEADERS, refusal_document
+from aibi.core.classify import classified, root_of
 from aibi.core.importers.errors import ImportRefused
 from aibi.core.operator.auth import AUTHORIZATION
 from aibi.core.schema.limits import (
     API_REQUESTS,
+    ASSET_REQUESTS,
     CLIENT_TOOL_CALLS,
     CONCURRENT_IMPORTS,
     OPERATOR_REQUESTS,
@@ -93,6 +101,7 @@ _LIMITS: Mapping[str, int] = {
     OPERATOR_REQUESTS: 429,
     API_REQUESTS: 429,
     PAGE_REQUESTS: 429,
+    ASSET_REQUESTS: 429,
     TOKEN_FAILURES: 429,
     PROPOSAL_REQUESTS: 429,
     CONCURRENT_IMPORTS: 503,
@@ -175,7 +184,8 @@ class _Handlers:
         status: int | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Response:
-        if self.pages and page_path(route_path(request.scope)):
+        found = classified(request.scope)
+        if self.pages and found is not None and found.page:
             return refused_page(root_of(request.scope), refusals, status=status, headers=headers)
         return refused(refusals, status=status, headers=headers)
 

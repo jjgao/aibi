@@ -231,6 +231,15 @@ class SessionEnd(_Request):
     expected: Sha256
 
 
+class TakeOver(_Request):
+    """A take-over, with the open session and the draft it was shown (``GET …/datasets/{d}``),
+    compared under the session's slot (D415): both, which a browser's request must give, or
+    neither, which only a client that is not a browser, such as the operator CLI, may."""
+
+    session: PositiveInt | None = None
+    expected: Sha256 | None = None
+
+
 _STORED_MESSAGE = (
     "Text the server keeps holds no token or handle, as written or percent-decoded; the value "
     "is not repeated here"
@@ -525,6 +534,7 @@ __all__ = [
     "SessionPublishedOut",
     "SkippedProposal",
     "Source",
+    "TakeOver",
     "UploadSource",
     "Uploaded",
     "WithdrawRequest",

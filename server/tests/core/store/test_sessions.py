@@ -2,6 +2,8 @@
 handles and expected drafts, the structural checks on every change, publish and discard, the
 states a draft took, and the audit trail."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -76,6 +78,60 @@ def test_a_stale_handle_is_refused_after_a_takeover_and_the_new_one_works(
     assert stale == "CONFLICT"
     draft = change(store, "lib", second.handle, second.draft, relabel(), "operator:grace")
     assert store.resolve("lib", "draft").manifest == draft
+
+
+def test_a_take_over_of_what_was_shown_refuses_a_draft_changed_since(
+    store: Store, imported: str
+) -> None:
+    """D415: the session and the draft shown are compared; on a mismatch no handle is issued
+    and the holder's handle still works."""
+    opened = open_session(store, "lib", ADA)
+    shown = {"session": opened.session, "expected": opened.draft}
+    draft = change(store, "lib", opened.handle, opened.draft, relabel(), ADA)
+    assert refused(take_over, store, "lib", "operator:grace", **shown) == "CONFLICT"
+    again = refused(take_over, store, "lib", "operator:grace", expected=opened.draft)
+    assert again == "CONFLICT"
+    draft = change(store, "lib", opened.handle, draft, relabel(label="y"), ADA)
+    taken = take_over(store, "lib", "operator:grace", session=opened.session, expected=draft)
+    assert (taken.session, taken.draft) == (opened.session, draft)
+    assert refused(take_over, store, "lib", ADA, session=opened.session + 1) == "CONFLICT"
+
+
+def test_a_change_inside_the_take_overs_window_is_seen(
+    store: Store, imported: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ada's change lands after the take-over was asked for and just before it takes the
+    session's slot: compared under the slot, it is seen."""
+    opened = open_session(store, "lib", ADA)
+    shown = {"session": opened.session, "expected": opened.draft}
+    original = Store.exclusive
+    armed = [True]
+    landed: list[str] = []
+
+    @contextmanager
+    def exclusive(self: Store, dataset: str, kind: Any) -> Iterator[None]:
+        if armed and kind == "session":
+            armed.clear()
+            landed.append(change(store, "lib", opened.handle, opened.draft, relabel(), ADA))
+        with original(self, dataset, kind):
+            yield
+
+    monkeypatch.setattr(Store, "exclusive", exclusive)
+    assert refused(take_over, store, "lib", "operator:grace", **shown) == "CONFLICT"
+    assert landed
+    change(store, "lib", opened.handle, landed[0], relabel(label="z"), ADA)
+
+
+def test_a_take_over_of_a_session_since_replaced_is_refused(store: Store, imported: str) -> None:
+    """A discarded session replaced by another on the same release has the same draft; the
+    session's id tells them apart."""
+    ada = open_session(store, "lib", ADA)
+    shown = {"session": ada.session, "expected": ada.draft}
+    discard(store, "lib", ada.handle, ada.draft, ADA)
+    bob = open_session(store, "lib", "operator:bob")
+    assert bob.draft == ada.draft
+    assert refused(take_over, store, "lib", "operator:eve", **shown) == "CONFLICT"
+    change(store, "lib", bob.handle, bob.draft, relabel(), "operator:bob")
 
 
 def test_a_stale_expected_draft_is_refused(store: Store, imported: str) -> None:

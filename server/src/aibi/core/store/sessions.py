@@ -7,7 +7,10 @@ handle never appears in the app DB, the audit trail, a refusal or a ``repr``. Ev
 publish and discard carries the handle and the draft manifest hash it expects: a handle that is
 not the current one (wrong, or replaced by a takeover), or a hash other than the draft's, is a
 ``CONFLICT``, and no open session is ``NO_SESSION``. Taking over needs no handle and issues a new
-one, invalidating the old.
+one, invalidating the old; given the session and the draft the operator was shown, it is a
+``CONFLICT`` unless the open session is that one and its draft that draft, compared while the
+session's slot is held, so that no change, discard or new session in between is taken over unseen
+(D415).
 
 A **change** applies its edits (``edits``, D245), sets versions against the session's base (D243),
 and checks the result in this order, the first stage that fails refusing it with all its refusals
@@ -305,17 +308,36 @@ def discard(store: Store, dataset: str, handle: str, expected: str, by: str) -> 
         store.sweep()
 
 
-def take_over(store: Store, dataset: str, by: str) -> Opened:
-    """Issue a new handle for the open session, invalidating the old one; the draft is kept."""
+def take_over(
+    store: Store,
+    dataset: str,
+    by: str,
+    *,
+    session: int | None = None,
+    expected: str | None = None,
+) -> Opened:
+    """Issue a new handle for the open session, invalidating the old one; the draft is kept.
+    Given ``session`` or ``expected``, the session and draft shown, a ``CONFLICT`` unless the
+    open session is that one with that draft, decided under the session's slot (D415)."""
     operator(by)
     with store.exclusive(dataset, "session"):
-        session = _open(store, dataset)
+        found = _open(store, dataset)
+        if session is not None and found.id != session:
+            raise StoreRefused(
+                RefusalCode.CONFLICT,
+                "The open session is not the one shown: it was ended, and another opened",
+            )
+        if expected is not None and found.draft != expected:
+            raise StoreRefused(
+                RefusalCode.CONFLICT,
+                "The draft is not at the state shown: a change came first",
+            )
         handle, hashed = _new_handle()
         with store.db.transaction() as db:
-            store.db.set_handle(db, session.id, hashed)
-            detail: JsonValue = {"base": session.base, "draft": session.draft}
-            store.db.audit(db, store.now(), dataset, by, "take_over", detail, session.id)
-    return Opened(session.id, handle, session.base, session.draft)
+            store.db.set_handle(db, found.id, hashed)
+            detail: JsonValue = {"base": found.base, "draft": found.draft}
+            store.db.audit(db, store.now(), dataset, by, "take_over", detail, found.id)
+    return Opened(found.id, handle, found.base, found.draft)
 
 
 __all__ = [
