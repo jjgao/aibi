@@ -19,9 +19,14 @@ unknown ones included. It checks, in this order, and refuses at the first check 
    given once; an ``Origin``, if given, is checked as above. It is still counted, against the
    client's ``page`` rate; any other request from another site, a page's subresource or a
    navigation a script started without the person included, is refused here, before any rate
-   counts it.
+   counts it. At ``/curate`` and below, the web bundle's operator entry (D412), a request is
+   admitted only with one ``Sec-Fetch-Site`` that is exactly ``none`` (a typed address, a
+   bookmark, a link from another application) or ``same-origin`` (``ORIGIN_NOT_ALLOWED``
+   otherwise, an absent header included): an allow-list, defence in depth against other web
+   pages and frames rather than a barrier.
 3. **CORS preflights** (D258): each takes a token from the client's ``api`` bucket, or at a page
-   path its ``page`` bucket (D314) (429 when it is empty), then is answered for a CORS origin on
+   path its ``page`` bucket (D314), or at ``/assets`` its ``assets`` bucket (D413) (429 when it
+   is empty), then is answered for a CORS origin on
    the API and mounts, for ``GET`` and ``POST`` and the ``Content-Type`` header, without
    credentials; any other preflight is refused. With
    CORS configured, responses there carry ``Vary: Origin``, and a CORS origin's requests
@@ -29,8 +34,9 @@ unknown ones included. It checks, in this order, and refuses at the first check 
 4. **Off the operator router, the client's rate** (D259): one token from the client's bucket of
    the path's class (``LIMIT_EXCEEDED`` naming the rate, 429, with ``Retry-After``): with
    ``pages``, ``page`` at the page paths (``page_requests``, D314), so that page views never
-   spend the ``api`` bucket agents use, and ``api`` elsewhere. Only requests that passed the Host
-   and Origin checks count, so a web page cannot drain the bucket local clients share.
+   spend the ``api`` bucket agents use; ``assets`` at ``/assets`` and below (``asset_requests``,
+   D413); and ``api`` elsewhere. Only requests that passed the Host and Origin checks count, so a
+   web page cannot drain the bucket local clients share.
 5. **At /operator and below** (D259, D261–D263): ``Authorization: Bearer <curator token>``, the
    only place a token is taken, and none in the URL or a cookie, as written or percent-decoded,
    is verified first. A request that fails takes a token from the client's ``token_failures``
@@ -52,7 +58,8 @@ unknown ones included. It checks, in this order, and refuses at the first check 
 Every response gets ``X-Content-Type-Options: nosniff``, ``Referrer-Policy: no-referrer``,
 ``Cross-Origin-Resource-Policy: same-origin`` and, unless it set its own, ``Content-Security-Policy:
 default-src 'none'; frame-ancestors 'none'``; the operator router's get ``Cache-Control:
-no-store``, and with TLS every response gets ``Strict-Transport-Security``. No response carries an
+no-store``, and so does every answer at ``/assets`` but a file served (D411), and with TLS every
+response gets ``Strict-Transport-Security``. No response carries an
 ``Access-Control-*`` header but the CORS headers this middleware adds. An exception that the
 application leaves unanswered is answered here with ``INTERNAL_ERROR`` and logged, never quoted,
 its path with any segment of a token's or a handle's shape blanked (``blank_path``); a client
@@ -60,6 +67,12 @@ that left before its body arrived gets no answer. WebSocket connections get the 
 rate checks, and none reaches the operator router; lifespan events pass through. Refusals have
 the one error shape (D265), and quote nothing of the request; with ``pages``, a refusal at a page
 path (``chrome.page_path``) is a page with the pages' headers instead (D311, D313).
+
+The middleware classifies each request once and records it in the request's scope
+(``classify.Classified``: its kind, the server's root path and whether a browser sent it),
+dropping a record an incoming scope holds, as it drops an attribution; the error handlers, the
+pages, the web bundle and the operator router read that record and classify nothing again
+(D414).
 """
 
 import logging
@@ -74,13 +87,23 @@ from typing import Literal, cast
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from aibi.core.api.chrome import PAGE_HEADERS, navigable, page_path, refusal_document, root_link
+from aibi.core.api.chrome import (
+    ASSETS_PREFIX,
+    CURATE_PATH,
+    PAGE_HEADERS,
+    navigable,
+    page_path,
+    refusal_document,
+    root_link,
+    under,
+)
 from aibi.core.api.chrome import route_path as _route_path
 from aibi.core.api.config import ServerConfig
 from aibi.core.api.errors import status_of
 from aibi.core.api.logs import WithoutSecrets
 from aibi.core.api.origins import host_name, origin, own_origins
 from aibi.core.api.rates import Buckets, Rate, client_key
+from aibi.core.classify import CLASSIFIED_KEY, Classified, Kind
 from aibi.core.operator.auth import (
     AUTHORIZATION,
     CSRF_HEADER,
@@ -99,6 +122,7 @@ from aibi.core.operator.auth import (
 )
 from aibi.core.schema.limits import (
     API_REQUESTS,
+    ASSET_REQUESTS,
     OPERATOR_REQUESTS,
     PAGE_REQUESTS,
     REQUEST_BYTES,
@@ -108,7 +132,7 @@ from aibi.core.schema.operator import Refusals
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, blank_secrets
 
-RateClass = Literal["operator", "api", "token_failures", "page"]
+RateClass = Literal["operator", "api", "token_failures", "page", "assets"]
 UPLOAD_PATH = re.compile(r"^/operator/datasets/[^/]+/uploads$")
 CSRF_PATH = f"{OPERATOR_PREFIX}/csrf"
 CORS_PREFIXES = ("/api", "/mcp")
@@ -127,8 +151,19 @@ _LIMIT_NAMES: Mapping[RateClass, str] = {
     "operator": OPERATOR_REQUESTS,
     "api": API_REQUESTS,
     "page": PAGE_REQUESTS,
+    "assets": ASSET_REQUESTS,
     "token_failures": TOKEN_FAILURES,
 }
+_CLASS_OF: Mapping[Kind, RateClass] = {
+    "navigable": "page",
+    "page": "page",
+    "operator": "operator",
+    "asset": "assets",
+    "other": "api",
+}
+"""The rate class of each kind of request (D259, D314, D413)."""
+_ADMITTED_SITES = ("none", "same-origin")
+"""The only ``Sec-Fetch-Site`` values admitted at ``/curate`` and below (D412)."""
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _CROSS_SITE = frozenset({b"same-site", b"cross-site"})
 _TOKEN_MESSAGE = "Operator requests carry the curator token: Authorization: Bearer <token>"
@@ -149,8 +184,6 @@ class Policy:
     token_digest: bytes = field(repr=False)
     csrf_key: bytes = field(repr=False)
     rates: Mapping[RateClass, Rate]
-    classes: Sequence[tuple[str, RateClass]]
-    """The rate class of each path prefix; any other path is ``api``. #12 adds ``/mcp``."""
     max_body_bytes: int
     upload_bytes: int
     tls: bool
@@ -171,9 +204,9 @@ class Policy:
                 "operator": Rate(rates.operator.per_minute, rates.operator.burst),
                 "api": Rate(rates.api.per_minute, rates.api.burst),
                 "page": Rate(rates.page.per_minute, rates.page.burst),
+                "assets": Rate(rates.assets.per_minute, rates.assets.burst),
                 "token_failures": Rate(rates.token_failures.per_minute, rates.token_failures.burst),
             },
-            classes=((OPERATOR_PREFIX, "operator"),),
             max_body_bytes=config.server.max_body_bytes,
             upload_bytes=config.imports.import_bytes,
             tls=config.tls,
@@ -216,10 +249,6 @@ def _refused(
     return _Refused(found, headers)
 
 
-def _under(path: str, prefix: str) -> bool:
-    return path == prefix or path.startswith(prefix + "/")
-
-
 @dataclass(frozen=True)
 class _Seen:
     """What the checks read of a request."""
@@ -234,9 +263,11 @@ class _Seen:
     """The client's rate-limit key (``client_key``)."""
     root_path: str
     """The server's root path, which the pages' links start from (``chrome.root_link``)."""
+    kind: Kind
+    """The request's one classification (D414)."""
 
     @classmethod
-    def of(cls, scope: Scope) -> "_Seen":
+    def of(cls, scope: Scope, *, pages: bool) -> "_Seen":
         headers: dict[bytes, list[bytes]] = {}
         for name, value in cast(Sequence[tuple[bytes, bytes]], scope.get("headers", ())):
             headers.setdefault(bytes(name).lower(), []).append(bytes(value))
@@ -252,6 +283,7 @@ class _Seen:
             headers={name: tuple(values) for name, values in headers.items()},
             client="" if client is None else client_key(str(client[0])),
             root_path=cast(str, scope.get("root_path", "")),
+            kind=_kind(path, pages=pages),
         )
 
     def one(self, name: bytes) -> str | None:
@@ -261,11 +293,21 @@ class _Seen:
 
     @property
     def operator(self) -> bool:
-        return _under(self.path, OPERATOR_PREFIX)
+        return self.kind == "operator"
+
+    @property
+    def page(self) -> bool:
+        """Whether it is at a page path of an application that serves the pages."""
+        return self.kind in ("navigable", "page")
+
+    @property
+    def curate(self) -> bool:
+        """Whether it is at the web bundle's operator entry or below (D412)."""
+        return under(self.path, CURATE_PATH)
 
     @property
     def cors_path(self) -> bool:
-        return any(_under(self.path, prefix) for prefix in CORS_PREFIXES)
+        return any(under(self.path, prefix) for prefix in CORS_PREFIXES)
 
     @property
     def upload(self) -> bool:
@@ -288,7 +330,7 @@ class _Seen:
         return (
             self.method == "GET"
             and not self.websocket
-            and navigable(self.path)
+            and self.kind == "navigable"
             and self.one(b"sec-fetch-site") in ("same-site", "cross-site")
             and self.one(b"sec-fetch-mode") == "navigate"
             and self.one(b"sec-fetch-dest") == "document"
@@ -307,6 +349,19 @@ class _Seen:
     def origin(self) -> str | None:
         given = self.one(b"origin")
         return None if given is None else origin(given)
+
+
+def _kind(path: str, *, pages: bool) -> Kind:
+    """The request's kind by the path the routes match (``classify``, D414)."""
+    if pages and navigable(path):
+        return "navigable"
+    if pages and page_path(path):
+        return "page"
+    if under(path, OPERATOR_PREFIX):
+        return "operator"
+    if under(path, ASSETS_PREFIX):
+        return "asset"
+    return "other"
 
 
 class RequestProtection:
@@ -332,17 +387,19 @@ class RequestProtection:
             return
         if scope["type"] not in ("http", "websocket"):
             raise RuntimeError("request protection passes lifespan, HTTP and WebSocket alone")
-        scope = {key: value for key, value in scope.items() if key not in (OPERATOR_KEY, CSRF_KEY)}
-        seen = _Seen.of(scope)
+        dropped = (OPERATOR_KEY, CSRF_KEY, CLASSIFIED_KEY)
+        scope = {key: value for key, value in scope.items() if key not in dropped}
+        seen = _Seen.of(scope, pages=self.pages)
+        scope = {**scope, CLASSIFIED_KEY: self._classified(seen)}
         found = self._host(seen) or self._origin(seen)
         if found is None and seen.preflight and not seen.websocket:
-            found = self._rate(seen, "page" if self._page(seen) else "api")
+            found = self._rate(seen, "api" if seen.operator else _CLASS_OF[seen.kind])
             if found is None:
                 await self._preflight(seen, send)
                 return
         by: str | None = None
         if found is None and not seen.operator:
-            found = self._rate(seen, self._class(seen))
+            found = self._rate(seen, _CLASS_OF[seen.kind])
         elif found is None and seen.websocket:
             found = _refused(RefusalCode.NOT_FOUND, "The operator router serves no WebSocket")
         elif found is None:
@@ -385,6 +442,12 @@ class RequestProtection:
         allowed = self._allowed_origins(seen)
         if given and (len(given) != 1 or seen.origin not in allowed):
             return _refused(RefusalCode.ORIGIN_NOT_ALLOWED, "Requests from this origin are refused")
+        if seen.curate and seen.one(b"sec-fetch-site") not in _ADMITTED_SITES:
+            return _refused(
+                RefusalCode.ORIGIN_NOT_ALLOWED,
+                "The operator entry opens only in a browser, from a typed address, a bookmark or "
+                "this server's own pages",
+            )
         site = seen.headers.get(b"sec-fetch-site", ())
         if self.pages and seen.navigation:
             return None
@@ -429,17 +492,13 @@ class RequestProtection:
             headers=((b"retry-after", str(max(1, math.ceil(wait))).encode("ascii")),),
         )
 
-    def _page(self, seen: _Seen) -> bool:
-        """Whether the request is at a page path of an application that serves the page."""
-        return self.pages and page_path(seen.path)
-
-    def _class(self, seen: _Seen) -> RateClass:
-        if self._page(seen):
-            return "page"
-        for prefix, name in self.policy.classes:
-            if _under(seen.path, prefix):
-                return name
-        return "api"
+    def _classified(self, seen: _Seen) -> Classified:
+        """The record of the request (D414)."""
+        try:
+            root: str | None = root_link(seen.root_path)
+        except ValueError:
+            root = None
+        return Classified(kind=seen.kind, root=root, browser=seen.browser)
 
     def _rate(self, seen: _Seen, name: RateClass) -> _Refused | None:
         wait = self._buckets[name].take(seen.client)
@@ -546,7 +605,8 @@ class RequestProtection:
                 headers.extend(pair for pair in SECURITY_HEADERS if pair[0] not in names)
                 if b"content-security-policy" not in names:
                     headers.append((b"content-security-policy", CONTENT_SECURITY_POLICY))
-                if seen.operator:
+                stored = seen.kind == "asset" and message["status"] != 200
+                if seen.operator or stored:
                     headers = [pair for pair in headers if pair[0] != b"cache-control"]
                     headers.append((b"cache-control", b"no-store"))
                 if self.policy.tls:
@@ -563,7 +623,7 @@ class RequestProtection:
     async def _refuse(self, seen: _Seen, send: Send, found: _Refused) -> None:
         refusal = blank_secrets(found.refusal)
         page: list[tuple[bytes, bytes]] = []
-        if self._page(seen):
+        if seen.page:
             body = refusal_document(self._root(seen), [refusal])
             kind = b"text/html; charset=utf-8"
             page = [(name.lower().encode(), value.encode()) for name, value in PAGE_HEADERS.items()]

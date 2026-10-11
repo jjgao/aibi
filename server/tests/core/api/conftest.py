@@ -17,6 +17,16 @@
   at import), ``logging.lastResort``, ``captureWarnings``, the warnings filters and
   ``showwarning``, ``sys.meta_path`` (removing ``NoDuckDB``) and ``sys.modules`` (removing the
   test packs' modules, named ``TEST_PACKS`` and on).
+- ``bundle_dir`` copies the checked-in web bundle (``fixtures/vite8``: the manifest, the build's
+  own ``index.html`` and ``operator.html``, and its files, the scripts' code replaced by
+  stand-ins, of a two-entry Vite 8.3.2 build with a shared chunk and its stylesheet, a lazy chunk
+  with its own, an image a script imports and one a stylesheet does, and an icon) into
+  ``tmp_path`` for a test to change; ``make_bundled`` builds the whole application, the tool
+  calls and a web bundle with them, like ``make_app`` otherwise; ``drive`` sends many requests
+  straight to an ASGI application in one event loop, for the generated tests. ``vite8`` and
+  ``copy_bundle`` copy the checked-in bundle as ``bundle_dir`` does, to load unchanged and
+  anywhere; each gives the loader modes it accepts (D410) whatever the umask of the checkout, and
+  ``safe_umask`` holds one for the test, so the files it adds are accepted too.
 
 Test modules can't import one another (``--import-mode=importlib``), so the helpers are given as
 fixtures.
@@ -25,6 +35,7 @@ fixtures.
 import dataclasses
 import logging
 import os
+import shutil
 import sys
 import warnings
 from collections.abc import Callable, Iterator, Sequence
@@ -40,9 +51,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from aibi.core.api import packs
 from aibi.core.api.app import create_app
+from aibi.core.api.bundle import Bundle, load_bundle
 from aibi.core.api.config import BASE, ServerConfig
 from aibi.core.api.protection import Policy
-from aibi.core.api.serve import services_of
+from aibi.core.api.serve import services_of, tools_of
 from aibi.core.operator.auth import encode_operator, hash_token, new_token
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.store.store import Store
@@ -51,6 +63,8 @@ TEST_PACKS = "aibi_test_pack_"
 """The prefix of every test pack module's name, which ``_process_state`` unloads."""
 BASE_URL = "http://127.0.0.1:8000"
 GENEROUS = {"per_minute": 1_000_000, "burst": 1_000_000}
+FIXTURE_BUNDLE = Path(__file__).resolve().parent / "fixtures" / "vite8"
+RATE_CLASSES = ("operator", "api", "token_failures", "proposals", "page", "assets")
 
 
 async def mcp(scope: Scope, receive: Receive, send: Send) -> None:
@@ -305,3 +319,214 @@ def write_config(tmp_path: Path) -> Callable[..., Path]:
         return path
 
     return write
+
+
+@pytest.fixture
+def safe_umask() -> Iterator[None]:
+    """The umask a bundle's files are made under: the loader refuses a file or directory that
+    group or others can write (D410), which a checkout under another umask would give."""
+    before = os.umask(0o022)
+    yield
+    os.umask(before)
+
+
+@pytest.fixture
+def copy_bundle(safe_umask: None) -> Callable[[Path, Path], Path]:
+    """Copy a bundle, its modes made ones the loader accepts (``0o755`` and ``0o644``, whatever
+    the checkout's umask gave the original)."""
+
+    def copy(source: Path, target: Path) -> Path:
+        shutil.copytree(source, target, symlinks=True)
+        for directory, _, names in os.walk(target):
+            os.chmod(directory, 0o755)
+            for name in names:
+                if not Path(directory, name).is_symlink():
+                    os.chmod(Path(directory, name), 0o644)
+        return target
+
+    return copy
+
+
+@pytest.fixture
+def vite8(tmp_path: Path, copy_bundle: Callable[[Path, Path], Path]) -> Path:
+    """The checked-in bundle, copied beside ``tmp_path`` for a test to load unchanged."""
+    return copy_bundle(FIXTURE_BUNDLE, tmp_path / "vite8")
+
+
+@pytest.fixture
+def bundle_dir(tmp_path: Path, copy_bundle: Callable[[Path, Path], Path]) -> Path:
+    return copy_bundle(FIXTURE_BUNDLE, tmp_path / "bundle")
+
+
+@dataclass
+class Bundled:
+    app: FastAPI
+    client: TestClient
+    store: Store
+    token: str
+    config: ServerConfig
+    root: Path
+    clock: Clock
+    bundle: Bundle | None
+
+    def headers(self, **extra: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Aibi-Operator": encode_operator("Ada Lovelace"),
+            **extra,
+        }
+
+
+MakeBundled = Callable[..., Bundled]
+
+
+@pytest.fixture
+def make_bundled(tmp_path: Path) -> Iterator[MakeBundled]:
+    made: list[Bundled] = []
+
+    def make(
+        bundle: Path | None,
+        *,
+        name: str = "bundled",
+        server: dict[str, Any] | None = None,
+        mounts: dict[str, ASGIApp] | None = None,
+        **client: Any,
+    ) -> Bundled:
+        root = tmp_path / name
+        (root / "imports").mkdir(parents=True)
+        token = new_token()
+        given = dict(server or {})
+        given["rates"] = {
+            **dict.fromkeys(RATE_CLASSES, GENEROUS),
+            **given.get("rates", {}),
+        }
+        if bundle is not None:
+            given["web_bundle"] = str(bundle)
+        written: dict[str, Any] = {
+            "server": given,
+            "curator": {"token_hash": hash_token(token)},
+            "storage": {"data": "data", "imports": ["imports"]},
+        }
+        config = ServerConfig.model_validate(written, context={BASE: root})
+        store = Store(config.storage.data)
+        services = services_of(config, store, PackRegistry((), core_version="0.0.1"))
+        clock = Clock()
+        loaded = None if config.server.web_bundle is None else load_bundle(config.server.web_bundle)
+        app = create_app(
+            Policy.of(config, csrf_key=b"k" * 32),
+            services,
+            tools=tools_of(config, store, None),
+            mounts=mounts or {},
+            clock=clock,
+            bundle=loaded,
+        )
+        test_client = TestClient(app, base_url=client.pop("base_url", BASE_URL), **client)
+        test_client.__enter__()
+        found = Bundled(app, test_client, store, token, config, root, clock, loaded)
+        made.append(found)
+        return found
+
+    yield make
+    for found in made:
+        found.client.__exit__(None, None, None)
+        found.store.close()
+
+
+@dataclass(frozen=True)
+class Sent:
+    """One request for ``drive``: its path as the scope holds it (decoded), and the rest."""
+
+    path: str
+    method: str = "GET"
+    headers: tuple[tuple[bytes, bytes], ...] = ((b"host", b"127.0.0.1:8000"),)
+    root_path: str = ""
+    raw_path: bytes | None = None
+    query: bytes = b""
+    client: tuple[str, int] = ("127.0.0.1", 50000)
+    websocket: bool = False
+
+
+@dataclass
+class Got:
+    status: int | None
+    headers: list[tuple[bytes, bytes]]
+    body: bytes
+    accepted: bool = False
+    """For a WebSocket: whether the application accepted it."""
+
+    def header(self, name: bytes) -> bytes | None:
+        found = [value for key, value in self.headers if key == name]
+        assert len(found) <= 1, (name, found)
+        return found[0] if found else None
+
+
+async def _one(app: ASGIApp, sent: Sent) -> Got:
+    scope: Scope = {
+        "type": "websocket" if sent.websocket else "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": sent.method,
+        "scheme": "ws" if sent.websocket else "http",
+        "path": sent.path,
+        "raw_path": sent.raw_path if sent.raw_path is not None else sent.path.encode(),
+        "root_path": sent.root_path,
+        "query_string": sent.query,
+        "headers": list(sent.headers),
+        "client": sent.client,
+        "server": ("127.0.0.1", 8000),
+    }
+    if sent.websocket:
+        scope.pop("method")
+        scope["subprotocols"] = []
+    got = Got(None, [], b"")
+    pending: list[Message] = (
+        [{"type": "websocket.connect"}]
+        if sent.websocket
+        else [{"type": "http.request", "body": b"", "more_body": False}]
+    )
+
+    async def receive() -> Message:
+        if pending:
+            return pending.pop(0)
+        return (
+            {"type": "websocket.disconnect", "code": 1000}
+            if sent.websocket
+            else {"type": "http.disconnect"}
+        )
+
+    async def send(message: Message) -> None:
+        if message["type"] == "http.response.start":
+            got.status = message["status"]
+            got.headers = [(bytes(k).lower(), bytes(v)) for k, v in message.get("headers", [])]
+        elif message["type"] == "http.response.body":
+            got.body += message.get("body", b"")
+        elif message["type"] == "websocket.accept":
+            got.accepted = True
+        elif message["type"] == "websocket.close":
+            got.status = got.status or 1000
+
+    await app(scope, receive, send)
+    return got
+
+
+def _drive(app: ASGIApp, requests: Sequence[Sent]) -> list[Got]:
+    answers: list[Got] = []
+
+    async def main() -> None:
+        with anyio.fail_after(600):
+            for sent in requests:
+                answers.append(await _one(app, sent))
+
+    anyio.run(main)
+    return answers
+
+
+@pytest.fixture
+def drive() -> Callable[[ASGIApp, Sequence[Sent]], list[Got]]:
+    return _drive
+
+
+@pytest.fixture
+def sent() -> type[Sent]:
+    """``Sent``, the requests ``drive`` sends."""
+    return Sent

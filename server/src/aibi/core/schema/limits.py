@@ -233,6 +233,8 @@ API_REQUESTS = "api_requests"
 """Requests a client makes to every other route, per minute (D259)."""
 PAGE_REQUESTS = "page_requests"
 """Requests a client makes to the catalogue page's paths, per minute (D314)."""
+ASSET_REQUESTS = "asset_requests"
+"""Requests a client makes to the web bundle's files at ``/assets``, per minute (D413)."""
 TOKEN_FAILURES = "token_failures"
 """Operator requests a client makes with a missing or wrong curator token, per minute (D259)."""
 CONCURRENT_IMPORTS = "concurrent_imports"
@@ -408,6 +410,7 @@ __all__ = [
     "ARCHIVE_BYTES",
     "ARCHIVE_MEMBERS",
     "ARCHIVE_RATIO",
+    "ASSET_REQUESTS",
     "CHANGE_EDITS",
     "CLAUSES",
     "CLAUSE_DEPTH",

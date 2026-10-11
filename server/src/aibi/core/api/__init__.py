@@ -12,7 +12,12 @@ request protection.
 - ``chrome``: what the catalogue's pages share, their refusals and page paths included (D311,
   D313, D314).
 - ``page``: the read-only catalogue page, at ``/`` and ``/datasets/<dataset>`` (D311, D313).
-- ``app``: the application, with the tools, the MCP transport, the catalogue page, the operator
-  router and the mounts behind the middleware.
+- ``bundle``: a built web bundle, loaded at start, its two documents written by the server, and
+  its routes, which replace the catalogue page's (D410–D412).
+- ``app``: the application, with the tools, the MCP transport, the catalogue page or the web
+  bundle, the operator router and the mounts behind the middleware.
+
+``aibi.core.classify`` holds the record of each request that the middleware makes and the rest
+reads (D414).
 - ``serve``: ``aibi-server``, which checks the configuration, makes tokens and runs uvicorn.
 """

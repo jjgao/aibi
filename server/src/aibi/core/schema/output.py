@@ -405,7 +405,7 @@ REPORT_CLASSIFICATION = 1
 classification is read with each note's fixed text. Raised only when that changes (M4.0f-A2b's
 conversions), never for a change of wording."""
 
-CACHE_WORDING = 6
+CACHE_WORDING = 7
 """The server's wording: a cached result written under another wording is not read back, and
 the call computes it again (D374, D399). Raised with any change to a ``text()`` template (a test
 holds their digest) and with every change of ``REPORT_CLASSIFICATION``."""

@@ -60,7 +60,15 @@ MCP_LOGGERS = (
     "mcp.shared.session",
 )
 """The MCP SDK's loggers on the server's paths."""
-LOGGERS = ("", "uvicorn.access", "uvicorn.error", "aibi", "aibi.core.api.protection", *MCP_LOGGERS)
+LOGGERS = (
+    "",
+    "uvicorn.access",
+    "uvicorn.error",
+    "aibi",
+    "aibi.core.api.protection",
+    "aibi.core.api.bundle",
+    *MCP_LOGGERS,
+)
 """The loggers the filter is put on: the root logger, uvicorn's, the server's own and the MCP
 SDK's."""
 FILTER = "without_secrets"
