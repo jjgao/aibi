@@ -5,6 +5,7 @@ description = "AI-native cohort exploration over related tables"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+    "attrs>=22.2",  # jsonschemas.py reads the attrs fields of jsonschema's validators (Attribute.alias)
     "duckdb>=1.5.5,<1.6",  # a new DuckDB can change a digest: bump the versions it changes (§7.6)
     # The scanners a Postgres or MySQL snapshot loads, DuckDB's own signed builds, one per DuckDB
     # version, which DuckDB checks the signature of when it loads them (D306).
@@ -12,6 +13,8 @@ dependencies = [
     "duckdb-extension-postgres-scanner==1.5.5",
     "fastapi>=0.141",
     "httpx>=0.28",
+    # jsonschemas.py relies on its internals (evolve, the attrs fields, _resolver, referencing's
+    # Resolver): tests/core/schema/test_jsonschemas.py, the class test, pins them.
     "jsonschema>=4.23",
     "mcp>=1.30,<2",
     "packaging>=24",

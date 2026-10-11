@@ -8,7 +8,8 @@
 A pack's schema for a descriptor kind is JSON Schema 2020-12. It is checked when the pack is
 registered (``problems``):
 
-- it must be a valid schema of that dialect, and no subschema declares another;
+- it must be a valid schema of that dialect, and no subschema below the root declares a
+  ``$schema`` or an ``$id`` (the root's own are left out of what is evaluated, D406);
 - every ``$ref`` and ``$dynamicRef`` in it is local (``#…``), so that validating an extension
   object never retrieves anything, and resolves within the schema, to a valid schema;
 - what a reference resolves to is checked as every subschema is, wherever it is in the schema
@@ -19,14 +20,16 @@ registered (``problems``):
 - it has no ``pattern`` or ``patternProperties``: v1 has no regular expression engine that runs
   in linear time, and a pattern would run on values from imported files and agents.
 
-Validation (``Checker``) runs on every descriptor write with an empty registry of resources, and
-formats are annotations, never asserted. ``uniqueItems`` is checked in linear time, by the RFC 8785
-bytes of each item, rather than by jsonschema's comparison of every pair: the equality is JSON
-Schema's (``1`` equals ``1.0``, booleans are not numbers, objects compare by content), and a pack
-schema could otherwise make one extension value of ``MAX_LIST`` objects cost minutes. jsonschema's
-own check sorts the items first and so misses equal items where Python orders a boolean and a
-number as equal (``[[1], [true], [1]]``); this one does not. An error is reported by where it is in
-the extension object and the keyword that failed, never by the value that failed it (A6).
+Validation (``Checker``) runs on every descriptor write with a registry of the schema alone, never
+jsonschema's metaschemas, and by this module's validator alone, whatever a subschema's
+``$schema`` (D406); formats are annotations, never asserted. ``uniqueItems`` is checked in linear
+time, by the RFC 8785 bytes of each item, rather than by jsonschema's comparison of every pair:
+the equality is JSON Schema's (``1`` equals ``1.0``, booleans are not numbers, objects compare by
+content), and a pack schema could otherwise make one extension value of ``MAX_LIST`` objects cost
+minutes. jsonschema's own check sorts the items first and so misses equal items where Python
+orders a boolean and a number as equal (``[[1], [true], [1]]``); this one does not. An error is
+reported by where it is in the extension object and the keyword that failed, never by the value
+that failed it (A6).
 
 ``unevaluatedItems`` and ``unevaluatedProperties`` are jsonschema's, with the items and members that
 other keywords evaluated collected in a set rather than a list, since jsonschema's membership test
@@ -73,6 +76,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, cast
 
+import attrs
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import SchemaError, ValidationError
 from pydantic import JsonValue
@@ -93,6 +97,12 @@ _REFERENCES = ("$ref", "$dynamicRef")
 _REFUSED_KEYWORDS = ("pattern", "patternProperties")
 _IN_PLACE_LISTS = ("allOf", "anyOf", "oneOf")
 _IN_PLACE = ("not", "if", "then", "else")
+_ROOT_ONLY = {
+    "$schema": "a subschema declares a $schema, which v1 does not use",
+    "$id": "a subschema declares an $id, which v1 does not use",
+}
+"""The keywords only the root may hold, which evaluation leaves out (``_evaluated``), and the
+problem of a subschema that holds one (D406)."""
 STEPS_BASE = 10_000
 STEPS_PER_VALUE = 8
 """Steps per JSON value of the extension object, on top of ``STEPS_BASE`` (D247)."""
@@ -184,11 +194,19 @@ def _cycles(start: Located) -> bool:
     return False
 
 
+def _evaluated(schema: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """The schema that is registered and evaluated: a copy without the root's own ``$schema``
+    and ``$id``, which v1 does not use, so that no reference reaches a subschema that names a
+    dialect or a base (D406). ``schema`` itself is left as it is."""
+    return {key: value for key, value in schema.items() if key not in _ROOT_ONLY}
+
+
 def _structure(schema: Mapping[str, JsonValue]) -> list[str]:
     """What is wrong with a valid schema's subschemas and references: every subschema, and
-    everything a reference resolves to, wherever it is, and what that refers to in turn."""
+    everything a reference resolves to, wherever it is, and what that refers to in turn. The
+    schema is resolved as ``Checker`` resolves it, from ``_evaluated(schema)``."""
     found: set[str] = set()
-    resource = DRAFT202012.create_resource(dict(schema))
+    resource = DRAFT202012.create_resource(_evaluated(schema))
     resolver = Registry().resolver_with_root(resource)
     pending = list(_subschemas(resource, resolver))
     known = {id(contents) for contents, _ in pending}
@@ -198,9 +216,8 @@ def _structure(schema: Mapping[str, JsonValue]) -> list[str]:
         if id(contents) in seen or not isinstance(contents, Mapping):
             continue
         seen.add(id(contents))
-        declared = contents.get("$schema")
-        if declared is not None and declared != DIALECT:
-            found.add(f"a subschema declares a dialect other than {DIALECT}")
+        # The root's own are not in its evaluated copy, so these are a subschema's.
+        found.update(message for key, message in _ROOT_ONLY.items() if key in contents)
         for keyword in _REFUSED_KEYWORDS:
             if keyword in contents:
                 found.add(f"it uses {keyword}, which v1 does not evaluate")
@@ -593,6 +610,28 @@ _Validator = validators.extend(
 )
 
 
+def _pin(validator: Any) -> None:
+    """Make ``validator``'s ``evolve`` always build ``validator``, with the same fields as
+    jsonschema's own, the schema defaulting to the one evolved. jsonschema's chooses the class by
+    the subschema's ``$schema`` (``validator_for``), so a subschema naming the dialect, or a
+    reference into one, would be evaluated by its stock validator, which spends no step, never
+    looks at a deadline and compares every pair for ``uniqueItems`` (D406)."""
+    evolved = tuple((field.name, field.alias) for field in attrs.fields(validator) if field.init)
+
+    def evolve(self: Any, **changes: Any) -> Any:
+        changes.setdefault("schema", self.schema)
+        fields = attrs.asdict(self, recurse=False)
+        for name, alias in evolved:
+            if alias not in changes:
+                changes[alias] = fields[name]
+        return validator(**changes)
+
+    validator.evolve = evolve
+
+
+_pin(_Validator)
+
+
 def steps(value: JsonValue, ceiling: int = STEPS_MAX) -> int:
     """The step budget of evaluating ``value``: ``STEPS_BASE`` plus ``STEPS_PER_VALUE`` per JSON
     value in it, at most ``ceiling`` (D247)."""
@@ -639,7 +678,11 @@ class Checker:
     """Validates extension objects against one schema that ``problems`` accepted."""
 
     def __init__(self, schema: Mapping[str, JsonValue]) -> None:
-        self._validator = _Validator(dict(schema), registry=Registry())
+        # Resolved as ``_structure`` resolves it, in a registry of the schema alone: jsonschema's
+        # own registry holds its metaschemas, which a reference could otherwise reach (D406).
+        evaluated = _evaluated(schema)
+        resolver = Registry().resolver_with_root(DRAFT202012.create_resource(evaluated))
+        self._validator = _Validator(evaluated, _resolver=resolver)
 
     def failures(
         self, value: JsonValue, *, ceiling: int = STEPS_MAX, budget: StepBudget | None = None
