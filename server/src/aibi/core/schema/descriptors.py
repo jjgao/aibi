@@ -1205,6 +1205,15 @@ class ColumnSource(DescModel):
     ) = None
 
 
+AbsentValues = Annotated[
+    list[Annotated[String, Field(min_length=1)]],
+    Field(min_length=1, max_length=MAX_ENTRIES, json_schema_extra={"uniqueItems": True}),
+    LimitName(ENTRIES),
+]
+"""Source values a pack's importer dropped because they mean "assessed, nothing there" (D401):
+distinct, in code point order, and each non-empty."""
+
+
 MissingCodes = Annotated[
     dict[String, Literal["UNKNOWN", "NOT_APPLICABLE", "NOT_ASSESSED"]],
     Field(max_length=MAX_LIST),
@@ -1264,6 +1273,9 @@ class ColumnFields(DescModel):
     list_syntax: ListSyntax | None = None
     completeness: Literal["complete", "partial", "unknown"] | None = None
     source: ColumnSource | None = None
+    absent: AbsentValues | None = None
+    """The importer's, never an operator's (D401): the values a pack's reshape dropped from this
+    column as meaning "assessed, nothing there"."""
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -1286,6 +1298,11 @@ class ColumnFields(DescModel):
                     "conflicting_members",
                     "units apply to number, integer and time_offset columns",
                 ),
+            )
+        if self.absent is not None and self.absent != sorted(set(self.absent)):
+            found.add(
+                ("absent",),
+                problem("unordered_values", "Absent values are distinct, in code point order"),
             )
         if self.range is not None:
             found.extend(("range",), _range_problems(datatype, self.range))

@@ -22,7 +22,8 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   (`derivations.py`, read by `Store.explain`) and the result cache (`cache.py`, `Store.results`).
 - `core/importers/`: confinement, archives and the upload area, CSV/TSV, workbooks, Parquet and
   database snapshots (read in a worker process that can be killed), `import_dataset` and
-  `reimport_dataset`, and `checks.py`, which takes a pack importer's result apart before any validator.
+  `reimport_dataset`, `checks.py`, which takes a pack importer's result apart before any validator,
+  and `reshaped.py`, which records a table a pack's importer unpivoted and has the core rebuild it.
 - `core/api/`: the HTTP application: configuration, one request-protection middleware in front of
   every router and mount, refusals as the one error shape, `aibi-server`, `POST /api/tools/<name>`,
   and the read-only catalogue pages (`page.py`, `markup.py`, `chrome.py`; HTML without a script).

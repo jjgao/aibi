@@ -178,7 +178,7 @@ def test_extension_points_are_found_by_their_names() -> None:
     assert packs.requirement_predicate("library.has_loans") is not None
     assert packs.requirement_predicate("library.other") is None
     assert packs.importer("library") is None
-    assert packs.rebuilder("archive") is None
+    assert not hasattr(packs, "rebuilder")
 
 
 def test_severities_come_from_the_core_or_the_pack() -> None:

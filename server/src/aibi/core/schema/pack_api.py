@@ -7,10 +7,11 @@ pack; the server hands the registry the packs it loads.
 
 The extension points are typed here. The core calls each from the milestone that delivers its
 feature (M1–M3); an analysis's inputs (``AnalysisInputs``) are what M3.2d materialises (D342).
-Raw snapshots and typed tables are the store's (``aibi.core.store.sources``) and the evaluator's
-(``aibi.core.engine.data``).
+Raw snapshots are the store's (``aibi.core.store.sources``); the core rebuilds every typed table
+from them (D401).
 """
 
+import hashlib
 import math
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -53,7 +54,6 @@ from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.results import Pep440
 
 if TYPE_CHECKING:
-    from aibi.core.engine.data import Table
     from aibi.core.store.build import Layout
     from aibi.core.store.sources import RawSource
 
@@ -209,7 +209,14 @@ class ImportOptions:
 
 
 NoteKind = Literal[
-    "skipped_source", "renamed", "not_proposed", "dropped", "unparsed", "gap", "reimported"
+    "skipped_source",
+    "renamed",
+    "not_proposed",
+    "dropped",
+    "unparsed",
+    "gap",
+    "reimported",
+    "reshaped",
 ]
 
 NOTE_TEXT: Mapping[NoteKind, str] = MappingProxyType(
@@ -221,6 +228,7 @@ NOTE_TEXT: Mapping[NoteKind, str] = MappingProxyType(
         "unparsed": "Cells whose value does not parse as the column's datatype, which are UNKNOWN",
         "gap": "Rows that the coverage or the endpoint's coding does not account for",
         "reimported": "Changed by a re-import",
+        "reshaped": "Source cells a pack's importer reshaped away",
     }
 )
 """An import report note's fixed text, by its kind: the message of every note in the public queue
@@ -242,9 +250,25 @@ class ImportNote:
 
 
 @dataclass(frozen=True)
+class Reshaped:
+    """What a pack's importer dropped when it unpivoted a matrix into a long table (SPEC §10.1,
+    D401): a cell whose value is in ``absent`` (assessed, nothing there) or that is empty (not
+    assessed) gives no row. ``column`` is the value column; ``dropped`` counts the absent cells
+    and ``digest`` is ``cell_digest`` of their keys (the table's primary-key values, in the
+    key's order); ``empty`` counts the empty cells, which the coverage does not list."""
+
+    column: str
+    absent: Sequence[str]
+    dropped: int
+    digest: str
+    empty: int = 0
+
+
+@dataclass(frozen=True)
 class ImportResult:
     """What an importer returns: the raw snapshots by source name, each table's layout on
-    them, the descriptors with their proposals, and notes for the curation queue.
+    them, the descriptors with their proposals, notes for the curation queue, and what a pack's
+    importer dropped from each table it unpivoted, by table id.
 
     A validator is given the core's checked copy of it (``importers.checks``), whose mappings
     are read-only (``MappingProxyType``), which cannot be deep-copied or pickled."""
@@ -253,13 +277,29 @@ class ImportResult:
     layouts: Mapping[str, "Layout"]
     descriptors: Sequence[Descriptor]
     notes: Sequence[ImportNote] = ()
+    reshaped: Mapping[str, Reshaped] = field(default_factory=dict[str, Reshaped])
 
 
-RawSnapshot = Mapping[str, "RawSource"]
-"""A dataset's raw snapshots, by source name, before parsing (SPEC §12.2)."""
-
-Tables = Mapping[str, "Table"]
-"""Typed tables, by table id, rebuilt from raw snapshots (SPEC §12.2)."""
+def cell_digest(cells: Iterable[Sequence[str]]) -> str:
+    """The digest of a set of cells, each given by its key's values as text, in the key's order
+    (D401), as 64 lower-case hexadecimal digits: each cell is encoded as each of its values'
+    UTF-8 length (8 bytes, big-endian) followed by its UTF-8; the encodings, each once, are
+    sorted as bytes; and the digest is SHA-256 of each encoding's length (8 bytes, big-endian)
+    followed by the encoding, in that order. A commitment to the set, which chosen cells cannot
+    match without a SHA-256 collision (a sum of per-cell hashes could be matched by cells found
+    in seconds, round 1 of #77's review). The values are a ``category`` or ``string`` key's,
+    which the core compares as its key parts do."""
+    encoded = sorted(
+        {
+            b"".join(len(part).to_bytes(8, "big") + part for part in (v.encode() for v in cell))
+            for cell in cells
+        }
+    )
+    hashed = hashlib.sha256()
+    for item in encoded:
+        hashed.update(len(item).to_bytes(8, "big"))
+        hashed.update(item)
+    return hashed.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -392,12 +432,6 @@ class Importer(Protocol):
     def import_source(self, source: ConfinedPath, options: ImportOptions) -> ImportResult: ...
 
 
-class Rebuilder(Protocol):
-    """Rebuilds tables a pack importer reshaped, when parse-affecting fields change (§12.2)."""
-
-    def rebuild(self, raw: RawSnapshot, descriptors: Mapping[str, Descriptor]) -> Tables: ...
-
-
 class Validator(Protocol):
     """A pack's validator (SPEC §10.1). The paths of ``validate_descriptors``'s refusals point
     into the release's descriptors by id, ``/<descriptor id><field pointer>``, and the core
@@ -475,7 +509,6 @@ class Pack:
     extension_schemas: Mapping[str, JsonSchema] = field(default_factory=dict[str, JsonSchema])
     """A JSON Schema for the pack's extension object, by descriptor kind."""
     importer: Importer | None = None
-    rebuilder: Rebuilder | None = None
     validator: Validator | None = None
     proposer: Proposer | None = None
     leaf_kinds: Mapping[str, LeafKind] = field(default_factory=dict[str, LeafKind])
@@ -992,9 +1025,6 @@ class PackRegistry:
     def importer(self, pack_id: str) -> Importer | None:
         return self._registered(pack_id).importer
 
-    def rebuilder(self, pack_id: str) -> Rebuilder | None:
-        return self._registered(pack_id).rebuilder
-
     def leaf_kind(self, kind: str) -> LeafKind | None:
         """The leaf kind ``<pack id>.<name>``, from the pack its namespace names: ``None`` if
         that pack has no such kind, and ``UnknownPack`` if no such pack is registered (A3)."""
@@ -1076,16 +1106,15 @@ __all__ = [
     "Previous",
     "Proposal",
     "Proposer",
-    "RawSnapshot",
-    "Rebuilder",
     "Refused",
     "ReleaseView",
     "RequirementPredicate",
+    "Reshaped",
     "SourceReader",
-    "Tables",
     "TranslationNote",
     "Translator",
     "UnknownPack",
     "Validator",
+    "cell_digest",
     "plain_json",
 ]

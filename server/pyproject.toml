@@ -171,7 +171,6 @@ forbidden_modules = [
 # Annotations under TYPE_CHECKING, which the CLI never runs; tests/core/operator/test_cli.py
 # checks in a fresh interpreter that the CLI loads none of the forbidden modules.
 ignore_imports = [
-    "aibi.core.schema.pack_api -> aibi.core.engine.data",
     "aibi.core.schema.pack_api -> aibi.core.store.build",
     "aibi.core.schema.pack_api -> aibi.core.store.sources",
 ]

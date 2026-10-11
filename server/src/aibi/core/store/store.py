@@ -79,7 +79,7 @@ from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import SHA256_RE
 from aibi.core.schema.limits import CacheLimits, LogLimits
 from aibi.core.schema.output import Segment, data, plain_text, text
-from aibi.core.schema.pack_api import ImportNote
+from aibi.core.schema.pack_api import ImportNote, Reshaped
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode
 from aibi.core.store import build, parquet, redaction, tables, tombstones
 from aibi.core.store.appdb import AppDB, Label
@@ -355,10 +355,11 @@ class Store:
         notes: Sequence[ImportNote] = (),
         tombstones: Iterable[Tombstone] = (),
         revise: Callable[[tuple[Descriptor, ...]], Sequence[Descriptor]] | None = None,
+        reshaped: Mapping[str, Reshaped] | None = None,
     ) -> Built:
         """Build a release from new raw snapshots, through the validation gate, with the
         importer's ``notes`` in its import report and ``tombstones``; its blobs stay pinned by
-        ``pin``. ``revise`` is ``build.import_release``'s."""
+        ``pin``. ``revise`` and ``reshaped`` are ``build.import_release``'s."""
         return build.import_release(
             self.blobs,
             dataset,
@@ -369,6 +370,7 @@ class Store:
             tombstones=self._tombstones_blob(pin, tombstones),
             notes=notes,
             revise=revise,
+            reshaped=reshaped or {},
         )
 
     def change_release(

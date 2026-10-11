@@ -227,7 +227,8 @@
             "dropped",
             "unparsed",
             "gap",
-            "reimported"
+            "reimported",
+            "reshaped"
           ],
           "title": "Kind",
           "type": "string"

@@ -64,6 +64,8 @@ from aibi.core.schema.pack_api import (
     PackRegistry,
     Proposal,
     ReleaseView,
+    Reshaped,
+    cell_digest,
 )
 from aibi.core.schema.refusals import Refusal
 from aibi.core.store.build import Layout
@@ -282,11 +284,12 @@ def _declared(
     extensions: Mapping[str, Any] | None = None,
     *,
     proposed: Sequence[str] = (),
+    by: str = BY,
 ) -> Descriptor:
     """A descriptor whose fields the importer declares as ``imported``, but for those named in
     ``proposed``."""
-    entry: dict[str, JsonValue] = {"status": "imported", "by": BY, "at": AT}
-    guess: dict[str, JsonValue] = {"status": "proposed", "by": BY, "at": AT}
+    entry: dict[str, JsonValue] = {"status": "imported", "by": by, "at": AT}
+    guess: dict[str, JsonValue] = {"status": "proposed", "by": by, "at": AT}
     curation: dict[str, JsonValue] = {"/label": entry}
     curation.update({f"/fields/{name}": guess if name in proposed else entry for name in fields})
     for pack, members in (extensions or {}).items():
@@ -500,3 +503,233 @@ def birds() -> Birds:
         proposer=propose_definitions,
     )
     return Birds(importer, PackRegistry([pack], core_version=aibi.__version__), survey, pack)
+
+
+# --- The grid pack -------------------------------------------------------------------------------
+
+GRID_BY = "importer:grid@1.0.0"
+GRADES = ["A", "B", "C"]
+
+
+def _grid_declared(kind: str, id: str, fields: Mapping[str, JsonValue]) -> Descriptor:
+    return _declared(kind, id, fields, by=GRID_BY)
+
+
+def _tsv(content: bytes) -> list[list[str]]:
+    lines = content.decode().split("\n")
+    return [line.split("\t") for line in lines if line]
+
+
+@dataclass
+class GridImporter:
+    """A pack of orchard harvests (SPEC §10.1, D401): ``trees.tsv``; ``grades.tsv``, a matrix of
+    one row per season and one column per tree, whose cells are a grade, ``0`` (no harvest) or
+    empty (not assessed), unpivoted into ``yields(tree_id, season, grade)``; and ``pickings.tsv``,
+    a tree's pickers in two slots, exploded into ``pickings(tree_id, picker)``, whose coverage
+    lists the trees the file held, so that a tree it never named is not covered (round 1 of
+    #77's review, m6: an explode declares nothing, but a unit its source never held is no
+    observation either).
+
+    The unpivot keeps a row for each grade and drops ``0`` as absent and empty cells, declaring
+    both (``Reshaped``). Its coverage lists the cells the matrix held, a grade or ``0``: each tree
+    is assigned the group of the seasons its column held, and a tree whose column held none is
+    not assigned. ``change`` may alter the result, so a test can play a dishonest pack."""
+
+    change: Callable[[ImportResult], ImportResult] | None = None
+
+    def import_source(self, source: ConfinedPath, options: ImportOptions) -> ImportResult:
+        files = {entry.name: entry for entry in options.reader.files(source)}
+        read = {
+            name: options.reader.read(entry.path, options.limits.import_bytes)
+            for name, entry in files.items()
+            if entry.path is not None
+        }
+        trees = _tsv(read["trees.tsv"])[1:]
+        grid = _tsv(read["grades.tsv"])
+        header, rows = grid[0][1:], grid[1:]
+        yields: list[tuple[SourceValue, ...]] = []
+        held: dict[str, list[str]] = {tree: [] for tree in header}
+        dropped: list[tuple[str, str]] = []
+        empty = 0
+        for row in rows:
+            season, cells = row[0], row[1:] + [""] * (len(header) - len(row) + 1)
+            for tree, cell in zip(header, cells, strict=False):
+                if cell == "":
+                    empty += 1
+                    continue
+                held[tree].append(season)
+                if cell == "0":
+                    dropped.append((tree, season))
+                else:
+                    yields.append((tree, season, cell))
+        groups: dict[tuple[str, ...], str] = {}
+        for tree in header:
+            seasons = tuple(sorted(held[tree]))
+            if seasons and seasons not in groups:
+                groups[seasons] = f"g{len(groups) + 1}"
+        assigned = [(tree, groups[tuple(sorted(held[tree]))]) for tree in header if held[tree]]
+        group_seasons = [(name, season) for seasons, name in groups.items() for season in seasons]
+        pickings: list[tuple[SourceValue, ...]] = []
+        for row in _tsv(read["pickings.tsv"])[1:]:
+            tree, *slots = row
+            pickings.extend((tree, picker) for picker in slots if picker)
+        sources: dict[str, Any] = {
+            "trees": TypedSource(("tree_id", "variety"), tuple(tuple(t) for t in trees)),
+            "yields": TypedSource(("tree_id", "season", "grade"), tuple(yields)),
+            "tree_groups": TypedSource(("tree_id", "group"), tuple(assigned)),
+            "group_seasons": TypedSource(("group", "season"), tuple(group_seasons)),
+            "pickings": TypedSource(("tree_id", "picker"), tuple(pickings)),
+            "picked": TypedSource(
+                ("tree_id",), tuple(sorted({(str(row[0]),) for row in pickings}))
+            ),
+        }
+        layouts = {
+            name: Layout(name, tuple((c, c) for c in source.columns))
+            for name, source in sources.items()
+        }
+        pack_source: JsonValue = {"kind": "pack", "name": "yields", "original_name": "grades.tsv"}
+        descriptors: list[Descriptor] = [
+            _grid_declared("dataset", "dataset", {"name": "Orchard", "packs": []}),
+            _grid_declared("table", "trees", {"role": "entity", "primary_key": ["tree_id"]}),
+            _grid_declared("column", "trees.tree_id", {"datatype": "string"}),
+            _grid_declared("column", "trees.variety", {"datatype": "category"}),
+            _grid_declared(
+                "table",
+                "yields",
+                {
+                    "role": "measurement",
+                    "primary_key": ["tree_id", "season"],
+                    "source": pack_source,
+                },
+            ),
+            _grid_declared("column", "yields.tree_id", {"datatype": "string"}),
+            _grid_declared("column", "yields.season", {"datatype": "string"}),
+            _grid_declared(
+                "column",
+                "yields.grade",
+                {
+                    "datatype": "category",
+                    "permissible_values": {
+                        "values": [{"value": grade} for grade in GRADES],
+                        "ordered": True,
+                    },
+                },
+            ),
+            _grid_declared("table", "tree_groups", {"role": "coverage"}),
+            _grid_declared("column", "tree_groups.tree_id", {"datatype": "string"}),
+            _grid_declared("column", "tree_groups.group", {"datatype": "string"}),
+            _grid_declared("table", "group_seasons", {"role": "coverage"}),
+            _grid_declared("column", "group_seasons.group", {"datatype": "string"}),
+            _grid_declared("column", "group_seasons.season", {"datatype": "string"}),
+            _grid_declared("table", "pickings", {"role": "measurement"}),
+            _grid_declared("column", "pickings.tree_id", {"datatype": "string"}),
+            _grid_declared("column", "pickings.picker", {"datatype": "category"}),
+            _grid_declared("table", "picked", {"role": "coverage"}),
+            _grid_declared("column", "picked.tree_id", {"datatype": "string"}),
+        ]
+        for child in ("yields", "pickings"):
+            descriptors.append(
+                _grid_declared(
+                    "relationship",
+                    f"rel:{child}.tree_id",
+                    {
+                        "child_table": child,
+                        "child_columns": ["tree_id"],
+                        "parent_table": "trees",
+                        "parent_columns": ["tree_id"],
+                        "cardinality": "many-to-one",
+                    },
+                )
+            )
+        descriptors.append(
+            _grid_declared(
+                "coverage",
+                "cov:yields.tree_id",
+                {
+                    "relationship": "rel:yields.tree_id",
+                    "parents": {
+                        "assignment": {
+                            "table": "tree_groups",
+                            "parent_columns": {"tree_id": "tree_id"},
+                            "group_column": "group",
+                        },
+                        "groups": {
+                            "table": "group_seasons",
+                            "group_column": "group",
+                            "scope_columns": {"season": "season"},
+                        },
+                    },
+                },
+            )
+        )
+        descriptors.append(
+            _grid_declared(
+                "coverage",
+                "cov:pickings.tree_id",
+                {
+                    "relationship": "rel:pickings.tree_id",
+                    "parents": {"table": "picked", "parent_columns": {"tree_id": "tree_id"}},
+                },
+            )
+        )
+        reshaped = {
+            "yields": Reshaped(
+                column="grade",
+                absent=("0",),
+                dropped=len(dropped),
+                digest=cell_digest(dropped),
+                empty=empty,
+            )
+        }
+        result = ImportResult(sources, layouts, descriptors, reshaped=reshaped)
+        return result if self.change is None else self.change(result)
+
+
+@dataclass
+class Grid:
+    importer: GridImporter
+    registry: PackRegistry
+    pack: Pack
+    write: Callable[..., Path]
+
+    def with_change(self, change: Callable[[ImportResult], ImportResult]) -> PackRegistry:
+        """A registry whose grid importer changes its result with ``change``."""
+        pack = Pack(manifest=self.pack.manifest, importer=GridImporter(change))
+        return PackRegistry([pack], core_version=aibi.__version__)
+
+
+def write_orchard(
+    roots: Roots,
+    *,
+    trees: Sequence[tuple[str, str]] = (("t1", "apple"), ("t2", "pear"), ("t3", "plum")),
+    grades: Sequence[Sequence[str]] = (("autumn", "A", "0", ""), ("spring", "B", "0", "A")),
+    header: Sequence[str] = ("t1", "t2", "t3"),
+    pickings: Sequence[Sequence[str]] = (("t1", "ann", "bob"), ("t2", "ann", "")),
+    name: str = "orchard",
+) -> Path:
+    """An orchard directory: by default t1 graded in both seasons, t2 ``0`` in both, and t3
+    empty in autumn and graded A in spring."""
+    folder = roots.inside / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "trees.tsv").write_bytes(
+        ("tree_id\tvariety\n" + "".join(f"{t}\t{v}\n" for t, v in trees)).encode()
+    )
+    lines = ["season\t" + "\t".join(header)] + ["\t".join(row) for row in grades]
+    (folder / "grades.tsv").write_bytes(("\n".join(lines) + "\n").encode())
+    (folder / "pickings.tsv").write_bytes(
+        ("tree_id\tpicker_1\tpicker_2\n" + "".join("\t".join(r) + "\n" for r in pickings)).encode()
+    )
+    return folder
+
+
+@pytest.fixture
+def grid(roots: Roots) -> Grid:
+    importer = GridImporter()
+    pack = Pack(
+        manifest=PackManifest(
+            id="grid", version="1.0.0", results_version=1, requires_core=">=0.0.1"
+        ),
+        importer=importer,
+    )
+    registry = PackRegistry([pack], core_version=aibi.__version__)
+    return Grid(importer, registry, pack, lambda **given: write_orchard(roots, **given))

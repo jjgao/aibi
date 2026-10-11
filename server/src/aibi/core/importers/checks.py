@@ -99,6 +99,7 @@ from aibi.core.schema.limits import (
     IMPORT_BYTES,
     IMPORT_CELLS,
     IMPORT_TABLES,
+    MAX_ENTRIES,
     MAX_IDENTIFIER,
     MAX_QUEUE_BYTES,
     MAX_QUEUE_ITEMS,
@@ -119,6 +120,7 @@ from aibi.core.schema.pack_api import (
     ImportResult,
     NoteKind,
     Refused,
+    Reshaped,
     SourceReader,
 )
 from aibi.core.schema.refusals import Refusal, RefusalCode
@@ -386,18 +388,20 @@ def checked(result: object, limits: ImportLimits) -> ImportResult:
     import's result, which ``run_importer`` makes ``PACK_FAILED``."""
     if type(result) is not ImportResult:
         raise _Failed("returned what is not an import's result")
-    given_descriptors, given_sources, given_layouts, given_notes = _fields(
-        result, "descriptors", "sources", "layouts", "notes"
+    given_descriptors, given_sources, given_layouts, given_notes, given_reshaped = _fields(
+        result, "descriptors", "sources", "layouts", "notes", "reshaped"
     )
     descriptors = _descriptors(given_descriptors)
     sources = _sources(given_sources)
     layouts = _layouts(given_layouts, sources)
     notes = _notes(given_notes)
+    reshaped = _reshaped(given_reshaped, sources, layouts, descriptors)
     copy = ImportResult(
         sources=MappingProxyType(sources),
         layouts=MappingProxyType(layouts),
         descriptors=tuple(descriptors),
         notes=tuple(notes),
+        reshaped=MappingProxyType(reshaped),
     )
     _limits(copy, limits)
     return copy
@@ -409,7 +413,8 @@ def for_validator(result: ImportResult) -> ImportResult:
     offsets, ``None``) and tuples of them, every object of the core's (a source, an error cell, a
     layout, a descriptor, a note, a segment) made anew, so that nothing a validator does to its
     copy, through ``object.__setattr__`` or an object's ``__dict__`` included, changes what is
-    built from ``result`` (D400). ``result`` is a copy of the core's: the checked copy of a
+    built from ``result`` (D400); a table's ``Reshaped`` declaration is made anew too (D401).
+    ``result`` is a copy of the core's: the checked copy of a
     pack's result, or what the core's own importers read."""
     return ImportResult(
         sources=MappingProxyType(
@@ -431,6 +436,12 @@ def for_validator(result: ImportResult) -> ImportResult:
                 tuple(n.rows),
             )
             for n in result.notes
+        ),
+        reshaped=MappingProxyType(
+            {
+                table: Reshaped(r.column, r.absent, r.dropped, r.digest, r.empty)
+                for table, r in result.reshaped.items()
+            }
         ),
     )
 
@@ -631,6 +642,79 @@ def _layouts(given: object, sources: Mapping[str, RawSource]) -> dict[str, Layou
     return copied
 
 
+def _reshaped(
+    given: object,
+    sources: Mapping[str, RawSource],
+    layouts: Mapping[str, Layout],
+    descriptors: Sequence[Descriptor],
+) -> dict[str, Reshaped]:
+    """The tables the pack unpivoted, each with what it dropped (D401): its value column one of
+    the table's, laid out on a typed source whose every cell in that column is non-empty text
+    other than an absent value, the absent values 1 to ``MAX_ENTRIES`` distinct, non-empty
+    strings of Unicode text, and its counts and digest within their ranges. A descriptor of the
+    pack's own does not set ``absent``: the core writes it from this."""
+    if any(
+        isinstance(descriptor, ColumnDescriptor) and descriptor.fields.absent is not None
+        for descriptor in descriptors
+    ):
+        raise _Failed("set absent values itself, which the core writes from its declaration")
+    items = _mapping(given)
+    if items is None:
+        raise _Failed("returned reshaped tables that are not a mapping")
+    copied: dict[str, Reshaped] = {}
+    for table, declared in items:
+        if type(table) is not str or table not in layouts or type(declared) is not Reshaped:
+            raise _Failed("declared a reshaped table that is not one it laid out")
+        column, given_absent, dropped, digest, empty = _fields(
+            declared, "column", "absent", "dropped", "digest", "empty"
+        )
+        named = dict(layouts[table].columns)
+        if type(column) is not str or column not in named:
+            raise _Failed("declared absent values of a column its table does not lay out")
+        absent = _sequence(given_absent)
+        if (
+            absent is None
+            or not 1 <= len(absent) <= MAX_ENTRIES
+            or not all(_string(value, MAX_STRING) and value != "" for value in absent)
+            or len(set(absent)) != len(absent)
+        ):
+            raise _Failed(
+                f"declared absent values that are not 1 to {MAX_ENTRIES} distinct, non-empty "
+                "strings"
+            )
+        if not _count(dropped, 0) or not _count(empty, 0):
+            raise _Failed("declared counts of dropped cells that are not counts")
+        if (
+            type(digest) is not str
+            or len(digest) != 64
+            or not all(c in "0123456789abcdef" for c in digest)
+        ):
+            raise _Failed("declared a digest of dropped cells that is not one")
+        values = cast(list[str], absent)
+        source = sources[layouts[table].source]
+        if not isinstance(source, TypedSource):
+            raise _Failed("declared a reshaped table that is not laid out on a typed source")
+        at = source.columns.index(named[column]) if named[column] in source.columns else None
+        if at is None:
+            raise _Failed("declared absent values of a column its source does not hold")
+        held = set(values)
+        for row in source.rows:
+            cell = row[at]
+            if type(cell) is not str or cell == "" or cell in held:
+                raise _Failed(
+                    "kept a cell of the reshaped column that is not a value: empty, not text, "
+                    "or an absent value"
+                )
+        copied[table] = Reshaped(
+            column=column,
+            absent=tuple(sorted(values)),
+            dropped=cast(int, dropped),
+            digest=digest,
+            empty=cast(int, empty),
+        )
+    return copied
+
+
 def _notes(given: object) -> list[ImportNote]:
     found = _sequence(given)
     if found is None:
@@ -767,6 +851,10 @@ def _limits(result: ImportResult, limits: ImportLimits) -> None:
                 data(table if _string(table, MAX_STRING) else ""),
             )
         cells += _cells(result.sources[layout.source], settings.get(table), limits, cells)
+        if cells > limits.import_cells:
+            raise _too_many_cells(limits)
+    for _, declaration in sorted(result.reshaped.items()):
+        cells += declaration.dropped + declaration.empty
         if cells > limits.import_cells:
             raise _too_many_cells(limits)
 

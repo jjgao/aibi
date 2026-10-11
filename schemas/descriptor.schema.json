@@ -875,6 +875,19 @@
         }
       ],
       "properties": {
+        "absent": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-aibi-data": true
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Absent",
+          "type": "array",
+          "uniqueItems": true
+        },
         "completeness": {
           "enum": [
             "complete",

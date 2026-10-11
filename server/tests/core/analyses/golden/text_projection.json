@@ -1,4 +1,4 @@
-{"cache_wording": 2, "cases": {
+{"cache_wording": 3, "cases": {
  "ages_compared": [
   ["/caveats/0/message/0", "text", "An expected count below 5 in the table this chi-squared test used"],
   ["/caveats/1/message/0", "text", "Units whose membership of a cohort, or whose value of a column, could not be decided or has none, if any, are left out of the cohort or of that column's values; population and analysed count them by reason, where the disclosure settings show them"],
