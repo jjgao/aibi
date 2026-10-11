@@ -63,6 +63,7 @@ from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.jsonschemas import problems as schema_problems
 from aibi.core.schema.limits import (
     MAX_DEPTH,
+    MAX_PACK_REQUIREMENTS,
     RESULT_CHARACTERS,
     RESULT_VALUES,
     TEXT_CHARACTERS,
@@ -1070,6 +1071,26 @@ class _Kept:
     """The module that gave it, when the registry was given labels (D404)."""
 
 
+def _too_many_requirements(kept: Sequence[_Kept]) -> list[str]:
+    """The problem of packs whose analyses have more than ``MAX_PACK_REQUIREMENTS``
+    requirements together (D420), every element of every ``requires`` counted, naming the
+    limit, the total and each pack's share in pack id order, so that the order the packs were
+    given in never decides which is named."""
+    shares = sorted(
+        (one.pack.id, one.label, sum(len(found.entry.fields.requires) for found in one.analyses))
+        for one in kept
+        if one.pack is not None
+    )
+    total = sum(share for _, _, share in shares)
+    if total <= MAX_PACK_REQUIREMENTS:
+        return []
+    named = ", ".join(f"{label} has {share}" for _, label, share in shares)
+    return [
+        f"the packs' analyses have {total} requirements in all, more than the "
+        f"{MAX_PACK_REQUIREMENTS} allowed (MAX_PACK_REQUIREMENTS): {named}"
+    ]
+
+
 def _analysis_copy(analysis: RegisteredAnalysis) -> RegisteredAnalysis:
     """An analysis as the registry hands it out: a copy of its entry, so that changing what is
     handed out changes nothing registered, and the same handle."""
@@ -1451,6 +1472,7 @@ class PackRegistry:
                     problems.append(
                         f"{claim[0]} {_shown(claim[1])} is registered by {owner.label} and {label}"
                     )
+        problems.extend(_too_many_requirements(kept))
         if problems:
             raise PackError(problems)
         ordered = dict(sorted(by_id.items()))
