@@ -67,7 +67,7 @@ describe("the cap", () => {
 
   it("counts a chunked body as it arrives and cancels the stream past the cap", async () => {
     const fake = chunked(MiB);
-    await expect(readCapped(answer(fake.stream))).rejects.toThrow(new ClientError(REFUSALS.tooLarge));
+    await expect(readCapped(answer(fake.stream))).rejects.toThrow(new ClientError("tooLarge"));
     expect(fake.cancelled()).toBe(true);
     expect(fake.given()).toBe(9);
   });
@@ -111,7 +111,7 @@ describe("the cap", () => {
     ["a truncated sequence at the end", [0x22, 0xe2, 0x82]],
     ["an overlong encoding", [0xc0, 0xaf]],
   ])("refuses %s", async (_case, bytes) => {
-    await expect(readCapped(answer(new Uint8Array(bytes)))).rejects.toThrow(new ClientError(REFUSALS.notUtf8));
+    await expect(readCapped(answer(new Uint8Array(bytes)))).rejects.toThrow(new ClientError("notUtf8"));
   });
 
   it("reports a stream that fails, a reset mid-body, in its own words, not as bad UTF-8", async () => {
@@ -128,7 +128,7 @@ describe("the cap", () => {
       },
     });
     const refused = await readCapped(answer(stream)).catch((error: unknown) => error);
-    expect(refused).toEqual(new ClientError(REFUSALS.interrupted));
+    expect(refused).toEqual(new ClientError("interrupted"));
     expect((refused as Error).message).not.toContain("137.25");
     expect((refused as Error).message).not.toContain("ECONNRESET");
     expect((refused as Error).cause).toBeUndefined();
@@ -141,7 +141,7 @@ describe("the cap", () => {
         controller.error(new Error("reset"));
       },
     });
-    await expect(readCapped(answer(stream))).rejects.toThrow(new ClientError(REFUSALS.interrupted));
+    await expect(readCapped(answer(stream))).rejects.toThrow(new ClientError("interrupted"));
   });
 
   it("reports bad UTF-8 in the words of bad UTF-8, split across chunks or cut off at the end", async () => {
@@ -152,14 +152,14 @@ describe("the cap", () => {
         controller.close();
       },
     });
-    await expect(readCapped(answer(split))).rejects.toThrow(new ClientError(REFUSALS.notUtf8));
+    await expect(readCapped(answer(split))).rejects.toThrow(new ClientError("notUtf8"));
     const cut = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([0x22, 0xf0, 0x9f]));
         controller.close();
       },
     });
-    await expect(readCapped(answer(cut))).rejects.toThrow(new ClientError(REFUSALS.notUtf8));
+    await expect(readCapped(answer(cut))).rejects.toThrow(new ClientError("notUtf8"));
   });
 
   it("cancels the stream after bad UTF-8, so that nothing keeps reading", async () => {
@@ -231,7 +231,7 @@ describe("exchange", () => {
 
   it("refuses an answer that is not JSON, unread", async () => {
     fake("<html>", "text/html");
-    await expect(exchange(routes.health())).rejects.toThrow(new ClientError(REFUSALS.notJson));
+    await expect(exchange(routes.health())).rejects.toThrow(new ClientError("notJson"));
     fake("{}", "application/jsonx");
     await expect(exchange(routes.health())).rejects.toThrow(REFUSALS.notJson);
   });
@@ -247,7 +247,7 @@ describe("exchange", () => {
     ["a route with a backslash", route("health", "GET", "/api/\\elsewhere")],
   ])("refuses %s, sending nothing", async (_case, given) => {
     const { fetch } = fake("{}");
-    await expect(exchange(given)).rejects.toThrow(new ClientError(REFUSALS.notARoute));
+    await expect(exchange(given)).rejects.toThrow(new ClientError("notARoute"));
     expect(fetch).not.toHaveBeenCalled();
   });
 

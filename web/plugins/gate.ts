@@ -57,6 +57,10 @@
  *     other. A `require` of a module is no import statement either, and the lint refuses the name;
  *     the graph refuses what it loads like any other module. Beside it the lint refuses
  *     `import.meta.glob` in `src/`.
+ * (e) **No operator module in the catalogue entry (D423).** The closure of `index.html` holds no
+ *     module of `OPERATOR_ONLY`: the page's operator client (`src/api/operator.ts`, whose module
+ *     installs listeners and which holds the curator token), its factory (`src/api/curator.ts`)
+ *     and the operator entry's modules (`src/operator/`).
  *
  * The plugin can only fail the build: a report it wrote into `dist/` would be refused by the
  * loader, which admits nothing at a bundle's root but its own files.
@@ -70,6 +74,9 @@ import { EXTENSIONS } from "../scripts/check-bundle.mjs";
 import { SRC_EXTENSIONS, srcKind } from "../scripts/tooling.mjs";
 
 export const OPERATOR_ENTRY = "operator.html";
+
+/** The catalogue entry, whose graph holds no operator module (`OPERATOR_ONLY`). */
+export const CATALOGUE_ENTRY = "index.html";
 
 /** The packages the operator entry's graph may hold: React's own closure. */
 export const OPERATOR_PACKAGES: ReadonlySet<string> = new Set(["react", "react-dom", "scheduler"]);
@@ -240,6 +247,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/decode.ts", "decode boxes each number of a body from its source text: it alone makes a box"],
         ["src/api/index.ts", "re-exports isServerNumber, the brand check, which gives nothing of a number"],
+        ["src/api/curator.ts", "the operator's client reads answers, and asks isServerNumber whether a value is a box (never what it holds)"],
       ]),
     },
   ],
@@ -255,7 +263,12 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
   ],
   [
     "src/api/client.ts",
-    { importers: new Map([["src/api/index.ts", "re-exports exchange, start, REFUSALS and the cap: the one place of I/O"]]) },
+    {
+      importers: new Map([
+        ["src/api/index.ts", "re-exports exchange, start, REFUSALS and the cap: the one place of I/O"],
+        ["src/api/curator.ts", "the operator's client sends through send, the one function that sets the operator's credentials (D423)"],
+      ]),
+    },
   ],
   [
     "src/api/oracle.ts",
@@ -272,9 +285,32 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
   ],
   [
     "src/api/generated/routes.ts",
-    { importers: new Map([["src/api/index.ts", "re-exports the generated functions as routes"]]) },
+    {
+      importers: new Map([
+        ["src/api/index.ts", "re-exports the generated functions as routes"],
+        ["src/api/curator.ts", "the operator's client makes the routes of its operations"],
+      ]),
+    },
+  ],
+  [
+    "src/api/curator.ts",
+    { importers: new Map([["src/api/operator.ts", "makes the page's one operator client (D423)"]]) },
+  ],
+  [
+    "src/api/operator.ts",
+    {
+      importers: new Map([
+        ["src/operator/Shell.tsx", "the token's shell unlocks, shows and forgets the page's operator client (D423)"],
+        ["src/harness/Harness.tsx", "the end-to-end harness drives the page's operator client for the matrix"],
+      ]),
+    },
   ],
 ]);
+
+/** The modules the catalogue entry's graph may not hold (D423): the operator's client, whose
+ * module installs listeners on the page and holds the curator token, and the operator entry's
+ * own modules. */
+export const OPERATOR_ONLY: readonly string[] = ["src/api/operator.ts", "src/api/curator.ts", "src/operator"];
 
 /** The file a module id loads from, relative to the project: its id up to the first `?` or `#`,
  * `null` when that is no path inside the project. */
@@ -372,6 +408,10 @@ export function graphProblems(
       continue;
     }
     for (const id of reached(graph, entry)) {
+      const relative = id.startsWith("\0") ? null : placeOf(root, id).relative;
+      if (document === CATALOGUE_ENTRY && relative !== null && OPERATOR_ONLY.some((place) => inside(relative, place))) {
+        problems.push(`in ${document}'s graph: the operator module ${JSON.stringify(relative)} (D423)`);
+      }
       const problem = confinementProblem(root, id, documents);
       if (problem !== null) {
         problems.push(`in ${document}'s graph: ${problem}`);
