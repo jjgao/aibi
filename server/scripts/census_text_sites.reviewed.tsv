@@ -164,7 +164,6 @@ core/schema/checks.py	check_document	text	cohort_leaves	a number
 core/schema/checks.py	check_document	text	pack_leaves	a number
 core/schema/loading.py	_banned_refusal	text	error.message()	a member, tag, kind or choice of the server's own models, or a constant sentence
 core/schema/loading.py	_banned_refusal	text	kind	a member, tag, kind or choice of the server's own models, or a constant sentence
-core/schema/loading.py	_finish	text	len(kept) - MAX_REFUSALS	a number (a length)
 core/schema/loading.py	_refusal	text	json.dumps(value)	a member, tag, kind or choice of the server's own models, or a constant sentence
 core/schema/loading.py	_refusal	text	kind	a member, tag, kind or choice of the server's own models, or a constant sentence
 core/schema/loading.py	_refusal	text	member	a member, tag, kind or choice of the server's own models, or a constant sentence
@@ -178,17 +177,12 @@ core/schema/output.py	text	{"text": ...}	value	text()'s own argument, rebuilt as
 core/schema/params.py	_unknown.build	text	len(declared)	a number (a length)
 core/schema/params.py	_unknown.build	text	len(listed)	a number (a length)
 core/schema/refusals.py	_blank_segment	text	blanked	text the server's own blanking left in a segment
-core/schema/refusals.py	finish_refusals	text	len(ordered) - MAX_REFUSALS	a number (a length)
-core/schema/release.py	_Checker._absent	refuse	rule	a literal sentence of the server's own (D401); the names go to data
-core/schema/release.py	_Checker._absent_coverage	refuse	rule	a literal sentence of the server's own (D401); the names go to data
-core/schema/release.py	_Checker._coverage	refuse	message	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.column	refuse	message	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.ids	refuse	first[descriptor.id]	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.ids	refuse	len(datasets)	a number (a length)
-core/schema/release.py	_Checker.ids	text	descriptor.kind	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.ids	text	kind	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.leads_to_key	refuse	what	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
-core/schema/release.py	_Checker.leads_to_key	text	what	a literal sentence, a descriptor kind (a ``Literal``), or an index; the names go to data
+core/schema/refusals.py	left_out	text	LEFT_OUT.format(count)	a number (a count of refusals)
+core/schema/refusals.py	said	text	part	a sentence of the server's own: every caller's even parts are literals, the odd ones go to data (D405)
+core/schema/release.py	_concept_refused	text	has	a literal sentence of the server's own, chosen by a flag; the ids go to data
+core/schema/release.py	_concept_refused	text	len(known)	a number (a length)
+core/schema/release.py	_concept_refused	text	nearest_	a literal sentence of the server's own with a number (a length); the ids go to data
+core/schema/release.py	_not_of_a_release	text	known	a descriptor kind of the closed ``RELEASE_KINDS`` (a ``Literal``), which is the server's own
 core/store/build.py	_Builder.table	refusal	column	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
 core/store/build.py	_Builder.table	refusal	message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
 core/store/build.py	_Builder.table	refusal	table	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
@@ -244,8 +238,6 @@ core/store/store.py	Store.exclusive	StoreRefused	session.id	a number, a literal 
 core/store/store.py	Store.resolve	StoreRefused	pin	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
 core/store/tables.py	build_table	text	len(layout)	a number (a length)
 core/store/tables.py	build_table	text	len(parsed.names)	a number (a length)
-core/store/writes.py	_out_of_steps	_refusal	budget	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
-core/store/writes.py	_out_of_steps	_refusal	ceiling	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
-core/store/writes.py	_out_of_steps	_refusal	remedy	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
-core/store/writes.py	check_writes	_refusal	*message	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
-core/store/writes.py	check_writes	_refusal	descriptor.kind	a number, a literal sentence, or an id the server made (a label, a session, a digest); ``build.refusal`` takes a table id as a path, not text
+core/store/writes.py	_out_of_steps	text	budget	a number
+core/store/writes.py	_out_of_steps	text	ceiling	a number
+core/store/writes.py	_out_of_steps	text	remedy	a literal sentence of the server's own

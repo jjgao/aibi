@@ -593,6 +593,8 @@ def test_no_hook_object_is_read_after_registration() -> None:
         *packs.caveat_rules(["library"]),
         packs.analyses(),
         packs.concepts(),
+        packs.concept_sorts(),
+        packs.concept_ids("value"),
         packs.extension_schemas("dataset", ["library"]),
         packs.wordings(CaveatCode.SMALL_N, ["library"]),
         packs.severity("library.RENEWALS_ESTIMATED"),
@@ -605,8 +607,9 @@ def test_no_hook_object_is_read_after_registration() -> None:
     called = {
         "pack", "listed", "importer", "leaf_kind", "leaf_summary", "translator", "analysis",
         "requirement_predicate", "ontology_validator", "validators", "proposers", "facets",
-        "caveat_rules", "analyses", "concepts", "extension_schemas", "wordings", "severity",
-        "leaf_kinds", "leaf_checker", "analysis_checkers", "ids",
+        "caveat_rules", "analyses", "concepts", "concept_sorts", "concept_ids",
+        "extension_schemas", "wordings", "severity", "leaf_kinds", "leaf_checker",
+        "analysis_checkers", "ids",
     }  # fmt: skip
     public = {name for name, _ in inspect.getmembers(PackRegistry) if not name.startswith("_")}
     assert public == called, "a registry method this test does not call"

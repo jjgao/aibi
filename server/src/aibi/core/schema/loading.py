@@ -59,7 +59,6 @@ from aibi.core.schema.limits import (
     MAX_DOCUMENT_BYTES,
     MAX_REFUSALS,
     NESTING_DEPTH,
-    REFUSALS,
     LimitName,
 )
 from aibi.core.schema.output import Segment, data, text
@@ -70,6 +69,7 @@ from aibi.core.schema.refusals import (
     RefusalCode,
     blank_secrets,
     finish_refusals,
+    left_out,
 )
 
 _KEY_LABEL = "[key]"
@@ -704,14 +704,7 @@ def _finish(found: list[_Found], positions: _Positions) -> list[Refusal]:
             refusal = refusal.model_copy(update={"message": message})
         refusals.append(refusal)
     if len(kept) > MAX_REFUSALS:
-        refusals.append(
-            Refusal(
-                code=RefusalCode.LIMIT_EXCEEDED,
-                path=None,
-                message=[text(f"{len(kept) - MAX_REFUSALS} more refusals were left out")],
-                limit=Limit(name=REFUSALS, max=MAX_REFUSALS),
-            )
-        )
+        refusals.append(left_out(len(kept) - MAX_REFUSALS))
     return refusals
 
 
