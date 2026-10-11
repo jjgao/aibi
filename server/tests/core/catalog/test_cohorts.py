@@ -34,7 +34,7 @@ from aibi.core.schema.cohorts import (
 )
 from aibi.core.schema.limits import MIN_LOG_BYTES, LogLimits, QueryLimits
 from aibi.core.schema.loading import load_document
-from aibi.core.schema.output import DataSegment, Output, TextSegment, text
+from aibi.core.schema.output import DataSegment, Output, Segment, TextSegment, text
 from aibi.core.schema.pack_api import (
     Pack,
     PackManifest,
@@ -545,7 +545,7 @@ class _Flat:
 
     def translate(
         self, document: JsonValue
-    ) -> tuple[Mapping[str, JsonValue], Sequence[TranslationNote]]:
+    ) -> tuple[Mapping[str, JsonValue], list[TranslationNote] | tuple[TranslationNote, ...]]:
         if self.fail:
             raise RuntimeError("the translator broke on " + json.dumps(document))
         if self.junk is not None:
@@ -669,7 +669,7 @@ class _Given:
 
     def translate(
         self, document: JsonValue
-    ) -> tuple[Mapping[str, JsonValue], Sequence[TranslationNote]]:
+    ) -> tuple[Mapping[str, JsonValue], list[TranslationNote] | tuple[TranslationNote, ...]]:
         if isinstance(document, dict):
             document["written by the translator"] = True
         return self.made  # type: ignore[return-value]
@@ -736,7 +736,8 @@ def test_a_translation_holds_at_most_1000_notes_of_at_most_64_segments(
     world: World, orchard: Orchard, notes: int, segments: int, accepted: bool
 ) -> None:
     world.publish("orchard", orchard())
-    made = (document(), [TranslationNote("/trees", [text("a")] * segments)] * notes)
+    message: list[Segment] = [text("a")] * segments
+    made = (document(), [TranslationNote("/trees", message)] * notes)
     catalog = catalog_of(world, registry=given_registry("flat.where", made=made))
     found = validated(catalog, {"document": {}, "format": "flat.where"})
     if accepted:

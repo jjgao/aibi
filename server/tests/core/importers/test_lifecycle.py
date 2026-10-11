@@ -7,11 +7,11 @@ import itertools
 import json
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -23,9 +23,10 @@ from aibi.core.importers import run as run_module
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.errors import ImportRefused
 from aibi.core.importers.run import Published, import_dataset, reimport_dataset
+from aibi.core.schema.copiers import UNSHOWN
 from aibi.core.schema.curation import ChangeRequest, ProposalInput
 from aibi.core.schema.jsonschemas import WRITE_STEPS_MAX
-from aibi.core.schema.limits import ImportLimits
+from aibi.core.schema.limits import MAX_QUEUE_ITEMS, ImportLimits
 from aibi.core.schema.pack_api import ImportOptions, PackError, PackRegistry, Proposal
 from aibi.core.store import proposals as proposals_module
 from aibi.core.store import sessions
@@ -307,28 +308,70 @@ def test_a_proposer_that_fails_is_reported_and_the_import_stands(
     registry = PackRegistry([replace(birds.pack, proposer=failing)], core_version=aibi.__version__)
     published = lifecycle.import_(_survey(roots, birds), registry=registry, pack="birds")
     assert published.proposers is not None
-    assert [(s.pack, s.codes) for s in published.proposers.skipped] == [
-        ("birds", ("RuntimeError",))
-    ]
+    assert [(s.pack, s.codes) for s in published.proposers.skipped] == [("birds", ("PACK_FAILED",))]
     assert store.resolve("d").label == 1
 
 
 def test_a_proposal_that_raises_anything_is_skipped_and_the_publish_stands(
     lifecycle: Lifecycle, roots: Roots, birds: Birds, store: Store
 ) -> None:
-    class Broken:
-        @property
-        def descriptor(self) -> str:
+    class Broken(Mapping[str, Any]):
+        def __getitem__(self, key: str) -> Any:
             raise KeyError("broken")
 
+        def __iter__(self) -> Any:
+            raise KeyError("broken")
+
+        def __len__(self) -> int:
+            return 1
+
+        def items(self) -> Any:
+            raise KeyError("broken")
+
+    class Lookalike:
+        descriptor = "sites"
+        pointer = "/definition"
+        value = "Places"
+
     def propose(release: Any) -> list[Any]:
-        return [Broken(), Proposal("sites", "/definition", "Places")]
+        return [
+            Proposal("tables", "/definition", cast(Any, Broken())),
+            Lookalike(),
+            Proposal("sites", "/definition", "Places"),
+        ]
 
     registry = PackRegistry([replace(birds.pack, proposer=propose)], core_version=aibi.__version__)
     published = lifecycle.import_(_survey(roots, birds), registry=registry, pack="birds")
     assert published.proposers is not None
-    assert [(s.descriptor, s.codes) for s in published.proposers.skipped] == [(None, ("KeyError",))]
+    assert [(s.descriptor, s.codes) for s in published.proposers.skipped] == [
+        ("tables", ("PACK_FAILED",)),
+        (UNSHOWN, ("INVALID_VALUE",)),
+    ]
     assert len(published.proposers.proposals) == 1
+
+
+def test_a_proposer_of_more_than_a_queue_s_items_fails_and_the_report_is_bounded(
+    lifecycle: Lifecycle, roots: Roots, birds: Birds, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def many(release: Any) -> list[Proposal]:
+        return [Proposal("sites", "/label", float("nan"))] * (MAX_QUEUE_ITEMS + 1)
+
+    registry = PackRegistry([replace(birds.pack, proposer=many)], core_version=aibi.__version__)
+    published = lifecycle.import_(_survey(roots, birds), registry=registry, pack="birds")
+    assert published.proposers is not None
+    assert [(s.pack, s.descriptor, s.codes) for s in published.proposers.skipped] == [
+        ("birds", None, ("PACK_FAILED",))
+    ]
+    assert published.proposers.truncated == 0
+
+    def invalid(release: Any) -> list[Proposal]:
+        return [Proposal("sites", "/label", float("nan"))] * 5
+
+    monkeypatch.setattr(proposals_module, "MAX_QUEUE_ITEMS", 2)
+    registry = PackRegistry([replace(birds.pack, proposer=invalid)], core_version=aibi.__version__)
+    found = proposals_module.run_proposers(store, "d", registry)
+    assert [(s.descriptor, s.codes) for s in found.skipped] == [("sites", ("INVALID_VALUE",))] * 2
+    assert found.truncated == 3
 
 
 def test_an_exception_out_of_recording_a_proposal_is_skipped_after_a_session_publishes(

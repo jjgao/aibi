@@ -67,10 +67,11 @@ from aibi.core.engine.counts import CountParts, count_parts, static_caveats
 from aibi.core.engine.data import Release
 from aibi.core.engine.queries import run_cohorts
 from aibi.core.engine.readback import readback
-from aibi.core.engine.resolve import Label, pack_failed
+from aibi.core.engine.resolve import Label
 from aibi.core.engine.sql import Accounting
 from aibi.core.engine.suppression import disclosed
 from aibi.core.engine.worker import CallerDeadline, QueryRefused
+from aibi.core.schema import guards
 from aibi.core.schema.cohorts import (
     CohortCheck,
     CohortCounts,
@@ -87,13 +88,20 @@ from aibi.core.schema.cohorts import (
     ValidateDocument,
     ViewCheck,
 )
+from aibi.core.schema.copiers import translation
 from aibi.core.schema.document import Document
-from aibi.core.schema.ids import JSON_POINTER_RE
-from aibi.core.schema.jsonio import JsonError, json_value, pointer, utf16_key
-from aibi.core.schema.limits import LOG_BYTES, MAX_REFUSALS, MAX_SUMMARY_SEGMENTS, TOOL_SECONDS
+from aibi.core.schema.guards import NotJson, PackFailed, Tripped
+from aibi.core.schema.jsonio import pointer, utf16_key
+from aibi.core.schema.limits import (
+    DOCUMENT_BYTES,
+    JSON_VALUES,
+    LOG_BYTES,
+    MAX_DOCUMENT_BYTES,
+    MAX_VALUES,
+    TOOL_SECONDS,
+)
 from aibi.core.schema.loading import DocumentResult, as_written, load_document
-from aibi.core.schema.output import Data, DataSegment, Segment, TextSegment, data, text
-from aibi.core.schema.pack_api import TranslationNote as PackNote
+from aibi.core.schema.output import Data, Segment, data, text
 from aibi.core.schema.pack_api import UnknownPack
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
@@ -355,62 +363,31 @@ def _translated(
             message=[text("No installed pack translates documents of format "), data(format)],
             alternatives=_listed(_formats(catalog)),
         )
+    document = copy.deepcopy(dict(given))
+    allowance = guards.allowance(
+        MAX_VALUES,
+        MAX_DOCUMENT_BYTES,
+        MAX_DOCUMENT_BYTES,
+        (JSON_VALUES, DOCUMENT_BYTES, DOCUMENT_BYTES),
+    )
     try:
-        made = cast(object, translator.translate(copy.deepcopy(dict(given))))
-    except MemoryError:
-        raise
-    except Exception as error:
-        pack_failed(format.partition(".")[0], "translator", error)
+        made = translator.call(lambda h: translation(h.translate, document, allowance=allowance))
+    except PackFailed:
         return _failed("The pack's translator of this format failed")
-    if not isinstance(made, tuple) or len(cast(tuple[object, ...], made)) != 2:
-        return _failed("The pack's translator of this format gave no document and notes")
-    translated, notes = cast(tuple[object, object], made)
-    try:
-        document = json_value(
-            dict(cast(Mapping[str, object], translated))
-            if isinstance(translated, Mapping)
-            else None
+    if isinstance(made, Tripped):
+        return Refusal(
+            code=RefusalCode.PACK_FAILED,
+            path=None,
+            message=[
+                text("The pack's translator of this format gave a document larger than "),
+                text(f"one may be ({made.name}, at most {made.most})"),
+            ],
+            limit=Limit(name=made.name, max=made.most),
         )
-    except JsonError:
-        document = None
-    found = _notes(notes)
-    if found is None or not isinstance(document, dict):
-        return _failed(
-            "The pack's translator of this format gave what is not a JSON document and a list "
-            "of notes the core can read"
-        )
-    found += _negations(document)
-    return document, found
-
-
-def _notes(given: object) -> list[TranslationNote] | None:
-    """A translator's notes, each a pointer into the document given and at most
-    ``MAX_SUMMARY_SEGMENTS`` segments; at most ``MAX_REFUSALS`` of them. ``None`` otherwise."""
-    if not isinstance(given, list | tuple):
-        return None
-    notes = cast(Sequence[object], given)
-    if len(notes) > MAX_REFUSALS:
-        return None
-    found: list[TranslationNote] = []
-    for note in notes:
-        if not isinstance(note, PackNote):
-            return None
-        at, message = cast(object, note.pointer), cast(object, note.message)
-        if not isinstance(at, str) or not isinstance(message, list | tuple):
-            return None
-        segments = list(cast(Sequence[object], message))
-        if JSON_POINTER_RE.fullmatch(at) is None or len(segments) > MAX_SUMMARY_SEGMENTS:
-            return None
-        if not all(isinstance(segment, TextSegment | DataSegment) for segment in segments):
-            return None
-        found.append(
-            TranslationNote(
-                pointer=at,
-                translated=False,
-                message=cast(list[Segment], segments),
-            )
-        )
-    return found
+    if isinstance(made, NotJson):
+        return _failed("The pack's translator of this format gave a document that is not JSON")
+    translated, notes = made
+    return translated, [*notes, *_negations(translated)]
 
 
 def _negations(document: Mapping[str, JsonValue]) -> list[TranslationNote]:

@@ -252,7 +252,6 @@ READS: dict[tuple[str, str, str], str] = {
     ("core/schema/document.py", "PackLeaf._check_pack", "__pydantic_extra__"): (
         "reads a pack leaf's extra members, to check them"
     ),
-    ("core/engine/resolve.py", "<module>", "vars"): "reads the built-in exceptions' names",
     ("core/importers/checks.py", "<module>", "__dict__"): (
         "reads the class dictionary of BaseException, for its own __traceback__ descriptor"
     ),
@@ -265,6 +264,32 @@ READS: dict[tuple[str, str, str], str] = {
         "reads the instance dictionary of an object a pack built, only when it is a plain dict of "
         "exact str keys, so that no code of the pack's runs; what is read is copied through "
         "text(), data() or a constructor, never handed on"
+    ),
+    ("core/schema/copiers.py", "_fields", "vars"): (
+        "reads the instance dictionary of an object a pack built, only when it is a plain dict of "
+        "exact str keys, so that no code of the pack's runs; what is read is counted and then "
+        "validated again as the exact instance it is (D403), never handed on"
+    ),
+    ("core/schema/copiers.py", "_fields", "__pydantic_fields_set__"): (
+        "reads the fields-set of a model a pack built, only to check that it is an exact set of "
+        "exact str, so that the instance's validation reads built-in types only; nothing is made "
+        "from it"
+    ),
+    ("core/schema/copiers.py", "_fields", "__pydantic_extra__"): (
+        "reads that a model a pack built holds no extra members, before it is validated again; "
+        "nothing is made from it"
+    ),
+    ("core/schema/copiers.py", "_fields", "__pydantic_private__"): (
+        "reads that a model a pack built holds no private members, before it is validated again; "
+        "nothing is made from it"
+    ),
+    ("core/schema/guards.py", "<module>", "vars"): (
+        "reads the built-in exceptions' names, from the module builtins: no output, no object of "
+        "a pack's"
+    ),
+    ("core/schema/guards.py", "Hook.__init__", "__setattr__"): (
+        "sets the three slots of the handle it is making, before anyone holds it, to a pack, a "
+        "stage and the hook object, which is stored and never read; no model, no server text"
     ),
 }
 """The reads of a banned name, by file, enclosing function and name, each with why."""
@@ -323,7 +348,6 @@ NAMED: dict[tuple[str, str], str] = {
     ("core/schema/operator.py", "_stored"): "a request's members, by a constant tuple",
     ("core/schema/output.py", "Output.model_copy"): "the members of an output that are set",
     ("core/schema/release.py", "_Checker.coverage_tables"): "a constant pair of members",
-    ("core/store/proposals.py", "_shown"): "a member of a descriptor, by a name its caller gives",
 }
 """The functions that read an attribute by a name that is not a constant (``getattr(x, name)``),
 by file and enclosing function, each with why."""

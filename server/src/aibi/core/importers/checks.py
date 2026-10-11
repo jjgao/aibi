@@ -62,9 +62,11 @@ when there are from 1 to ``MAX_REFUSALS``, each has a
 code of the pack's own (``<pack id>.<CODE>``, §8.6), names no limit, points to no path, holds no
 counts, and has a message and alternatives within a note's bounds.
 ``MemoryError`` is ``LIMIT_EXCEEDED`` naming ``import_bytes`` (D225), and ``KeyboardInterrupt`` and
-``SystemExit`` pass as new instances, as for a pack's analyses (``analyses.packs``); anything else
-the pack raises, ``BaseException`` subclasses and an ``ImportRefused`` of its own making included,
-is ``PACK_FAILED``, logged with the pack and a built-in exception's type alone (D285).
+``SystemExit`` pass as new instances (a ``SystemExit`` with status 1), as from every hook's
+guard (``schema.guards``, D403), which hands the importer to this guard alone (``Hook.enter``);
+anything else the pack raises, ``BaseException`` subclasses and an ``ImportRefused`` of its own
+making included, is ``PACK_FAILED``, logged with the pack and a built-in exception's type alone
+(D285).
 """
 
 import os
@@ -77,7 +79,6 @@ from typing import cast
 
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from aibi.core.engine.resolve import pack_failed
 from aibi.core.importers.errors import ImportRefused, long_cell_refused, out_of_memory, refused
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
@@ -92,6 +93,7 @@ from aibi.core.schema.descriptors import (
     RelationshipDescriptor,
     TableDescriptor,
 )
+from aibi.core.schema.guards import pack_failed
 from aibi.core.schema.ids import MAX_SAFE_INTEGER, is_identifier, is_pack_code
 from aibi.core.schema.jsonio import canonical, is_text
 from aibi.core.schema.limits import (
@@ -335,7 +337,7 @@ def run_importer(
         except BaseException:  # building the refusal is guarded too: the constant one stands
             passed, failure = None, fallback
     if passed is not None:
-        raise passed()
+        raise SystemExit(1) if passed is SystemExit else passed()
     assert failure is not None
     raise failure
 

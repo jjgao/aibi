@@ -67,13 +67,7 @@ from typing import Annotated, Union, cast, get_args, get_origin
 from pydantic import BaseModel
 
 from aibi.core.analyses import columns, cox, distribution, existence, members, survival
-from aibi.core.engine.resolve import (
-    UNCONFIRMED,
-    DescriptorCopies,
-    PackView,
-    pack_failed,
-    usable_endpoint,
-)
+from aibi.core.engine.resolve import UNCONFIRMED, Operation, usable_endpoint
 from aibi.core.schema.analyses import (
     ColumnsParams,
     ColumnsValues,
@@ -89,6 +83,7 @@ from aibi.core.schema.analyses import (
     SurvivalValues,
 )
 from aibi.core.schema.catalog import ApplicableAnalysis
+from aibi.core.schema.copiers import is_true
 from aibi.core.schema.descriptors import (
     AnalysisDescriptor,
     ColumnDescriptor,
@@ -99,6 +94,7 @@ from aibi.core.schema.descriptors import (
     TableDescriptor,
 )
 from aibi.core.schema.document import DocModel
+from aibi.core.schema.guards import PackFailed
 from aibi.core.schema.ids import CORE_ANALYSIS_FAMILIES
 from aibi.core.schema.jsonschemas import Checker
 from aibi.core.schema.output import Output
@@ -373,10 +369,13 @@ class Analyses:
         *,
         dataset: str,
         manifest: str,
+        operation: Operation | None = None,
     ) -> list[str]:
         """The roles of a pack analysis's ``predicate`` requirements that do not hold of a
-        release, each run as applicability runs it (D341)."""
-        view = _view(descriptors, dataset, manifest)
+        release, each run as applicability runs it (D341), on its pack's view of the release in
+        ``operation`` (D403)."""
+        views = Operation() if operation is None else operation
+        release = _Release(dataset, manifest, descriptors)
         held: dict[str, bool] = {}
         missing: list[str] = []
         for requirement in analysis.entry.fields.requires:
@@ -384,7 +383,7 @@ class Analyses:
             if reference is None:
                 continue
             if reference not in held:
-                held[reference] = self._holds(reference, view)
+                held[reference] = self._holds(reference, views, release)
             if not held[reference]:
                 missing.append(requirement.role)
         return missing
@@ -407,13 +406,16 @@ class Analyses:
         manifest: str,
         unit: str | None = None,
         k: int | None = None,
+        operation: Operation | None = None,
     ) -> list[ApplicableAnalysis]:
         """Each analysis's applicability to a release (module docstring): for ``unit``, or, with
         none, the best status over the release's keyed tables; ``k`` is the release's effective
         disclosure setting, the floor's included, under which a ``refused`` analysis is
         ``unavailable`` (D353), and one that shows only numbers' units for a unit over which no
-        view compares categories (``CATEGORIES_UNDER_K``, D337)."""
-        view = _view(descriptors, dataset, manifest)
+        view compares categories (``CATEGORIES_UNDER_K``, D337). Each requirement predicate runs
+        once, on its pack's view of the release in ``operation`` (D403)."""
+        views = Operation() if operation is None else operation
+        release = _Release(dataset, manifest, descriptors)
         rowless = _rowless(descriptors)
         keyed = [
             descriptor.id
@@ -424,7 +426,7 @@ class Analyses:
         held: dict[str, bool] = {}
         found: list[ApplicableAnalysis] = []
         for analysis in self.all():
-            outcomes = [self._matched(analysis, descriptors, view, table, held) for table in units]
+            outcomes = [self._matched(analysis, release, views, table, held) for table in units]
             if not outcomes:
                 outcomes = [(_UNAVAILABLE, ["unit"], list[str]())]
             refused = _refused(analysis, k, rowless)
@@ -450,14 +452,15 @@ class Analyses:
     def _matched(
         self,
         analysis: Registered,
-        descriptors: Sequence[Descriptor],
-        view: PackView,
+        release: "_Release",
+        views: Operation,
         unit: str,
         held: dict[str, bool],
     ) -> tuple[int, list[str], list[str]]:
         """The status rank of one analysis for one unit, the roles it misses and those met only
         by unconfirmed descriptors; ``held`` keeps what each requirement predicate gave, which
         reads the release and not the unit, so that it runs once."""
+        descriptors = release.descriptors
         missing: list[str] = []
         unconfirmed: list[str] = []
         for requirement in analysis.entry.fields.requires:
@@ -469,7 +472,7 @@ class Analyses:
             least = 1 if requirement.min is None else requirement.min
             reference = requirement.predicate
             if reference is not None and reference not in held:
-                held[reference] = self._holds(reference, view)
+                held[reference] = self._holds(reference, views, release)
             holds = reference is None or held[reference]
             if (requirement.kind is not None and len(matches) < least) or not holds:
                 missing.append(requirement.role)
@@ -482,7 +485,9 @@ class Analyses:
         rank = _UNAVAILABLE if missing else _CAVEATS if unconfirmed else _AVAILABLE
         return rank, missing, unconfirmed
 
-    def _holds(self, reference: str, view: PackView) -> bool:
+    def _holds(self, reference: str, views: Operation, release: "_Release") -> bool:
+        """Whether a requirement predicate holds of the release: called through its handle's
+        guard on its pack's view of the release (D403); one that fails does not hold."""
         if self.packs is None:
             return False
         try:
@@ -491,13 +496,22 @@ class Analyses:
             return False
         if predicate is None:
             return False
+        view = views.unlabelled(
+            predicate.pack, release.dataset, release.manifest, release.descriptors
+        )
         try:
-            return predicate(view) is True
-        except MemoryError:
-            raise
-        except Exception as error:
-            pack_failed(reference.partition(".")[0], "requirement predicate", error)
+            return predicate.call(lambda h: is_true(h, view))
+        except PackFailed:
             return False
+
+
+@dataclass(frozen=True)
+class _Release:
+    """The release applicability reads: its dataset, manifest and descriptors."""
+
+    dataset: str
+    manifest: str
+    descriptors: Sequence[Descriptor]
 
 
 _AVAILABLE, _CAVEATS, _UNAVAILABLE = 0, 1, 2
@@ -559,13 +573,6 @@ def _refused(analysis: Registered, k: int | None, rowless: bool) -> list[str]:
     if lists_keys and rowless:
         found.append("allow_row_ids")
     return found
-
-
-def _view(descriptors: Sequence[Descriptor], dataset: str, manifest: str) -> PackView:
-    """What a requirement predicate reads of the release: its descriptors, copied (§10.1)."""
-    found = next((d for d in descriptors if isinstance(d, DatasetDescriptor)), None)
-    packs = () if found is None else tuple(found.fields.packs or ())
-    return PackView(dataset, manifest, packs, DescriptorCopies({d.id: d for d in descriptors}))
 
 
 def _matches(

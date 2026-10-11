@@ -4155,3 +4155,84 @@ def test_a_postgres_database_in_sql_ascii_with_names_that_are_text_is_read(
         source = connect("postgres", url_env="U", environ={"U": database})
         found = DatabaseImporter().import_database(source, roots.options("library"))
     assert sorted(found.layouts) == ["base"]
+
+
+# --- A database snapshot's source, as a pack's validator gets it (D305, D403) --------------------
+
+
+def test_a_validator_gets_a_database_source_of_its_own_under_its_guard(
+    roots: Any, store: Store, connect: Any
+) -> None:
+    import aibi
+    from aibi.core.schema import guards
+    from aibi.core.schema.curation import ChangeRequest
+    from aibi.core.schema.pack_api import DatabaseSource, Pack, PackManifest, PackRegistry
+    from aibi.core.store import sessions
+
+    given: list[tuple[object, bool]] = []
+
+    class Validator:
+        def __init__(self, fail: bool) -> None:
+            self.fail = fail
+
+        def validate_source(self, source: Any, result: Any) -> list[Refusal]:
+            frame: Any = sys._getframe(1)  # pyright: ignore[reportPrivateUsage]
+            guarded = False
+            while frame is not None:
+                guarded = guarded or frame.f_code is guards._contained.__code__  # pyright: ignore[reportPrivateUsage]
+                frame = frame.f_back
+            given.append((source, guarded))
+            if self.fail:
+                raise RuntimeError("s3cr3t")
+            return []
+
+        def validate_descriptors(self, release: Any) -> list[Refusal]:
+            return []
+
+    def registry(fail: bool) -> PackRegistry:
+        pack = Pack(
+            manifest=PackManifest(
+                id="dbs", version="1.0.0", results_version=1, requires_core=">=0"
+            ),
+            validator=Validator(fail),
+        )
+        return PackRegistry([pack], core_version=aibi.__version__)
+
+    path = sqlite_file(roots.inside)
+    import_dataset(store, connect("sqlite", path), roots.options("library"), "operator:a")
+    opened = sessions.open_session(store, "library", "operator:a")
+    edit = {"op": "set", "descriptor": "dataset", "pointer": "/fields/packs", "value": ["dbs"]}
+    request = ChangeRequest.model_validate({"edits": [edit]})
+    draft = sessions.change(
+        store,
+        "library",
+        opened.handle,
+        opened.draft,
+        request,
+        "operator:a",
+        registry=registry(False),
+    )
+    sessions.publish(store, "library", opened.handle, draft, "operator:a", registry=registry(False))
+    with sqlite3.connect(path) as writer:
+        writer.execute("INSERT INTO authors VALUES (4, 'Dale')")
+    resolved = connect("sqlite", path)
+    reimport_dataset(
+        store, resolved, roots.options("library"), "operator:a", registry=registry(False)
+    )
+    [(source, guarded)] = given
+    assert guarded
+    assert type(source) is DatabaseSource
+    assert source == resolved.source
+    assert source is not resolved.source
+    with sqlite3.connect(path) as writer:
+        writer.execute("INSERT INTO authors VALUES (5, 'Eve')")
+    with pytest.raises(ImportRefused) as refused:
+        reimport_dataset(
+            store,
+            connect("sqlite", path),
+            roots.options("library"),
+            "operator:a",
+            registry=registry(True),
+        )
+    assert refusal_of(refused).code == RefusalCode.PACK_FAILED
+    assert "s3cr3t" not in shown(refusal_of(refused))

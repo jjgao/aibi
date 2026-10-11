@@ -11,7 +11,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1926,7 +1926,9 @@ class _Equal:
 
     schema: Mapping[str, JsonValue] = {"type": "object"}
 
-    def compile(self, leaf: PackLeaf, release: ReleaseView, pack_version: str) -> Sequence[Clause]:
+    def compile(
+        self, leaf: PackLeaf, release: ReleaseView, pack_version: str
+    ) -> list[Clause] | tuple[Clause, ...]:
         members = leaf.model_extra or {}
         clause: dict[str, Any] = {
             "kind": "value",
@@ -1940,7 +1942,7 @@ class _Equal:
         )
         return list(loaded.document.cohorts["c"].all)
 
-    def summary(self, leaf: PackLeaf) -> Sequence[Segment]:
+    def summary(self, leaf: PackLeaf) -> list[Segment] | tuple[Segment, ...]:
         return [text("rows whose column equals the value")]
 
 

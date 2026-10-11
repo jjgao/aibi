@@ -16,7 +16,8 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 
 - `core/schema/`: the models of M0 (identifiers, analysis documents, descriptors, results, cohort
   counts, caveats, refusals, the pack API, whose `PackRegistry` keeps core-made copies of what a pack
-  gives) and `digests.py`, which hashes and digests.
+  gives and hands out `Hook`s, one guard (`guards.py`, `copiers.py`) for every call of a pack's code)
+  and `digests.py`, which hashes and digests.
 - `core/store/`: blobs, raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure,
   the validation gate, the release lifecycle (operation slots, curation sessions with handles, the
   proposal and curation queues), catalogue statistics (`statistics.py`), the derivation log

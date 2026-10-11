@@ -23,8 +23,6 @@ Refused until later milestones: concept references and cross-dataset cohorts (M6
 coverage's ``parent_scope`` holding more than value predicates and combinators.
 """
 
-import builtins
-import logging
 import math
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -34,7 +32,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from packaging.specifiers import SpecifierSet
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import JsonValue
 
 from aibi.core.engine.data import Release
 from aibi.core.engine.graph import PATH_SEARCH_STEPS, Graph, Path, Step, down_steps, render
@@ -68,9 +66,11 @@ from aibi.core.engine.resolved import (
 )
 from aibi.core.engine.units import convertible
 from aibi.core.schema.analyses import EXCLUDE, Aggregate, Variable
+from aibi.core.schema.copiers import CompilerRefused, NoExpansion, expansion, segments
 from aibi.core.schema.descriptors import (
     ColumnDescriptor,
     CoverageDescriptor,
+    DatasetDescriptor,
     Descriptor,
     DirectCoverage,
     EndpointDescriptor,
@@ -81,7 +81,6 @@ from aibi.core.schema.descriptors import (
 from aibi.core.schema.document import (
     AllClause,
     AnyClause,
-    Clause,
     ClauseModel,
     CohortLeaf,
     CoveredLeaf,
@@ -98,8 +97,9 @@ from aibi.core.schema.document import (
     walk,
 )
 from aibi.core.schema.document import Step as DocStep
+from aibi.core.schema.guards import Hook, PackFailed, pack_failed
 from aibi.core.schema.ids import DECIMAL_INTEGER_RE, MAX_SAFE_INTEGER
-from aibi.core.schema.jsonio import JsonError, canonical, pointer
+from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.jsonschemas import (
     OUT_OF_STEPS,
     STEPS_BASE,
@@ -122,14 +122,8 @@ from aibi.core.schema.limits import (
     PATH_STEPS,
 )
 from aibi.core.schema.loading import as_written
-from aibi.core.schema.output import DataSegment, Segment, TextSegment, data, text
-from aibi.core.schema.pack_api import (
-    LeafKind,
-    Pack,
-    PackRegistry,
-    Refused,
-    UnknownPack,
-)
+from aibi.core.schema.output import Segment, TextSegment, data, text
+from aibi.core.schema.pack_api import LeafKind, PackRegistry, UnknownPack
 from aibi.core.schema.params import Position
 from aibi.core.schema.refusals import Limit, Refusal, RefusalCode, finish_refusals
 
@@ -145,10 +139,8 @@ _LISTED = 64
 _EXPANSION = "~expansion"
 """The token under a pack leaf's position at which its expansion is resolved; no position of
 the document as written has it, and every refusal inside an expansion is placed at the leaf."""
-_CLAUSES: TypeAdapter[list[Clause]] = TypeAdapter(list[Clause])
 
 Label = int | Literal["draft"]
-_logger = logging.getLogger(__name__)
 
 
 class LabelNotShownError(AttributeError):
@@ -216,28 +208,71 @@ class PackView:
         return cls(release.dataset, release.manifest, packs, DescriptorCopies(release.by_id))
 
 
-_BUILT_IN: tuple[tuple[type, str], ...] = tuple(
-    (found, name)
-    for name, found in vars(builtins).items()
-    if isinstance(found, type) and issubclass(found, BaseException)
-)
-"""Each built-in exception type with its name in ``builtins``: the one name a log may give a
-pack's exception, since a pack names its own types, and sets ``__module__``, as it likes. It is
-looked up by identity, which runs no code of the pack's: a dict would hash the pack's type, and
-its metaclass may make that raise, or say something else (D400)."""
+@dataclass(frozen=True)
+class LabelledView:
+    """A ``ReleaseView`` with its label: what a validator, a proposer and a facet read of a
+    release (§10.1), its descriptors copied as they are read (``DescriptorCopies``). A draft's
+    label is ``"draft"``, and an import's the label it would be published as."""
+
+    dataset: str
+    manifest: str
+    label: Label
+    packs: Sequence[str]
+    descriptors: Mapping[str, Descriptor]
 
 
-def pack_failed(pack: str, stage: str, error: BaseException) -> None:
-    """Log that a pack's code raised: the pack and the exception's type only, since its message
-    may quote the leaf or the release (D285), and the type's name only for a built-in exception,
-    since a pack names its own types as it likes (D343)."""
-    kind = type(error)
-    _logger.warning(
-        "pack %s: its %s raised %s",
-        pack,
-        stage,
-        next((name for found, name in _BUILT_IN if found is kind), "an exception of its own"),
-    )
+def _packs_of(descriptors: Iterable[Descriptor]) -> tuple[str, ...]:
+    for descriptor in descriptors:
+        if isinstance(descriptor, DatasetDescriptor):
+            return tuple(descriptor.fields.packs or ())
+    return ()
+
+
+class Operation:
+    """The views of one operation (an import, a re-import, a session's change or publish, a
+    proposers' run, a catalogue read, applicability), made by the caller of the sites whose
+    hooks it calls and dropped when it ends (D403). Each pack whose hooks read a release in it
+    gets one view of it, keyed by (pack id, manifest hash, label), whose descriptors are copied
+    the first time that pack reads them: a pack's write to its copy reaches only its own later
+    hooks in the operation, in the core's fixed order, and never another pack's. Only the sites
+    whose outputs enter no id, digest or cache, or a cache whose key fixes the calls that share
+    the view (the catalogue's facets, by ``basis``), share a view this way; a leaf compiler and a
+    caveat rule get a view of their own per call (``PackView.of``, D285, D287). The core never
+    reads a view after handing it out."""
+
+    __slots__ = ("_views",)
+
+    def __init__(self) -> None:
+        self._views: dict[tuple[str, str, Label | None], LabelledView | PackView] = {}
+
+    def labelled(
+        self,
+        pack: str,
+        dataset: str,
+        manifest: str,
+        label: Label,
+        descriptors: Sequence[Descriptor],
+    ) -> LabelledView:
+        """``pack``'s view of a release by its label, made the first time it is asked for."""
+        key = (pack, manifest, label)
+        found = self._views.get(key)
+        if not isinstance(found, LabelledView):
+            copies = DescriptorCopies({d.id: d for d in descriptors})
+            found = LabelledView(dataset, manifest, label, _packs_of(descriptors), copies)
+            self._views[key] = found
+        return found
+
+    def unlabelled(
+        self, pack: str, dataset: str, manifest: str, descriptors: Sequence[Descriptor]
+    ) -> "PackView":
+        """``pack``'s view of a release without its label (a requirement predicate's)."""
+        key = (pack, manifest, None)
+        found = self._views.get(key)
+        if not isinstance(found, PackView):
+            copies = DescriptorCopies({d.id: d for d in descriptors})
+            found = PackView(dataset, manifest, _packs_of(descriptors), copies)
+            self._views[key] = found
+        return found
 
 
 def identifying(release: Release, descriptor: ColumnDescriptor) -> bool:
@@ -2330,13 +2365,15 @@ class _Resolver:
         if pack_id in self.unavailable:
             return None  # refused at the document's packs
         registry = self.registry
-        leaf_kind = None
+        compiler: Hook[LeafKind] | None = None
+        summarising: Hook[LeafKind] | None = None
         if registry is not None:
             try:
-                leaf_kind = registry.leaf_kind(kind)
+                compiler = registry.leaf_kind(kind)
+                summarising = registry.leaf_summary(kind)
             except UnknownPack:
-                leaf_kind = None
-        if registry is None or leaf_kind is None:
+                compiler = summarising = None
+        if registry is None or compiler is None or summarising is None:
             self.refuse(
                 RefusalCode.UNKNOWN_KIND,
                 (*at, "kind"),
@@ -2349,12 +2386,12 @@ class _Resolver:
         key = canonical(leaf)
         if not self._schema_holds(registry, kind, leaf, key, at):
             return None
-        pack = registry.pack(pack_id)
-        compiled = self._expansion(key, context.release, pack, leaf_kind, at)
-        summary = self._summary(key, pack_id, leaf_kind, at)
+        version = registry.pack(pack_id).manifest.version
+        compiled = self._expansion(key, context.release, pack_id, version, compiler, at)
+        summary = self._summary(key, summarising, at)
         if compiled is None or summary is None:
             return None
-        expansion, written = compiled
+        expanded, written = compiled
         values = _count_values(written)
         if values > self.expansion_values:
             self.refuse(
@@ -2369,7 +2406,7 @@ class _Resolver:
         written_before = set(context.written)
         outer, self.expanding = self.expanding, (at, kind)
         try:
-            members, failed = self._resolved(context, expansion, (*at, _EXPANSION), table, in_where)
+            members, failed = self._resolved(context, expanded, (*at, _EXPANSION), table, in_where)
         finally:
             self.expanding = outer
             context.written = written_before
@@ -2442,46 +2479,43 @@ class _Resolver:
         self,
         key: bytes,
         release: Release,
-        pack: Pack,
-        leaf_kind: LeafKind,
+        pack: str,
+        version: str,
+        compiler: Hook[LeafKind],
         at: Position,
     ) -> tuple[list[ClauseModel], JsonValue] | None:
         """The leaf's expansion in a release, checked: core clauses with no pack, ``ids`` or
-        ``cohort`` leaf at any depth, as a document holds them. The compiler runs once per
-        distinct leaf and release, on a leaf of its own built from the leaf's JSON and a view
-        of its own (``PackView``), so that what it does to either reaches no other reader, and
-        no leaf's expansion depends on what another's compiler did; its refusals are placed at
-        the leaf, their paths below it, and anything else it raises but a ``MemoryError`` (a
-        ``RecursionError`` included) is ``PACK_FAILED`` (D285)."""
+        ``cohort`` leaf at any depth, as a document holds them, read back from their JSON
+        (``copiers.expansion``). The compiler runs once per distinct leaf and release, through
+        its handle's guard (D403), on a leaf of its own built from the leaf's JSON and a view of
+        its own (``PackView``), so that what it does to either reaches no other reader, and no
+        leaf's expansion depends on what another's compiler did; its refusals (a ``Refused``
+        itself, in the pack's own codes) are placed at the leaf, their paths below it, and
+        anything else it raises but a passed type (a ``RecursionError`` included) is
+        ``PACK_FAILED`` (D285)."""
         cache = (key, release.manifest)
         if cache in self.compiled:
             found = self.compiled[cache]
             if found is None:
                 self._refuse_again(cache, at)
             return found
+        leaf = PackLeaf.model_validate_json(key)
+        view = PackView.of(release)
         try:
-            given = leaf_kind.compile(
-                PackLeaf.model_validate_json(key), PackView.of(release), pack.manifest.version
-            )
-            checked = self._checked_expansion(cast(object, given))
-        except Refused as refused:
-            self.compiled[cache] = None
-            self.refused_by_pack[cache] = list(refused.refusals)
-            self._refuse_again(cache, at)
-            return None
-        except MemoryError:
-            raise
-        except Exception as error:
-            pack_failed(pack.id, "leaf compiler", error)
+            given = compiler.call(lambda h: expansion(h.compile, leaf, view, version, pack=pack))
+        except PackFailed:
             self.compiled[cache] = None
             self.raised.add(cache)
             self._refuse_again(cache, at)
             return None
-        if checked is None:
+        if isinstance(given, CompilerRefused | NoExpansion):
             self.compiled[cache] = None
-            self.refused_by_pack[cache] = []
+            self.refused_by_pack[cache] = (
+                list(given.refusals) if isinstance(given, CompilerRefused) else []
+            )
             self._refuse_again(cache, at)
             return None
+        checked = (list(given.clauses), given.written)
         self.compiled[cache] = checked
         return checked
 
@@ -2512,49 +2546,19 @@ class _Resolver:
                 limit=refusal.limit,
             )
 
-    @staticmethod
-    def _checked_expansion(given: object) -> tuple[list[ClauseModel], JsonValue] | None:
-        """The expansion a compiler gave, checked; ``None`` for what is no expansion. Dumping
-        the models it gave runs its code, whose exceptions the caller catches."""
-        if not isinstance(given, list | tuple):
-            return None
-        items = cast(Sequence[object], given)
-        if not all(isinstance(item, BaseModel) for item in items):
-            return None
-        try:
-            written = [
-                cast(JsonValue, cast(BaseModel, item).model_dump(mode="json", by_alias=True))
-                for item in items
-            ]
-            canonical(written)
-            checked = _CLAUSES.validate_python(written)
-        except (JsonError, ValidationError, ValueError, TypeError):
-            return None
-        for member, _, _ in walk(list(checked), []):
-            if isinstance(member, PackLeaf | IdsLeaf | CohortLeaf):
-                return None
-        return list(checked), cast(JsonValue, written)
-
     def _summary(
-        self, key: bytes, pack: str, leaf_kind: LeafKind, at: Position
+        self, key: bytes, summarising: Hook[LeafKind], at: Position
     ) -> tuple[Segment, ...] | None:
-        """The pack's summary of the leaf as written, from a leaf of its own: at most
-        ``MAX_SUMMARY_SEGMENTS`` segments, kept outside every hash (§7.3); anything else, or an
-        exception, is ``PACK_FAILED`` (D285)."""
+        """The pack's summary of the leaf as written, from a leaf of its own, through its
+        handle's guard: at most ``MAX_SUMMARY_SEGMENTS`` segments of at most ``MAX_TEXT``
+        characters together (``copiers.segments``), kept outside every hash (§7.3); anything
+        else, or an exception, is ``PACK_FAILED`` (D285, D403)."""
         if key not in self.summarised:
-            found: tuple[Segment, ...] | None = None
+            leaf = PackLeaf.model_validate_json(key)
+            found: tuple[Segment, ...] | None
             try:
-                given = cast(object, leaf_kind.summary(PackLeaf.model_validate_json(key)))
-                if type(given) is list or type(given) is tuple:
-                    items = tuple(cast(Sequence[object], given))
-                    if len(items) <= MAX_SUMMARY_SEGMENTS and all(
-                        type(item) is TextSegment or type(item) is DataSegment for item in items
-                    ):
-                        found = _segments(cast(tuple[Segment, ...], items))
-            except MemoryError:
-                raise
-            except Exception as error:
-                pack_failed(pack, "summary", error)
+                found = summarising.call(lambda h: segments(h.summary, leaf))
+            except PackFailed:
                 found = None
             self.summarised[key] = found
         summary = self.summarised[key]
@@ -3490,16 +3494,6 @@ def _remarked(node: RClause, origin: frozenset[Position]) -> RClause:
     return replace(node, origin=origin)
 
 
-def _segments(given: tuple[Segment, ...]) -> tuple[Segment, ...] | None:
-    """A pack's segments, each an exact ``TextSegment`` or ``DataSegment``, validated again as
-    the instances they are: a pack's object is checked in shape, and a segment is never rebuilt
-    from what it dumps (D285, D399)."""
-    try:
-        return tuple(type(segment).model_validate(segment) for segment in given)
-    except ValidationError:
-        return None
-
-
 def _count_values(value: JsonValue) -> int:
     """The JSON values in a value, itself included."""
     count = 0
@@ -3632,6 +3626,8 @@ __all__ = [
     "Function",
     "Label",
     "LabelNotShownError",
+    "LabelledView",
+    "Operation",
     "PackView",
     "Resolution",
     "ResolvedCohort",

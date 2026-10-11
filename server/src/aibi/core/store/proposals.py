@@ -26,10 +26,12 @@ proposer, or of every proposer of a kind (``agent``), keeping those the open dra
 holds, so that an operator takes the agents' share back in one step (D277).
 
 **Proposers.** ``run_proposers`` runs the curation proposers of the packs the dataset lists on a
-view of its latest release, after every publish and on request (D249); their proposals enter the
-queue by ``importer:<pack id>@<pack version>``, and one that is invalid or raises, or a proposer
-that raises, is skipped and reported, never raised. A proposal the same proposer made before and
-an operator rejected is not made again.
+view of its latest release, after every publish and on request (D249), each through its handle's
+guard on its pack's view (D403); their proposals, copied as the core's (``copiers.proposals``),
+enter the queue by ``importer:<pack id>@<pack version>``, and one that is invalid
+(``INVALID_VALUE``) or whose reading raises (``PACK_FAILED``), or a proposer that fails
+(``PACK_FAILED``, never its type's name), is skipped and reported, never raised. A proposal the
+same proposer made before and an operator rejected is not made again.
 
 **The curation queue** (D250) lists, for the latest release or a given label: every curated field
 whose status is ``imported_default`` or ``proposed``; the fields nobody declared from a fixed list
@@ -51,6 +53,9 @@ from typing import Literal, cast
 
 from pydantic import JsonValue, ValidationError
 
+from aibi.core.engine.resolve import LabelledView, Operation
+from aibi.core.schema import guards
+from aibi.core.schema.copiers import ProposalItem, ShownName, proposals
 from aibi.core.schema.curation import (
     CurationQueue,
     ProposalInput,
@@ -67,21 +72,25 @@ from aibi.core.schema.descriptors import (
     RelationshipDescriptor,
     TableDescriptor,
 )
+from aibi.core.schema.guards import Hook, PackFailed
 from aibi.core.schema.jsonio import canonical, lookup
 from aibi.core.schema.limits import (
     AGENT_PROPOSALS,
     CLIENT_PROPOSALS,
+    JSON_VALUES,
     MAX_AGENT_PROPOSALS,
     MAX_CLIENT_PROPOSALS,
+    MAX_DOCUMENT_BYTES,
     MAX_OPEN_PROPOSALS,
     MAX_PROPOSAL_BYTES,
     MAX_QUEUE_BYTES,
     MAX_QUEUE_ITEMS,
+    MAX_VALUES,
     OPEN_PROPOSALS,
     PROPOSAL_BYTES,
 )
 from aibi.core.schema.output import Boundary, Output, admitted_at
-from aibi.core.schema.pack_api import PackRegistry
+from aibi.core.schema.pack_api import PackRegistry, Proposer
 from aibi.core.schema.refusals import Limit, RefusalCode
 from aibi.core.schema.release import check_release
 from aibi.core.store.appdb import Session, StoredProposal
@@ -95,18 +104,17 @@ from aibi.core.store.writes import (
     check_writes,
     packs_of,
     versions,
-    view,
 )
 
 
 @dataclass(frozen=True)
 class Skipped:
     """A pack's proposal that was not recorded, or a proposer that failed (``descriptor``
-    ``None``), with why."""
+    ``None``), with why; a name the core does not show is its own words, ``copiers.UNSHOWN``."""
 
     pack: str
-    descriptor: str | None
-    pointer: str | None
+    descriptor: ShownName | None
+    pointer: ShownName | None
     codes: tuple[str, ...]
 
 
@@ -115,6 +123,9 @@ class ProposersRun:
     proposals: tuple[int, ...]
     """The ids of the proposals recorded or found open already."""
     skipped: tuple[Skipped, ...]
+    """The first ``MAX_QUEUE_ITEMS`` skipped, in the order the proposers ran."""
+    truncated: int = 0
+    """The skipped left out past ``MAX_QUEUE_ITEMS``."""
 
 
 def propose_descriptor(
@@ -369,42 +380,16 @@ def reject_proposals(
     return len(rejected), len(kept)
 
 
-def _pack_proposals(found: object) -> list[object]:
-    if isinstance(found, list | tuple):
-        return list(cast(Sequence[object], found))
-    raise TypeError("a proposer returns a sequence of proposals")
-
-
-def _shown(item: object, name: str) -> str | None:
-    try:
-        found = getattr(item, name, None)
-    except Exception:
-        return None
-    return found if isinstance(found, str) else None
-
-
-def _given(item: object) -> ProposalInput:
-    """A pack's proposal as a proposal input; raises ``ValidationError`` or whatever the item
-    raises."""
-    given: dict[str, object] = {
-        "descriptor": getattr(item, "descriptor", None),
-        "pointer": getattr(item, "pointer", None),
-    }
-    if getattr(item, "remove", False) is True:
-        given["remove"] = True
-    else:
-        given["value"] = getattr(item, "value", None)
-    evidence = getattr(item, "evidence", None)
-    if evidence is not None:
-        given["evidence"] = evidence
-    return ProposalInput.model_validate(given)
-
-
-def run_proposers(store: Store, dataset: str, registry: PackRegistry) -> ProposersRun:
+def run_proposers(
+    store: Store, dataset: str, registry: PackRegistry, operation: Operation | None = None
+) -> ProposersRun:
     """Run the curation proposers of the registered packs the dataset lists, on its latest
-    release (D249). Whatever a proposer or one of its proposals does, it is skipped and reported,
-    never raised: this runs after a publish has committed. A proposal the same proposer made
-    before and an operator rejected is not made again."""
+    release (D249), each through its handle's guard on its pack's view of it in ``operation``
+    (D403). Whatever a proposer or one of its proposals does, it is skipped and reported, never
+    raised: this runs after a publish has committed. A proposal the same proposer made before
+    and an operator rejected is not made again. The report holds at most ``MAX_QUEUE_ITEMS``
+    skipped, and counts the rest (``truncated``); each proposer gives at most
+    ``MAX_QUEUE_ITEMS`` proposals (``copiers.proposals``)."""
     latest = store.latest(dataset)
     if latest is None:
         return ProposersRun((), ())
@@ -412,35 +397,64 @@ def run_proposers(store: Store, dataset: str, registry: PackRegistry) -> Propose
         pin.manifest(latest.manifest)
         descriptors = store.descriptors(latest.manifest)
     packs = [pack for pack in packs_of(descriptors) if pack in registry.ids]
-    released = view(dataset, latest.manifest, latest.label, descriptors)
+    views = Operation() if operation is None else operation
     ids: list[int] = []
     skipped: list[Skipped] = []
-    for pack in registry.listed(packs):
-        if pack.proposer is None:
+    left_out = 0
+
+    def skip(item: Skipped) -> None:
+        nonlocal left_out
+        if len(skipped) < MAX_QUEUE_ITEMS:
+            skipped.append(item)
+        else:
+            left_out += 1
+
+    for proposer in registry.proposers(packs):
+        pack = proposer.pack
+        view = views.labelled(pack, dataset, latest.manifest, latest.label, descriptors)
+        found = _proposed(proposer, view)
+        if found is None:
+            skip(Skipped(pack, None, None, (RefusalCode.PACK_FAILED.value,)))
             continue
-        by = f"importer:{pack.id}@{pack.manifest.version}"
-        try:
-            found = _pack_proposals(pack.proposer(released))
-        except Exception as error:
-            skipped.append(Skipped(pack.id, None, None, (type(error).__name__,)))
-            continue
+        by = f"importer:{pack}@{registry.pack(pack).manifest.version}"
         for item in found:
-            shown = (_shown(item, "descriptor"), _shown(item, "pointer"))
+            shown = (item.descriptor, item.pointer)
+            if item.proposal is None:
+                skip(Skipped(pack, *shown, (item.code or _INVALID,)))
+                continue
             try:
-                proposal = _given(item)
-                if _rejected(store, dataset, proposal, by):
+                if _rejected(store, dataset, item.proposal, by):
                     continue
-                ids.append(propose_descriptor(store, dataset, proposal, by, registry=registry))
+                ids.append(propose_descriptor(store, dataset, item.proposal, by, registry=registry))
             except ValidationError:
-                skipped.append(Skipped(pack.id, *shown, (RefusalCode.INVALID_VALUE.value,)))
+                skip(Skipped(pack, *shown, (_INVALID,)))
             except EditRefused as error:
                 codes = tuple(sorted({str(refusal.code) for refusal in error.refusals}))
-                skipped.append(Skipped(pack.id, *shown, codes))
+                skip(Skipped(pack, *shown, codes))
             except StoreRefused as error:
-                skipped.append(Skipped(pack.id, *shown, (str(error.refusal.code),)))
-            except Exception as error:
-                skipped.append(Skipped(pack.id, *shown, (type(error).__name__,)))
-    return ProposersRun(tuple(ids), tuple(skipped))
+                skip(Skipped(pack, *shown, (str(error.refusal.code),)))
+            except Exception as error:  # the core's own, after the proposal was copied
+                skip(Skipped(pack, *shown, (type(error).__name__,)))
+    return ProposersRun(tuple(ids), tuple(skipped), left_out)
+
+
+_INVALID = RefusalCode.INVALID_VALUE.value
+
+
+def _proposed(proposer: Hook[Proposer], view: LabelledView) -> tuple[ProposalItem, ...] | None:
+    """One proposer's proposals, copied (``copiers.proposals``), each item read under its own
+    guard and given an allowance of its own; ``None`` when the proposer fails."""
+    pack = proposer.pack
+    allowances = guards.allowances(
+        MAX_VALUES,
+        MAX_DOCUMENT_BYTES,
+        MAX_DOCUMENT_BYTES,
+        (JSON_VALUES, PROPOSAL_BYTES, PROPOSAL_BYTES),
+    )
+    try:
+        return proposer.call(lambda h: proposals(h, view, pack=pack, allowances=allowances))
+    except PackFailed:
+        return None
 
 
 # --- The curation queue (D250) ---------------------------------------------------------------

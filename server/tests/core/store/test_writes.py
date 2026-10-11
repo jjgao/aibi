@@ -1,6 +1,8 @@
 """Checks on every descriptor write and the versions the server sets (SPEC §5.1, §10.1, D243,
 D247), with a test-only pack of shelf marks."""
 
+import gc
+import logging
 import time
 import tracemalloc
 from typing import Any
@@ -101,6 +103,73 @@ def test_an_ontology_validator_rejects_a_code_and_an_unknown_system_passes() -> 
     )
     found = check_writes([*descriptors(), column], registry())
     assert codes(found) == [("INVALID_VALUE", "/1/fields/concepts/1/code")]
+
+
+def test_an_ontology_validator_that_failed_is_not_called_again_in_one_check(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls: list[str] = []
+
+    def failing(code: str) -> bool:
+        calls.append(code)
+        raise ValueError("s3cr3t")
+
+    concepts = [
+        {"system": "marks", "code": f"M{n}", "label": "One", "relation": "exact"} for n in range(3)
+    ]
+    columns = [build.column(f"t.{name}", "string", concepts=concepts) for name in ("a", "b")]
+    with caplog.at_level(logging.WARNING):
+        found = check_writes(
+            [*descriptors(), *columns], registry(ontology_systems={"marks": failing})
+        )
+    assert codes(found) == [
+        ("PACK_FAILED", f"/{at}/fields/concepts/{n}/code") for at in (1, 2) for n in range(3)
+    ]
+    assert calls == ["M0"]
+    assert caplog.messages == ["pack shelf: its ontology validator raised ValueError"]
+    calls.clear()
+    check_writes([*descriptors(), *columns], registry(ontology_systems={"marks": failing}))
+    assert calls == ["M0"], "a later check calls it again"
+
+
+def test_a_failed_ontology_system_disables_only_itself_and_blames_only_its_pack(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def failing(code: str) -> bool:
+        raise ValueError("s3cr3t")
+
+    bins = Pack(
+        manifest=PackManifest(id="bins", version="1.0.0", results_version=1, requires_core=">=0"),
+        ontology_systems={"bins": lambda code: code.startswith("B")},
+    )
+    packs = PackRegistry(
+        [
+            Pack(
+                manifest=MANIFEST,
+                extension_schemas={"dataset": SCHEMA},
+                ontology_systems={"marks": failing},
+            ),
+            bins,
+        ],
+        core_version=aibi.__version__,
+    )
+    concepts = [
+        {"system": "marks", "code": "M0", "label": "One", "relation": "exact"},
+        {"system": "bins", "code": "B1", "label": "Bin", "relation": "exact"},
+        {"system": "bins", "code": "X1", "label": "Ex", "relation": "exact"},
+        {"system": "marks", "code": "M1", "label": "Two", "relation": "exact"},
+    ]
+    column = build.column("t.a", "string", concepts=concepts)
+    with caplog.at_level(logging.WARNING):
+        found = check_writes([*descriptors(), column], packs)
+    assert codes(found) == [
+        ("PACK_FAILED", "/1/fields/concepts/0/code"),
+        ("INVALID_VALUE", "/1/fields/concepts/2/code"),
+        ("PACK_FAILED", "/1/fields/concepts/3/code"),
+    ]
+    blamed = [r.model_dump_json() for r in found if r.code == "PACK_FAILED"]
+    assert all("shelf" in one and "bins" not in one for one in blamed), blamed
+    assert caplog.messages == ["pack shelf: its ontology validator raised ValueError"]
 
 
 @pytest.mark.parametrize(
@@ -585,9 +654,12 @@ def test_the_checker_fails_what_jsonschema_fails_where_it_does(
 
 
 def test_unique_items_takes_linear_time_on_objects() -> None:
-    """D247: jsonschema compares every pair of objects; 10,000 of them took 80 s."""
+    """D247: jsonschema compares every pair of objects; 10,000 of them took 80 s. The collector
+    runs first, so that the bound times the check and not a full collection of the heap the
+    suite before it left pending (about a million objects late in ``tests/core``)."""
     checker = Checker({"type": "array", "uniqueItems": True})
     many: list[Any] = [{"k": i} for i in range(10_000)]
+    gc.collect()
     started = time.monotonic()
     assert checker.failures(many) == []
     assert checker.failures([*many, {"k": 5}]) == [Failure((), "uniqueItems")]

@@ -738,11 +738,22 @@ def _proposers_lines(ran: ProposersRan | None) -> list[str]:
     if ran.proposals:
         lines.append("  proposals: " + ", ".join(str(number) for number in ran.proposals))
     lines += [
-        f"  skipped from {escaped(item.pack)}: {escaped(item.descriptor or '(the proposer)')} "
-        f"{escaped(item.pointer or '')} ({escaped(', '.join(item.codes))})"
+        f"  skipped from {escaped(item.pack)}: {_named(item.descriptor, '(the proposer)')} "
+        f"{_named(item.pointer, '')} ({escaped(', '.join(item.codes))})"
         for item in ran.skipped
     ]
+    if ran.truncated:
+        lines.append(f"  … and {ran.truncated} more skipped")
     return lines
+
+
+def _named(name: str | TextSegment | None, absent: str) -> str:
+    """A skipped proposal's name: the pack's text escaped, or the core's own words as they are."""
+    if name is None:
+        return absent
+    if isinstance(name, TextSegment):
+        return name.text
+    return escaped(name)
 
 
 def _imported(published: ImportPublished) -> list[str]:

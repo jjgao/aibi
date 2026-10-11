@@ -21,7 +21,7 @@ fixtures, as in the other test directories.
 
 import itertools
 import shutil
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -92,7 +92,7 @@ class SurveyImporter:
         return replace(result, descriptors=descriptors)
 
 
-def propose_definitions(release: ReleaseView) -> Sequence[Proposal]:
+def propose_definitions(release: ReleaseView) -> list[Proposal] | tuple[Proposal, ...]:
     return [
         Proposal(
             descriptor.id,
