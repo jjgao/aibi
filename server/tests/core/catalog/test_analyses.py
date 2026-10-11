@@ -1905,7 +1905,7 @@ def test_list_analyses_gives_every_entry_and_its_applicability(
     catalog = catalog_of(world)
     found = answer(catalog, "list_analyses", {})
     assert isinstance(found, AnalysisListing)
-    assert [entry["id"] for entry in found.analyses] == [
+    assert [entry.id for entry in found.analyses] == [
         "compare.columns",
         "compare.existence",
         "summary.distribution",

@@ -39,7 +39,8 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   which talks to it over HTTP only.
 - `core/catalog/`: the catalogue and the service functions of the public tools (`search_catalog`,
   `describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`, `validate_document`,
-  `count_cohort`, `explain`, `list_analyses`, `run_analysis`); `core/mcp/` serves them at `/mcp`.
+  `count_cohort`, `explain`, `list_analyses` (typed entries), `run_analysis`); `core/mcp/` serves them at
+  `/mcp`.
 - `core/engine/`: canonicalisation, ids and counts, the reference evaluator, the SQL compiler
   (`sql.py`), the worker that runs a document's queries in a child process (the server's process
   never loads DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).

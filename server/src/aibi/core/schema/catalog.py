@@ -41,7 +41,20 @@ from aibi.core.schema.cohorts import (
     ValidateDocument,
 )
 from aibi.core.schema.curation import CurationQueue, ProposalInput
-from aibi.core.schema.descriptors import By, Datatype, PositiveInt, SemVer
+from aibi.core.schema.descriptors import (
+    By,
+    Datatype,
+    PositiveInt,
+    SemVer,
+)
+from aibi.core.schema.entries import (
+    AnalysisEntry,
+    CrossDatasetOut,
+    FieldsOut,
+    LibraryOut,
+    RandomnessOut,
+    RequirementOut,
+)
 from aibi.core.schema.ids import (
     MAX_SAFE_INTEGER,
     AnalysisId,
@@ -438,7 +451,7 @@ class AnalysisListing(Output):
     """What ``list_analyses`` gives (§9.1, §9.4, §11.1; D316): each registry entry, by id, and,
     for a dataset, each one's applicability."""
 
-    analyses: list[DescriptorJson]
+    analyses: list[AnalysisEntry]
     dataset: DatasetId | None = None
     release: ReleaseOut | None = None
     unit: TableId | None = None
@@ -546,6 +559,7 @@ __all__ = [
     "MAX_SEARCH_TEXT",
     "TOOL_MODELS",
     "AgentName",
+    "AnalysisEntry",
     "AnalysisListing",
     "ApplicableAnalysis",
     "Bin",
@@ -557,6 +571,7 @@ __all__ = [
     "ColumnDescription",
     "ColumnStatistics",
     "Completeness",
+    "CrossDatasetOut",
     "DatasetDescription",
     "DescribeColumn",
     "DescribeDataset",
@@ -564,8 +579,10 @@ __all__ = [
     "DisclosureOut",
     "Distribution",
     "FacetName",
+    "FieldsOut",
     "GraphEdge",
     "HistogramOut",
+    "LibraryOut",
     "ListAnalyses",
     "NoDistribution",
     "NoneReason",
@@ -575,8 +592,10 @@ __all__ = [
     "Proposed",
     "QueueOut",
     "QueueRequest",
+    "RandomnessOut",
     "ReleaseOut",
     "ReleasePin",
+    "RequirementOut",
     "Role",
     "SearchCatalog",
     "StatCount",
