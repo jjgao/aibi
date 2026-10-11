@@ -767,7 +767,12 @@ def test_only_a_stop_a_guard_raised_passes(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(pack_api, "_registered", stopping)
     found = _problems(LIBRARY, ARCHIVE)
-    assert found == ["registration was stopped by what is not a guard's"]
+    assert found == ["the 1st pack given: registration was stopped by what is not a guard's"]
+    with pytest.raises(PackError) as raised:
+        PackRegistry([ARCHIVE, LIBRARY], core_version=CORE, labels=["shelves.a", "shelves.b"])
+    assert raised.value.problems == (
+        "the module shelves.a: registration was stopped by what is not a guard's",
+    )
 
 
 class _NotJsonRaising(Mapping[str, Any]):

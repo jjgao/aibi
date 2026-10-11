@@ -82,12 +82,16 @@ def pack_failed(pack: str, stage: str, error: BaseException) -> None:
     if any(kind is one for one in _UNFIT):
         _logger.warning("pack %s: its %s gave what the core does not take", pack, stage)
         return
-    _logger.warning(
-        "pack %s: its %s raised %s",
-        pack,
-        stage,
-        next((name for found, name in _BUILT_IN if found is kind), "an exception of its own"),
-    )
+    _logger.warning("pack %s: its %s raised %s", pack, stage, builtin_name(error))
+
+
+def builtin_name(error: BaseException) -> str:
+    """The name in ``builtins`` of ``error``'s type when it is exactly a built-in exception
+    type, found by identity in a table built when this module is imported (so before any pack's
+    module), else "an exception of its own": the one way the core names a pack's exception,
+    which runs no code of the error's or its type's (D400, D404)."""
+    kind = type(error)
+    return next((name for found, name in _BUILT_IN if found is kind), "an exception of its own")
 
 
 class PackFailed(Exception):  # noqa: N818 - "failed" is the refusal's word, PACK_FAILED
@@ -340,6 +344,7 @@ __all__ = [
     "Unfit",
     "allowance",
     "allowances",
+    "builtin_name",
     "contain",
     "pack_failed",
     "passed",

@@ -8,13 +8,25 @@
   a test gives, and records what it answers: for requests no HTTP client sends (no ``Host``, a body
   that stops half way) and for proving a body was never read.
 - ``write_config`` writes a configuration file, private, beside an import directory.
+- ``_process_state``, for every test here, turns the loader's DuckDB guard off (pytest's process
+  may have loaded DuckDB, D404) and, after the test, restores the state the loader, or a logging
+  configuration such as uvicorn's, changes for the whole process: the level, ``propagate``,
+  ``disabled``, handlers and filters of the root logger and of every logger in
+  ``logging.root.manager.loggerDict`` (``aibi``, ``aibi.*``, ``uvicorn*`` and any other; one made
+  during the test is given a new logger's, but for the ``NullHandler`` a library adds to its own
+  at import), ``logging.lastResort``, ``captureWarnings``, the warnings filters and
+  ``showwarning``, ``sys.meta_path`` (removing ``NoDuckDB``) and ``sys.modules`` (removing the
+  test packs' modules, named ``TEST_PACKS`` and on).
 
 Test modules can't import one another (``--import-mode=importlib``), so the helpers are given as
 fixtures.
 """
 
 import dataclasses
+import logging
 import os
+import sys
+import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +38,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from aibi.core.api import packs
 from aibi.core.api.app import create_app
 from aibi.core.api.config import BASE, ServerConfig
 from aibi.core.api.protection import Policy
@@ -34,6 +47,8 @@ from aibi.core.operator.auth import encode_operator, hash_token, new_token
 from aibi.core.schema.pack_api import PackRegistry
 from aibi.core.store.store import Store
 
+TEST_PACKS = "aibi_test_pack_"
+"""The prefix of every test pack module's name, which ``_process_state`` unloads."""
 BASE_URL = "http://127.0.0.1:8000"
 GENEROUS = {"per_minute": 1_000_000, "burst": 1_000_000}
 
@@ -98,6 +113,71 @@ class Built:
 
 
 MakeApp = Callable[..., Built]
+
+_Logger = tuple[int, bool, bool, list[logging.Handler], list[Any]]
+"""A logger's level, ``propagate``, ``disabled``, handlers and filters."""
+
+
+def _loggers() -> dict[str, logging.Logger]:
+    found = {
+        name: logger
+        for name, logger in logging.root.manager.loggerDict.items()
+        if isinstance(logger, logging.Logger)
+    }
+    return {"": logging.getLogger(), **found}
+
+
+def _state(logger: logging.Logger) -> _Logger:
+    return (
+        logger.level,
+        logger.propagate,
+        logger.disabled,
+        logger.handlers[:],
+        logger.filters[:],
+    )
+
+
+def _restore(loggers: dict[str, _Logger]) -> None:
+    """Every logger as ``loggers`` held it, a logger made since as a new one, keeping the
+    ``NullHandler`` a library adds to its own; a handler the test added is closed, but pytest's,
+    which it attaches to a logger that does not propagate."""
+    for name, logger in _loggers().items():
+        held = loggers.get(name)
+        if held is None:
+            kept = [one for one in logger.handlers if type(one) is logging.NullHandler]
+            held = (logging.NOTSET, True, False, kept, [])
+        level, propagate, disabled, handlers, filters = held
+        if _state(logger) == held:
+            continue
+        for added in logger.handlers[:]:
+            if added not in handlers:
+                logger.removeHandler(added)
+                if not type(added).__module__.startswith("_pytest"):
+                    added.close()
+        logger.handlers[:] = handlers
+        logger.filters[:] = filters
+        logger.setLevel(level)
+        logger.propagate = propagate
+        logger.disabled = disabled
+
+
+@pytest.fixture(autouse=True)
+def _process_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(packs, "GUARD_DUCKDB", False)
+    loggers = {name: _state(logger) for name, logger in _loggers().items()}
+    resort = logging.lastResort
+    captured = logging.__dict__["_warnings_showwarning"]
+    meta_path = [one for one in sys.meta_path if type(one) is not packs.NoDuckDB]
+    try:
+        with warnings.catch_warnings():
+            yield
+    finally:
+        logging.__dict__["_warnings_showwarning"] = captured
+        _restore(loggers)
+        logging.lastResort = resort
+        sys.meta_path[:] = meta_path
+        for name in [name for name in sys.modules if name.startswith(TEST_PACKS)]:
+            del sys.modules[name]
 
 
 @pytest.fixture
