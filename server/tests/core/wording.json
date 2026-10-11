@@ -1,8 +1,8 @@
 {
- "cache_wording": 7,
+ "cache_wording": 8,
  "report_classification": 1,
- "templates": "sha256:e0e9eb9af483020e38cdf30092aaba7de1010a4d95148765788094835ac87e8b",
- "count": 1365,
+ "templates": "sha256:82fa76b985736a5a2d443e34e60f9a1300e850f2e9cdf7169560cbdfce38afcb",
+ "count": 1367,
  "history": [
   [
    1,
@@ -31,6 +31,10 @@
   [
    1,
    7
+  ],
+  [
+   1,
+   8
   ]
  ]
 }
