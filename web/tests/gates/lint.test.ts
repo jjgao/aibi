@@ -18,7 +18,12 @@ const eslint = new ESLint({
   cwd: WEB,
   overrideConfig: {
     languageOptions: {
-      parserOptions: { projectService: { allowDefaultProject: ["src/*.tsx", "probe/*.ts"] } },
+      parserOptions: {
+        projectService: {
+          allowDefaultProject: ["src/*.tsx", "scripts/probe.ts", "tests/probe.ts", "e2e/probe.ts", "plugins/probe.ts", "shared/probe.ts"],
+          defaultProject: "tsconfig.app.json",
+        },
+      },
     },
   },
 });
@@ -110,9 +115,16 @@ describe("the app's source may not write the name of a sink, in any position", (
     expect(await flagged(code)).toContain("no-restricted-syntax");
   });
 
-  it("flags nothing outside src/ (the rules are the app's)", async () => {
-    expect(await flagged("export const f = (el: any, s: string) => { el.innerHTML = s; };", "probe/x.ts")).toEqual([]);
-    expect(await flagged("export const f = (el: any, s: string) => { Reflect.set(el, 'x', s); console.log(s); };", "probe/x.ts")).toEqual([]);
+  it.each(["scripts/probe.ts", "tests/probe.ts", "e2e/probe.ts", "plugins/probe.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "eslint.config.mjs"])(
+    "flags nothing in the tooling, %s (the rules are the app's)",
+    async (file) => {
+      expect(await flagged("export const f = (el: any, s: string) => { el.innerHTML = s; };", file)).toEqual([]);
+      expect(await flagged("export const f = (el: any, s: string) => { Reflect.set(el, 'x', s); console.log(s); };", file)).toEqual([]);
+    },
+  );
+
+  it("flags a file of a directory of its own, which the app's rules reach by default", async () => {
+    expect(await flagged("export const f = (el: any, s: string) => { el.innerHTML = s; };", "shared/probe.ts")).toContain("no-restricted-syntax");
   });
 });
 

@@ -1570,49 +1570,15 @@ def test_r2_leaves_the_constraint_contexts_alone() -> None:
 
 # --- The request side's numbers (the input of M5.1c-1's adapters) --------------------------------
 
-ADAPTER_FED = {
-    "SearchCatalog.offset",
-    "DescribeDataset.columns_offset",
-    "Accept.proposal",
-    "path:proposal",
-    "TakeOver.session",
-    "DescribeColumn.release",
-    "DescribeDataset.release",
-    "ListAnalyses.release",
-    "QueueRequest.release",
-    "WithdrawRequest.release",
-    "query:release",
-}
-"""A number a response gave, which the person's next request takes back: an offset (a page's
-``next_offset``, ``columns_next``), a proposal's id, a release's label, the open session's id (a
-take-over's)."""
-TYPED_BY_THE_PERSON = {
-    "SearchCatalog.limit",
-    "SearchCatalog.min_rows",
-    "Completeness.min_present",
-    "DescribeDataset.columns_limit",
-    "ExistsLeaf.min_count",
-    "SomeAtLeast.some",
-}
-"""A number the person types (or the client's constant, for a page's size)."""
-BOTH = {
-    "Range.gt",
-    "Range.gte",
-    "Range.lt",
-    "Range.lte",
-    "ValueLeaf.value",
-    "ValueLeaf.values[]",
-    "CoveredLeaf.scope.*[]",
-    "UnitKey.key[]",
-    "DocumentJson",
-    "ParameterValue",
-    "RequestJson",
-    "DescriptorJson",
-}
-"""Typed by the person, or taken back from a response: a bin's edge, a column's statistic, a
-member's key or value, a document or a descriptor read back."""
-NEVER_IN_THE_CLIENT = {"EraseRequest.key[]"}
-"""The data subject's key, which no screen takes (D269)."""
+CLASSES_FILE = Path(__file__).resolve().parents[4] / "web" / "src" / "api" / "classes.json"
+"""The classes of the request side's numbers, the web client's single hand source (D419): each
+class a reason (``why``) and its positions, read here and by the client's own gates."""
+CLASS_NAMES = ["adapter_fed", "typed_by_the_person", "both", "never_in_the_client"]
+
+
+def classes() -> dict[str, dict[str, Any]]:
+    loaded: dict[str, dict[str, Any]] = json.loads(CLASSES_FILE.read_text(encoding="utf-8"))
+    return loaded
 
 
 def request_numbers(document: dict[str, Any]) -> set[str]:
@@ -1653,7 +1619,32 @@ def request_numbers(document: dict[str, Any]) -> set[str]:
     return found
 
 
+def test_the_classes_are_four_each_with_its_reason() -> None:
+    """``classes.json`` is exactly the four classes, in order, each a reason that says what the
+    class holds (JSON has no comments: the reason is a member) and its positions, sorted and
+    unique."""
+    found = classes()
+    assert list(found) == CLASS_NAMES
+    for name, given in found.items():
+        assert list(given) == ["why", "positions"], name
+        why = given["why"]
+        assert isinstance(why, str), name
+        assert len(why) > 30, name
+        assert why.endswith("."), name
+        assert why == why.strip(), name
+        positions = given["positions"]
+        assert isinstance(positions, list), name
+        assert all(isinstance(position, str) for position in positions), name
+        assert positions == sorted(set(positions)), name
+    assert len({given["why"] for given in found.values()}) == 4
+    assert "response gave" in found["adapter_fed"]["why"]
+    assert "person types" in found["typed_by_the_person"]["why"]
+    assert "Typed by the person, or taken back" in found["both"]["why"]
+    assert "D269" in found["never_in_the_client"]["why"]
+
+
 def test_every_request_number_is_classified(document: dict[str, Any]) -> None:
-    classes = [ADAPTER_FED, TYPED_BY_THE_PERSON, BOTH, NEVER_IN_THE_CLIENT]
-    assert sum(len(found) for found in classes) == len(set().union(*classes)) == 30
-    assert request_numbers(document) == set().union(*classes)
+    """The 30 positions a request takes a number at are the classes' union, each in one class."""
+    sets = [set(given["positions"]) for given in classes().values()]
+    assert sum(len(found) for found in sets) == len(set().union(*sets)) == 30
+    assert request_numbers(document) == set().union(*sets)

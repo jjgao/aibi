@@ -31,6 +31,33 @@
  *     root files (`ROOT_ASSETS`): a script that is no chunk (a raw `.ts`, `.cjs` or `.jsx` that
  *     `new URL(...)` or `?url` made an asset) fails the gate itself, before check-bundle.
  *
+ * (d) **The client's confinement, on the module graph of every entry (D419).** The bundler has
+ *     resolved every form of import by the time the gate runs (a static or dynamic `import`, a
+ *     re-export, `import.meta.glob` eager or lazy, a `?raw` or `?url` query, a module a plugin
+ *     made), so the gate asks the graph, not the source text. It walks every document the build
+ *     starts from (every entry chunk, not two named ones: `ENTRIES` are the two the build must
+ *     hold, and any other is walked too, and refused if it is no `.html`): (1) every module in the
+ *     closure of a document (static and dynamic imports) is under `src/`, but for the project's
+ *     own `node_modules/`, the documents and `VIRTUAL_MODULES` (a project module beside `src/`,
+ *     such as `shared/digits.ts`, is refused, whichever tsconfig includes it), and has an extension
+ *     of `SRC_EXTENSIONS` (`scripts/tooling.mjs`, which the lint and the import-graph test read
+ *     too: compared exactly, so `.JS`, `.Ts`, `.MJS`, `.es6`, `.jsonc` and no extension are off it,
+ *     since the bundler reads any extension it does not know as JavaScript and the lint reads
+ *     only the ones it names), has no dot-led segment (a dotfile or dot directory: not read by the
+ *     lint's project service), and is spelled as its real path (`realpathSync.native`: a symlink,
+ *     or on a case-insensitive file system a case that differs from the file's); (2) every module of `src/api/` is in `API_MODULES`, which states by
+ *     file who may import it, statically or dynamically, and why: the box's internals (`box.ts`),
+ *     the decoder (`decode.ts`), the client (`client.ts`) and the oracle's counter (`oracle.ts`)
+ *     each to the named importers alone, and `index.ts` to the rest of `src/`; a module of
+ *     `src/api/` the table lacks, an importer it does not list and an importer that is a virtual
+ *     module are refused. `import type` leaves no edge in the graph (the transform removes it
+ *     whole), so the gate cannot see it: the lint's import patterns and the import-graph test over
+ *     the type checker's program refuse those. `import { type X }` does leave one under the
+ *     project's `verbatimModuleSyntax` (a bare `import "..."`), which the gate refuses like any
+ *     other. A `require` of a module is no import statement either, and the lint refuses the name;
+ *     the graph refuses what it loads like any other module. Beside it the lint refuses
+ *     `import.meta.glob` in `src/`.
+ *
  * The plugin can only fail the build: a report it wrote into `dist/` would be refused by the
  * loader, which admits nothing at a bundle's root but its own files.
  */
@@ -40,6 +67,7 @@ import path from "node:path";
 import type { Plugin } from "vite";
 
 import { EXTENSIONS } from "../scripts/check-bundle.mjs";
+import { SRC_EXTENSIONS, srcKind } from "../scripts/tooling.mjs";
 
 export const OPERATOR_ENTRY = "operator.html";
 
@@ -170,6 +198,219 @@ export function operatorProblem(root: string, id: string): string | null {
   return `the module ${JSON.stringify(id)}, outside the allow-list`;
 }
 
+/** The two documents the build starts from. */
+export const ENTRIES: readonly string[] = ["index.html", "operator.html"];
+
+/** What the gate reads of a module of the bundler's graph: the ids of the modules that import it
+ * and of those it imports, each statically or dynamically (an `import.meta.glob`, `?raw` and a
+ * re-export included: the bundler has resolved them all). */
+export interface GateModule {
+  readonly importers: readonly string[];
+  readonly dynamicImporters: readonly string[];
+  readonly imports: readonly string[];
+  readonly dynamicImports: readonly string[];
+}
+
+/** The bundler's module graph, by module id. */
+export type GateGraph = ReadonlyMap<string, GateModule>;
+
+/** Who may import a module of `src/api/`: `importers` are the exact files (relative to the
+ * project) that may, each with its reason; `outside` is the reason for admitting every module of
+ * `src/` outside `src/api/`, which the index alone has. Static and dynamic importers are held to
+ * the same list. */
+export interface ApiModule {
+  readonly importers: ReadonlyMap<string, string>;
+  readonly outside?: string;
+}
+
+/** The modules of `src/api/` the real builds hold, with their importers as the graph shows them
+ * (read from a build of the skeleton, both modes, and held equal to it by a test). A module of
+ * `src/api/` not listed here fails the build until it is, with its importers and why. */
+export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
+  [
+    "src/api/index.ts",
+    {
+      importers: new Map(),
+      outside: "the app's door: every module of src/ outside src/api/ reaches the client through this module alone",
+    },
+  ],
+  [
+    "src/api/box.ts",
+    {
+      importers: new Map([
+        ["src/api/decode.ts", "decode boxes each number of a body from its source text: it alone makes a box"],
+        ["src/api/index.ts", "re-exports isServerNumber, the brand check, which gives nothing of a number"],
+      ]),
+    },
+  ],
+  [
+    "src/api/decode.ts",
+    {
+      importers: new Map([
+        ["src/api/client.ts", "exchange reads every body through decode: the one decoder"],
+        ["src/api/index.ts", "re-exports DecodeError, the decoder's refusal"],
+        ["src/api/oracle.ts", "exports the decoder's counter, which the end-to-end harness reads"],
+      ]),
+    },
+  ],
+  [
+    "src/api/client.ts",
+    { importers: new Map([["src/api/index.ts", "re-exports exchange, start, REFUSALS and the cap: the one place of I/O"]]) },
+  ],
+  [
+    "src/api/oracle.ts",
+    { importers: new Map([["src/harness/Harness.tsx", "the end-to-end harness reads the counter: nothing else may, and no production build holds it"]]) },
+  ],
+  [
+    "src/api/route.ts",
+    {
+      importers: new Map([
+        ["src/api/client.ts", "exchange sends to a route the generated functions made, which isRoute recognises"],
+        ["src/api/generated/routes.ts", "each generated function makes its route with route, segment and search"],
+      ]),
+    },
+  ],
+  [
+    "src/api/generated/routes.ts",
+    { importers: new Map([["src/api/index.ts", "re-exports the generated functions as routes"]]) },
+  ],
+]);
+
+/** The file a module id loads from, relative to the project: its id up to the first `?` or `#`,
+ * `null` when that is no path inside the project. */
+function fileOf(root: string, id: string): string | null {
+  return id.startsWith("\0") ? null : placeOf(root, id).relative;
+}
+
+/** Why a module may not be in a document's closure, or `null`: every project module is under
+ * `src/` and has an extension of `SRC_EXTENSIONS` the lint reads (code or a stylesheet); a
+ * document, a package of the project's own `node_modules/` and a virtual module of Vite's are
+ * admitted (the operator entry's packages are `operatorProblem`'s). `documents` are the
+ * documents the build starts from, relative to the project. */
+export function confinementProblem(root: string, id: string, documents: readonly string[] = ENTRIES): string | null {
+  if (id.startsWith("\0")) {
+    return VIRTUAL_MODULES.has(id) ? null : `the virtual module ${JSON.stringify(id)}`;
+  }
+  const { suffix, relative, normal } = placeOf(root, id);
+  if (!normal) {
+    return `the module ${JSON.stringify(id)}, whose file is not a normal path`;
+  }
+  if (suffix !== "" && !OPERATOR_QUERIES.has(suffix)) {
+    return `the module ${JSON.stringify(id)}, which carries ${JSON.stringify(suffix)}, a query or fragment the skeleton's build never makes`;
+  }
+  if (relative === null) {
+    return `the module ${JSON.stringify(id)}, outside the project`;
+  }
+  if (documents.includes(relative)) {
+    return null;
+  }
+  if (inside(relative, "node_modules")) {
+    return null;
+  }
+  if (relative.split("/").includes("node_modules")) {
+    return `the module ${JSON.stringify(relative)}, in a node_modules directory that is not the project's own`;
+  }
+  if (!inside(relative, "src")) {
+    return `the project module ${JSON.stringify(relative)}, outside src/`;
+  }
+  if (relative.split("/").some((segment) => segment.startsWith("."))) {
+    return `the module ${JSON.stringify(relative)}, whose path has a dot-led segment (a file the lint's project service does not read)`;
+  }
+  return srcKind(relative, ["code", "style"])
+    ? null
+    : `the module ${JSON.stringify(relative)}, whose extension is none the lint reads (${[...SRC_EXTENSIONS].filter(([, kind]) => kind !== "data").map(([extension]) => extension).join(" ")}: D419)`;
+}
+
+/** The ids of the modules an entry reaches, itself included, by static and dynamic imports. */
+function reached(graph: GateGraph, entry: string): string[] {
+  const seen = new Set<string>();
+  const pending = [entry];
+  for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+    const module = graph.get(id);
+    if (seen.has(id) || module === undefined) {
+      continue;
+    }
+    seen.add(id);
+    pending.push(...module.imports, ...module.dynamicImports);
+  }
+  return [...seen];
+}
+
+/** Why `importer` may not import the module of `src/api/` the table calls `file`, or `null`. A
+ * virtual importer (`\0...`) is no path inside the project (`relative` is `null`), so it is never
+ * one of the table's. */
+function importerProblem(root: string, file: string, entry: ApiModule, importer: string): string | null {
+  const { suffix, relative, normal } = placeOf(root, importer);
+  if (suffix === "" && normal && relative !== null) {
+    if (entry.importers.has(relative)) {
+      return null;
+    }
+    if (entry.outside !== undefined && inside(relative, "src") && !inside(relative, "src/api")) {
+      return null;
+    }
+  }
+  return `the importer ${JSON.stringify(importer)} is not one of ${file}'s (${[...entry.importers.keys(), ...(entry.outside === undefined ? [] : ["the modules of src/ outside src/api/"])].join(", ")})`;
+}
+
+/** Every problem of the module graph (module docstring, (d)). `built` are the documents the build
+ * starts from beyond `ENTRIES` (relative to the project), each walked as well; `real` gives a
+ * file's real path (the plugin passes `realpathSync.native`), which every module under `src/`
+ * must be spelled as: a symlink or a different case on a case-insensitive file system places a
+ * module by a path the lint and the table did not read. */
+export function graphProblems(
+  root: string,
+  graph: GateGraph,
+  built: readonly string[] = [],
+  real: (file: string) => string = (file) => file,
+): string[] {
+  const problems: string[] = [];
+  const documents = [...new Set([...ENTRIES, ...built])];
+  for (const document of documents) {
+    const entry = path.join(root, document);
+    if (!graph.has(entry)) {
+      problems.push(`the build has no module for ${document}`);
+      continue;
+    }
+    for (const id of reached(graph, entry)) {
+      const problem = confinementProblem(root, id, documents);
+      if (problem !== null) {
+        problems.push(`in ${document}'s graph: ${problem}`);
+      } else if (!id.startsWith("\0") && inside(placeOf(root, id).relative ?? "", "src")) {
+        const file = id.slice(0, id.search(/[?#]|$/u));
+        let found: string | null;
+        try {
+          found = real(file);
+        } catch {
+          found = null;
+        }
+        if (found !== file) {
+          problems.push(`in ${document}'s graph: the module ${JSON.stringify(id)}, whose path is not its real path (a symlink, or the file's own case)`);
+        }
+      }
+    }
+  }
+  for (const [id, module] of graph) {
+    const file = fileOf(root, id);
+    if (file === null || !inside(file, "src/api")) {
+      continue;
+    }
+    const entry = API_MODULES.get(file);
+    if (entry === undefined) {
+      problems.push(`${JSON.stringify(file)} is a module of src/api/ the gate's table does not list (D419)`);
+      continue;
+    }
+    for (const [importers, how] of [[module.importers, "imported"], [module.dynamicImporters, "imported dynamically"]] as const) {
+      for (const importer of importers) {
+        const problem = importerProblem(root, file, entry, importer);
+        if (problem !== null) {
+          problems.push(`${file} is ${how}: ${problem}`);
+        }
+      }
+    }
+  }
+  return [...new Set(problems)];
+}
+
 /** The chunks of the operator entry's closure, by file name: its chunk and every chunk it
  * imports, statically or dynamically. */
 export function operatorClosure(root: string, chunks: readonly GateChunk[]): GateChunk[] | string {
@@ -276,7 +517,32 @@ export function operatorGate(options: GateOptions): Plugin<GateOptions> {
           assets.push(output.fileName);
         }
       }
-      const problems = [...gateProblems(root, chunks, options), ...assetProblems(assets)];
+      const graph = new Map<string, GateModule>();
+      for (const id of this.getModuleIds()) {
+        const info = this.getModuleInfo(id);
+        if (info !== null) {
+          graph.set(id, {
+            importers: info.importers,
+            dynamicImporters: info.dynamicImporters,
+            imports: info.importedIds,
+            dynamicImports: info.dynamicallyImportedIds,
+          });
+        }
+      }
+      const built: string[] = [];
+      const strays: string[] = [];
+      for (const chunk of chunks) {
+        if (chunk.isEntry && chunk.facadeModuleId !== null) {
+          const relative = path.relative(root, chunk.facadeModuleId);
+          (relative.endsWith(".html") ? built : strays).push(relative);
+        }
+      }
+      const problems = [
+        ...gateProblems(root, chunks, options),
+        ...graphProblems(root, graph, built, (file) => realpathSync.native(file)),
+        ...strays.map((name) => `the build has an entry that is no document: ${JSON.stringify(name)}`),
+        ...assetProblems(assets),
+      ];
       if (problems.length > 0) {
         this.error(`The build's gate refuses it (D411):\n${problems.join("\n")}`);
       }

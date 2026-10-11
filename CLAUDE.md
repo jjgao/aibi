@@ -172,7 +172,9 @@ uv run python -m aibi.core.api.openapi ../schemas     # schemas/openapi.json (ge
 Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
 OpenAPI document (`schemas/openapi.json`), not written by hand, but for the one exception SPEC
 §12.4 records: three JSON-value types and `ServerNumber`, which the generated types reach through
-the document's `x-aibi-json` and `x-aibi-server-number` marks (written in M5.1c-1, D416).
+the document's `x-aibi-json` and `x-aibi-server-number` marks (`src/api/json.ts`, `src/api/box.ts`;
+D416, D419). After changing the document, run `npm run generate`; after changing a result envelope,
+`uv run python scripts/export_envelopes.py` in `server/` (CI fails while either is stale).
 Node is pinned in `web/.nvmrc` and every package exactly in `package.json` and its lockfile (v3);
 install scripts never run. From `web/` (the matrix starts the real server from `server/.venv`, so
 run `uv sync` in `server/` first):
@@ -180,6 +182,7 @@ run `uv sync` in `server/` first):
 ```bash
 npm ci --ignore-scripts
 npm run licenses && npm audit --omit=dev --audit-level=high
+npm run generate:check   # src/api/generated/ is what schemas/openapi.json gives (npm run generate writes it)
 npm run typecheck && npm run lint && npm test   # tsc (no skipLibCheck), ESLint, Vitest
 npm run build       # dist/ under umask 022 through the build's gate, then check-bundle --mode prod
 npm run build:e2e   # dist-e2e/ (with the harness), then check-bundle --mode e2e

@@ -118,6 +118,7 @@ describe("the committed policy and lockfile", () => {
       "BlueOak-1.0.0",
       "CC0-1.0",
       "MPL-2.0",
+      "Python-2.0",
     ]);
   });
 

@@ -14,13 +14,19 @@ two synthetic ones, as their JSON goes over the wire:
   ``api/test_openapi.py`` (R2's parent type, the never-split comparison) carry the class;
 - **the instance oracle**: every number of an envelope lands on a position marked
   ``x-aibi-server-number`` or in a response's ``x-aibi-json`` value (the web client's rule for
-  numbers it may not compute with, M5.1c-1).
+  numbers it may not compute with, M5.1c-1);
+- **the web client's fixture**: ``web/tests/fixtures/envelopes.json``, which the web package's
+  gate compiles as ``ResultEnvelope`` literals against the generated types (D419), is what
+  ``scripts/export_envelopes.py`` writes from these envelopes now.
 """
 
 import copy
+import importlib.util
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import jsonschema
@@ -29,6 +35,7 @@ import pytest
 from aibi.core.schema.export import result_schema
 
 GOLDEN = Path(__file__).parent / "golden" / "results.json"
+EXPORT = Path(__file__).resolve().parents[3] / "scripts" / "export_envelopes.py"
 SYNTHETIC_CAP = 40
 """Positions perturbed in each synthetic envelope; the golden ones are perturbed at every distinct
 generalized position (``OpenApi.agreement``)."""
@@ -113,6 +120,38 @@ def test_every_number_of_an_envelope_lands_on_a_marked_position(
         assert openapi.unmarked_numbers(envelope, "ResultEnvelope") == []
         checked += json.dumps(envelope).count(":")
     assert checked > 1000
+
+
+def _export() -> ModuleType:
+    """``scripts/export_envelopes.py`` as a module, by its path (it is no package)."""
+    spec = importlib.util.spec_from_file_location("export_envelopes", EXPORT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
+    return module
+
+
+def test_the_web_client_s_fixture_is_the_golden_envelopes(
+    envelopes: dict[str, dict[str, Any]],
+) -> None:
+    """A changed envelope (a member, a type, a new golden case) fails here until the fixture the
+    web client's type gate compiles is written again (``scripts/export_envelopes.py``)."""
+    script = _export()
+    assert script.GOLDEN == GOLDEN
+    assert list(envelopes) == list(json.loads(GOLDEN.read_text(encoding="utf-8")))
+    assert script.TARGET.read_text(encoding="utf-8") == script.render(envelopes)
+
+
+def test_the_web_client_s_fixture_is_rendered_one_envelope_a_line() -> None:
+    script = _export()
+    text = script.render({"a": {"n": 1.10, "s": "é"}, "b": [1, None]})
+    assert text == '{\n"a": {"n":1.1,"s":"\\u00e9"},\n"b": [1,null]\n}\n'
+    assert json.loads(text) == {"a": {"n": 1.1, "s": "é"}, "b": [1, None]}
 
 
 def test_the_validator_cache_is_by_a_schema_s_content_not_its_identity(openapi: Any) -> None:
