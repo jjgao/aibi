@@ -154,6 +154,22 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "The tools' surfaces import no operator operation (SPEC §11.2, D278, D408)"
+type = "forbidden"
+source_modules = ["aibi.core.api.tools", "aibi.core.mcp", "aibi.core.catalog"]
+forbidden_modules = [
+    "aibi.core.store.erasure",
+    "aibi.core.store.sessions",
+    "aibi.core.operator",
+    "aibi.core.importers",
+]
+# The error mapping turns operator and importer refusals into the one error shape (§12.5).
+ignore_imports = [
+    "aibi.core.api.errors -> aibi.core.importers.errors",
+    "aibi.core.api.errors -> aibi.core.operator.auth",
+]
+
+[[tool.importlinter.contracts]]
 name = "The operator CLI talks to the server over HTTP only (SPEC §11.2, D268)"
 type = "forbidden"
 source_modules = [
