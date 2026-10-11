@@ -45,6 +45,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   `summary.distribution`, `summary.members`, `compare.columns`, `survival.km`, `survival.cox` and a
   pack's analyses (`packs.py`). Their statistical methods (`stats.py`, `timetoevent.py`, `coxfit.py`,
   `coxph.py`, `cone.py`, `cox.py`) are held to R, with `ieee.py` doing their arithmetic as C does.
+- `packs/onco/`: the oncology pack (D407), installed by `[packs] modules`: its concepts, the `OncoTree`,
+  `HGNC`, `NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet. It
+  imports only the pack API (`aibi.core.schema.pack_api`).
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.
