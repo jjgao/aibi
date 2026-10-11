@@ -36,6 +36,7 @@ from aibi.core.schema.pack_api import (
     PackError,
     PackManifest,
     PackRegistry,
+    RegisteredAnalysis,
     ReleaseView,
     plain_json,
 )
@@ -615,9 +616,10 @@ def run_checked(view: Any, echo: Echo, ends: float | None = None) -> packs.Outco
     found = [ordered(listed(cohort.resolved, variables)) for cohort in view.cohorts]
     positions = [CohortAt(cohort, evaluate(cohort.resolved)) for cohort in view.cohorts]
     analyses = tallies(echo)
-    _, _, returns = analyses.implementation("tallies.echo")
+    registered, _, returns = analyses.implementation("tallies.echo")
+    assert registered.implementation is echo
     return packs.run_pack(
-        echo,
+        registered,
         returns,
         positions,
         list(zip(view.roles, view.variables, strict=True)),
@@ -1376,7 +1378,7 @@ def test_members_excluded_only_as_not_applicable_raise_no_unknown_excluded(
     )
     _, _, returns = tallies().implementation("tallies.echo")
     outcome = packs.run_pack(
-        Echo(entry()),
+        RegisteredAnalysis(entry(), Echo(entry())),
         returns,
         [CohortAt(cohort, evaluate(cohort.resolved))],
         list(zip(view.roles, view.variables, strict=True)),
@@ -1977,3 +1979,20 @@ def test_an_aggregate_not_taken_offers_count_only_where_its_conditions_name_no_i
         [] if offered else [("ROW_IDS_NOT_ALLOWED", "/views/0/params/columns/measure/0/where")]
     )
     assert refusals(found) == expected
+
+
+class RunRaising(Echo):
+    """An analysis whose ``run`` cannot even be read."""
+
+    @property
+    def run(self) -> Any:  # type: ignore[override]
+        raise RuntimeError("c1 secret")
+
+
+def test_reading_an_analysis_s_run_is_inside_its_guard(
+    check: Check, shop: Shop, caplog: pytest.LogCaptureFixture
+) -> None:
+    with pytest.raises(packs.PackFailed) as failed:
+        run_view(check, shop, RunRaising(entry()))
+    assert "c1" not in said(failed.value)
+    assert "secret" not in caplog.text

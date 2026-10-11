@@ -14,15 +14,25 @@ from them (D401).
 import hashlib
 import math
 import re
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Literal, NewType, Protocol, cast
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
-from pydantic import AfterValidator, Field, JsonValue, StrictInt
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    JsonValue,
+    StrictInt,
+    TypeAdapter,
+    ValidationError,
+)
 
 from aibi.core.schema.caveats import CORE_SEVERITIES, CaveatCode, Severity
 from aibi.core.schema.descriptors import (
@@ -33,6 +43,7 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.document import Clause, PackKey, PackLeaf
 from aibi.core.schema.errors import problem
+from aibi.core.schema.guards import PASSED, passed
 from aibi.core.schema.ids import (
     CORE_ANALYSIS_FAMILIES,
     MAX_SAFE_INTEGER,
@@ -498,32 +509,39 @@ of the form and a view whose ``label`` it may not read (D287)."""
 
 @dataclass(frozen=True)
 class Pack:
-    """A pack's manifest and its implementations of the extension points; each is optional."""
+    """A pack's manifest and its implementations of the extension points; each is optional.
+
+    The members that hold the pack's hook objects take no part in the generated ``repr``,
+    equality or hash, so that none of them runs a hook's code (D402)."""
 
     manifest: PackManifest
     concepts: Sequence[ConceptDescriptor] = ()
     """Registered for every deployment the pack is installed in; ids are ``<pack id>:…``."""
     ontology_systems: Mapping[str, OntologyValidator] = field(
-        default_factory=dict[str, OntologyValidator]
+        default_factory=dict[str, OntologyValidator], repr=False, compare=False
     )
     extension_schemas: Mapping[str, JsonSchema] = field(default_factory=dict[str, JsonSchema])
     """A JSON Schema for the pack's extension object, by descriptor kind."""
-    importer: Importer | None = None
-    validator: Validator | None = None
-    proposer: Proposer | None = None
-    leaf_kinds: Mapping[str, LeafKind] = field(default_factory=dict[str, LeafKind])
+    importer: Importer | None = field(default=None, repr=False, compare=False)
+    validator: Validator | None = field(default=None, repr=False, compare=False)
+    proposer: Proposer | None = field(default=None, repr=False, compare=False)
+    leaf_kinds: Mapping[str, LeafKind] = field(
+        default_factory=dict[str, LeafKind], repr=False, compare=False
+    )
     """By kind, ``<pack id>.<name>``."""
-    translators: Mapping[str, Translator] = field(default_factory=dict[str, Translator])
+    translators: Mapping[str, Translator] = field(
+        default_factory=dict[str, Translator], repr=False, compare=False
+    )
     """By format, ``<pack id>.<name>``."""
-    analyses: Sequence[Analysis] = ()
+    analyses: Sequence[Analysis] = field(default=(), repr=False, compare=False)
     requirement_predicates: Mapping[str, RequirementPredicate] = field(
-        default_factory=dict[str, RequirementPredicate]
+        default_factory=dict[str, RequirementPredicate], repr=False, compare=False
     )
     """By name; cited as ``<pack id>.<name>``."""
-    facet: Facet | None = None
+    facet: Facet | None = field(default=None, repr=False, compare=False)
     caveat_codes: Mapping[str, Severity] = field(default_factory=dict[str, Severity])
     """Every code the pack raises, ``<pack id>.<CODE>``, with its severity (SPEC §8.3)."""
-    caveat_rule: CaveatRule | None = None
+    caveat_rule: CaveatRule | None = field(default=None, repr=False, compare=False)
     wording: Mapping[CaveatCode, str] = field(default_factory=dict[CaveatCode, str])
     """A message template per core code, in the pack's words (SPEC §10.1)."""
 
@@ -549,67 +567,43 @@ def _namespaced(pack: str, name: str) -> bool:
     return prefix == pack and dot == "." and is_identifier(rest)
 
 
-def _problems(pack: Pack, core: Version) -> list[str]:
-    """Everything wrong with one pack on its own."""
-    problems: list[str] = []
-    manifest = pack.manifest
-    name = manifest.id
-    if not SpecifierSet(manifest.requires_core, prereleases=True).contains(core):
-        problems.append(f"{name} requires core {manifest.requires_core}, not {core}")
-    problems.extend(
-        f"{name}: concept {concept.id} is not in its namespace {name}:"
-        for concept in pack.concepts
-        if not concept.id.startswith(f"{name}:")
-    )
-    concept_ids = [concept.id for concept in pack.concepts]
-    problems.extend(
-        f"{name}: concept {concept} is registered twice"
-        for concept in sorted({c for c in concept_ids if concept_ids.count(c) > 1})
-    )
-    problems.extend(
-        f"{name}: ontology system name {system!r} is empty, too long or not Unicode text"
-        for system in pack.ontology_systems
-        if not isinstance(cast(object, system), str)
-        or not 0 < len(system) <= 200
-        or not is_text(system)
-    )
-    for label, names in (
-        ("leaf kind", pack.leaf_kinds),
-        ("translator format", pack.translators),
-        ("analysis", [analysis.entry.id for analysis in pack.analyses]),
-    ):
-        problems.extend(
-            f"{name}: {label} {item} is not {name}.<name>"
-            for item in names
-            if not isinstance(cast(object, item), str) or not _namespaced(name, item)
-        )
-    analysis_ids = [analysis.entry.id for analysis in pack.analyses]
-    if len(set(analysis_ids)) != len(analysis_ids):
-        problems.append(f"{name}: an analysis id appears twice")
-    problems.extend(
-        f"{name}: requirement predicate {predicate!r} is not an identifier"
-        for predicate in pack.requirement_predicates
-        if not isinstance(cast(object, predicate), str) or not is_identifier(predicate)
-    )
-    for code, severity in pack.caveat_codes.items():
-        if (
-            not isinstance(cast(object, code), str)
-            or code.partition(".")[0] != name
-            or not is_pack_code(code)
-        ):
-            problems.append(f"{name}: caveat code {code} is not {name}.<CODE>")
-        if not isinstance(cast(object, severity), Severity):
-            problems.append(f"{name}: caveat code {code} has no severity")
-    for analysis in pack.analyses:
-        for code in analysis.entry.fields.caveats:
-            owner, dot, _ = code.partition(".")
-            if (dot and owner == name and code not in pack.caveat_codes) or (
-                not dot and code not in CaveatCode
-            ):
-                problems.append(
-                    f"{name}: analysis {analysis.entry.id} cites {code}, which is not declared"
-                )
-    return problems
+SHOWN_CHARACTERS = 200
+"""How much of a pack's name or a schema pointer a registration problem quotes (D402)."""
+
+
+def _shown(text: str, most: int = SHOWN_CHARACTERS) -> str:
+    """``text``, exactly a ``str``, as a registration problem quotes it: a backslash and every
+    character outside printable ASCII escaped (``\\uXXXX``, ``\\UXXXXXXXX``), so that no name
+    puts a control character or an escape sequence on a terminal, cut to ``most`` characters
+    with ``…`` (D402)."""
+    written: list[str] = []
+    for character in text[:most]:
+        code = ord(character)
+        if character == "\\":
+            written.append("\\\\")
+        elif 0x20 <= code < 0x7F:
+            written.append(character)
+        elif code <= 0xFFFF:
+            written.append(f"\\u{code:04x}")
+        else:
+            written.append(f"\\U{code:08x}")
+    return "".join(written) + ("…" if len(text) > most else "")
+
+
+def _named(value: object) -> str:
+    """How a problem names a key a pack gave: quoted (``_shown``) when it is exactly a ``str`` of
+    Unicode text, else in the core's words, never formatting the pack's object."""
+    if type(value) is str and is_text(value):
+        return _shown(value)
+    return "(a key that is not text)"
+
+
+_ORDINALS = {1: "st", 2: "nd", 3: "rd"}
+
+
+def _ordinal(position: int) -> str:
+    suffix = "th" if 10 <= position % 100 <= 20 else _ORDINALS.get(position % 10, "th")
+    return f"{position}{suffix}"
 
 
 class _NotJsonError(ValueError):
@@ -634,7 +628,9 @@ class _RaisedLimitError(RuntimeError):
 @dataclass
 class _Allowance:
     """What a copy may still hold: JSON values, and characters of text (keys included), each
-    string at most ``text`` of them; counted before each is copied."""
+    string at most ``text`` of them; counted before each is copied. It records what the copy
+    itself raised, so that only that is ever quoted or passed on as the copy's: an exception of
+    the same type that is not it was raised by the code being copied (D343, D402)."""
 
     most_values: int
     most_characters: int
@@ -642,9 +638,24 @@ class _Allowance:
     names: tuple[str, str, str]
     values: int = 0
     characters: int = 0
-    tripped: "JsonTooLarge | None" = None
-    """The limit this copy passed, raised as it is: a ``JsonTooLarge`` that is not it was
-    raised by the code being copied."""
+    tripped: JsonTooLarge | None = None
+    """The limit this copy passed, raised as it is."""
+    refused: _NotJsonError | None = None
+    """What this copy found JSON text cannot carry unchanged, raised as it is."""
+    reason: str = ""
+    """``refused``'s reason, in the core's words."""
+
+    @classmethod
+    def unbounded(cls) -> "_Allowance":
+        """An allowance of no limit but the recursion's, for a copy that only records."""
+        most = sys.maxsize
+        return cls(most, most, most, (RESULT_VALUES, RESULT_CHARACTERS, TEXT_CHARACTERS))
+
+    def refuse(self, reason: str) -> _NotJsonError:
+        """The exception that refuses what is being copied, for ``reason``, recorded."""
+        self.reason = reason
+        self.refused = _NotJsonError(reason)
+        return self.refused
 
     def value(self) -> None:
         self.values += 1
@@ -663,44 +674,277 @@ class _Allowance:
         raise self.tripped
 
 
+class _Passing(BaseException):
+    """A ``PASSED`` type a pack's code raised during registration, which stops it."""
+
+    def __init__(self, kind: type[BaseException]) -> None:
+        super().__init__()
+        self.kind = kind
+
+
+class _Reads:
+    """The reads of one pack's members at registration, each inside a guard of its own (D402):
+    what a read raises is that member's problem, in the core's words, and the pack's other
+    members are still read; a ``PASSED`` type stops registration (``_Passing``, the instance
+    recorded as ``raised``, so that no other stops it)."""
+
+    def __init__(self, label: str, problems: list[str]) -> None:
+        self.label = label
+        self.problems = problems
+        self.raised: _Passing | None = None
+
+    def __call__[T](
+        self,
+        member: str,
+        read: Callable[[], T],
+        copy: _Allowance | None = None,
+        where: str | None = None,
+    ) -> tuple[bool, T | None]:
+        """``read()``, guarded. With ``copy``, the allowance of a JSON copy that ``read`` makes,
+        the copy's own refusal (``copy.refused``, by identity) is the problem that ``where`` (by
+        default the member) is not a JSON value, quoting the core's reason; any other exception,
+        of whatever type, is that the member could not be read."""
+        passing: type[BaseException] | None = None
+        try:
+            return True, read()
+        except BaseException as error:  # every exception of the pack's is contained (D402)
+            passing = passed(error)
+            if passing is None:
+                if copy is not None and error is copy.refused:
+                    shown = f"its {member}" if where is None else where
+                    self.problems.append(
+                        f"{self.label}: {shown} is not a JSON value: it holds {copy.reason}"
+                    )
+                else:
+                    self.problems.append(f"{self.label}: its {member} could not be read")
+        if passing is not None:
+            self.raised = _Passing(passing)
+            raise self.raised
+        return False, None
+
+
+def _member[E: Enum](kind: type[E], given: object) -> E | None:
+    """The member of ``kind`` that ``given`` is, by identity, or ``None``: an object of the enum's
+    exact type that is no member (``str.__new__(kind, ...)``) is none, and nothing of it is read
+    (D402)."""
+    return next((member for member in kind if member is given), None)
+
+
+def _sequence(value: object) -> list[object]:
+    """What a pack gave as a sequence, read once, by one iteration."""
+    return [item for item in cast(Iterable[object], value)]  # noqa: C416 - one __iter__, no __len__
+
+
+def _items(value: object) -> list[tuple[object, object]]:
+    """What a pack gave as a mapping, read once, by one ``items()``."""
+    return [(key, member) for key, member in cast(Mapping[object, object], value).items()]
+
+
+_CONCEPT: TypeAdapter[ConceptDescriptor] = TypeAdapter(ConceptDescriptor)
+_ENTRY: TypeAdapter[AnalysisDescriptor] = TypeAdapter(AnalysisDescriptor)
+
+
+# The built-in types' own methods, which read a container without calling any of its members'.
+_DICT_ITEMS = cast(
+    Callable[[dict[object, object]], Iterable[tuple[object, object]]],
+    dict.items,  # pyright: ignore[reportUnknownMemberType]
+)
+_LIST_ITEMS = cast(
+    Callable[[list[object]], Iterable[object]],
+    list.__iter__,  # pyright: ignore[reportUnknownMemberType]
+)
+_TUPLE_ITEMS = cast(
+    Callable[[tuple[object, ...]], Iterable[object]],
+    tuple.__iter__,  # pyright: ignore[reportUnknownMemberType]
+)
+
+
+def _lossless(value: object, allowance: _Allowance) -> None:
+    """Refuses (``allowance.refuse``) what a model's dump holds that its JSON text would not
+    carry unchanged: a number that is not finite, which JSON writes as ``null``, and two keys of
+    an object written as the same text, of which JSON keeps the last. It reads the dump's
+    containers by the built-in types' own methods, never a key's or a value's."""
+    if isinstance(value, dict):
+        seen: set[str] = set()
+        for key, member in _DICT_ITEMS(cast(dict[object, object], value)):
+            if isinstance(key, str):
+                text = str.__str__(key)
+                if text in seen:
+                    raise allowance.refuse("two keys written as the same text")
+                seen.add(text)
+            _lossless(member, allowance)
+    elif isinstance(value, list):
+        for item in _LIST_ITEMS(cast(list[object], value)):
+            _lossless(item, allowance)
+    elif isinstance(value, tuple):
+        for item in _TUPLE_ITEMS(cast(tuple[object, ...], value)):
+            _lossless(item, allowance)
+    elif isinstance(value, float) and not math.isfinite(float.__float__(value)):
+        raise allowance.refuse("a number that is not finite")
+
+
+def _read_back[M: BaseModel](
+    adapter: TypeAdapter[M], given: Callable[[], object], allowance: _Allowance
+) -> M:
+    """A model a pack gave, read by ``given``, as the core keeps it: dumped once by its class's
+    serializer, refused where its JSON text would not carry it unchanged (``_lossless``), and
+    read back from that text as an exact model of plain values (D402)."""
+    dumped = adapter.dump_python(cast(M, given()), mode="python", warnings="error")
+    _lossless(dumped, allowance)
+    kept = adapter.validate_python(dumped)
+    return adapter.validate_json(adapter.dump_json(kept, warnings="error"))
+
+
+_CORE_CODES: frozenset[str] = frozenset(code.value for code in CaveatCode)
+
+
+def _manifest_fields(manifest: PackManifest) -> tuple[str, str, int, str]:
+    """The manifest's fields, the manifest read once."""
+    return manifest.id, manifest.version, manifest.results_version, manifest.requires_core
+
+
+def _manifest(given: Pack, reads: _Reads) -> PackManifest | None:
+    """The pack's manifest rebuilt as an exact ``PackManifest`` from its fields, each read once
+    and exactly a ``str`` or an ``int``; a problem names the field alone (D402)."""
+    ok, fields = reads("manifest", lambda: _manifest_fields(given.manifest))
+    if not ok or fields is None:
+        return None
+    names = ("id", "version", "results_version", "requires_core")
+    kinds: tuple[type, ...] = (str, str, int, str)
+    wrong = [n for n, v, k in zip(names, fields, kinds, strict=True) if type(v) is not k]
+    if wrong:
+        reads.problems.append(
+            f"{reads.label}: its manifest's {', '.join(wrong)} is not of its type"
+        )
+        return None
+    try:
+        return PackManifest(
+            id=fields[0],
+            version=fields[1],
+            results_version=fields[2],
+            requires_core=fields[3],
+        )
+    except ValidationError as error:
+        found = sorted({str(e["loc"][0]) for e in error.errors(include_input=False) if e["loc"]})
+        reads.problems.append(f"{reads.label}: its manifest's {', '.join(found)} is not valid")
+        return None
+
+
+def _keys(
+    given: list[tuple[object, object]], what: str, reads: _Reads, rule: str = "a name"
+) -> list[tuple[str, object]]:
+    """The entries of a mapping a pack gave whose keys are exactly ``str`` of Unicode text,
+    each key once; a problem for any other (D402)."""
+    kept: list[tuple[str, object]] = []
+    seen: set[str] = set()
+    for key, member in given:
+        if type(key) is not str or not is_text(key):
+            reads.problems.append(f"{reads.label}: {what} {_named(key)} is not {rule}")
+            continue
+        if key in seen:
+            reads.problems.append(f"{reads.label}: {what} {_shown(key)} is given twice")
+            continue
+        seen.add(key)
+        kept.append((key, member))
+    return kept
+
+
+def _object(given: Callable[[], object], allowance: _Allowance) -> dict[str, JsonValue] | None:
+    """A JSON object a pack gave, read by ``given`` and copied as plain JSON (``_plain``), or
+    ``None`` when it is no mapping."""
+    value = given()
+    if not isinstance(value, Mapping):
+        return None
+    return cast(dict[str, JsonValue], _plain(cast(object, value), allowance))
+
+
+def _schema(
+    given: Callable[[], object], member: str, where: str, reads: _Reads
+) -> dict[str, JsonValue] | None:
+    """A schema a pack gave, read by ``given`` and copied as plain JSON inside the member's
+    guard, which alone runs the pack's code, then checked as an extension schema is (D247,
+    D285) by the core's code outside it, so that the core's own failure is never the pack's; or
+    ``None`` with its problems."""
+    allowance = _Allowance.unbounded()
+    unread = f"{reads.label}: {where} is not a JSON object"
+    ok, copied = reads(member, lambda: _object(given, allowance), allowance, where)
+    if not ok:
+        return None
+    if copied is None:
+        reads.problems.append(unread)
+        return None
+    return _checked_schema(copied, where, reads)
+
+
+def _kept_schema(kept: JsonValue, where: str, reads: _Reads) -> dict[str, JsonValue] | None:
+    """A schema the core already holds (an entry's ``params`` or ``returns``, read back from
+    JSON), copied and checked by the core's code alone, outside any guard: the copy's own
+    refusal is a problem, and any other failure is the core's, raised as it is (D402)."""
+    allowance = _Allowance.unbounded()
+    try:
+        copied = _plain(kept, allowance)
+    except _NotJsonError as error:
+        if error is not allowance.refused:
+            raise
+        reads.problems.append(
+            f"{reads.label}: {where} is not a JSON value: it holds {allowance.reason}"
+        )
+        return None
+    if not isinstance(copied, dict):
+        reads.problems.append(f"{reads.label}: {where} is not a JSON object")
+        return None
+    return _checked_schema(copied, where, reads)
+
+
+def _checked_schema(
+    copied: dict[str, JsonValue], where: str, reads: _Reads
+) -> dict[str, JsonValue] | None:
+    """A copied schema checked as an extension schema is (D247, D285), by the core's code
+    alone; each problem, its pointers included, quoted escaped and cut (``_shown``)."""
+    found = schema_problems(copied)
+    reads.problems.extend(
+        f"{reads.label}: {where} is refused: {_shown(problem, 4 * SHOWN_CHARACTERS)}"
+        for problem in found
+    )
+    return None if found else copied
+
+
 def _plain(
     value: object,
+    allowance: _Allowance,
     depth: int = 0,
     inside: frozenset[int] = frozenset(),
-    allowance: _Allowance | None = None,
 ) -> JsonValue:
     """A copy of a JSON value given as mappings and sequences, read-only ones included, made of
     plain dicts and lists. Anything JSON text cannot carry unchanged raises ``_NotJsonError``: a
     key that is not Unicode text, two keys written as the same text, a set, a non-finite number,
     a number beyond ±(2^53 − 1), a value that holds itself, or nesting deeper than JSON text may
-    have; with an ``allowance``, more than it allows raises ``JsonTooLarge`` before the value
-    that passes it is copied."""
-    if allowance is not None:
-        allowance.value()
+    have, each recorded by ``allowance`` (``refuse``); more than it allows raises
+    ``JsonTooLarge`` before the value that passes it is copied."""
+    allowance.value()
     if isinstance(value, Mapping | list | tuple):
         identity = id(cast(object, value))
         if identity in inside:
-            raise _NotJsonError("a value that holds itself")
+            raise allowance.refuse("a value that holds itself")
         if depth >= MAX_DEPTH:
-            raise _NotJsonError(f"nesting deeper than {MAX_DEPTH}")
+            raise allowance.refuse(f"nesting deeper than {MAX_DEPTH}")
         within = inside | {identity}
         if isinstance(value, Mapping):
             members = cast(Mapping[object, object], value)
             copied: dict[str, JsonValue] = {}
             for key, member in members.items():
                 if not isinstance(key, str):
-                    raise _NotJsonError("a key that is not Unicode text")
-                if allowance is not None:
-                    allowance.string(str.__len__(key))
+                    raise allowance.refuse("a key that is not Unicode text")
+                allowance.string(str.__len__(key))
                 text = str.__str__(key)
                 if not is_text(text):
-                    raise _NotJsonError("a key that is not Unicode text")
+                    raise allowance.refuse("a key that is not Unicode text")
                 if text in copied:
-                    raise _NotJsonError(f"two keys written as {text!r}")
-                copied[text] = _plain(member, depth + 1, within, allowance)
+                    raise allowance.refuse("two keys written as the same text")
+                copied[text] = _plain(member, allowance, depth + 1, within)
             return copied
         items = cast(Sequence[object], value)
-        return [_plain(item, depth + 1, within, allowance) for item in items]
+        return [_plain(item, allowance, depth + 1, within) for item in items]
     # Scalars are read, checked and kept as Python's own types, so that a subclass cannot pass
     # the checks as one value and be written as another.
     if value is None:
@@ -708,25 +952,24 @@ def _plain(
     if isinstance(value, bool):
         return value is True
     if isinstance(value, str):
-        if allowance is not None:
-            allowance.string(str.__len__(value))
+        allowance.string(str.__len__(value))
         text = str.__str__(value)
         if not is_text(text):
-            raise _NotJsonError("text that is not Unicode")
+            raise allowance.refuse("text that is not Unicode")
         return text
     number: int | float
     if isinstance(value, int):
         if int.bit_length(value) > MAX_SAFE_INTEGER.bit_length():
-            raise _NotJsonError("a number beyond ±(2^53 - 1)")
+            raise allowance.refuse("a number beyond ±(2^53 - 1)")
         number = int.__index__(value)
     elif isinstance(value, float):
         number = float.__float__(value)
         if not math.isfinite(number):
-            raise _NotJsonError("a number that is not finite")
+            raise allowance.refuse("a number that is not finite")
     else:
-        raise _NotJsonError(f"a {type(value).__name__}")
+        raise allowance.refuse("a value that is not JSON")
     if abs(number) > MAX_SAFE_INTEGER:
-        raise _NotJsonError("a number beyond ±(2^53 - 1)")
+        raise allowance.refuse("a number beyond ±(2^53 - 1)")
     return number
 
 
@@ -740,7 +983,7 @@ def plain_json(value: object, *, values: int, characters: int, text: int) -> Jso
     names = (RESULT_VALUES, RESULT_CHARACTERS, TEXT_CHARACTERS)
     allowance = _Allowance(values, characters, text, names)
     try:
-        return _plain(value, allowance=allowance)
+        return _plain(value, allowance)
     except JsonTooLarge as large:
         if large is allowance.tripped:
             raise
@@ -766,120 +1009,270 @@ def _schemas(schemas: Mapping[str, JsonSchema]) -> Mapping[str, JsonSchema]:
 
 
 @dataclass(frozen=True)
-class _Registered:
-    """An analysis as registered: its entry as it was then, with the pack's implementation."""
+class RegisteredAnalysis:
+    """An analysis as registered: its entry, read once and read back as an exact model, and the
+    pack's implementation, kept by identity and never read by the registry (D402); a caller
+    reads and calls ``implementation.run`` inside a guard (``analyses.packs``)."""
 
     _entry: AnalysisDescriptor
-    implementation: Analysis
+    implementation: Analysis = field(repr=False, compare=False)
 
     @property
     def entry(self) -> AnalysisDescriptor:
         """A copy of the entry as registered, which nothing can change."""
         return self._entry.model_copy(deep=True)
 
-    def run(self, inputs: AnalysisInputs) -> Mapping[str, JsonValue]:
-        return self.implementation.run(inputs)
+
+@dataclass(frozen=True, eq=False)
+class _Kept:
+    """What the registry keeps of one pack: the pack, the copies of its leaf kinds' schemas, and
+    its analyses as registered."""
+
+    pack: Pack | None
+    leaf_schemas: dict[str, JsonSchema]
+    analyses: list[RegisteredAnalysis]
 
 
-def _snapshot(pack: Pack) -> tuple[Pack, list[str]]:
-    """The pack as registered, and what is wrong with its schemas and wordings, which it holds
-    without them: later changes to what the caller gave change nothing. Concepts, schemas and
-    entries are copied in, and handed out only as copies (``_handed_out``)."""
-    name = pack.manifest.id
-    problems: list[str] = []
+def _analysis_copy(analysis: RegisteredAnalysis) -> RegisteredAnalysis:
+    """An analysis as the registry hands it out: a copy of its entry, so that changing what is
+    handed out changes nothing registered, and the same implementation."""
+    return RegisteredAnalysis(analysis.entry, analysis.implementation)
+
+
+def _registered(given: Pack, core: Version, reads: _Reads) -> _Kept:
+    """``given`` as the registry keeps it (D402): a ``Pack`` built by keyword from copies of
+    the core's (its manifest, concepts, entries, schemas, names and wordings) and the pack's
+    hook objects, kept by identity; each member read once inside its own guard. No pack when
+    its manifest cannot be read, its other members' problems still reported. Also the copies
+    of its leaf kinds' schemas and its analyses as registered, whose implementations are the
+    pack's ``analyses``."""
+    manifest = _manifest(given, reads)
+    if manifest is not None:
+        reads.label = _shown(manifest.id)
+    name = None if manifest is None else manifest.id
+    problems = reads.problems
+    label = reads.label
+    if manifest is not None and not SpecifierSet(manifest.requires_core, prereleases=True).contains(
+        core
+    ):
+        problems.append(f"{label} requires core {_shown(manifest.requires_core)}, not {core}")
+
+    concepts: list[ConceptDescriptor] = []
+    ok, found = reads("concepts", lambda: _sequence(given.concepts))
+    for position, concept in enumerate(found or [], 1):
+        allowance = _Allowance.unbounded()
+        ok, copy = reads(
+            f"{_ordinal(position)} concept",
+            lambda c=concept, a=allowance: _read_back(_CONCEPT, lambda: c, a),
+            allowance,
+        )
+        if ok and copy is not None:
+            concepts.append(copy)
+    if name is not None:
+        problems.extend(
+            f"{label}: concept {_shown(c.id)} is not in its namespace {label}:"
+            for c in concepts
+            if not c.id.startswith(f"{name}:")
+        )
+    ids = [c.id for c in concepts]
+    problems.extend(
+        f"{label}: concept {_shown(c)} is registered twice"
+        for c in sorted({c for c in ids if ids.count(c) > 1})
+    )
+
+    systems: dict[str, OntologyValidator] = {}
+    ok, items = reads("ontology systems", lambda: _items(given.ontology_systems))
+    for system, validator in items or []:
+        if type(system) is not str or not 0 < len(system) <= 200 or not is_text(system):
+            problems.append(
+                f"{label}: an ontology system name is empty, too long or not Unicode text"
+            )
+            continue
+        if system in systems:
+            problems.append(f"{label}: ontology system {_shown(system)} is given twice")
+            continue
+        systems[system] = cast(OntologyValidator, validator)
+
     schemas: dict[str, JsonSchema] = {}
-    for kind, schema in pack.extension_schemas.items():
+    ok, items = reads("extension schemas", lambda: _items(given.extension_schemas))
+    for kind, schema in _keys(items or [], "extension schema for", reads):
         if kind not in RELEASE_KINDS:
             problems.append(
-                f"{name}: extension schema for {kind}, which is not a release descriptor kind"
+                f"{label}: extension schema for {_shown(kind)}, which is not a release "
+                "descriptor kind"
             )
-        if not isinstance(cast(object, schema), Mapping):
-            problems.append(f"{name}: the extension schema for {kind} is not a JSON object")
-            continue
-        try:
-            schemas[kind] = cast(dict[str, JsonValue], _plain(schema))
-        except _NotJsonError as error:
-            problems.append(
-                f"{name}: the extension schema for {kind} is not a JSON value: it holds {error}"
-            )
-            continue
-        problems.extend(
-            f"{name}: the extension schema for {kind} is refused: {found}"
-            for found in schema_problems(schemas[kind])
+        copied = _schema(
+            lambda s=schema: s,
+            f"extension schema for {_shown(kind)}",
+            f"the extension schema for {_shown(kind)}",
+            reads,
         )
-    wording: dict[CaveatCode, str] = {}
-    for code, template in pack.wording.items():
-        if code not in CaveatCode:
-            problems.append(f"{name}: wording for {code}, which is not a core caveat code")
-        given = cast(object, template)
-        if not isinstance(given, str) or not given or not is_text(given):
-            problems.append(f"{name}: the wording for {code} is not Unicode text")
+        if copied is not None:
+            schemas[kind] = copied
+
+    leaf_kinds: dict[str, LeafKind] = {}
+    leaf_schemas: dict[str, JsonSchema] = {}
+    ok, items = reads("leaf kinds", lambda: _items(given.leaf_kinds))
+    rule = "<pack id>.<name>" if name is None else f"{label}.<name>"
+    for kind, leaf in _keys(items or [], "leaf kind", reads, rule):
+        if name is not None and not _namespaced(name, kind):
+            problems.append(f"{label}: leaf kind {_shown(kind)} is not {label}.<name>")
+        leaf_kinds[kind] = cast(LeafKind, leaf)
+        copied = _schema(
+            lambda o=leaf: cast(LeafKind, o).schema,
+            f"leaf kind {_shown(kind)}'s schema",
+            f"the schema of leaf kind {_shown(kind)}",
+            reads,
+        )
+        if copied is not None:
+            leaf_schemas[kind] = copied
+
+    translators: dict[str, Translator] = {}
+    ok, items = reads("translators", lambda: _items(given.translators))
+    for format, translator in _keys(items or [], "translator format", reads, rule):
+        if name is not None and not _namespaced(name, format):
+            problems.append(f"{label}: translator format {_shown(format)} is not {label}.<name>")
+        translators[format] = cast(Translator, translator)
+
+    analyses: list[RegisteredAnalysis] = []
+    ok, found = reads("analyses", lambda: _sequence(given.analyses))
+    for position, analysis in enumerate(found or [], 1):
+        allowance = _Allowance.unbounded()
+        ok, entry = reads(
+            f"{_ordinal(position)} analysis's entry",
+            lambda a=analysis, w=allowance: _read_back(_ENTRY, lambda: cast(Analysis, a).entry, w),
+            allowance,
+        )
+        if not ok or entry is None:
             continue
-        wording[code] = given
-    for analysis in pack.analyses:
-        fields = analysis.entry.fields
-        for member, schema in (("params", fields.params), ("returns", fields.returns)):
-            try:
-                found = cast(dict[str, JsonValue], _plain(cast(object, schema)))
-            except _NotJsonError as error:
-                problems.append(
-                    f"{name}: the {member} schema of analysis {analysis.entry.id} is not a JSON "
-                    f"value: it holds {error}"
-                )
-                continue
-            problems.extend(
-                f"{name}: the {member} schema of analysis {analysis.entry.id} is refused: {found}"
-                for found in schema_problems(found)
+        if name is not None and not _namespaced(name, entry.id):
+            problems.append(f"{label}: analysis {_shown(entry.id)} is not {label}.<name>")
+        for member, kept_schema in (
+            ("params", entry.fields.params),
+            ("returns", entry.fields.returns),
+        ):
+            _kept_schema(
+                cast(JsonValue, kept_schema),
+                f"the {member} schema of analysis {_shown(entry.id)}",
+                reads,
             )
-    snapshot = replace(
-        pack,
-        concepts=tuple(concept.model_copy(deep=True) for concept in pack.concepts),
-        ontology_systems=MappingProxyType(dict(pack.ontology_systems)),
+        analyses.append(RegisteredAnalysis(entry, cast(Analysis, analysis)))
+    analysis_ids = [a.entry.id for a in analyses]
+    if len(set(analysis_ids)) != len(analysis_ids):
+        problems.append(f"{label}: an analysis id appears twice")
+
+    predicates: dict[str, RequirementPredicate] = {}
+    ok, items = reads("requirement predicates", lambda: _items(given.requirement_predicates))
+    for predicate, function in items or []:
+        if type(predicate) is not str or not is_identifier(predicate):
+            problems.append(
+                f"{label}: requirement predicate {_named(predicate)} is not an identifier"
+            )
+            continue
+        if predicate in predicates:
+            problems.append(f"{label}: requirement predicate {_shown(predicate)} is given twice")
+            continue
+        predicates[predicate] = cast(RequirementPredicate, function)
+
+    codes: dict[str, Severity] = {}
+    code_rule = "<pack id>.<CODE>" if name is None else f"{label}.<CODE>"
+    ok, items = reads("caveat codes", lambda: _items(given.caveat_codes))
+    for code, severity in items or []:
+        if type(code) is not str or not is_text(code):
+            problems.append(f"{label}: caveat code {_named(code)} is not {code_rule}")
+            continue
+        if name is not None and (code.partition(".")[0] != name or not is_pack_code(code)):
+            problems.append(f"{label}: caveat code {_shown(code)} is not {label}.<CODE>")
+        member = _member(Severity, severity)
+        if member is None:
+            problems.append(f"{label}: caveat code {_shown(code)} has no severity")
+            continue
+        if code in codes:
+            problems.append(f"{label}: caveat code {_shown(code)} is given twice")
+            continue
+        codes[code] = member
+    for analysis in analyses:
+        for cited in analysis.entry.fields.caveats:
+            owner, dot, _ = cited.partition(".")
+            if (dot and owner == name and cited not in codes) or (
+                not dot and cited not in _CORE_CODES
+            ):
+                problems.append(
+                    f"{label}: analysis {_shown(analysis.entry.id)} cites {_shown(cited)}, "
+                    "which is not declared"
+                )
+
+    wording: dict[CaveatCode, str] = {}
+    ok, items = reads("wording", lambda: _items(given.wording))
+    for code, template in items or []:
+        core_code: CaveatCode | None = None
+        if type(code) is CaveatCode:
+            core_code = _member(CaveatCode, code)
+        elif type(code) is str and code in _CORE_CODES:
+            core_code = CaveatCode(code)
+        if core_code is None:
+            problems.append(f"{label}: wording for {_named(code)}, which is not a core caveat code")
+            shown = _named(code)
+        else:
+            shown = core_code.value
+        if type(template) is not str or not template or not is_text(template):
+            problems.append(f"{label}: the wording for {shown} is not Unicode text")
+            continue
+        if core_code is None:
+            continue
+        if core_code in wording:
+            problems.append(f"{label}: the wording for {shown} is given twice")
+            continue
+        wording[core_code] = template
+
+    ok, importer = reads("importer", lambda: given.importer)
+    ok, validator = reads("validator", lambda: given.validator)
+    ok, proposer = reads("proposer", lambda: given.proposer)
+    ok, facet = reads("facet", lambda: given.facet)
+    ok, caveat_rule = reads("caveat rule", lambda: given.caveat_rule)
+
+    if manifest is None:
+        return _Kept(None, leaf_schemas, analyses)
+    kept = Pack(
+        manifest=manifest,
+        concepts=tuple(concepts),
+        ontology_systems=MappingProxyType(systems),
         extension_schemas=MappingProxyType(schemas),
-        leaf_kinds=MappingProxyType(dict(pack.leaf_kinds)),
-        translators=MappingProxyType(dict(pack.translators)),
-        analyses=tuple(
-            _Registered(analysis.entry.model_copy(deep=True), analysis)
-            for analysis in pack.analyses
-        ),
-        requirement_predicates=MappingProxyType(dict(pack.requirement_predicates)),
-        caveat_codes=MappingProxyType(dict(pack.caveat_codes)),
+        importer=importer,
+        validator=validator,
+        proposer=proposer,
+        leaf_kinds=MappingProxyType(leaf_kinds),
+        translators=MappingProxyType(translators),
+        analyses=tuple(analysis.implementation for analysis in analyses),
+        requirement_predicates=MappingProxyType(predicates),
+        facet=facet,
+        caveat_codes=MappingProxyType(codes),
+        caveat_rule=caveat_rule,
         wording=MappingProxyType(wording),
     )
-    return snapshot, problems
-
-
-def _leaf_schemas(pack: Pack) -> tuple[dict[str, JsonSchema], list[str]]:
-    """The schemas of a pack's leaf kinds as they are when it is registered, checked as its
-    extension schemas are (D285), and what is wrong with them."""
-    schemas: dict[str, JsonSchema] = {}
-    problems: list[str] = []
-    for kind, leaf in pack.leaf_kinds.items():
-        given = cast(object, leaf.schema)
-        if not isinstance(given, Mapping):
-            problems.append(f"{pack.id}: the schema of leaf kind {kind} is not a JSON object")
-            continue
-        try:
-            schemas[kind] = cast(dict[str, JsonValue], _plain(cast(object, given)))
-        except _NotJsonError as error:
-            problems.append(
-                f"{pack.id}: the schema of leaf kind {kind} is not a JSON value: it holds {error}"
-            )
-            continue
-        problems.extend(
-            f"{pack.id}: the schema of leaf kind {kind} is refused: {found}"
-            for found in schema_problems(schemas[kind])
-        )
-    return schemas, problems
+    return _Kept(kept, leaf_schemas, analyses)
 
 
 def _handed_out(pack: Pack) -> Pack:
-    """A registered pack as the registry hands it out: its concepts and schemas copied, so that
-    changing them changes nothing registered (analyses copy their entries themselves)."""
-    return replace(
-        pack,
+    """A registered pack as the registry hands it out, built by keyword: copies of its
+    concepts and schemas, so that changing them changes nothing registered (analyses copy their
+    entries themselves), and the same hook objects."""
+    return Pack(
+        manifest=pack.manifest.model_copy(),
         concepts=tuple(concept.model_copy(deep=True) for concept in pack.concepts),
+        ontology_systems=pack.ontology_systems,
         extension_schemas=_schemas(pack.extension_schemas),
+        importer=pack.importer,
+        validator=pack.validator,
+        proposer=pack.proposer,
+        leaf_kinds=pack.leaf_kinds,
+        translators=pack.translators,
+        analyses=pack.analyses,
+        requirement_predicates=pack.requirement_predicates,
+        facet=pack.facet,
+        caveat_codes=pack.caveat_codes,
+        caveat_rule=pack.caveat_rule,
+        wording=pack.wording,
     )
 
 
@@ -896,46 +1289,62 @@ class PackRegistry:
         except InvalidVersion:
             raise PackError([f"core version {core_version!r} is not a PEP 440 version"]) from None
         problems: list[str] = []
-        snapshots: list[Pack] = []
+        kept: list[Pack] = []
         leaf_schemas: dict[str, JsonSchema] = {}
-        for given in packs:
-            snapshot, found = _snapshot(given)
-            snapshots.append(snapshot)
-            problems.extend(found)
-            schemas, found = _leaf_schemas(snapshot)
-            leaf_schemas.update(schemas)
-            problems.extend(found)
-        packs = snapshots
+        registered: dict[str, list[RegisteredAnalysis]] = {}
+        readers: list[_Reads] = []
+        passing: type[BaseException] | None = None
+        try:
+            for position, given in enumerate(list(packs), 1):
+                label = f"the {_ordinal(position)} pack given"
+                if type(given) is not Pack:
+                    problems.append(f"{label} is not a Pack")
+                    continue
+                readers.append(_Reads(label, problems))
+                found = _registered(given, core, readers[-1])
+                leaf_schemas.update(found.leaf_schemas)
+                if found.pack is not None:
+                    kept.append(found.pack)
+                    registered.setdefault(found.pack.id, []).extend(found.analyses)
+        except _Passing as stop:
+            # Only a stop a guard of this registry's raised passes, its type taken by identity.
+            ours = any(stop is reads.raised for reads in readers)
+            passing = next((kind for kind in PASSED if ours and kind is stop.kind), None)
+            if passing is None:
+                problems.append("registration was stopped by what is not a guard's")
+        if passing is not None:
+            raise SystemExit(1) if passing is SystemExit else passing()
         by_id: dict[str, Pack] = {}
         owners: dict[tuple[str, str], str] = {}
-        for pack in packs:
-            problems.extend(_problems(pack, core))
+        declared = {code for pack in kept for code in pack.caveat_codes}
+        for pack in kept:
+            label = _shown(pack.id)
             problems.extend(
-                f"{pack.id}: analysis {analysis.entry.id} cites {code}, which no registered pack "
-                "declares"
-                for analysis in pack.analyses
+                f"{label}: analysis {_shown(analysis.entry.id)} cites {_shown(code)}, which no "
+                "registered pack declares"
+                for analysis in registered.get(pack.id, [])
                 for code in analysis.entry.fields.caveats
-                if "." in code
-                and code.partition(".")[0] != pack.id
-                and not any(code in other.caveat_codes for other in packs)
+                if "." in code and code.partition(".")[0] != pack.id and code not in declared
             )
             if pack.id in by_id:
-                problems.append(f"pack {pack.id} is registered twice")
+                problems.append(f"pack {label} is registered twice")
             by_id[pack.id] = pack
             claims = [("ontology system", system) for system in pack.ontology_systems]
             claims += [("concept", concept.id) for concept in pack.concepts]
             for claim in claims:
                 if claim in owners and owners[claim] != pack.id:
                     problems.append(
-                        f"{claim[0]} {claim[1]} is registered by {owners[claim]} and {pack.id}"
+                        f"{claim[0]} {_shown(claim[1])} is registered by "
+                        f"{_shown(owners[claim])} and {label}"
                     )
                 owners.setdefault(claim, pack.id)
         if problems:
             raise PackError(problems)
+        packs = kept
         self._packs = MappingProxyType(dict(sorted(by_id.items())))
         self._systems = {system: pack for pack in packs for system in pack.ontology_systems}
         self._analyses = {
-            analysis.entry.id: analysis for pack in packs for analysis in pack.analyses
+            analysis.entry.id: analysis for pack in packs for analysis in registered[pack.id]
         }
         self._leaf_checkers = {kind: Checker(schema) for kind, schema in leaf_schemas.items()}
         """The checker of each leaf kind's schema as registered."""
@@ -944,8 +1353,7 @@ class PackRegistry:
                 Checker(analysis.entry.fields.params),
                 Checker(analysis.entry.fields.returns),
             )
-            for pack in packs
-            for analysis in pack.analyses
+            for analysis in self._analyses.values()
         }
         """The checkers of each analysis's ``params`` and ``returns`` schemas as registered."""
 
@@ -1043,16 +1451,19 @@ class PackRegistry:
         """As ``leaf_kind``, for a document format ``<pack id>.<name>``."""
         return self._registered(format.partition(".")[0]).translators.get(format)
 
-    def analysis(self, analysis_id: str) -> Analysis | None:
+    def analysis(self, analysis_id: str) -> RegisteredAnalysis | None:
         """A pack's analysis, as ``leaf_kind`` finds a kind; a core family's are not packs'
         (M3)."""
         family = analysis_id.partition(".")[0]
         if family not in CORE_ANALYSIS_FAMILIES:
             self._registered(family)
-        return self._analyses.get(analysis_id)
+        found = self._analyses.get(analysis_id)
+        return None if found is None else _analysis_copy(found)
 
-    def analyses(self) -> list[Analysis]:
-        return [self._analyses[analysis_id] for analysis_id in sorted(self._analyses)]
+    def analyses(self) -> list[RegisteredAnalysis]:
+        return [
+            _analysis_copy(self._analyses[analysis_id]) for analysis_id in sorted(self._analyses)
+        ]
 
     def analysis_checkers(self, analysis_id: str) -> tuple[Checker, Checker]:
         """The checkers of a registered pack analysis's ``params`` and ``returns`` schemas, as
@@ -1107,6 +1518,7 @@ __all__ = [
     "Proposal",
     "Proposer",
     "Refused",
+    "RegisteredAnalysis",
     "ReleaseView",
     "RequirementPredicate",
     "Reshaped",

@@ -210,8 +210,9 @@ def _structure(schema: Mapping[str, JsonValue]) -> list[str]:
                 continue
             try:
                 resolved = scoped.lookup(reference)
-            except (Unresolvable, ValueError):
-                # referencing raises ValueError for a token that is not an index into an array.
+            except (Unresolvable, ValueError, TypeError, LookupError):
+                # referencing raises ValueError for a token that is not an index into an array,
+                # and TypeError or a LookupError for one into a value that is neither.
                 found.add(f"it holds a {key} that resolves to nothing in the schema")
                 continue
             target = cast(object, resolved.contents)  # a pointer may land on any JSON value
