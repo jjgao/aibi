@@ -52,6 +52,13 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 - `packs/onco/`: the oncology pack (D407), installed by `[packs] modules`: its concepts, the `OncoTree`,
   `HGNC`, `NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet. It
   imports only the pack API (`aibi.core.schema.pack_api`).
+- `web/` (D418): the web bundle's package (React, react-router's hash router, Vite 8), so far a
+  skeleton of fixed words: the catalogue entry (`src/catalogue/`, with a lazy not-found screen)
+  and the operator entry (`src/operator/`, which reads nothing from its URL), the end-to-end
+  harness's stub (`src/harness/`, in `dist-e2e/` alone), the build's gate (`plugins/gate.ts`: no
+  harness in production, an allow-list for the operator entry's graph), `scripts/check-bundle.mjs`
+  (names, hashes, caps, the budget, then the real loader) and `scripts/check-licenses.mjs`, and
+  the policy matrix (`e2e/`: Playwright against the built bundles served by the real server).
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.
@@ -113,7 +120,7 @@ server/src/aibi/core/{schema,store,importers,catalog,engine,analyses,api,mcp,ope
 server/src/aibi/packs/onco/
 server/tests/core/        # must pass with no pack registered
 server/tests/packs/onco/
-web/
+web/                      # the web bundle's package (D418): src/, plugins/, scripts/, tests/, e2e/
 fixtures/
 schemas/                  # generated JSON Schemas, checked in
 ```
@@ -166,6 +173,22 @@ Frontend (`web/`): React + TypeScript + Vite; API types are generated from the s
 OpenAPI document (`schemas/openapi.json`), not written by hand, but for the one exception SPEC
 §12.4 records: three JSON-value types and `ServerNumber`, which the generated types reach through
 the document's `x-aibi-json` and `x-aibi-server-number` marks (written in M5.1c-1, D416).
+Node is pinned in `web/.nvmrc` and every package exactly in `package.json` and its lockfile (v3);
+install scripts never run. From `web/` (the matrix starts the real server from `server/.venv`, so
+run `uv sync` in `server/` first):
+
+```bash
+npm ci --ignore-scripts
+npm run licenses && npm audit --omit=dev --audit-level=high
+npm run typecheck && npm run lint && npm test   # tsc (no skipLibCheck), ESLint, Vitest
+npm run build       # dist/ under umask 022 through the build's gate, then check-bundle --mode prod
+npm run build:e2e   # dist-e2e/ (with the harness), then check-bundle --mode e2e
+AIBI_CHROMIUM=/path/to/chrome npm run e2e     # the policy matrix; CI installs its own Chromium
+```
+
+CI's `web` job runs these; the `server` job builds nothing of `web/`. A bundle that outgrows
+`web/budget.json` (the measured build and 15%) fails `check-bundle`: measure it again and change
+the budget in the same PR, saying why.
 
 ## Working on issues
 

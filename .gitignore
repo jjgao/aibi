@@ -6,6 +6,12 @@ __pycache__/
 build/
 dist/
 
+# The web package (web/): its dependencies, its two builds and Playwright's output
+node_modules/
+web/dist*/
+playwright-report/
+test-results/
+
 # Tool caches
 .pytest_cache/
 .ruff_cache/
