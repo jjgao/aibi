@@ -38,9 +38,10 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 - `core/operator/`: the operator router behind the curator token, and `aibi`, the operator CLI,
   which talks to it over HTTP only.
 - `core/catalog/`: the catalogue and the service functions of the public tools (`search_catalog`,
-  `describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`, `validate_document`,
-  `count_cohort`, `explain`, `list_analyses` (typed entries), `run_analysis`); `core/mcp/` serves them at
-  `/mcp`.
+  `describe_dataset`, `describe_column`, `curation_queue`, `propose_descriptor`,
+  `validate_document`, `count_cohort`, `explain`, `list_analyses` (typed entries),
+  `list_leaf_kinds`, `run_analysis`); `core/mcp/` serves them at `/mcp`. `served.py` bounds what
+  the two listings serve alike to every call, checked once by the loader for `check` and `serve`.
 - `core/engine/`: canonicalisation, ids and counts, the reference evaluator, the SQL compiler
   (`sql.py`), the worker that runs a document's queries in a child process (the server's process
   never loads DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).

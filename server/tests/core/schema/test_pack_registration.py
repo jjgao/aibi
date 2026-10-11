@@ -151,7 +151,7 @@ class _Counted(Mapping[str, Any]):
 
     def items(self) -> Any:
         self.reads.append("items")
-        return self.given.items()
+        return _CountedItems(self)
 
     def values(self) -> Any:
         self.reads.append("values")
@@ -164,6 +164,21 @@ class _Counted(Mapping[str, Any]):
     def __bool__(self) -> bool:
         self.reads.append("__bool__")
         return bool(self.given)
+
+
+class _CountedItems:
+    """What a ``_Counted``'s ``items()`` gives: its pairs, iterated, recording a read of their
+    length (which ``list()`` makes, for one)."""
+
+    def __init__(self, mapping: _Counted) -> None:
+        self.mapping = mapping
+
+    def __iter__(self) -> Iterator[tuple[str, Any]]:
+        return iter(self.mapping.given.items())
+
+    def __len__(self) -> int:
+        self.mapping.reads.append("len(items())")
+        return len(self.mapping.given)
 
 
 class _CountedSequence(Sequence[Any]):
@@ -602,6 +617,13 @@ def test_no_hook_object_is_read_after_registration() -> None:
         packs.leaf_checker("library.overdue"),
         packs.analysis_checkers("library.loan_rates"),
         packs.ids,
+        packs.leaf_schemas(),
+        packs.manifest("library"),
+        packs.label("library"),
+        packs.caveat_codes("library"),
+        packs.formats(),
+        packs.analysis_entries(),
+        packs.analysis_versions(),
     ]
     assert handed
     called = {
@@ -609,7 +631,8 @@ def test_no_hook_object_is_read_after_registration() -> None:
         "requirement_predicate", "ontology_validator", "validators", "proposers", "facets",
         "caveat_rules", "analyses", "concepts", "concept_sorts", "concept_ids",
         "extension_schemas", "wordings", "severity", "leaf_kinds", "leaf_checker",
-        "analysis_checkers", "ids",
+        "analysis_checkers", "ids", "leaf_schemas", "manifest", "label", "caveat_codes",
+        "formats", "analysis_entries", "analysis_versions",
     }  # fmt: skip
     public = {name for name, _ in inspect.getmembers(PackRegistry) if not name.startswith("_")}
     assert public == called, "a registry method this test does not call"
@@ -1019,12 +1042,20 @@ def test_a_pack_named_by_its_position_has_no_namespace_problem() -> None:
     given = replace(LIBRARY, manifest=_Raising.model_construct())
     found = _problems(given, ARCHIVE)
     assert all("is not" not in p or "manifest" in p for p in found), found
-    bad = replace(given, leaf_kinds=_Pairs([(1, Overdue())]), caveat_codes=_Pairs([(1, 1)]))
+    bad = replace(
+        given,
+        leaf_kinds=_Pairs([(1, Overdue())]),
+        translators=_Pairs([(1, None)]),
+        caveat_codes=_Pairs([(1, 1)]),
+    )
     found = _problems(bad, ARCHIVE)
-    assert "the 1st pack given: leaf kind (a key that is not text) is not <pack id>.<name>" in found
+    named = "the 1st pack given: translator format (a key that is not text) is not <pack id>.<name>"
+    assert named in found
     assert "the 1st pack given: caveat code (a key that is not text) is not <pack id>.<CODE>" in (
         found
     )
+    # Its leaf kinds, like its concepts and analyses, are not read at all (D421).
+    assert not [p for p in found if "leaf kind" in p], found
 
 
 def test_a_manifest_that_is_not_valid_quotes_no_value() -> None:

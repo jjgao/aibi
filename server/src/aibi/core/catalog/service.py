@@ -16,6 +16,8 @@ stay on the operator router.
   brief columns (a page of them), its relationships, coverage and endpoints, the table graph, the
   applicable analyses over its keyed tables (§9.4, D316) and the standing caveats (D275).
 - ``list_analyses`` gives the registry's entries, and for a dataset their applicability (D316).
+- ``list_leaf_kinds`` gives every registered leaf kind with its pack's version and its schema
+  as registered (D421).
 - ``describe_column`` gives a column's descriptor with its observation-state counts and value
   distribution, disclosed (D276).
 - ``curation_queue`` gives the queue of §11.1 (D250), its counts disclosed and referenced (D277).
@@ -52,6 +54,7 @@ from aibi.core.catalog.index import (
     entries,
     kept_statistics,
 )
+from aibi.core.catalog.served import leaf_kind_listing
 from aibi.core.engine.worker import Workers
 from aibi.core.schema.catalog import (
     MAX_HIT_TABLES,
@@ -66,6 +69,7 @@ from aibi.core.schema.catalog import (
     DisclosureOut,
     GraphEdge,
     ListAnalyses,
+    ListLeafKinds,
     OntologyTerm,
     Proposed,
     ProposeDescriptor,
@@ -93,7 +97,7 @@ from aibi.core.schema.descriptors import (
     RelationshipDescriptor,
     TableDescriptor,
 )
-from aibi.core.schema.entries import analysis_entry
+from aibi.core.schema.entries import LeafKindListing
 from aibi.core.schema.jsonio import canonical
 from aibi.core.schema.numbers import NotEstimableReason
 from aibi.core.schema.output import Data, Output, Segment, data, text
@@ -725,7 +729,7 @@ class Catalog:
         """Every registry entry, by id, and for a dataset each one's applicability to the release
         the request pins, for its unit or for each of the release's keyed tables."""
         analyses = self.analyses
-        entries = [analysis_entry(analysis.entry) for analysis in analyses.all()]
+        entries = analyses.entries()
         if request.dataset is None:
             return AnalysisListing(analyses=entries)
         release = self._release(request.dataset, request.release)
@@ -752,6 +756,13 @@ class Catalog:
             ),
         )
 
+    # --- list_leaf_kinds (§7.3, §11.1, D421) ----------------------------------------------------
+
+    def list_leaf_kinds(self, request: ListLeafKinds) -> LeafKindListing:
+        """Every registered leaf kind, by kind, with its pack and the pack's version, and its
+        schema as the pack had it when it was registered: a pack's data (A6)."""
+        return leaf_kind_listing(self.registry)
+
     # --- Resources (§11.1, D279) ---------------------------------------------------------------
 
     def _concepts(self) -> list[ConceptDescriptor]:
@@ -768,7 +779,8 @@ class Catalog:
                 found.append((f"aibi://dataset/{dataset}@{latest.label}/dataset", dataset))
         found.extend((f"aibi://concept/{c.id}", c.id) for c in self._concepts())
         found.extend(
-            (f"aibi://analysis/{a.id}@{a.entry.version}", a.id) for a in self.analyses.all()
+            (f"aibi://analysis/{analysis}@{version}", analysis)
+            for analysis, version in self.analyses.versions()
         )
         found.extend((f"aibi://model/{m.id}", m.id) for m in self.models)
         return found[:MAX_RESOURCES]

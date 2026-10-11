@@ -5216,6 +5216,105 @@
         "title": "LabelState",
         "type": "object"
       },
+      "LeafKindEntry": {
+        "additionalProperties": false,
+        "description": "A registered leaf kind as ``list_leaf_kinds`` lists it (§7.3, §11.1, D421): its name\n``<pack id>.<name>``, its pack's id and version, and its schema as the pack had it when it\nwas registered. The schema is a pack's data, never an instruction (A6): the entry is marked\nas data as a whole, and its names are typed by their patterns.",
+        "properties": {
+          "kind": {
+            "maxLength": 129,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "pattern": "^(?:cohort|compare|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|summary|survival|value)\\."
+                }
+              ]
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "leaf_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OutputJson"
+            },
+            "title": "Leaf Schema",
+            "type": "object",
+            "x-aibi-data": true
+          },
+          "pack": {
+            "maxLength": 64,
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "__"
+                },
+                {
+                  "enum": [
+                    "cohort",
+                    "compare",
+                    "core",
+                    "cov",
+                    "covered",
+                    "dataset",
+                    "drv",
+                    "ep",
+                    "exists",
+                    "ids",
+                    "iss",
+                    "leaf",
+                    "model",
+                    "rel",
+                    "sha256",
+                    "stat",
+                    "summary",
+                    "survival",
+                    "value"
+                  ]
+                }
+              ]
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Pack",
+            "type": "string"
+          },
+          "pack_version": {
+            "maxLength": 64,
+            "pattern": "^(?:[0-9]+!)?[0-9]+(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:\\+[a-z0-9]+(?:\\.[a-z0-9]+)*)?$",
+            "title": "Pack Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "pack",
+          "pack_version",
+          "leaf_schema"
+        ],
+        "title": "LeafKindEntry",
+        "type": "object",
+        "x-aibi-data": true
+      },
+      "LeafKindListing": {
+        "additionalProperties": false,
+        "description": "What ``list_leaf_kinds`` gives (§11.1, D421): every registered leaf kind, by kind.",
+        "properties": {
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/LeafKindEntry"
+            },
+            "title": "Kinds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kinds"
+        ],
+        "title": "LeafKindListing",
+        "type": "object"
+      },
       "LibraryOut": {
         "additionalProperties": false,
         "properties": {
@@ -5308,6 +5407,13 @@
           }
         },
         "title": "ListAnalyses",
+        "type": "object"
+      },
+      "ListLeafKinds": {
+        "additionalProperties": false,
+        "description": "``list_leaf_kinds``' request (§11.1, D421): it takes nothing.",
+        "properties": {},
+        "title": "ListLeafKinds",
         "type": "object"
       },
       "LoggedIssuance": {
@@ -13488,6 +13594,218 @@
           }
         },
         "summary": "List Analyses"
+      }
+    },
+    "/api/tools/list_leaf_kinds": {
+      "post": {
+        "operationId": "list_leaf_kinds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListLeafKinds"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeafKindListing"
+                }
+              }
+            },
+            "description": "The answer"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "The curator token's scheme",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's",
+            "headers": {
+              "Allow": {
+                "description": "The methods the path takes",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusals"
+                }
+              }
+            },
+            "description": "Refused (D265): the refusals, the status the first one's"
+          }
+        },
+        "summary": "List Leaf Kinds"
       }
     },
     "/api/tools/propose_descriptor": {

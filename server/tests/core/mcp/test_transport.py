@@ -52,6 +52,7 @@ def test_the_server_lists_exactly_the_catalogue_and_query_tools(served: Served) 
         "count_cohort",
         "explain",
         "list_analyses",
+        "list_leaf_kinds",
         "run_analysis",
     ]
     assert list(TOOL_MODELS) == [tool.name for tool in TOOLS]
