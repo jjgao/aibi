@@ -33,7 +33,8 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   the read-only catalogue pages (`page.py`, `markup.py`, `chrome.py`; HTML without a script),
   `packs.py`, which installs the packs the configuration's `[packs] modules` names, and `bundle.py`,
   which serves the built web bundle; protection records one classification of each request
-  (`core/classify.py`, D414) and everything after it reads that record.
+  (`core/classify.py`, D414) and everything after it reads that record; `openapi.py` (with
+  `openapi_normalise.py`, `openapi_vocabulary.py`) generates the OpenAPI document (D416).
 - `core/operator/`: the operator router behind the curator token, and `aibi`, the operator CLI,
   which talks to it over HTTP only.
 - `core/catalog/`: the catalogue and the service functions of the public tools (`search_catalog`,
@@ -152,11 +153,18 @@ uv run aibi-server serve --config aibi.toml
 AIBI_TOKEN=… AIBI_OPERATOR="Your Name" uv run aibi status
 ```
 
-After changing a model in `core/schema/`, regenerate the checked-in JSON Schemas with
-`uv run python -m aibi.core.schema.export ../schemas`; a test fails while they are stale.
+After changing a model in `core/schema/` or a route, regenerate the checked-in JSON Schemas and
+the OpenAPI document; a test fails while either is stale:
+
+```bash
+uv run python -m aibi.core.schema.export ../schemas   # schemas/*.schema.json
+uv run python -m aibi.core.api.openapi ../schemas     # schemas/openapi.json (generated, never served)
+```
 
 Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
-OpenAPI schema, not written by hand.
+OpenAPI document (`schemas/openapi.json`), not written by hand, but for the one exception SPEC
+§12.4 records: three JSON-value types and `ServerNumber`, which the generated types reach through
+the document's `x-aibi-json` and `x-aibi-server-number` marks (written in M5.1c-1, D416).
 
 ## Working on issues
 

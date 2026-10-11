@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,10 @@ from typing import Any
 import jsonschema
 import pytest
 
-from aibi.core.schema.export import SCHEMAS, render
-from aibi.core.schema.loading import load_descriptor, load_document
+from aibi.core.schema.catalog import TOOL_MODELS
+from aibi.core.schema.cohorts import ValidateDocument
+from aibi.core.schema.export import SCHEMAS, render, request_schema
+from aibi.core.schema.loading import load_descriptor, load_document, load_request
 
 SCHEMA_DIR = Path(__file__).resolve().parents[4] / "schemas"
 DOCUMENTS = Path(__file__).parent / "documents"
@@ -474,3 +477,118 @@ def test_schemas_use_only_json_schema_keywords(name: str) -> None:
 def test_the_keyword_walker_finds_unknown_members() -> None:
     schema = {"properties": {"gt": {"type": "number", "gt": 0}}, "allOf": [{"lt": 1}]}
     assert list(_unknown_keywords(schema)) == ["#/properties/gt/gt", "#/allOf/0/lt"]
+
+
+# --- Classes over every schema ------------------------------------------------------------------
+
+
+def _schema_nodes(schema: Any) -> Iterator[dict[str, Any]]:
+    if not isinstance(schema, dict):
+        return
+    yield schema
+    for key, value in schema.items():
+        if key in _SCHEMA_MAPS:
+            for member in value.values():
+                yield from _schema_nodes(member)
+        elif key in _SCHEMA_LISTS:
+            for member in value:
+                yield from _schema_nodes(member)
+        elif key in _SCHEMA_VALUES:
+            yield from _schema_nodes(value)
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS))
+def test_no_schema_has_prefix_items_beside_items(name: str) -> None:
+    """``items`` beside ``prefixItems`` applies only past the prefix (2020-12): a builder puts
+    positional constraints in an ``allOf`` conjunct instead."""
+    for node in _schema_nodes(SCHEMAS[name]()):
+        assert not ("prefixItems" in node and "items" in node), name
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS))
+def test_every_definition_of_a_schema_is_referred_to(name: str) -> None:
+    schema: dict[str, Any] = SCHEMAS[name]()
+    text = json.dumps({key: value for key, value in schema.items() if key != "$defs"})
+    pending = [found for found in schema.get("$defs", {}) if f'"#/$defs/{found}"' in text]
+    reached: set[str] = set()
+    while pending:
+        found = pending.pop()
+        if found not in reached:
+            reached.add(found)
+            inner = json.dumps(schema["$defs"][found])
+            pending += [other for other in schema["$defs"] if f'"#/$defs/{other}"' in inner]
+    assert reached == set(schema.get("$defs", {}))
+
+
+def test_every_member_of_a_result_s_cohorts_is_a_cohort_reference() -> None:
+    schema: dict[str, Any] = SCHEMAS["result.schema.json"]()
+    cohorts = jsonschema.Draft202012Validator(
+        {**schema["properties"]["cohorts"], "$defs": schema["$defs"]}
+    )
+    assert not cohorts.is_valid([{"position": 0, "reference": True, "junk": 1}])
+    assert not cohorts.is_valid([{"position": 1, "reference": True, "id": "x"}])
+
+
+@pytest.mark.parametrize(
+    ("value", "loaded"),
+    [
+        (9007199254740991, True),
+        (9007199254740992, False),
+        (-9007199254740992, False),
+        (1e300, False),
+        (1.5, True),
+        (None, True),
+        (-0.0, True),
+        (True, True),
+        ("s", True),
+        ({"a": [1, None]}, True),
+    ],
+)
+def test_validate_document_s_json_values_are_judged_as_the_loader_judges_them(
+    value: Any, loaded: bool
+) -> None:
+    """R3: a request's JSON values are ``RequestJson``, ``null`` included and numbers bounded;
+    the loader alone bounds how deep they nest."""
+    body = {"document": {"x": value}}
+    found = load_request(json.dumps(body).encode(), ValidateDocument)
+    assert (found.value is not None) == loaded
+    validator = jsonschema.Draft202012Validator(
+        SCHEMAS["tool.validate-document.request.schema.json"]()
+    )
+    assert validator.is_valid(body) == loaded
+
+
+# --- The OpenAPI document against the corpus (api.openapi) --------------------------------------
+
+
+def test_the_openapi_document_judges_the_corpus_as_the_tool_schema_does(openapi: Any) -> None:
+    """The agreement test on the request side: ``count_cohort``'s body, the builder's schema
+    against the document's component, on every document of the corpus and perturbations of the
+    valid ones."""
+    request = TOOL_MODELS["count_cohort"][0]
+    builder = request_schema(request, request.__name__)
+    found: list[str] = []
+    for document in [*VALID, *INVALID, example("sites"), example("library")]:
+        found += openapi.disagreements(builder, request.__name__, {"document": document}, 0)
+    for document in VALID:
+        found += openapi.disagreements(builder, request.__name__, {"document": document}, 40)
+    assert found == []
+
+
+def test_the_substituted_document_is_closed_and_judged_as_its_schema(openapi: Any) -> None:
+    """``Substituted*`` is the document after substitution: closed under its references, it
+    accepts and refuses what ``document.schema.json`` does, and refuses a ``"$name"``."""
+    names = set(openapi.document["components"]["schemas"])
+    substituted = {name for name in names if name.startswith("Substituted")}
+    text = json.dumps(
+        {name: openapi.document["components"]["schemas"][name] for name in substituted}
+    )
+    referred = set(re.findall(r'"#/components/schemas/([A-Za-z]+)"', text))
+    assert referred <= substituted
+    builder = SCHEMAS["document.schema.json"]()
+    found: list[str] = []
+    for document in [*VALID, *INVALID, example("sites"), example("library")]:
+        found += openapi.disagreements(builder, "SubstitutedDocument", document, 0)
+    assert found == []
+    assert openapi.validator("SubstitutedDocument").is_valid(example("library"))
+    assert not openapi.validator("SubstitutedDocument").is_valid(example("sites"))

@@ -99,7 +99,7 @@ from aibi.core.api.chrome import (
 )
 from aibi.core.api.chrome import route_path as _route_path
 from aibi.core.api.config import ServerConfig
-from aibi.core.api.errors import status_of
+from aibi.core.api.errors import RETRY_AFTER, WWW_AUTHENTICATE, checked_headers, status_of
 from aibi.core.api.logs import WithoutSecrets
 from aibi.core.api.origins import host_name, origin, own_origins
 from aibi.core.api.rates import Buckets, Rate, client_key
@@ -489,7 +489,7 @@ class RequestProtection:
             RefusalCode.LIMIT_EXCEEDED,
             "Too many requests from this client; try again later",
             limit=Limit(name=_LIMIT_NAMES[name], max=rate.per_minute),
-            headers=((b"retry-after", str(max(1, math.ceil(wait))).encode("ascii")),),
+            headers=((RETRY_AFTER.lower().encode(), str(max(1, math.ceil(wait))).encode("ascii")),),
         )
 
     def _classified(self, seen: _Seen) -> Classified:
@@ -519,7 +519,7 @@ class RequestProtection:
             limited = self._rate(seen, "token_failures")
             if limited is not None:
                 return limited, None
-            challenge = ((b"www-authenticate", AUTHORIZATION.encode("ascii")),)
+            challenge = ((WWW_AUTHENTICATE.lower().encode(), AUTHORIZATION.encode("ascii")),)
             return _refused(RefusalCode.TOKEN_REQUIRED, _TOKEN_MESSAGE, headers=challenge), None
         limited = self._rate(seen, "operator")
         if limited is not None:
@@ -622,6 +622,9 @@ class RequestProtection:
 
     async def _refuse(self, seen: _Seen, send: Send, found: _Refused) -> None:
         refusal = blank_secrets(found.refusal)
+        # A header outside the table is a programmer error (``ValueError``, a 500 by design,
+        # ``errors.checked_headers``): the check is here so that a new check cannot add one.
+        checked_headers(found.status, (name.decode("ascii") for name, _ in found.headers))
         page: list[tuple[bytes, bytes]] = []
         if seen.page:
             body = refusal_document(self._root(seen), [refusal])

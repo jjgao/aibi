@@ -1,11 +1,42 @@
 {
+  "$defs": {
+    "RequestJson": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/RequestJson"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/RequestJson"
+          },
+          "type": "object"
+        }
+      ],
+      "description": "Any JSON value"
+    }
+  },
   "$id": "tool.validate-document.request.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
     "document": {
       "additionalProperties": {
-        "x-aibi-output-json": true
+        "$ref": "#/$defs/RequestJson"
       },
       "title": "Document",
       "type": "object"

@@ -214,6 +214,8 @@ TOOLS: tuple[Tool, ...] = (
     ),
 )
 BY_NAME: Mapping[str, Tool] = MappingProxyType({tool.name: tool for tool in TOOLS})
+if len(BY_NAME) != len(TOOLS):  # a second tool of one name would replace the first (D416)
+    raise ValueError(f"two tools share a name: {sorted(tool.name for tool in TOOLS)}")
 
 
 def call(catalog: Catalog, tool: Tool, body: bytes, *, client: str = "") -> Output | list[Refusal]:

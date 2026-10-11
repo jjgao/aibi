@@ -516,11 +516,19 @@ def _under_pattern(prefixes: Sequence[str]) -> str:
 
 def _envelope_schema(schema: dict[str, Any]) -> None:
     """JSON Schema: cohort positions count from 0, caveats affect the digested parts (and, for
-    DRAFT_RELEASE, the releases), and an output over a draft is never a cache hit."""
+    DRAFT_RELEASE, the releases), and an output over a draft is never a cache hit.
+
+    The positions are a conjunct beside ``items``: ``prefixItems`` beside ``items`` would leave
+    ``items`` to the members past the prefix, so no member would be checked as a cohort reference.
+    """
     cohorts = schema["properties"]["cohorts"]
-    cohorts["prefixItems"] = [
-        {"properties": {"position": {"const": position}}} for position in range(MAX_COHORTS)
-    ]
+    cohorts.setdefault("allOf", []).append(
+        {
+            "prefixItems": [
+                {"properties": {"position": {"const": position}}} for position in range(MAX_COHORTS)
+            ]
+        }
+    )
     draft = CaveatCode.DRAFT_RELEASE.value
     schema["properties"]["caveats"]["items"] = {
         "allOf": [
