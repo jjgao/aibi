@@ -173,6 +173,8 @@ jobs:
         run: npm run lint
       - name: Unit and build tests
         run: npm test
+      - name: The lint tests in two shuffled orders (each lint sees the package's own files)
+        run: npm run test:shuffle
       - name: Build dist/ and check it (production)
         run: npm run build
       - name: Build dist-e2e/ and check it (end-to-end)

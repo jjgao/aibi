@@ -31,10 +31,10 @@
  */
 import path from "node:path";
 
-import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { PAGE_TYPES } from "../../scripts/page-objects.mjs";
+import { Linter } from "./linter";
 import { type Checked, check, WEB } from "./program";
 
 const PARSER = {
@@ -49,11 +49,11 @@ const PARSER = {
   },
 };
 
-const eslint = new ESLint({ cwd: WEB, overrideConfig: PARSER });
+const eslint = new Linter({ cwd: WEB, overrideConfig: PARSER });
 
 /** A linter that has `src/operator/url.ts` under `rules` besides the configuration's (a layer of the
  * lint switched off, to see the other alone). */
-const without = (rules: Record<string, "off">, files: string[] = ["src/operator/url.ts"]) => new ESLint({ cwd: WEB, overrideConfig: [PARSER, { files, rules }] });
+const without = (rules: Record<string, "off">, files: string[] = ["src/operator/url.ts"]) => new Linter({ cwd: WEB, overrideConfig: [PARSER, { files, rules }] });
 
 /** The name layer alone: the type-aware rule is off in every file of `src/`, so that the layer of
  * names, which the type rule makes redundant on most cells, is held by its own tables. */
@@ -927,7 +927,9 @@ describe("who imports the operator client and its internals", () => {
     ["operator.ts, send", "import { send } from './client';\nexport const f = send;\n", "src/api/operator.ts", true],
     ["a module of src/api/, createCurator", "import { createCurator } from './curator';\nexport const f = createCurator;\n", "src/api/probe.ts", true],
     ["operator.ts, createCurator", "import { createCurator } from './curator';\nexport const f = createCurator;\n", "src/api/operator.ts", false],
-    ["curator.ts, the box's internals", "import { textOf } from './box';\nexport const f = textOf;\n", "src/api/curator.ts", true],
+    ["curator.ts, the box's text (idAt alone reads it, D425)", "import { textOf } from './box';\nexport const f = textOf;\n", "src/api/curator.ts", true],
+    ["curator.ts, idAt", "import { idAt } from './provenance';\nexport const f = idAt;\n", "src/api/curator.ts", false],
+    ["curator.ts, the box's maker", "import { box } from './box';\nexport const f = box;\n", "src/api/curator.ts", true],
     ["client.ts, decode", "import { decode } from './decode';\nexport const f = decode;\n", "src/api/client.ts", false],
     ["client.ts, the box's internals", "import { box } from './box';\nexport const f = box;\n", "src/api/client.ts", true],
     ["decode.ts, box", "import { box } from './box';\nexport const f = box;\n", "src/api/decode.ts", false],

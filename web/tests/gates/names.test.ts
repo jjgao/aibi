@@ -9,12 +9,12 @@
  */
 import path from "node:path";
 
-import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 
+import { Linter } from "./linter";
 import { WEB } from "./program";
 
-const eslint = new ESLint({
+const eslint = new Linter({
   cwd: WEB,
   overrideConfig: {
     languageOptions: {

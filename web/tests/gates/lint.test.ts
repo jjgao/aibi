@@ -9,12 +9,13 @@
  */
 import path from "node:path";
 
-import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
+
+import { Linter } from "./linter";
 
 const WEB = path.join(import.meta.dirname, "../..");
 
-const eslint = new ESLint({
+const eslint = new Linter({
   cwd: WEB,
   overrideConfig: {
     languageOptions: {

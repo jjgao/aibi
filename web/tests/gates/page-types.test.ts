@@ -16,12 +16,12 @@
  */
 import path from "node:path";
 
-import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
 import { EVERY, isLibraryGlobal, PAGE_TYPES, REACHERS, WINDOW_CHANNELS } from "../../scripts/page-objects.mjs";
 import { classify, domProgram, givesOf, liveMembers, methodMembers, readFixture, subtypeMembers } from "../../scripts/page-members.mjs";
+import { Linter } from "./linter";
 import { WEB } from "./program";
 
 const live = liveMembers();
@@ -198,7 +198,7 @@ const PARSER = {
     },
   },
 };
-const eslint = new ESLint({ cwd: WEB, overrideConfig: PARSER });
+const eslint = new Linter({ cwd: WEB, overrideConfig: PARSER });
 
 async function typeRuleRefuses(code: string, file_: string): Promise<boolean> {
   const [result] = await eslint.lintText(code, { filePath: path.join(WEB, file_) });

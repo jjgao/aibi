@@ -10,14 +10,14 @@
  */
 import path from "node:path";
 
-import { ESLint } from "eslint";
 import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { box, OPAQUE, type ServerNumber } from "../../src/api/box";
+import { Linter } from "./linter";
 import { check, nodeAfter, type Checked, WEB } from "./program";
 
-const eslint = new ESLint({
+const eslint = new Linter({
   cwd: WEB,
   overrideConfig: {
     languageOptions: { parserOptions: { projectService: { allowDefaultProject: ["src/*.tsx", "src/probe.ts", "src/api/probe.ts", "src/harness/probe.ts", "scripts/probe.ts", "shared/probe.ts"], defaultProject: "tsconfig.app.json" } } },

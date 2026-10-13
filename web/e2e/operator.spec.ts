@@ -8,11 +8,16 @@
  * with no timer run, a suspend); an unknown outcome (an aborted request, a killed server) is
  * never sent again. The flows that need the end-to-end build's harness skip the production build.
  *
- * Two tabs: what is testable without take-over (which waits for the request half, D423) is that a
- * second tab cannot open a session on a dataset another holds (DATASET_BUSY), holds no handle and
- * sends no change, and that the first tab goes on; that the second tab takes the session over is
- * not. A handle made stale by a take-over elsewhere (the CLI's, here Playwright's request
- * context, a client that is not a browser) is dropped on the CONFLICT it meets.
+ * Two tabs: a second tab cannot open a session on a dataset another holds (DATASET_BUSY), holds no
+ * handle and sends no change, and the first tab goes on; the second tab takes the session over from
+ * a fresh dataset state (D425), and the first tab's handle, made stale, is dropped on the CONFLICT
+ * it meets. A handle made stale by a take-over elsewhere (the CLI's, here Playwright's request
+ * context, a client that is not a browser) is dropped too.
+ *
+ * The request half (D425): each of the four flows that send an id back is driven through the
+ * harness, which reads the node through the client and passes it whole; the run-time oracle is
+ * `request.postData()` and the URL of each request, which must name exactly the ids the server's
+ * own state shows (read here through the API context).
  */
 import net from "node:net";
 
@@ -186,6 +191,75 @@ test.describe("the operator client, driven by the harness", () => {
     expect(await run(page, "confirm", { descriptor: "items" })).toMatchObject({ kind: "answer", status: "200", holds: "yes" });
     expect(await run(page, "discard")).toMatchObject({ kind: "answer", holds: "no" });
     checkCredentials(await recorded.all(), origin, token);
+    watcher.clean();
+  });
+
+  test("two tabs, with take-over: the second takes the session over from a fresh state, and the first's stale handle is dropped on its CONFLICT (D425)", async ({ page, context, origin, watcher, request }) => {
+    const token = curatorToken();
+    const recorded = record(context);
+    const base = "/operator/datasets/takeover";
+    expectOperator(watcher, origin, [[`${base}/session/change`, 409]], [base, `${base}/session/open`, `${base}/session/take-over`, `${base}/session/discard`]);
+    await page.goto(`${origin}/curate`);
+    await unlock(page, token);
+    await expect(status(page)).toHaveText(UNLOCKED);
+    expect(await run(page, "open", { dataset: "takeover" })).toMatchObject({ kind: "answer", holds: "yes" });
+    expect(await run(page, "confirm", { descriptor: "items" })).toMatchObject({ kind: "answer", status: "200", holds: "yes" });
+    const headers = { Authorization: `Bearer ${token}`, "Aibi-Operator": "e2e" };
+    const shown = ((await (await api(request, "GET", `${origin}${base}`, { headers })).json()) as { session: { session: number; draft: string } }).session;
+    const second = await context.newPage();
+    await second.goto(`${origin}/curate`);
+    await unlock(second, token);
+    await expect(status(second)).toHaveText(UNLOCKED);
+    // A copy of the session's node is no node the client decoded: refused, nothing sent.
+    expect(await run(second, "take_over_copy", { dataset: "takeover" })).toMatchObject({ kind: "invalid", what: "node", holds: "no" });
+    expect((await recorded.all()).filter((found) => found.url.endsWith("/session/take-over")).length).toBe(0);
+    expect(await run(second, "take_over", { dataset: "takeover" })).toMatchObject({ kind: "answer", status: "200", holds: "yes" });
+    const takeOvers = (await recorded.all()).filter((found) => found.url === `${origin}${base}/session/take-over`);
+    expect(takeOvers.map((found) => [found.method, found.body])).toEqual([["POST", JSON.stringify({ session: shown.session, expected: shown.draft })]]);
+    expect(await run(page, "confirm", { descriptor: "items" })).toMatchObject({ kind: "refused", status: "409", codes: "CONFLICT", holds: "no" });
+    expect(await run(second, "discard", { dataset: "takeover" })).toMatchObject({ kind: "answer", holds: "no" });
+    checkCredentials(await recorded.all(), origin, token);
+    watcher.clean();
+  });
+
+  test("rejects and accepts the proposals the queue shows, and reads the queue as of a release, by the nodes the client decoded (D425)", async ({ page, context, origin, watcher, request }) => {
+    const token = curatorToken();
+    const headers = { Authorization: `Bearer ${token}`, "Aibi-Operator": "e2e" };
+    for (const value of ["The items", "Things"]) {
+      const proposed = await api(request, "POST", `${origin}/api/tools/propose_descriptor`, { data: { dataset: "proposals", descriptor: "items", pointer: "/definition", value, agent: "e2e" } });
+      expect(proposed.status()).toBe(200);
+    }
+    const base = "/operator/datasets/proposals";
+    const queue = (await (await api(request, "GET", `${origin}${base}/queue`, { headers })).json()) as { proposals: { id: number; descriptor: string }[] };
+    const ids = queue.proposals.filter((found) => found.descriptor === "items").map((found) => found.id);
+    expect(ids.length).toBe(2);
+    const [rejected, accepted] = ids;
+    const state = (await (await api(request, "GET", `${origin}${base}`, { headers })).json()) as { labels: { label: number; manifest: string }[] };
+    const [label] = state.labels;
+    if (rejected === undefined || accepted === undefined || label === undefined) {
+      throw new Error("the fixture holds no proposals or no release");
+    }
+    const recorded = record(context);
+    expectOperator(watcher, origin, [], [base, `${base}/queue`, `${base}/queue?release=${String(label.label)}`, `${base}/proposals/${String(rejected)}/reject`, `${base}/session/open`, `${base}/session/change`, `${base}/session/discard`]);
+    await page.goto(`${origin}/curate`);
+    await unlock(page, token);
+    await expect(status(page)).toHaveText(UNLOCKED);
+    expect(await run(page, "reject", { dataset: "proposals", descriptor: "items" })).toMatchObject({ kind: "answer", status: "200" });
+    expect(await run(page, "open")).toMatchObject({ kind: "answer", holds: "yes" });
+    expect(await run(page, "accept")).toMatchObject({ kind: "answer", status: "200", holds: "yes" });
+    expect(await run(page, "queue_at", { manifest: label.manifest })).toMatchObject({ kind: "answer", status: "200" });
+    expect(await run(page, "discard")).toMatchObject({ kind: "answer", holds: "no" });
+    const records = await recorded.all();
+    checkCredentials(records, origin, token);
+    const mine = records.filter((found) => new URL(found.url).pathname.startsWith(`${base}/`) || new URL(found.url).pathname === base);
+    const rejects = mine.filter((found) => found.url.endsWith("/reject"));
+    expect(rejects.map((found) => [found.method, new URL(found.url).pathname, found.body])).toEqual([["POST", `${base}/proposals/${String(rejected)}/reject`, "{}"]]);
+    const changes = mine.filter((found) => found.url.endsWith("/session/change")).map((found) => JSON.parse(found.body ?? "null") as { handle: string; expected: string; edits: unknown });
+    expect(changes.map((found) => [Object.keys(found), found.edits])).toEqual([[["handle", "expected", "edits"], [{ op: "accept", proposal: accepted }]]]);
+    const queued = mine.filter((found) => found.method === "GET" && new URL(found.url).search !== "").map((found) => new URL(found.url).pathname + new URL(found.url).search);
+    expect(queued).toEqual([`${base}/queue?release=${String(label.label)}`]);
+    const after = (await (await api(request, "GET", `${origin}${base}/queue`, { headers })).json()) as { proposals: { id: number }[] };
+    expect(after.proposals.map((found) => found.id)).toEqual([accepted]);
     watcher.clean();
   });
 
