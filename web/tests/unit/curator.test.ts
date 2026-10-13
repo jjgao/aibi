@@ -26,6 +26,8 @@ const MANIFEST = `sha256:${"c".repeat(64)}`;
 const SECRETS = [TOKEN, OTHER_TOKEN, CSRF, CSRF_2, HANDLE, HANDLE_2];
 const NAME = "Ada (curator)!";
 const NAME_HEADER = "Ada%20%28curator%29%21";
+/** An era for the calls of `send` made here (the client's own is in its closure). */
+const ERA: object = Object.freeze({});
 
 const REFUSAL_CODES: readonly components["schemas"]["RefusalCode"][] = [
   "INVALID_JSON", "DUPLICATE_KEY", "NON_FINITE_NUMBER", "INTEGER_OUT_OF_RANGE", "NULL_NOT_ALLOWED", "MISSING_MEMBER", "UNKNOWN_MEMBER", "WRONG_TYPE",
@@ -350,10 +352,10 @@ describe("what each operation sends, and where", () => {
     const signal = new AbortController().signal;
     const elsewhere = [routes.health(), routes.search_catalog(), routes.list_analyses()];
     for (const route of elsewhere) {
-      await expect(send(route, credentials, signal)).rejects.toThrow(new ClientError("notARoute"));
+      await expect(send(route, credentials, signal, ERA)).rejects.toThrow(new ClientError("notARoute"));
     }
     const lookalike = { operation: "datasets", method: "GET", url: "/operator/datasets" } as const;
-    await expect(send(lookalike, credentials, signal)).rejects.toThrow(new ClientError("notARoute"));
+    await expect(send(lookalike, credentials, signal, ERA)).rejects.toThrow(new ClientError("notARoute"));
     expect(sent).toEqual([]);
   });
 
@@ -363,7 +365,7 @@ describe("what each operation sends, and where", () => {
     ["lower-case hexadecimal", { token: TOKEN, operator: "%c3%a9", csrf: null }],
     ["a malformed CSRF token", { token: TOKEN, operator: "Ada", csrf: `${CSRF}\n` }],
   ])("send refuses %s in fixed words that hold none of it, sending nothing", async (_case, credentials) => {
-    const refused = await send(routes.datasets(), credentials, new AbortController().signal).then(
+    const refused = await send(routes.datasets(), credentials, new AbortController().signal, ERA).then(
       () => null,
       (error: unknown) => error,
     );
@@ -1150,7 +1152,7 @@ describe("send sends to a URL under /operator/ that no parser can move (m2)", ()
     ["another case", "/OPERATOR/datasets"],
     ["an empty URL", ""],
   ])("refuses %s, sending nothing", async (_case, url) => {
-    await expect(send(route("datasets", "GET", url), credentials, signal)).rejects.toThrow(new ClientError("notARoute"));
+    await expect(send(route("datasets", "GET", url), credentials, signal, ERA)).rejects.toThrow(new ClientError("notARoute"));
     expect(sent).toEqual([]);
   });
 
@@ -1164,7 +1166,7 @@ describe("send sends to a URL under /operator/ that no parser can move (m2)", ()
     ["dots inside a segment", "/operator/datasets/a..b"],
     ["dots in a query", "/operator/datasets?path=../x"],
   ])("sends %s", async (_case, url) => {
-    expect((await send(route("datasets", "GET", url), credentials, signal)).kind).toBe("answer");
+    expect((await send(route("datasets", "GET", url), credentials, signal, ERA)).kind).toBe("answer");
     expect(sent.map((request) => request.url)).toEqual([url]);
   });
 });
@@ -1208,7 +1210,7 @@ describe("an open answer's members are an allow-list, and no handle is nested in
 });
 
 describe("the client object's members are pinned, and no member's result holds a secret (m7)", () => {
-  const MEMBERS = ["change", "datasets", "dataset", "discard", "forget", "holds", "install", "open", "publish", "queue", "subscribe", "unlock", "view", "withdraw"].sort();
+  const MEMBERS = ["acceptProposal", "change", "datasets", "dataset", "discard", "forget", "holds", "install", "open", "publish", "queue", "queueAt", "rejectProposal", "subscribe", "takeOver", "unlock", "view", "withdraw"].sort();
 
   it("has exactly these own members, plain methods, on a plain object", () => {
     const { client } = rig();
@@ -1216,6 +1218,25 @@ describe("the client object's members are pinned, and no member's result holds a
     expect(Object.getPrototypeOf(client)).toBe(Object.prototype);
     for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(client))) {
       expect([name, typeof descriptor.value, Reflect.has(descriptor, "get")]).toEqual([name, "function", false]);
+    }
+  });
+
+  it("is frozen, so that a member is never written through an alias (m10 of round 3), and so is everything it retains and hands out: its view, in every state", async () => {
+    const { client } = rig();
+    expect(Object.isFrozen(client)).toBe(true);
+    const alias: { holds: (dataset: string) => boolean } = client;
+    expect(() => {
+      alias.holds = () => true;
+    }).toThrow(TypeError);
+    expect(client.holds("x")).toBe(false);
+    expect(() => {
+      Reflect.deleteProperty(client, "holds");
+      Object.defineProperty(client, "view", { value: () => ({ locked: false, reason: null }) });
+    }).toThrow(TypeError);
+    for (const [, make] of STATES) {
+      const made = await make();
+      expect(Object.isFrozen(made.client)).toBe(true);
+      expect(Object.isFrozen(made.client.view())).toBe(true);
     }
   });
 

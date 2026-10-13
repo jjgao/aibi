@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint --max-warnings 0 .",
     "test": "vitest run",
+    "test:shuffle": "vitest run --project gates --sequence.shuffle --sequence.seed=7 corpus lint names operator page-types request-half && vitest run --project gates --sequence.shuffle --sequence.seed=1234 corpus lint names operator page-types request-half",
     "build": "umask 022 && vite build --mode production && node scripts/check-bundle.mjs --mode prod dist",
     "build:e2e": "umask 022 && vite build --mode e2e && node scripts/check-bundle.mjs --mode e2e dist-e2e",
     "e2e": "playwright test"

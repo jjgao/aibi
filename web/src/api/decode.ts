@@ -5,8 +5,15 @@
  * give (`context.source` undefined: a reviver whose holder was changed under it gets no source,
  * and a browser without the feature gives none at all) is refused, never rebuilt from the JS
  * number, which has already lost digits (`9007199254740993`) or text (`1.10`, `-0`). Every object
- * and array is frozen as it is made. A refusal's message is fixed and never quotes the body (the
+ * and array is frozen before `decode` returns it. A refusal's message is fixed and never quotes the body (the
  * engine's own `SyntaxError` does, so it is replaced, without a cause).
+ *
+ * **Before freezing (D425).** `decode` holds every object and array it makes unfrozen until the
+ * parse is done, calls `beforeFreeze` (if given) with the root, and then freezes them all: the
+ * one place where a node can be stamped with its provenance (`origin.ts`'s `stamp`, which refuses a
+ * frozen node), so that the stamp never relies on adding a private field to a frozen object.
+ * `decode` itself knows no operation: the hook is `client.ts`'s, from `provenance.ts`'s `recorder`.
+ * A hook that throws throws out of `decode` as it is, and nothing is frozen or returned.
  *
  * `decode` is `client.ts`'s alone (the lint, the import-graph test and the build's gate hold it);
  * `decodedCount` counts every call, the run-time oracle's counter, which `oracle.ts` exports and
@@ -34,8 +41,9 @@ type Reviver = (this: unknown, key: string, value: unknown, context?: Context) =
 
 const parse = JSON.parse as (text: string, reviver: Reviver) => unknown;
 
-/** The reviver: a number becomes the box of its source text, which must be given; an object or
- * an array is frozen; anything else is kept. */
+/** The reviver's step for a leaf: a number becomes the box of its source text, which must be
+ * given; anything else is kept. (`decode` holds every object and array itself, to freeze them
+ * after the hook, and never gives one to this.) */
 export function revive(this: unknown, _key: string, value: unknown, context?: Context): unknown {
   if (typeof value === "number") {
     const source = context?.source;
@@ -44,25 +52,36 @@ export function revive(this: unknown, _key: string, value: unknown, context?: Co
     }
     return box(source);
   }
-  if (typeof value === "object" && value !== null) {
-    return Object.freeze(value);
-  }
   return value;
 }
 
 let decoded = 0;
 
-/** A response body's value, its numbers boxed and its objects and arrays frozen. */
-export function decode(text: string): JsonOut {
+/** A response body's value, its numbers boxed and its objects and arrays frozen; `beforeFreeze`,
+ * if given, is called with the root while every object and array is still unfrozen. */
+export function decode(text: string, beforeFreeze?: (root: JsonOut) => void): JsonOut {
   decoded += 1;
+  const made: object[] = [];
+  let root: JsonOut;
   try {
-    return parse(text, revive) as JsonOut;
+    root = parse(text, function (this: unknown, key: string, value: unknown, context?: Context): unknown {
+      if (typeof value === "object" && value !== null) {
+        made.push(value);
+        return value;
+      }
+      return revive.call(this, key, value, context);
+    }) as JsonOut;
   } catch (error) {
     if (error instanceof DecodeError) {
       throw error;
     }
     throw new DecodeError();
   }
+  beforeFreeze?.(root);
+  for (const value of made) {
+    Object.freeze(value);
+  }
+  return root;
 }
 
 /** How many bodies `decode` was given since the page loaded (the oracle's counter). */

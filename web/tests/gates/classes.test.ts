@@ -95,10 +95,27 @@ describe("the classes of the request's numbers", () => {
     expect(Object.keys(classes)).toEqual(["adapter_fed", "typed_by_the_person", "both", "never_in_the_client"]);
     const all = Object.values(classes).flatMap((given) => given.positions);
     expect(new Set(all).size).toBe(all.length);
-    for (const given of Object.values(classes)) {
-      expect(Object.keys(given)).toEqual(["why", "positions"]);
+    for (const [name, given] of Object.entries(classes)) {
+      expect(Object.keys(given)).toEqual(name === "adapter_fed" ? ["why", "positions", "from", "until"] : ["why", "positions"]);
       expect(given.why.length).toBeGreaterThan(30);
       expect(given.positions).toEqual([...given.positions].sort());
+    }
+  });
+
+  it("give each position a response number feeds its feed, or null and until when (D425, m5, n4)", () => {
+    const fed = classes["adapter_fed"] as unknown as { positions: string[]; from: Record<string, unknown>; until: Record<string, string> };
+    expect(Object.keys(fed.from)).toEqual(fed.positions);
+    const nulls = Object.entries(fed.from).filter(([, feed]) => feed === null).map(([position]) => position);
+    expect(Object.keys(fed.until)).toEqual(nulls);
+    expect(nulls.length).toBe(7);
+    expect(fed.until["WithdrawRequest.release"]).toMatch(/^never: the client sends the release's manifest/u);
+    for (const position of nulls.filter((found) => found !== "WithdrawRequest.release")) {
+      expect(fed.until[position], position).toMatch(/^M5\.2\/M5\.3/u);
+    }
+    for (const [position, feed] of Object.entries(fed.from)) {
+      if (feed !== null) {
+        expect(Object.keys(feed as object), position).toEqual(["operation", "path", "read"]);
+      }
     }
   });
 

@@ -247,7 +247,8 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/decode.ts", "decode boxes each number of a body from its source text: it alone makes a box"],
         ["src/api/index.ts", "re-exports isServerNumber, the brand check, which gives nothing of a number"],
-        ["src/api/curator.ts", "the operator's client reads answers, and asks isServerNumber whether a value is a box (never what it holds)"],
+        ["src/api/curator.ts", "the operator's client reads answers and asks isServerNumber whether a value is a box, which gives nothing of a number"],
+        ["src/api/provenance.ts", "the recorder asks isServerNumber whether a node is a box, and idAt, the one function that reads a box's text (textOf), reads a request id's (D425)"],
       ]),
     },
   ],
@@ -278,7 +279,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
     "src/api/route.ts",
     {
       importers: new Map([
-        ["src/api/client.ts", "exchange sends to a route the generated functions made, which isRoute recognises"],
+        ["src/api/client.ts", "exchange and send send to a route the generated functions made, whose URL and dataset urlOf and datasetOf alone read (D425)"],
         ["src/api/generated/routes.ts", "each generated function makes its route with route, segment and search"],
       ]),
     },
@@ -295,6 +296,27 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
   [
     "src/api/curator.ts",
     { importers: new Map([["src/api/operator.ts", "makes the page's one operator client (D423)"]]) },
+  ],
+  [
+    "src/api/ids.ts",
+    { importers: new Map([["src/api/provenance.ts", "idAt makes a request id through requestId, the grammar, its one maker (D425)"]]) },
+  ],
+  [
+    "src/api/origin.ts",
+    {
+      importers: new Map([
+        ["src/api/provenance.ts", "the recorder stamps the feeding nodes of an answer as it is decoded, and idAt reads a node's origin back, refusing a node without one or with another (D425)"],
+      ]),
+    },
+  ],
+  [
+    "src/api/provenance.ts",
+    {
+      importers: new Map([
+        ["src/api/client.ts", "send's reader records a 2xx answer's feeding nodes through recorder, as decode makes them (D425)"],
+        ["src/api/curator.ts", "the four flows read their id through idAt, the one function that reads a box's text, by a position's name (D425)"],
+      ]),
+    },
   ],
   [
     "src/api/operator.ts",

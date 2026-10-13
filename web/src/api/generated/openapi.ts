@@ -3,6 +3,7 @@
  * `npm run generate`; CI fails while this file differs from what the document gives (D419).
  */
 import type { ServerNumber } from "../box";
+import type { RequestId } from "../ids";
 import type { JsonIn, JsonInNull, JsonOut } from "../json";
 
 export interface paths {
@@ -565,7 +566,7 @@ export interface components {
              */
             readonly op: "accept";
             /** Proposal */
-            readonly proposal: number;
+            readonly proposal: RequestId;
         };
         /** AllClause */
         readonly AllClause: {
@@ -2758,7 +2759,7 @@ export interface components {
             /** Expected */
             readonly expected?: string;
             /** Session */
-            readonly session?: number;
+            readonly session?: RequestId;
         };
         /** TextSegment */
         readonly TextSegment: {
@@ -6135,7 +6136,7 @@ export interface operations {
             };
             readonly path: {
                 readonly dataset: string;
-                readonly proposal: number;
+                readonly proposal: RequestId;
             };
             readonly cookie?: never;
         };
@@ -6476,7 +6477,7 @@ export interface operations {
     readonly queue: {
         readonly parameters: {
             readonly query?: {
-                readonly release?: number;
+                readonly release?: RequestId;
             };
             readonly header: {
                 /** @description The operator's name, percent-encoded (D262) */

@@ -8,8 +8,8 @@
  * - `JsonIn`: a value a request carries where `null` is no JSON value (`{direction: "request",
  *   null: false}`: `ParameterValue`, `DocumentJson`, `SubstitutedDocumentJson`). Its numbers are
  *   JS numbers: what a person typed (a response's number never reaches a request through this
- *   type, which no `ServerNumber` is assignable to; how one goes back is the request half's,
- *   M5.1c-1c and M5.3).
+ *   type, which no `ServerNumber` is assignable to; the four ids a response gives back go through
+ *   the operator client's flows by provenance, D425, and the JSON values are M5.3's).
  * - `JsonInNull`: the same with `null` (`{direction: "request", null: true}`: `RequestJson`,
  *   `DescriptorJson`).
  * - `JsonOut`: a value a response carries (`{direction: "response", null: true}`: `OutputJson`),
