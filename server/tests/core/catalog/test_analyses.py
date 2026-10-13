@@ -6,7 +6,7 @@ digest: the same document run both ways gives one digest."""
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import pytest
@@ -214,6 +214,7 @@ def evaluated(
             crossing,
             view.params,
             reference=view.reference,
+            allow=view.overlap,
             overlap=bool(crossing.overlapping()) and view.overlap,
             k=view.disclosure,
         )
@@ -1949,10 +1950,10 @@ def test_describe_dataset_names_the_analyses_that_apply(world: World, orchard: O
 
 def test_every_analysis_is_a_resource(world: World) -> None:
     catalog = catalog_of(world)
-    assert ("aibi://analysis/compare.existence@1.0.0", "compare.existence") in catalog.resources()
-    read = json.loads(catalog.read_resource("aibi://analysis/compare.existence@1.0.0"))
+    assert ("aibi://analysis/compare.existence@1.1.0", "compare.existence") in catalog.resources()
+    read = json.loads(catalog.read_resource("aibi://analysis/compare.existence@1.1.0"))
     assert read["kind"] == "analysis"
-    assert read["version"] == "1.0.0"
+    assert read["version"] == "1.1.0"
 
 
 def test_sixteen_predicates_over_many_units_fit_an_answer_far_smaller_than_one_value_a_unit(
@@ -2097,3 +2098,426 @@ def test_a_summary_the_deadline_stops_refuses_the_call_as_late(
     body: JsonValue = {"document": distribution_document(COLUMNS[:2])}
     refusal = refused(within(deadline, lambda: answer(catalog_of(world), "run_analysis", body)))
     assert refusal.limit == Limit(name="tool_seconds", max=30)
+
+
+# --- Predicates by scope (D424) ------------------------------------------------------------------
+
+IN = {"kind": "value", "column": "trees.group", "values": ["in"]}
+L1 = {"kind": "value", "column": "trees.l1", "values": ["y"]}
+L2 = {"kind": "value", "column": "trees.l2", "values": ["y"]}
+
+
+def graded(values: Sequence[str]) -> dict[str, Any]:
+    return {
+        "kind": "exists",
+        "table": "harvests",
+        "where": [{"kind": "value", "column": "harvests.grade", "values": list(values)}],
+    }
+
+
+def _category(column: str, values: Sequence[str], missing: Mapping[str, str]) -> list[Any]:
+    return [
+        _set(column, "/fields/datatype", "category"),
+        _set(column, "/fields/permissible_values", {"values": [{"value": v} for v in values]}),
+        _set(column, "/fields/missing_codes", dict(missing)),
+    ]
+
+
+GRADES = [
+    *_category("harvests.grade", ("A", "B", "C", "E"), {"NA": "UNKNOWN", "?": "NOT_ASSESSED"}),
+    _set("harvests", "/fields/role", "event"),
+]
+
+
+def _harvests_covered(parent_scope: Mapping[str, Any] | None = None) -> Any:
+    scope = {"parent_scope": dict(parent_scope)} if parent_scope else {}
+    return _put(
+        "coverage",
+        "cov:harvests.tree_id",
+        relationship="rel:harvests.tree_id",
+        parents="all",
+        **scope,
+    )
+
+
+@dataclass(frozen=True)
+class Scoped:
+    """A world of apple trees: each tree's own cells, its harvests' grades, the curation that
+    declares them, and a view over it."""
+
+    trees: tuple[Mapping[str, str], ...]
+    harvests: tuple[tuple[str, ...], ...]
+    edits: tuple[Any, ...]
+    cohorts: Mapping[str, Sequence[Any]]
+    view: Mapping[str, Any]
+
+
+def _scoped(world: World, scoped: Scoped) -> str:
+    """The world published and curated; its latest manifest."""
+    own = list(scoped.trees[0])
+    trees = ["tree_id,variety" + "".join(f",{c}" for c in own)]
+    trees += [
+        f"tree{n},apple" + "".join(f",{tree[c]}" for c in own)
+        for n, tree in enumerate(scoped.trees, 1)
+    ]
+    files = {"trees.csv": ("\n".join(trees) + "\n").encode()}
+    if scoped.harvests:
+        crops = ["harvest_id,tree_id,kg,grade"]
+        crops += [
+            f"h{n}_{at},tree{n},10,{grade}"
+            for n, grades in enumerate(scoped.harvests, 1)
+            for at, grade in enumerate(grades)
+        ]
+        files["harvests.csv"] = ("\n".join(crops) + "\n").encode()
+    world.publish("orchard", files)
+    world.curate("orchard", *scoped.edits)
+    return world.store.latest("orchard").manifest
+
+
+def _view(cohorts: Sequence[str], predicates: Sequence[Any], **given: Any) -> dict[str, Any]:
+    return {
+        "analysis": "compare.existence",
+        "cohorts": list(cohorts),
+        "params": {"predicates": list(predicates)},
+        **given,
+    }
+
+
+EVERY = {"all": [APPLE]}
+GROUPED = _category("trees.group", ("in", "out"), {"?": "NOT_ASSESSED"})
+LETTERS = [
+    *_category("trees.l1", ("y", "n"), {"?": "NOT_ASSESSED"}),
+    *_category("trees.l2", ("y", "n"), {"?": "NOT_ASSESSED"}),
+]
+
+
+def _wide(column: str) -> dict[str, Any]:
+    return {"kind": "value", "column": f"trees.{column}", "values": ["y"]}
+
+
+V2_X = {"all": [_wide("l1"), _wide("l2")]}
+V2_VIEW = _view(
+    ["x", "ux"],
+    [{"any": [{"unknown": _wide("l1")}, _wide("w")]}, _wide("w")],
+    overlap="allow",
+)
+TIERS = _category("trees.tier", ("gold", "silver"), {})
+
+
+def _tiered(*counts: tuple[str, str, str, int]) -> tuple[Mapping[str, str], ...]:
+    return tuple(
+        {"tier": tier, "l1": a, "l2": b} for tier, a, b, count in counts for _ in range(count)
+    )
+
+
+def _groups(*counts: tuple[str, int]) -> tuple[Mapping[str, str], ...]:
+    return tuple({"group": group} for group, count in counts for _ in range(count))
+
+
+def _letters(*counts: tuple[str, str, int]) -> tuple[Mapping[str, str], ...]:
+    return tuple({"l1": a, "l2": b} for a, b, count in counts for _ in range(count))
+
+
+SCOPED: dict[str, Scoped] = {
+    "coverage": Scoped(
+        _groups(("in", 5), ("out", 3), ("?", 2)),
+        (("A",), ("A",), ("B",), ("B",), ("A", "?"), ("A",), ("B",), (), (), ("A",)),
+        (*GRADES, *GROUPED, _harvests_covered(IN)),
+        EVERY,
+        _view(["all"], [IN, graded(["C"])]),
+    ),
+    "reason_by_difference": Scoped(
+        _groups(("in", 4), ("out", 3)),
+        (("A",), ("B",), ("A",), ("A", "?"), ("A",), ("B",), ()),
+        (*GRADES, *GROUPED, _harvests_covered(IN)),
+        EVERY,
+        _view(["all"], [IN, graded(["C"])]),
+    ),
+    "unknown_by_leaf": Scoped(
+        _letters(("y", "y", 10), ("n", "y", 5), ("?", "n", 5), ("y", "?", 4), ("?", "y", 1)),
+        (),
+        tuple(LETTERS),
+        {"all": [APPLE], "x": [L1, L2], "not_x": [{"not": {"all": [L1, L2]}}]},
+        _view(["all", "x", "not_x"], [{"unknown": L1}], overlap="allow"),
+    ),
+    "joint": Scoped(
+        _letters(("y", "y", 5), ("y", "?", 5), ("?", "y", 5), ("?", "?", 1)),
+        (),
+        tuple(LETTERS),
+        EVERY,
+        _view(["all"], [{"not": L1}, L2, {"any": [{"not": L1}, {"not": L2}]}]),
+    ),
+    "two_units": Scoped(
+        tuple({"pick": "y" if n < 2 else "n"} for n in range(10)),
+        (),
+        tuple(_category("trees.pick", ("y", "n"), {})),
+        {"x": [{"kind": "value", "column": "trees.pick", "values": ["y"]}]},
+        _view(["x"], [APPLE, {"not": APPLE}]),
+    ),
+    "a": Scoped(
+        tuple({"height_m": "1"} for _ in range(10)),
+        (("A", "NA"),) * 5 + (("NA",),) * 2 + (("B",),) * 3,
+        (*GRADES, _harvests_covered()),
+        EVERY,
+        _view(["all"], [graded(["A"]), graded(["E"])]),
+    ),
+    "b": Scoped(
+        tuple({"height_m": "1"} for _ in range(8)),
+        (("NA",),) * 4 + (("B", "?"),) + (("A",),) * 3,
+        (*GRADES, _harvests_covered()),
+        EVERY,
+        _view(["all"], [graded(["E"]), graded(["B"])]),
+    ),
+    "c": Scoped(
+        tuple({"height_m": "1"} for _ in range(10)),
+        (("A", "NA"),) * 5 + (("NA",),) * 2 + (("B",),) * 3,
+        (*GRADES, _harvests_covered()),
+        {"all": [APPLE], "x": [graded(["A"])]},
+        _view(["all", "x"], [graded(["E"])], overlap="allow"),
+    ),
+    "d": Scoped(
+        tuple({"height_m": "1"} for _ in range(10)),
+        (("A",),) * 5 + (("B",),) * 4 + (("C",),),
+        (
+            *GRADES,
+            _harvests_covered(),
+            _set("rel:harvests.tree_id", "/fields/cardinality", "one-to-one"),
+        ),
+        EVERY,
+        _view(["all"], [graded(["A"]), graded(["B"]), graded(["C"])]),
+    ),
+    "disjoint_allowed": Scoped(
+        tuple(
+            {"l1": a, "l2": b, "w": c}
+            for a, b, c, count in (
+                ("y", "y", "y", 10),
+                ("n", "y", "y", 10),
+                ("?", "y", "n", 1),
+                ("y", "?", "y", 6),
+                ("y", "?", "n", 6),
+            )
+            for _ in range(count)
+        ),
+        (),
+        (*LETTERS, *_category("trees.w", ("y", "n"), {"?": "NOT_ASSESSED"})),
+        {"x": V2_X["all"], "ux": [{"unknown": V2_X}]},
+        V2_VIEW,
+    ),
+    "two_refused": Scoped(
+        _tiered(
+            ("gold", "y", "y", 5),
+            ("gold", "n", "y", 4),
+            ("gold", "?", "n", 1),
+            ("silver", "y", "y", 3),
+            ("silver", "y", "n", 3),
+            ("silver", "n", "y", 3),
+            ("silver", "n", "n", 3),
+        ),
+        (),
+        (*LETTERS, *TIERS),
+        {
+            "gold": [{"kind": "value", "column": "trees.tier", "values": ["gold"]}],
+            "silver": [{"kind": "value", "column": "trees.tier", "values": ["silver"]}],
+        },
+        _view(["gold", "silver"], [L1, L2]),
+    ),
+    "tiers": Scoped(
+        tuple({"tier": t} for t in ["gold"] * 5 + ["silver"] * 4 + ["bronze"]),
+        (),
+        tuple(_category("trees.tier", ("gold", "silver", "bronze"), {})),
+        EVERY,
+        _view(
+            ["all"],
+            [
+                {"kind": "value", "column": "trees.tier", "values": [t]}
+                for t in ("gold", "silver", "bronze")
+            ],
+        ),
+    ),
+}
+"""The worlds of #73's issue and of its plan's reviews, end to end (D424): round 1's coverage
+world (a coverage within ``group in [in]``, beside a category no row holds), round 4's reason by
+difference, round 2's ``unknown_by_leaf`` world (25 trees, three positions that may share
+units) and its joint world (16 trees, three dependent predicates), two units of a table of ten
+under *k* = 2, the issue's (a) to (d), a partition of the trees by tier, round 3's V2 world (a
+cohort and its ``unknown``, disjoint, asked with overlap allowed: one scope), and a view of two
+positions that refuse overlap, one withheld and one shown."""
+
+
+def _scoped_document(scoped: Scoped) -> dict[str, Any]:
+    return document(cohorts=scoped.cohorts, view=scoped.view)
+
+
+@pytest.mark.parametrize("floor", [None, 2, 3, 5])
+@pytest.mark.parametrize("name", SCOPED)
+def test_views_of_dependent_predicates_run_by_sql_give_the_reference_evaluator_s_result(
+    world: World, name: str, floor: int | None
+) -> None:
+    manifest = _scoped(world, SCOPED[name])
+    written = _scoped_document(SCOPED[name])
+    [result] = run(catalog_of(world, floor=floor), written).results
+    [expected] = evaluated(world, manifest, written, floor=floor)
+    assert result.digest == expected.digest
+    assert result.derivation.id == expected.derivation.id
+    assert result.values == expected.values
+
+
+def _counts(result: ResultEnvelope) -> list[list[tuple[Any, Any, Any]]]:
+    """Each position's predicates as numerator, denominator and map."""
+    values = result.values.model_dump(mode="json")
+    return [
+        [
+            (
+                s["proportion"]["numerator"],
+                s["proportion"]["denominator"],
+                s["proportion"]["excluded"],
+            )
+            for s in position["predicates"]
+        ]
+        for position in values["positions"]
+    ]
+
+
+def _scoped_run(world: World, name: str, floor: int | None) -> ResultEnvelope:
+    _scoped(world, SCOPED[name])
+    [result] = run(catalog_of(world, floor=floor), _scoped_document(SCOPED[name])).results
+    return result
+
+
+WITHHELD = (None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("name", "floor"),
+    [
+        ("coverage", 3),
+        ("unknown_by_leaf", 3),
+        ("two_units", 2),
+        ("a", 3),
+        ("b", 3),
+        ("c", 3),
+        ("d", 3),
+        ("tiers", 3),
+        ("disjoint_allowed", 3),
+    ],
+)
+def test_a_scope_with_a_count_the_passes_hide_is_withheld_whole(
+    world: World, name: str, floor: int
+) -> None:
+    """Each world whose count D320 hid at one predicate, or at one position's population,
+    and a dependent predicate or position then pinned: the scope shows none of its predicates'
+    counts, and no flag or relationship of theirs (D424)."""
+    result = _scoped_run(world, name, floor)
+    assert all(found == WITHHELD for position in _counts(result) for found in position)
+    for analysed in result.analysed:
+        assert (analysed.n, analysed.excluded_units, analysed.excluded) == (None, None, None)
+        for variable in analysed.variables or ():
+            assert (variable.n, variable.excluded_units, variable.excluded) == (None, None, None)
+
+
+def test_a_view_that_allows_overlap_is_one_scope_though_its_cohorts_share_no_unit(
+    world: World,
+) -> None:
+    """The catalogue gives ``compare`` the view's ``allow``, not whether its cohorts share units
+    (``allow=bool(shared) and overlap``, or ``True``, fail here or in the equality tests): the
+    view of ``x`` and ``unknown x`` (disjoint) that allows overlap is one scope, so ``x``'s
+    hidden ``unknown_by_leaf`` withholds both positions, which would give it by the difference
+    of ``unknown x``'s two proportions (7 of 13 and 6 of 13)."""
+    withheld = _scoped_run(world, "disjoint_allowed", 3)
+    assert withheld.population[0].unknown_by_leaf is None
+    assert all(found == WITHHELD for position in _counts(withheld) for found in position)
+
+
+@pytest.mark.parametrize("order", [("refuse", "allow"), ("allow", "refuse")])
+@pytest.mark.parametrize("floor", [None, 2, 3, 5])
+def test_two_views_that_differ_only_in_overlap_mode_each_keep_their_own(
+    world: World, order: tuple[str, str], floor: int | None
+) -> None:
+    """One document asks V2's world (``x`` and ``unknown x``, disjoint) twice, refusing overlap
+    and allowing it: the two share one crossing run, and ``allow`` is each view's own, in either
+    order (``allow=views[0].overlap`` fails here). Each view is SQL = the reference evaluator,
+    the allowed view shows what the evaluator gives the view alone that allows overlap (at floor
+    3 withheld whole: ``unknown x``'s 7 of 13 and 6 of 13 are not shown, ``x``'s hidden leaf
+    count by their difference) and its derivation is not the refused view's. The view alone is
+    not run through the catalogue first: its result would be the cache's for the document's."""
+    base = SCOPED["disjoint_allowed"]
+    manifest = _scoped(world, base)
+    views = [
+        {**base.view, "overlap": "allow"}
+        if mode == "allow"
+        else {k: v for k, v in base.view.items() if k != "overlap"}
+        for mode in order
+    ]
+    written = document(cohorts=base.cohorts, views=views)
+    [alone] = evaluated(world, manifest, _scoped_document(base), floor=floor)
+    for attempt in range(2):  # the second run is the cache's
+        results = run(catalog_of(world, floor=floor), written).results
+        expected = evaluated(world, manifest, written, floor=floor)
+        assert [r.digest for r in results] == [e.digest for e in expected], attempt
+        assert [r.values for r in results] == [e.values for e in expected], attempt
+        by_mode = dict(zip(order, results, strict=True))
+        allowed = by_mode["allow"]
+        assert allowed.values == alone.values
+        assert allowed.population == alone.population
+        assert allowed.derivation.id != by_mode["refuse"].derivation.id
+        if floor == 3:
+            assert allowed.population[0].unknown_by_leaf is None
+            assert all(found == WITHHELD for position in _counts(allowed) for found in position)
+
+
+def test_without_a_floor_the_view_of_a_cohort_and_its_unknown_shows_its_counts(
+    world: World,
+) -> None:
+    """The control: with no floor the same world shows every count."""
+    shown = _scoped_run(world, "disjoint_allowed", None)
+    assert all(found[:2] != (None, None) for position in _counts(shown) for found in position)
+    assert shown.population[0].unknown_by_leaf is not None
+
+
+@pytest.mark.parametrize("floor", [2, 3, 5])
+def test_a_view_that_refuses_overlap_withholds_one_position_and_shows_the_other_end_to_end(
+    world: World, floor: int
+) -> None:
+    """Each position of a view that refuses overlap is its own scope through the catalogue: the
+    gold trees' one UNKNOWN unit is small under every floor and withholds their position, and
+    the silver trees', whose counts are not small, are shown (one scope would withhold both)."""
+    result = _scoped_run(world, "two_refused", floor)
+    gold, silver = _counts(result)
+    assert all(found == WITHHELD for found in gold)
+    assert [found[:2] for found in silver] == [(6, 12), (6, 12)]
+
+
+def test_without_a_floor_the_worlds_show_the_counts_the_scope_withholds(world: World) -> None:
+    """The control: round 1's coverage world realises its case, the category no row holds
+    UNKNOWN out of scope for the trees outside ``group in [in]`` and not assessed for the rest."""
+    result = _scoped_run(world, "coverage", None)
+    [[group, probe]] = _counts(result)
+    assert group[:2] == (5, 8)
+    assert probe[2]["OUT_OF_SCOPE"] == 3
+    assert probe[2]["NOT_ASSESSED"] >= 1
+
+
+@pytest.mark.parametrize("name", ["reason_by_difference", "joint"])
+def test_a_scope_shown_whole_shows_no_map_and_no_joint_count(world: World, name: str) -> None:
+    """A scope whose passes hide nothing is shown whole, its maps (but one of a shown 0, its
+    zeros) and ``analysed``'s counts ``null`` under any *k*; what dependent predicates shown
+    whole give by difference (a reason count, a joint count) is a residual D424 names, which
+    the assertions below record."""
+    shown = _scoped_run(world, name, 3)
+    [position] = _counts(shown)
+    assert all(n is not None and d is not None for n, d, _ in position)
+    assert all(m is None or not any(m.values()) for _, _, m in position)
+    [analysed] = shown.analysed
+    assert (analysed.n, analysed.excluded_units, analysed.excluded) == (None, None, None)
+    variables = analysed.variables or []
+    assert all(v.excluded is None or not any(v.excluded.values()) for v in variables)
+    size = shown.population[0].n_true
+    assert size is not None
+    if name == "reason_by_difference":
+        (p_true, p_known, _), (_, e_known, _) = position
+        assert size - e_known - (p_known - p_true) == 1
+    else:
+        q_unknown = cast(int, variables[1].excluded_units)
+        p_false = position[0][1] - position[0][0]
+        r_false = position[2][1] - position[2][0]
+        assert q_unknown - p_false + r_false == 1
