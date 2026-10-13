@@ -8,8 +8,9 @@ The ledger is made so that its suppressed counts are numbers nothing else in an 
 123 and 198 rows, pooled into 321, which suppresses the distribution with its 3011 and 989; and
 tables of 157 and 263 rows. The importer's evidence quotes each of them, and the unparsed note
 counts 197, as a control without a floor shows. ``run_analysis`` asks of every account whether its
-amount is known (4124 are, 197 not) and whether its kind is ``z`` (123) or not, and of the accounts
-of low and high amounts whether their kind is ``w`` (D320).
+amount is known (4124 are, 197 not) and whether its kind is ``z`` (123) or not, each predicate alone
+(D320) and the three in one view, one scope that the gate withholds whole (D424), and of the
+accounts of low and high amounts whether their kind is ``w`` (D320).
 """
 
 import json
@@ -46,6 +47,7 @@ def ledger() -> dict[str, bytes]:
 
 KIND_Z = {"kind": "value", "column": "accounts.kind", "values": ["z"]}
 AMOUNT = "accounts.amount"
+KNOWN = {"kind": "value", "column": AMOUNT, "range": {"gte": 0}}
 
 
 def analysis(dataset: str) -> dict[str, Any]:
@@ -59,17 +61,10 @@ def analysis(dataset: str) -> dict[str, Any]:
             "high": {"all": [{"kind": "value", "column": AMOUNT, "range": {"gte": 25}}]},
         },
         "views": [
-            {
-                "analysis": "compare.existence",
-                "cohorts": ["every"],
-                "params": {
-                    "predicates": [
-                        {"kind": "value", "column": AMOUNT, "range": {"gte": 0}},
-                        KIND_Z,
-                        {"not": KIND_Z},
-                    ]
-                },
-            },
+            *(
+                {"analysis": "compare.existence", "cohorts": ["every"], "params": {"predicates": p}}
+                for p in ([KNOWN], [KIND_Z], [{"not": KIND_Z}], [KNOWN, KIND_Z, {"not": KIND_Z}])
+            ),
             {
                 "analysis": "compare.existence",
                 "cohorts": ["low", "high"],

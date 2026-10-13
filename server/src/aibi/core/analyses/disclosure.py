@@ -1,29 +1,44 @@
-"""The disclosure pass over the counts an analysis adds to a result (SPEC §8.4; D320).
+"""The disclosure pass over the counts an analysis adds to a result (SPEC §8.4; D320, D424).
 
 A result's population is disclosed as a cohort count is (``engine.suppression``), each position
 alone, so that a cohort's counts are the same in a result as in ``count_cohort``'s answer. What a
 predicate adds at a position is its **split**: the units of the position's cohort for which it is
-TRUE, FALSE and UNKNOWN. A split is disclosed exactly as a cohort count is (``suppressed``), its
-total, the cohort's ``n_true``, as the size: so each count's complement is a member, one count
-suppressed alone takes another with it, and TRUE and FALSE are treated alike. A predicate and its
-``not`` then split the same units with TRUE and FALSE swapped, and are disclosed alike, so a count
-the view shows as FALSE of one and TRUE of the other is suppressed in both; ``known`` and
-``unknown`` of a predicate split them as ``known`` and ``unknown`` of a cohort do, which the pass
-over cohort counts leaves nothing to pin a suppressed count by (D297).
+TRUE, FALSE and UNKNOWN.
 
-What a result shows of a split is its TRUE units (a proportion's numerator) and its UNKNOWN units
-(``excluded_units``, and so the known ones, the denominator, which the size less them gives); the
-pass never leaves one of the three suppressed alone, so its FALSE units are shown only with both.
+**Scopes** (D424). Predicates of one view may depend on one another, whatever they read (one
+column's categories share each unit's default, a predicate may read the rows a coverage or a
+cohort of the view reads), and a count shown of one then bounds a count hidden of another. So
+the pass discloses a view's predicates by **scope**, a set of positions whose units may be
+shared: each position alone where the view refuses overlap, every position where it allows it
+(``scopes``). Dependence is never decided: a scope is disclosed so that nothing in it is shown
+beside anything hidden in it.
+
+- **A predicate alone**, one predicate in a scope of one position, keeps D320's rule: its split
+  is disclosed exactly as a cohort count is (``suppressed``), its total, the cohort's ``n_true``,
+  as the size, so each count's complement is a member, one count suppressed alone takes another
+  with it, and TRUE and FALSE are treated alike. What a result shows of a split is its TRUE
+  units (a proportion's numerator) and its UNKNOWN units (``excluded_units``, and so the known
+  ones, the denominator, which the size less them gives); the pass never leaves one of the three
+  suppressed alone, so its FALSE units are shown only with both. Its map of UNKNOWN units by
+  reason is shown with them, where none of its counts is small; ``analysed`` is its split's.
+- **Any other scope**, two predicates or more, or two positions or more, is **gated**
+  (``scope_shown``): it is shown only where every pass the output applies hides nothing in it,
+  each predicate's split at each of its positions unsuppressed (``suppressed`` empty, a small
+  table's rule included), each position's cohort ``n_true`` shown, and, where its positions may
+  share units, nothing of each one's population hidden; else every predicate's counts at every
+  position of the scope are withheld (``Pass.SCOPE``). Under a refused overlap only ``n_true``
+  of the population is in the gate: the position's predicates count its own units, and its other
+  population members count units outside it. A gated scope's maps of reasons and its
+  ``analysed`` counts, joint counts of its predicates (none known of at least the sum of their
+  UNKNOWN units less the size once for each predicate after the first, and of at most the
+  fewest), are never shown under *k* (``Pass.NEVER``, ``existence.never_shown``): dependent
+  predicates give them by difference.
+
 A position whose cohort's ``n_true`` is suppressed shows none of its splits, whose counts would
-add up to it. ``analysed`` of one predicate is its split's known and unknown units. Of two
-predicates or more, nothing that combines them is shown: the units for which some predicate is
-known, those for which none is and their reasons are joint counts, which the predicates' own
-counts bound from both sides (none is known of at least the sum of their UNKNOWN units less the
-size once for each predicate after the first, and of at most the fewest), so that a suppressed
-one can be pinned, and a map of their reasons bounds a predicate's own map, suppressed or not;
-each predicate's entry of ``variables`` carries its own. Whatever else a result carries
-(proportions' estimates and intervals, effects, tests, charts) is computed only from counts
-shown.
+add up to it. Whatever else a result carries (proportions' estimates and intervals, effects,
+tests, charts) is computed only from counts shown. What this protects, for *k* of 3 or more, is
+every count of a scope's gate and of its own positions' populations, relative to what the
+populations alone give; §8.4's Limits name what it does not (D424).
 
 **Variables** (D329). What a variable adds at a position is the split of the cohort's units into
 those it has a value for (``n``) and those it excludes (``excluded_units``), whose total is the
@@ -74,6 +89,7 @@ that names none of them.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 from aibi.core.engine.suppression import suppressed
 
@@ -87,19 +103,47 @@ class Split:
     unknown: int
 
 
+class Pass(StrEnum):
+    """The pass that nulls a member of what a result shows of its predicates (module
+    docstring)."""
+
+    COHORT = "cohort"
+    """The position's cohort's ``n_true`` is suppressed (a predicate alone)."""
+    SPLIT = "split"
+    """The predicate's split suppresses the count (a predicate alone, D320)."""
+    MAP = "map"
+    """A count of the map is from 1 to *k* − 1 (a predicate alone)."""
+    SCOPE = "scope"
+    """The scope's gate holds a count a pass hides, so the scope is withheld whole (D424)."""
+    NEVER = "never"
+    """Never shown under *k*, for the scope's shape (D424, ``existence.never_shown``)."""
+
+
+@dataclass(frozen=True)
+class Cohort:
+    """What the gate reads of a position: whether its cohort's ``n_true`` is shown, whether
+    nothing of its population is hidden (``lift_differs`` aside, which always is), its
+    predicates' splits of its units, and each one's UNKNOWN units by reason."""
+
+    size_shown: bool
+    whole_shown: bool
+    splits: tuple[Split, ...]
+    reasons: tuple[tuple[int, ...], ...]
+
+
 @dataclass(frozen=True)
 class Hidden:
-    """What the pass hides at one position: per predicate, its TRUE units (``true``) and its
-    UNKNOWN units (``unknown``, and with them its known ones); and ``analysed``, the units for
-    which some predicate is known and those for which none is, with their reasons."""
+    """What the pass hides at one position, per predicate, with the pass that hides it, or
+    ``None``: its TRUE units (``true``), its UNKNOWN units and with them its known ones
+    (``unknown``), and its map of UNKNOWN units by reason (``maps``)."""
 
-    true: tuple[bool, ...]
-    unknown: tuple[bool, ...]
-    analysed: bool
+    true: tuple[Pass | None, ...]
+    unknown: tuple[Pass | None, ...]
+    maps: tuple[Pass | None, ...]
 
     def proportion(self, predicate: int) -> bool:
         """Whether a count the predicate's proportion is computed from is suppressed."""
-        return self.true[predicate] or self.unknown[predicate]
+        return self.true[predicate] is not None or self.unknown[predicate] is not None
 
 
 def small(k: int, count: int) -> bool:
@@ -107,19 +151,50 @@ def small(k: int, count: int) -> bool:
     return 1 <= count <= k - 1
 
 
-def hidden(size_shown: bool, splits: Sequence[Split], k: int) -> Hidden:
-    """What the pass hides at a position whose cohort's ``n_true`` is shown or not
-    (``size_shown``), and whose predicates split its units as ``splits`` (module docstring)."""
-    if not size_shown:
-        every = (True,) * len(splits)
-        return Hidden(every, every, True)
-    true: list[bool] = []
-    unknown: list[bool] = []
-    for split in splits:
-        found = suppressed(split.true, split.false, split.unknown, k)
-        unknown.append("n_unknown" in found)
-        true.append("n_true" in found)
-    return Hidden(tuple(true), tuple(unknown), unknown[0] if len(splits) == 1 else True)
+def scopes(positions: int, *, allow: bool) -> list[tuple[int, ...]]:
+    """A view's scopes (module docstring): every position where it allows overlap, else each
+    alone."""
+    return [tuple(range(positions))] if allow else [(at,) for at in range(positions)]
+
+
+def gated(positions: int, predicates: int) -> bool:
+    """Whether a scope of this shape is gated: any but one predicate at one position."""
+    return positions > 1 or predicates > 1
+
+
+def scope_shown(scope: Sequence[Cohort], *, allow: bool, k: int) -> bool:
+    """The gate of a gated scope (module docstring): whether every pass the output applies
+    hides nothing in it."""
+    for at in scope:
+        if not at.size_shown or (allow and not at.whole_shown):
+            return False
+        if any(suppressed(s.true, s.false, s.unknown, k) for s in at.splits):
+            return False
+    return True
+
+
+def _alone(at: Cohort, k: int) -> Hidden:
+    """A predicate alone (D320)."""
+    [split] = at.splits
+    [reasons] = at.reasons
+    if not at.size_shown:
+        return Hidden((Pass.COHORT,), (Pass.COHORT,), (Pass.COHORT,))
+    found = suppressed(split.true, split.false, split.unknown, k)
+    true = Pass.SPLIT if "n_true" in found else None
+    unknown = Pass.SPLIT if "n_unknown" in found else None
+    map_pass = unknown or (Pass.MAP if any(small(k, count) for count in reasons) else None)
+    return Hidden((true,), (unknown,), (map_pass,))
+
+
+def hidden(scope: Sequence[Cohort], *, allow: bool, k: int) -> list[Hidden]:
+    """What the pass hides at each position of a scope (module docstring); a gated scope's maps
+    are ``Pass.NEVER``."""
+    predicates = len(scope[0].splits)
+    if not gated(len(scope), predicates):
+        return [_alone(scope[0], k)]
+    gone = None if scope_shown(scope, allow=allow, k=k) else Pass.SCOPE
+    every = (gone,) * predicates
+    return [Hidden(every, every, (Pass.NEVER,) * predicates) for _ in scope]
 
 
 def split_hidden(n: int, excluded_units: int, k: int) -> bool:
@@ -170,11 +245,16 @@ def merged(counts: Sequence[int], k: int) -> list[tuple[int, int]]:
 
 __all__ = [
     "CategoryShown",
+    "Cohort",
     "Hidden",
+    "Pass",
     "Split",
+    "gated",
     "hidden",
     "membership_shown",
     "merged",
+    "scope_shown",
+    "scopes",
     "small",
     "split_hidden",
 ]

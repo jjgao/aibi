@@ -773,6 +773,7 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                         ran.crossing,
                         params_of,
                         reference=view.reference,
+                        allow=view.overlap,
                         overlap=bool(shared) and view.overlap,
                         k=view.disclosure,
                     )

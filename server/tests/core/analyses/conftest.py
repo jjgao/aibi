@@ -63,7 +63,7 @@ from aibi.core.engine.memberships import evaluated, materialise_over
 from aibi.core.engine.resolve import Label, ResolvedCohort
 from aibi.core.engine.resolved import flipped
 from aibi.core.engine.sql import Accounting, Crossing, TruthValues, cross
-from aibi.core.engine.truth import Truth, TruthValue
+from aibi.core.engine.truth import Mark, Truth, TruthValue
 from aibi.core.engine.variables import Joint, Materialised
 from aibi.core.schema.analyses import (
     ColumnsParams,
@@ -78,7 +78,7 @@ from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.refusals import Refusal
 from aibi.core.schema.results import ResultEnvelope
-from aibi.core.schema.semantics import Reason
+from aibi.core.schema.semantics import Flag, Reason
 
 ORDERS = "rel:orders.customer"
 RETURNS = "rel:returns.order"
@@ -356,6 +356,7 @@ def analyse_document(
             crossing,
             view.params,
             reference=view.reference,
+            allow=view.overlap,
             overlap=bool(crossing.overlapping()) and view.overlap,
             k=view.disclosure,
         )
@@ -483,23 +484,43 @@ def _summarised_by_evaluator(
     )
 
 
-_REASONS = {"I": Reason.NO_INFORMATION, "A": Reason.NOT_ASSESSED, "C": Reason.NOT_COVERED}
+_REASONS = {
+    "I": Reason.NO_INFORMATION,
+    "A": Reason.NOT_ASSESSED,
+    "C": Reason.NOT_COVERED,
+    "O": Reason.OUT_OF_SCOPE,
+}
+FLAGGED = Mark(Flag.COVERAGE_PROPOSED, "rel:orders.customer")
+"""The mark of an answer that relied on proposed coverage: a pattern's lower-case letter."""
 
 
 def truth_values(pattern: str) -> list[TruthValue]:
+    """A unit's truth value per letter: ``T``, ``F``, or UNKNOWN for a reason (``I``, ``A``,
+    ``C``, ``O``); in lower case, the same marked ``FLAGGED``."""
     found: list[TruthValue] = []
     for character in pattern:
-        if character == "T":
-            found.append(TruthValue(Truth.TRUE))
-        elif character == "F":
-            found.append(TruthValue(Truth.FALSE))
+        marks = frozenset({FLAGGED}) if character.islower() else frozenset()
+        letter = character.upper()
+        if letter == "T":
+            found.append(TruthValue(Truth.TRUE, marks=marks))
+        elif letter == "F":
+            found.append(TruthValue(Truth.FALSE, marks=marks))
         else:
-            found.append(TruthValue(Truth.UNKNOWN, frozenset({_REASONS[character]})))
+            found.append(TruthValue(Truth.UNKNOWN, frozenset({_REASONS[letter]}), marks))
     return found
 
 
-def _accounting(values: Sequence[TruthValue]) -> Accounting:
+def _accounting(
+    values: Sequence[TruthValue], leaves: Sequence[frozenset[int]] | None = None, clauses: int = 1
+) -> Accounting:
+    """A cohort's accounting of units answered ``values``; with ``leaves``, each unit's
+    top-level clauses (of ``clauses``) that are UNKNOWN for it, counted by clause, else every
+    UNKNOWN unit under the one clause."""
     unknown = [value for value in values if value.is_unknown]
+    by_clause = (len(unknown),)
+    if leaves is not None:
+        given = [held for value, held in zip(values, leaves, strict=True) if value.is_unknown]
+        by_clause = tuple(sum(c in held for held in given) for c in range(clauses))
     return Accounting(
         n_true=sum(value.is_true for value in values),
         n_false=sum(value.is_false for value in values),
@@ -507,7 +528,7 @@ def _accounting(values: Sequence[TruthValue]) -> Accounting:
         unknown_by_reason={
             reason: sum(reason in value.reasons for value in unknown) for reason in Reason
         },
-        unknown_by_clause=(len(unknown),),
+        unknown_by_clause=by_clause,
         lift_differs=0,
         marks=frozenset(),
     )
@@ -525,15 +546,28 @@ PATTERN_DOCUMENT: dict[str, Any] = {
 
 
 def _pattern_document(
-    cohorts: int, predicates: int, reference: int, overlap: bool
+    cohorts: int, predicates: int, reference: int, overlap: bool, clauses: int = 1
 ) -> dict[str, Any]:
     names = list(PATTERN_DOCUMENT["cohorts"])[:cohorts]
+    written = {
+        name: {
+            "all": [
+                *cohort["all"],
+                *(
+                    {"kind": "value", "column": "customers.age", "range": {"lte": 100 - extra}}
+                    for extra in range(1, clauses)
+                ),
+            ]
+        }
+        for name, cohort in PATTERN_DOCUMENT["cohorts"].items()
+    }
     predicate_clauses = [
         {"kind": "value", "column": "customers.age", "range": {"lt": 70 - index}}
         for index in range(predicates)
     ]
     return {
         **PATTERN_DOCUMENT,
+        "cohorts": written,
         "views": [
             {
                 "analysis": "compare.existence",
@@ -553,10 +587,12 @@ def pattern_view(
     k: int | None = None,
     reference: int = 0,
     overlap: bool = False,
+    clauses: int = 1,
 ) -> CheckedView:
     """A checked view of ``cohorts`` cohorts and ``predicates`` predicates of the pattern
-    document, whose truth values ``compare_patterns`` gives."""
-    written = _pattern_document(cohorts, predicates, reference, overlap)
+    document, each cohort of ``clauses`` top-level clauses, whose truth values
+    ``compare_patterns`` gives."""
+    written = _pattern_document(cohorts, predicates, reference, overlap, clauses)
     release = shop_release({"customers": [{"customer_id": "c1", "age": 30}]})
     checked = check_document(written, release, floor=k)
     assert checked.refusals == [], checked.refusals
@@ -592,6 +628,41 @@ def compare_patterns(
         crossing,
         view.params,
         reference=view.reference,
+        allow=view.overlap,
+        overlap=bool(crossing.overlapping()) and view.overlap,
+        k=k,
+    )
+
+
+def compare_world(
+    view: CheckedView,
+    cohorts: Sequence[str],
+    predicates: Sequence[str],
+    *,
+    k: int | None,
+    leaves: Sequence[Sequence[frozenset[int]]] | None = None,
+) -> Outcome:
+    """``compare_patterns`` with each cohort's UNKNOWN units by top-level clause: ``leaves``
+    gives, per cohort and unit, the clauses UNKNOWN for it, of as many as the view's cohorts
+    have."""
+    positions: list[CohortAt] = []
+    for at, (cohort, pattern) in enumerate(zip(view.cohorts, cohorts, strict=True)):
+        values = truth_values(pattern)
+        held = None if leaves is None else leaves[at]
+        positions.append(CohortAt(cohort, _accounting(values, held, len(cohort.keys))))
+    crossing = cross(
+        [TruthValues.of(truth_values(pattern)) for pattern in cohorts],
+        [TruthValues.of(truth_values(pattern)) for pattern in predicates],
+        [None] * len(predicates),
+    )
+    assert isinstance(view.params, ExistenceParams)
+    return compare(
+        positions,
+        view.predicates,
+        crossing,
+        view.params,
+        reference=view.reference,
+        allow=view.overlap,
         overlap=bool(crossing.overlapping()) and view.overlap,
         k=k,
     )
@@ -613,6 +684,7 @@ def compare_crossing(
         crossing,
         view.params,
         reference=view.reference,
+        allow=view.overlap,
         overlap=bool(crossing.overlapping()) and view.overlap,
         k=k,
     )
@@ -937,3 +1009,8 @@ def compared() -> Callable[..., Outcome]:
 @pytest.fixture(scope="session")
 def counted() -> Callable[..., Outcome]:
     return compare_crossing
+
+
+@pytest.fixture(scope="session")
+def worlded() -> Callable[..., Outcome]:
+    return compare_world

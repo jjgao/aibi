@@ -1,4 +1,5 @@
-"""``compare.existence``: how often a condition holds, across cohorts (SPEC §9.5; D319, D320).
+"""``compare.existence``: how often a condition holds, across cohorts (SPEC §9.5; D319, D320,
+D424).
 
 For each predicate of the view (``params.predicates``, clauses asked of every unit of the unit
 table) and each cohort in view order, the proportion of the cohort's units for which the
@@ -28,27 +29,41 @@ fewer than two; a table whose TRUE or FALSE column is all zeros after that has n
 (``degenerate_table``); a risk ratio with a numerator of 0 on either side is not estimable
 (``no_events``). A chi-squared test with an expected count below 5 carries ``SMALL_N``.
 
-**Disclosure** (§8.4, D320). Under *k*, each position's population is disclosed as its cohort's
-count is (``engine.suppression``), and each predicate's split of the cohort's units as a cohort
-count over them is (``disclosure``): a proportion shows its numerator where the split's TRUE units
-are shown, and its denominator and ``excluded_units`` where its UNKNOWN units are. With two
-predicates or more, ``analysed``'s ``n``, ``excluded_units`` and ``excluded`` are never shown,
-since they combine predicates; each predicate's entry of ``variables`` is shown as its split is.
-An ``excluded`` map is ``null`` with its total or when any of its counts is small, and wherever
-one map is ``null`` every map of the same units is; every ``lift_differs`` is
-suppressed; a proportion's estimate and interval go with its counts, an effect with either
-proportion's, and a test with any count of any position, leaving the family, which says how many
-left it. Caveat messages quote no count but ``LIFT_DIFFERS``', which quotes none under *k*; and
-under *k*, ``UNKNOWN_EXCLUDED`` is carried wherever an UNKNOWN count is suppressed, so that it says
-nothing of one.
+**Disclosure** (§8.4, D320, D424). Under *k*, each position's population is disclosed as its
+cohort's count is (``engine.suppression``), and the predicates by scope (``disclosure``): each
+position alone where the view refuses overlap, every position where it allows it. A predicate
+alone (one predicate, one position) keeps D320's rule: its split of the cohort's units is
+disclosed as a cohort count over them is, so a proportion shows its numerator where the split's
+TRUE units are shown, and its denominator and ``excluded_units`` where its UNKNOWN units are,
+its ``excluded`` map with them where none of its counts is small, and ``analysed`` is its
+split's. Any other scope is shown whole or not at all, by the gate of every pass the output
+applies; its maps and ``analysed``'s counts are never shown (``never_shown``), and each
+predicate's entry of ``variables`` is shown as its split is. Every member the pass can null is
+listed, with the pass that nulls it, by ``_scope_members``, from which the output is built; every
+``lift_differs`` is suppressed; a proportion's estimate and interval go with its counts, an
+effect with either proportion's, and a test with any count of any position, leaving the family,
+which says how many left it. Caveat messages quote no count but ``LIFT_DIFFERS``', which quotes
+none under *k*; under *k*, ``UNKNOWN_EXCLUDED`` is carried wherever an UNKNOWN count is
+suppressed, so that it says nothing of one; and the flags a predicate's answers raise are named
+only for a predicate shown, not one whose numerator or denominator any pass nulls.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
+from functools import partial
 from typing import cast
 
 from aibi.core.analyses import stats
-from aibi.core.analyses.disclosure import Hidden, Split, hidden, small
+from aibi.core.analyses.disclosure import (
+    Cohort,
+    Hidden,
+    Pass,
+    Split,
+    gated,
+    hidden,
+    scopes,
+)
 from aibi.core.engine.canonical import CanonicalCohort
 from aibi.core.engine.counts import Tally, count_parts
 from aibi.core.engine.ids import leaf_key
@@ -84,7 +99,7 @@ from aibi.core.schema.results import Analysed, AnalysedVariable, Population
 from aibi.core.schema.semantics import ExclusionReason, Flag, Reason
 
 ANALYSIS_ID = "compare.existence"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 """Bumped whenever its outputs for the same inputs change (§7.6)."""
 METHODS: Mapping[str, str] = {
     "wilson": "Wilson score interval without continuity correction, as R's prop.test(correct "
@@ -223,14 +238,6 @@ def _counted(crossed: Crossed) -> tuple[list[_Share], _Analysed]:
 
 
 # --- Values ----------------------------------------------------------------------------------
-
-
-def _excluded_shown(
-    excluded: Mapping[ExclusionReason, int], total_hidden: bool, k: int | None
-) -> dict[ExclusionReason, int] | None:
-    if total_hidden or (k is not None and any(small(k, count) for count in excluded.values())):
-        return None
-    return dict(excluded)
 
 
 def _proportion(
@@ -372,6 +379,122 @@ def _test(shares: Sequence[_Share], cohorts: int, *, overlap: bool, suppressed: 
     )
 
 
+# --- Disclosure (D320, D424) -----------------------------------------------------------------
+
+NUMERATOR = "/values/positions/*/predicates/*/proportion/numerator"
+DENOMINATOR = "/values/positions/*/predicates/*/proportion/denominator"
+MAP = "/values/positions/*/predicates/*/proportion/excluded"
+LIFT = "/values/positions/*/predicates/*/lift_differs"
+ANALYSED_N = "/analysed/*/n"
+ANALYSED_UNITS = "/analysed/*/excluded_units"
+ANALYSED_MAP = "/analysed/*/excluded"
+VARIABLE_N = "/analysed/*/variables/*/n"
+VARIABLE_UNITS = "/analysed/*/variables/*/excluded_units"
+VARIABLE_MAP = "/analysed/*/variables/*/excluded"
+"""The members of a result that the pass over its predicates can null, as paths whose first
+``*`` is a position and whose second a predicate (``member``)."""
+
+
+def member(template: str, position: int, predicate: int = 0) -> str:
+    """A member's path at a position, and of a predicate."""
+    return template.replace("*", str(position), 1).replace("*", str(predicate), 1)
+
+
+def never_shown(positions: int, predicates: int) -> frozenset[str]:
+    """The members a scope of ``positions`` positions and ``predicates`` predicates never shows
+    under *k*, by its shape alone (D424): every ``lift_differs`` (D320); and of a gated scope
+    (``disclosure.gated``), both paths of every map of reasons and ``analysed``'s counts, which
+    with two predicates or more combine them, and which dependent predicates or positions give
+    by difference; but a map whose UNKNOWN units are shown as 0 is shown, its zeros given by
+    that count. Whatever else the pass nulls, it nulls by a pass over counts
+    (``_scope_members``)."""
+    found = {LIFT}
+    if gated(positions, predicates):
+        found |= {MAP, ANALYSED_N, ANALYSED_UNITS, ANALYSED_MAP}
+        if predicates > 1:
+            found.add(VARIABLE_MAP)
+    return frozenset(found)
+
+
+def _scope_members(
+    scope: Sequence[int],
+    cohorts: Sequence[Cohort],
+    hides: Sequence[Hidden],
+    predicates: int,
+    k: int | None,
+) -> dict[str, Pass | None]:
+    """Every member of a scope's positions that the output can null (the templates above), with
+    the pass that nulls it under ``k``, or ``None`` where it is shown: what ``never_shown``
+    declares for the scope's shape (a map of a shown 0 aside), else what ``disclosure.hidden``
+    hides. The output is built from this alone."""
+    never: frozenset[str] = frozenset() if k is None else never_shown(len(scope), predicates)
+    found: dict[str, Pass | None] = {}
+    zero: set[tuple[int, int]] = set()
+
+    def put(template: str, position: int, predicate: int, by: Pass | None) -> None:
+        if template in (MAP, VARIABLE_MAP) and (position, predicate) in zero:
+            by = None
+        elif template in never:
+            by = Pass.NEVER
+        found[member(template, position, predicate)] = by
+
+    for position, cohort, at in zip(scope, cohorts, hides, strict=True):
+        zero.update(
+            (position, predicate)
+            for predicate, split in enumerate(cohort.splits)
+            if at.unknown[predicate] is None and split.unknown == 0
+        )
+        for predicate in range(predicates):
+            put(NUMERATOR, position, predicate, at.true[predicate])
+            put(DENOMINATOR, position, predicate, at.unknown[predicate])
+            put(MAP, position, predicate, at.maps[predicate])
+            put(LIFT, position, predicate, None)
+            if predicates > 1:
+                put(VARIABLE_N, position, predicate, at.unknown[predicate])
+                put(VARIABLE_UNITS, position, predicate, at.unknown[predicate])
+                put(VARIABLE_MAP, position, predicate, at.maps[predicate])
+        one = predicates == 1
+        put(ANALYSED_N, position, 0, at.unknown[0] if one else None)
+        put(ANALYSED_UNITS, position, 0, at.unknown[0] if one else None)
+        put(ANALYSED_MAP, position, 0, at.maps[0] if one else None)
+    return found
+
+
+def _nothing_hidden(predicates: int) -> Hidden:
+    nothing = (None,) * predicates
+    return Hidden(nothing, nothing, nothing)
+
+
+def _cohort(population: Population, shares: Sequence[_Share]) -> Cohort:
+    return Cohort(
+        size_shown=population.n_true is not None,
+        whole_shown=set(population.suppressed or ()) <= {"/lift_differs"},
+        splits=tuple(share.split for share in shares),
+        reasons=tuple(tuple(share.excluded.values()) for share in shares),
+    )
+
+
+def disclosed_members(
+    cohorts: Sequence[Cohort], predicates: int, *, allow: bool, k: int | None
+) -> tuple[list[Hidden], dict[str, Pass | None]]:
+    """What the pass hides at each position, and every member it can null with the pass that
+    nulls it (``_scope_members``), scope by scope (``disclosure.scopes``), from what the gate
+    reads of each position (``cohorts``)."""
+    hides: list[Hidden] = [_nothing_hidden(predicates)] * len(cohorts)
+    members: dict[str, Pass | None] = {}
+    for scope in scopes(len(cohorts), allow=allow):
+        found = (
+            [_nothing_hidden(predicates)] * len(scope)
+            if k is None
+            else hidden([cohorts[at] for at in scope], allow=allow, k=k)
+        )
+        for position, at in zip(scope, found, strict=True):
+            hides[position] = at
+        within = [cohorts[at] for at in scope]
+        members.update(_scope_members(scope, within, found, predicates, k))
+    return hides, members
+
+
 # --- The analysis ----------------------------------------------------------------------------
 
 
@@ -392,13 +515,15 @@ def compare(
     params: ExistenceParams,
     *,
     reference: int,
+    allow: bool,
     overlap: bool,
     k: int | None,
 ) -> Outcome:
     """``compare.existence`` over a view's cohorts and predicates (module docstring), from the
     crossing of the ones with the others (``engine.sql``: counted by SQL, or by ``cross`` from
-    the reference evaluator's truth values). ``overlap`` says that the view allows overlap and
-    its cohorts share units."""
+    the reference evaluator's truth values). ``allow`` says that the view allows overlap, so
+    that its positions are one scope (D424), and ``overlap`` that its cohorts also share
+    units."""
     level = params.level
     raw = [count_parts(position.cohort, position.accounting) for position in positions]
     if len(crossing.cohorts) != len(positions) or any(
@@ -409,14 +534,14 @@ def compare(
     shares = [found[0] for found in counted]
     whole = [found[1] for found in counted]
     population = [disclosed(parts, k).population for parts in raw]
-    hides = [
-        _nothing_hidden(len(predicates))
-        if k is None
-        else hidden(population[position].n_true is not None, [s.split for s in shares[position]], k)
-        for position in range(len(positions))
-    ]
+    cohorts = [_cohort(population[at], shares[at]) for at in range(len(positions))]
+    hides, members = disclosed_members(cohorts, len(predicates), allow=allow, k=k)
+
+    def gone(template: str, position: int, predicate: int = 0) -> bool:
+        return members[member(template, position, predicate)] is not None
+
     analysed = [
-        _analysed(whole[position], shares[position], hides[position], k)
+        _analysed(whole[position], shares[position], partial(gone, position=position))
         for position in range(len(positions))
     ]
     keys = [predicate_key(predicate) for predicate in predicates]
@@ -424,21 +549,21 @@ def compare(
     for position in range(len(positions)):
         found: list[PredicateShare] = []
         for predicate, share in enumerate(shares[position]):
-            at = hides[position]
             proportion = _proportion(
                 share,
                 position,
                 keys[predicate],
                 level,
-                hidden_true=at.true[predicate],
-                hidden_known=at.unknown[predicate],
-                excluded=_excluded_shown(share.excluded, at.unknown[predicate], k),
+                hidden_true=gone(NUMERATOR, position, predicate),
+                hidden_known=gone(DENOMINATOR, position, predicate),
+                excluded=None if gone(MAP, position, predicate) else share.excluded,
             )
+            lift = gone(LIFT, position, predicate)
             found.append(
                 PredicateShare(
                     proportion=proportion,
-                    lift_differs=None if k is not None else share.lift,
-                    not_estimable=None if k is None else {"/lift_differs": _SUPPRESSED},
+                    lift_differs=None if lift else share.lift,
+                    not_estimable={"/lift_differs": _SUPPRESSED} if lift else None,
                 )
             )
         at_positions.append(ExistencePosition(predicates=found))
@@ -471,54 +596,46 @@ def compare(
         contrasts = _with_q(contrasts, family[1])
     view = ExistenceView(predicates=contrasts, family=None if family is None else family[0])
     values = ExistenceValues(positions=at_positions, view=view)
-    caveats = _caveats(positions, population, analysed, shares, hides, tested, k, overlap)
+    withheld = {
+        (position, predicate)
+        for position in range(len(positions))
+        for predicate in range(len(predicates))
+        if members[member(NUMERATOR, position, predicate)] is not None
+        or members[member(DENOMINATOR, position, predicate)] is not None
+    }
+    caveats = _caveats(positions, population, analysed, shares, hides, withheld, tested, k, overlap)
     return Outcome(population, analysed, values, caveats)
 
 
-def _nothing_hidden(predicates: int) -> Hidden:
-    return Hidden((False,) * predicates, (False,) * predicates, False)
-
-
-def _analysed(whole: _Analysed, shares: Sequence[_Share], hides: Hidden, k: int | None) -> Analysed:
-    gone_whole = hides.analysed
-    excluded = _excluded_shown(whole.excluded, gone_whole, k)
-    reasons = {
-        member: _SUPPRESSED
-        for member, gone in (
-            ("/n", gone_whole),
-            ("/excluded_units", gone_whole),
-            ("/excluded", excluded is None),
-        )
-        if gone
+def _analysed(whole: _Analysed, shares: Sequence[_Share], gone: Callable[..., bool]) -> Analysed:
+    """A position's ``analysed``, each member shown as ``_scope_members`` says (``gone``)."""
+    lost = {
+        "/n": gone(ANALYSED_N),
+        "/excluded_units": gone(ANALYSED_UNITS),
+        "/excluded": gone(ANALYSED_MAP),
     }
     variables: list[AnalysedVariable] | None = None
     if len(shares) > 1:
         variables = []
         for predicate, share in enumerate(shares):
-            unknown_hidden = hides.unknown[predicate]
-            shown = _excluded_shown(share.excluded, unknown_hidden, k)
-            gone = {
-                member: _SUPPRESSED
-                for member, lost in (
-                    ("/n", unknown_hidden),
-                    ("/excluded_units", unknown_hidden),
-                    ("/excluded", shown is None),
-                )
-                if lost
+            missing = {
+                "/n": gone(VARIABLE_N, predicate=predicate),
+                "/excluded_units": gone(VARIABLE_UNITS, predicate=predicate),
+                "/excluded": gone(VARIABLE_MAP, predicate=predicate),
             }
             variables.append(
                 AnalysedVariable(
-                    n=None if unknown_hidden else share.known,
-                    excluded=shown,
-                    excluded_units=None if unknown_hidden else share.unknown,
-                    not_estimable=gone or None,
+                    n=None if missing["/n"] else share.known,
+                    excluded=None if missing["/excluded"] else dict(share.excluded),
+                    excluded_units=None if missing["/excluded_units"] else share.unknown,
+                    not_estimable={m: _SUPPRESSED for m, out in missing.items() if out} or None,
                 )
             )
     return Analysed(
-        n=None if gone_whole else whole.n,
-        excluded=excluded,
-        excluded_units=None if gone_whole else whole.excluded_units,
-        not_estimable=reasons or None,
+        n=None if lost["/n"] else whole.n,
+        excluded=None if lost["/excluded"] else dict(whole.excluded),
+        excluded_units=None if lost["/excluded_units"] else whole.excluded_units,
+        not_estimable={m: _SUPPRESSED for m, out in lost.items() if out} or None,
         variables=variables,
     )
 
@@ -569,15 +686,18 @@ def _caveats(
     analysed: Sequence[Analysed],
     shares: Sequence[Sequence[_Share]],
     hides: Sequence[Hidden],
+    withheld: AbstractSet[tuple[int, int]],
     tested: Sequence[_Tested],
     k: int | None,
     overlap: bool,
 ) -> list[Caveat]:
     """The caveats that the view's data raise (module docstring); the static ones are the
-    caller's."""
+    caller's. The flags a predicate's answers carry are named only for a predicate shown at its
+    position, whose numerator and denominator no pass nulls (``withheld``: positions and
+    predicates, a withheld scope's and a predicate alone's under D320)."""
     found: list[Caveat] = []
     unknown = any(count.n_unknown is None or count.n_unknown for count in population) or any(
-        at.unknown[predicate] or share.unknown
+        at.unknown[predicate] is not None or share.unknown
         for row, at in zip(shares, hides, strict=True)
         for predicate, share in enumerate(row)
     )
@@ -601,8 +721,9 @@ def _caveats(
         asked = sorted(
             {
                 m.relationship
-                for row in shares
-                for share in row
+                for position, row in enumerate(shares)
+                for predicate, share in enumerate(row)
+                if (position, predicate) not in withheld
                 for m in share.marks
                 if m.flag is flag
             }
