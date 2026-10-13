@@ -19,9 +19,11 @@
  * is the operator's own trusted code, D410): code that patches a builtin is deliberate, and the
  * lint refuses it besides (`no-extend-native` and assignments to the builtins' members).
  *
- * `box` and `textOf` are this module's internals: the lint lets only `decode.ts` import them (and
- * the request half's builders, when they come), and a test over the TypeScript program holds that
- * no other module of `src/` names them and that `src/api/index.ts` exports neither.
+ * `box` and `textOf` are this module's internals: the lint lets only `decode.ts` import `box`, and
+ * only `decode.ts` and `provenance.ts` import `textOf` (`provenance.ts`'s `idAt` is the one function
+ * that reads a box's text, from a node stamped for its feed in its era: D425, MA3 of round 3), and a
+ * test over the TypeScript program holds that no other module of `src/` names them and that
+ * `src/api/index.ts` exports neither.
  */
 
 /** The words of every refused conversion: fixed, and never the number's text. */
@@ -88,8 +90,8 @@ export function box(text: string): ServerNumber {
   return make(text);
 }
 
-/** The source text a box holds; a value that is no box throws (the brand check). For the request
- * half's builders (M5.1c-1c, M5.3) and the tests; no module of `src/` calls it yet. */
+/** The source text a box holds; a value that is no box throws (the brand check). `provenance.ts`'s
+ * `idAt` (D425) and the tests alone call it. */
 export function textOf(number: ServerNumber): string {
   return read(number);
 }

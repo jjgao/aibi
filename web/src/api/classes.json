@@ -13,7 +13,45 @@
       "WithdrawRequest.release",
       "path:proposal",
       "query:release"
-    ]
+    ],
+    "from": {
+      "Accept.proposal": {
+        "operation": "queue",
+        "path": "proposals[]",
+        "read": "id"
+      },
+      "DescribeColumn.release": null,
+      "DescribeDataset.columns_offset": null,
+      "DescribeDataset.release": null,
+      "ListAnalyses.release": null,
+      "QueueRequest.release": null,
+      "SearchCatalog.offset": null,
+      "TakeOver.session": {
+        "operation": "dataset_state",
+        "path": "session",
+        "read": "session"
+      },
+      "WithdrawRequest.release": null,
+      "path:proposal": {
+        "operation": "queue",
+        "path": "proposals[]",
+        "read": "id"
+      },
+      "query:release": {
+        "operation": "dataset_state",
+        "path": "labels[]",
+        "read": "label"
+      }
+    },
+    "until": {
+      "DescribeColumn.release": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "DescribeDataset.columns_offset": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "DescribeDataset.release": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "ListAnalyses.release": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "QueueRequest.release": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "SearchCatalog.offset": "M5.2/M5.3: a tool's position, fed by a page or a document",
+      "WithdrawRequest.release": "never: the client sends the release's manifest (D423)"
+    }
   },
   "typed_by_the_person": {
     "why": "A number the person types (or the client's constant, for a page's size).",

@@ -1,9 +1,17 @@
 /**
- * A request's route (D419): what `routes.ts`, generated from the document, gives for each
- * operation, and the one thing `exchange` sends to. A route is made here alone (`route`, which
- * the generated functions call) and recorded, so that `exchange` refuses an object that merely
- * looks like one (a URL composed elsewhere); its URL is this origin's path, each literal segment
+ * A request's route (D419, D425): what `routes.ts`, generated from the document, gives for each
+ * operation, and the one thing `exchange` and `send` send to. A route is made here alone (`route`,
+ * which the generated functions call), so that the client refuses an object that merely looks like
+ * one (a URL composed elsewhere); its URL is this origin's path, each literal segment
  * percent-encoded by the generator and each parameter by `segment`.
+ *
+ * **No readable URL (D425).** A route shows its operation and its method, and nothing else: the
+ * URL and the dataset its path names are held in ES private fields of the class that makes it,
+ * which no code outside this module can name (not a property: `Object.keys` gives the two, `"url"
+ * in route` is false, `structuredClone` and a spread give a plain object that is no route).
+ * `urlOf` and `datasetOf` read them, for `client.ts` alone (the lint's table of the internals of
+ * `src/api/`, the import-graph test), so that no component reads a URL's digits back, whatever
+ * built it.
  */
 import type { operations } from "./generated/openapi";
 
@@ -11,27 +19,58 @@ export type OperationId = Extract<keyof operations, string>;
 
 export type Method = "GET" | "POST";
 
+/** A route as the app sees it: its operation and its method. */
 export interface Route<O extends OperationId = OperationId> {
   readonly operation: O;
   readonly method: Method;
-  readonly url: string;
 }
 
 /** The words of a refused parameter: fixed, and never the value. */
 export const REFUSED_SEGMENT = "A path parameter is empty, . or .., not well-formed text, or no safe whole number.";
 
-const MADE = new WeakSet<Route>();
+let urlOfMade: (value: object) => string | null;
+let datasetOfMade: (value: object) => string | null;
 
-/** A route, frozen and recorded. The generated functions alone call it. */
-export function route<O extends OperationId>(operation: O, method: Method, url: string): Route<O> {
-  const made: Route<O> = Object.freeze({ operation, method, url });
-  MADE.add(made);
-  return made;
+/** A route made here: its URL and the dataset its path names in private fields. */
+class Made<O extends OperationId> implements Route<O> {
+  readonly operation: O;
+  readonly method: Method;
+  readonly #url: string;
+  readonly #dataset: string | null;
+
+  constructor(operation: O, method: Method, url: string, dataset: string | null) {
+    this.operation = operation;
+    this.method = method;
+    this.#url = url;
+    this.#dataset = dataset;
+    Object.freeze(this);
+  }
+
+  static {
+    urlOfMade = (value) => (#url in value ? value.#url : null);
+    datasetOfMade = (value) => (#dataset in value ? value.#dataset : null);
+  }
 }
 
-/** Whether `route` made this object. */
-export function isRoute(value: Route): boolean {
-  return MADE.has(value);
+Object.freeze(Made.prototype);
+Object.freeze(Made);
+
+/** A route, frozen, its URL and its dataset private. The generated functions alone call it;
+ * `dataset` is the value of the path's `{dataset}` parameter, `null` for a path without one. */
+export function route<O extends OperationId>(operation: O, method: Method, url: string, dataset: string | null = null): Route<O> {
+  return new Made(operation, method, url, dataset);
+}
+
+/** The URL of a route `route` made; `null` for anything else (the brand check of the private
+ * field: an object that merely looks like a route has none). `client.ts`'s alone. */
+export function urlOf(value: unknown): string | null {
+  return typeof value === "object" && value !== null ? urlOfMade(value) : null;
+}
+
+/** The dataset a route's path names, `null` for a path without one or anything `route` did not
+ * make. `client.ts`'s alone: what it records an answer's provenance under (D425). */
+export function datasetOf(value: unknown): string | null {
+  return typeof value === "object" && value !== null ? datasetOfMade(value) : null;
 }
 
 /** A whole number's decimal digits: a safe, non-negative integer alone (the document caps every

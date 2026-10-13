@@ -7,14 +7,20 @@
  *   `/operator`, answers and refusals, and then writes how many bodies the decoder was given to
  *   its `data-oracle`; the matrix compares that with the responses the page received.
  * - The operator's flows (D423): a button for each operation of the page's operator client (the
- *   one the shell unlocks), over the dataset, manifest and descriptor its fields hold; the outcome
+ *   one the shell unlocks), over the dataset, manifest and descriptor its fields hold; the request
+ *   half's four (D425) read the node they send back from through the client first, and pass it
+ *   whole: a take-over the dataset state's `session`, a rejection or an acceptance the first of
+ *   the queue's `proposals` whose `descriptor` is the field's, a named release's queue the dataset
+ *   state's `labels` element whose `manifest` is the field's (the harness never sees a number's
+ *   value, only the node), and a take-over from a copy of the session's node, which the client
+ *   refuses unsent; the outcome
  *   is written to `output`'s data attributes: its kind, status, refusal codes, reason, what was
  *   invalid, whether the client holds a handle for the dataset, and the decoder's count. Never the
  *   token, a handle or the CSRF token, which the client gives no one.
  */
 import { useRef, useState } from "react";
 
-import { exchange, routes } from "../api";
+import { exchange, isServerNumber, type JsonOut, routes } from "../api";
 import { decodedCount } from "../api/oracle";
 import { operator, type Outcome } from "../api/operator";
 
@@ -27,6 +33,30 @@ async function oracle(): Promise<number> {
   await exchange(routes.describe_dataset(), { dataset: "no_such_dataset" });
   await exchange(routes.datasets());
   return decodedCount();
+}
+
+/** A member of a decoded record, `null` for anything else (read by its entries: the harness asserts
+ * no type). */
+function member(value: JsonOut, key: string): JsonOut {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || isServerNumber(value)) {
+    return null;
+  }
+  return Object.entries(value).find(([name]) => name === key)?.[1] ?? null;
+}
+
+/** The first element of a record's list member whose string member `key` is `wanted`. */
+function first(value: JsonOut, list: string, key: string, wanted: string): JsonOut {
+  const items = member(value, list);
+  if (typeof items !== "object" || items === null || isServerNumber(items)) {
+    return null;
+  }
+  return Object.values(items).find((item) => member(item, key) === wanted) ?? null;
+}
+
+/** The body of a read's outcome, the read itself when it is no answer. */
+async function read(outcome: Promise<Outcome>, then: (body: JsonOut) => Promise<Outcome>): Promise<Outcome> {
+  const found = await outcome;
+  return found.kind === "answer" ? then(found.body) : found;
 }
 
 /** What the fields hold when an operation runs. */
@@ -47,6 +77,13 @@ const OPERATIONS: Readonly<Record<string, (fields: Fields) => Promise<Outcome>>>
   publish: ({ dataset }) => operator.publish(dataset),
   discard: ({ dataset }) => operator.discard(dataset),
   withdraw: ({ dataset, manifest }) => operator.withdraw(dataset, manifest),
+  take_over: ({ dataset }) => read(operator.dataset(dataset), (state) => operator.takeOver(member(state, "session"))),
+  reject: ({ dataset, descriptor }) => read(operator.queue(dataset), (queue) => operator.rejectProposal(first(queue, "proposals", "descriptor", descriptor))),
+  accept: ({ dataset, descriptor }) => read(operator.queue(dataset), (queue) => operator.acceptProposal(first(queue, "proposals", "descriptor", descriptor))),
+  queue_at: ({ dataset, manifest }) => read(operator.dataset(dataset), (state) => operator.queueAt(first(state, "labels", "manifest", manifest))),
+  // A copy of the session's node (its own members, boxes and all): no node the client decoded, so
+  // refused before anything is sent (D425's run-time oracle for a forged input).
+  take_over_copy: ({ dataset }) => read(operator.dataset(dataset), (state) => operator.takeOver(Object.fromEntries(Object.entries(member(state, "session") ?? {})))),
 };
 
 interface Shown {

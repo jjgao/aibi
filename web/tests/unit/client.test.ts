@@ -236,7 +236,7 @@ describe("exchange", () => {
     await expect(exchange(routes.health())).rejects.toThrow(REFUSALS.notJson);
   });
 
-  const lookalike: Route<"health"> = { operation: "health", method: "GET", url: "/api/health" };
+  const lookalike: Route<"health"> = { operation: "health", method: "GET" };
 
   it.each([
     ["an object that only looks like a route", lookalike],

@@ -20,15 +20,24 @@
  *   not exactly those two members, or a mark anywhere but a component's top level, fails. Without
  *   the transform each of the six is TS2502 (it refers to itself through its own annotation).
  *
- * Request numbers are left as openapi-typescript renders them, `number`: what a person types, or
- * (the request half, M5.1c-1c and M5.3) what the client builds; no `ServerNumber` is assignable
- * to one. `defaultNonNullable: false` (a member with a default stays optional, as on the wire)
+ * - The request ids (D425): the request positions `src/api/classes.json` gives a `from` (the
+ *   four that take back an id a response gave: `TakeOver.session`, `Accept.proposal`,
+ *   `path:proposal`, `query:release`) render as `RequestId` (`src/api/ids.ts`), a number only the
+ *   grammar makes, so that no plain number and no box compiles there. Each position must name at
+ *   least one plain `integer` schema of a request that is not a response number (a component's
+ *   member, or every path or query parameter of that name), and each must be reached, by the
+ *   identity of its schema object, or the generation fails.
+ *
+ * Every other request number is left as openapi-typescript renders it, `number`: what a person
+ * types, or (M5.3) what the client builds; no `ServerNumber` is assignable to one. `defaultNonNullable: false` (a member with a default stays optional, as on the wire)
  * and `immutable: true` (every member and array read-only, as `decode` freezes what it makes).
  *
  * **The routes.** `routes.ts` gives each operation a function named by its operation id that
  * builds its `Route` (`src/api/route.ts`): the method, and the URL from the path template, each
  * literal segment percent-encoded here and each parameter by `segment` at run time (which refuses
- * an empty, `.` or `..` value), the query by `search`. A template whose literal segment is empty,
+ * an empty, `.` or `..` value), the query by `search`, and the value of a `{dataset}` parameter,
+ * which the route holds privately with its URL (D425: the dataset an answer's provenance is
+ * recorded under). A template whose literal segment is empty,
  * `.` or `..`, or that mixes a parameter with text in one segment, an operation id that is not a
  * plain name or a reserved word, a method other than GET and POST, and a path parameter the
  * template does not name (or the reverse) fail the generation.
@@ -42,6 +51,7 @@ import ts from "typescript";
 
 const WEB = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DOCUMENT = path.join(WEB, "..", "schemas", "openapi.json");
+export const CLASSES = path.join(WEB, "src", "api", "classes.json");
 export const OUTPUTS = {
   openapi: path.join(WEB, "src", "api", "generated", "openapi.ts"),
   routes: path.join(WEB, "src", "api", "generated", "routes.ts"),
@@ -122,6 +132,81 @@ function jsonType(mark, at) {
   return found;
 }
 
+/**
+ * The positions `classes.json` gives a feed (`adapter_fed.from`, not `null`): the request ids.
+ * @param {unknown} classes
+ * @returns {string[]}
+ */
+export function idPositions(classes) {
+  const fed = isObject(classes) ? classes["adapter_fed"] : undefined;
+  const from = isObject(fed) ? fed["from"] : undefined;
+  if (!isObject(from)) {
+    throw new GenerationError("classes.json: adapter_fed has no from");
+  }
+  return Object.entries(from)
+    .filter(([, feed]) => feed !== null)
+    .map(([position]) => position)
+    .sort();
+}
+
+/**
+ * The schema objects of the request ids, each with its position: `Component.member` is that
+ * member of that component; `path:name` and `query:name` every parameter so placed and named. A
+ * position that names no plain `integer`, or one a response number's mark is on, fails (a
+ * parameter of the name that is no number at all, such as a string, is not the position).
+ * @param {JsonObject} document
+ * @param {readonly string[]} positions
+ * @returns {Map<JsonObject, string>}
+ */
+export function idSchemas(document, positions) {
+  /** @type {Map<JsonObject, string>} */
+  const found = new Map();
+  const components = isObject(document["components"]) ? document["components"] : {};
+  const schemas = isObject(components["schemas"]) ? components["schemas"] : {};
+  const paths = isObject(document["paths"]) ? document["paths"] : {};
+  for (const position of positions) {
+    /** @type {unknown[]} */
+    const named = [];
+    const placed = /^(path|query):([A-Za-z_][A-Za-z0-9_]*)$/u.exec(position);
+    const member = /^([A-Za-z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(position);
+    if (placed?.[1] !== undefined && placed[2] !== undefined) {
+      for (const item of Object.values(paths)) {
+        for (const operation of isObject(item) ? Object.values(item) : []) {
+          const parameters = isObject(operation) && Array.isArray(operation["parameters"]) ? operation["parameters"] : [];
+          for (const given of parameters.filter(isObject)) {
+            const schema = given["schema"];
+            // A parameter of that name that is no number (the descriptor route's string `release`)
+            // is no request number, as the classes' walk reads it.
+            if (given["in"] === placed[1] && given["name"] === placed[2] && isObject(schema) && (schema["type"] === "integer" || schema["type"] === "number")) {
+              named.push(given["schema"]);
+            }
+          }
+        }
+      }
+    } else if (member?.[1] !== undefined && member[2] !== undefined) {
+      const component = schemas[member[1]];
+      const properties = isObject(component) ? component["properties"] : undefined;
+      named.push(isObject(properties) ? properties[member[2]] : undefined);
+    }
+    if (named.length === 0 || !named.every((schema) => isObject(schema) && schema["type"] === "integer" && !Object.hasOwn(schema, SERVER_NUMBER))) {
+      throw new GenerationError(`${position}: a request id is a plain integer of a request`);
+    }
+    for (const schema of named) {
+      if (isObject(schema)) {
+        found.set(schema, position);
+      }
+    }
+  }
+  return found;
+}
+
+/** The committed `classes.json`. @returns {unknown} */
+export function committedClasses() {
+  /** @type {unknown} */
+  const parsed = JSON.parse(readFileSync(CLASSES, "utf8"));
+  return parsed;
+}
+
 const HEADER = `/**
  * Generated by \`scripts/generate-types.mjs\` from \`schemas/openapi.json\`: do not edit. Run
  * \`npm run generate\`; CI fails while this file differs from what the document gives (D419).
@@ -129,20 +214,26 @@ const HEADER = `/**
 `;
 
 const TYPES_HEADER = `${HEADER}import type { ServerNumber } from "../box";
+import type { RequestId } from "../ids";
 import type { JsonIn, JsonInNull, JsonOut } from "../json";
 
 `;
 
 /**
  * The types of the document, rendered by openapi-typescript with the transform (`marks: false`
- * renders it without, for the gate that shows why the transform exists).
+ * renders it without, for the gate that shows why the transform exists). `ids` are the request
+ * ids' positions (none by default; `generate` gives the committed `classes.json`'s).
  * @param {JsonObject} document
- * @param {{ marks?: boolean }} [options]
+ * @param {{ marks?: boolean, ids?: readonly string[] }} [options]
  * @returns {Promise<string>}
  */
 export async function renderTypes(document, options = {}) {
   const marks = options.marks ?? true;
   const found = census(document);
+  /** @type {Map<JsonObject, string>} */
+  const ids = marks ? idSchemas(document, options.ids ?? []) : new Map();
+  /** @type {Set<JsonObject>} */
+  const reachedIds = new Set();
   /** @type {Set<JsonObject>} */
   const reached = new Set();
   /** @type {Set<string>} */
@@ -159,6 +250,10 @@ export async function renderTypes(document, options = {}) {
       }
       reachedJson.add(context.path ?? "");
       return ts.factory.createTypeReferenceNode(type);
+    }
+    if (ids.has(schema)) {
+      reachedIds.add(schema);
+      return ts.factory.createTypeReferenceNode("RequestId");
     }
     if (Object.hasOwn(schema, SERVER_NUMBER)) {
       if (!found.numbers.has(schema)) {
@@ -183,6 +278,10 @@ export async function renderTypes(document, options = {}) {
     const missedJson = [...found.json.keys()].filter((at) => !reachedJson.has(at));
     if (missedJson.length > 0) {
       throw new GenerationError(`the transform reached no ${JSON_VALUE} at ${missedJson.join(", ")}`);
+    }
+    const missedIds = [...ids].filter(([node]) => !reachedIds.has(node)).map(([, at]) => at);
+    if (missedIds.length > 0) {
+      throw new GenerationError(`the transform reached no request id at ${missedIds.join(", ")}`);
     }
   }
   return `${marks ? TYPES_HEADER : HEADER}${astToString(nodes)}`;
@@ -301,10 +400,11 @@ function renderRoute(template, method, name, operation) {
     });
     query = `\${search([${entries.join(", ")}])}`;
   }
+  const dataset = named.includes("dataset") ? ", path.dataset" : "";
   return `
 /** \`${method} ${template}\` */
 export function ${name}(${signature.join(", ")}): Route<"${name}"> {
-    return route("${name}", "${method}", \`${url}${query}\`);
+    return route("${name}", "${method}", \`${url}${query}\`${dataset});
 }
 `;
 }
@@ -315,7 +415,7 @@ export function ${name}(${signature.join(", ")}): Route<"${name}"> {
  * @returns {Promise<{ openapi: string, routes: string }>}
  */
 export async function generate(document) {
-  return { openapi: await renderTypes(document), routes: renderRoutes(document) };
+  return { openapi: await renderTypes(document, { ids: idPositions(committedClasses()) }), routes: renderRoutes(document) };
 }
 
 /**

@@ -77,82 +77,82 @@ export function datasets(): Route<"datasets"> {
 
 /** `GET /operator/datasets/{dataset}` */
 export function dataset_state(path: operations["dataset_state"]["parameters"]["path"]): Route<"dataset_state"> {
-    return route("dataset_state", "GET", `/operator/datasets/${segment(path.dataset)}`);
+    return route("dataset_state", "GET", `/operator/datasets/${segment(path.dataset)}`, path.dataset);
 }
 
 /** `GET /operator/datasets/{dataset}/descriptors/{descriptor}` */
 export function descriptor(path: operations["descriptor"]["parameters"]["path"], query: NonNullable<operations["descriptor"]["parameters"]["query"]> = {}): Route<"descriptor"> {
-    return route("descriptor", "GET", `/operator/datasets/${segment(path.dataset)}/descriptors/${segment(path.descriptor)}${search([["release", query.release]])}`);
+    return route("descriptor", "GET", `/operator/datasets/${segment(path.dataset)}/descriptors/${segment(path.descriptor)}${search([["release", query.release]])}`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/erase` */
 export function erase_dataset(path: operations["erase_dataset"]["parameters"]["path"]): Route<"erase_dataset"> {
-    return route("erase_dataset", "POST", `/operator/datasets/${segment(path.dataset)}/erase`);
+    return route("erase_dataset", "POST", `/operator/datasets/${segment(path.dataset)}/erase`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/import` */
 export function import_dataset(path: operations["import_dataset"]["parameters"]["path"]): Route<"import_dataset"> {
-    return route("import_dataset", "POST", `/operator/datasets/${segment(path.dataset)}/import`);
+    return route("import_dataset", "POST", `/operator/datasets/${segment(path.dataset)}/import`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/proposals/reject` */
 export function reject_all(path: operations["reject_all"]["parameters"]["path"]): Route<"reject_all"> {
-    return route("reject_all", "POST", `/operator/datasets/${segment(path.dataset)}/proposals/reject`);
+    return route("reject_all", "POST", `/operator/datasets/${segment(path.dataset)}/proposals/reject`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/proposals/{proposal}/reject` */
 export function reject(path: operations["reject"]["parameters"]["path"]): Route<"reject"> {
-    return route("reject", "POST", `/operator/datasets/${segment(path.dataset)}/proposals/${segment(path.proposal)}/reject`);
+    return route("reject", "POST", `/operator/datasets/${segment(path.dataset)}/proposals/${segment(path.proposal)}/reject`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/proposers` */
 export function proposers(path: operations["proposers"]["parameters"]["path"]): Route<"proposers"> {
-    return route("proposers", "POST", `/operator/datasets/${segment(path.dataset)}/proposers`);
+    return route("proposers", "POST", `/operator/datasets/${segment(path.dataset)}/proposers`, path.dataset);
 }
 
 /** `GET /operator/datasets/{dataset}/queue` */
 export function queue(path: operations["queue"]["parameters"]["path"], query: NonNullable<operations["queue"]["parameters"]["query"]> = {}): Route<"queue"> {
-    return route("queue", "GET", `/operator/datasets/${segment(path.dataset)}/queue${search([["release", query.release]])}`);
+    return route("queue", "GET", `/operator/datasets/${segment(path.dataset)}/queue${search([["release", query.release]])}`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/reimport` */
 export function reimport(path: operations["reimport"]["parameters"]["path"]): Route<"reimport"> {
-    return route("reimport", "POST", `/operator/datasets/${segment(path.dataset)}/reimport`);
+    return route("reimport", "POST", `/operator/datasets/${segment(path.dataset)}/reimport`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/session/change` */
 export function change(path: operations["change"]["parameters"]["path"]): Route<"change"> {
-    return route("change", "POST", `/operator/datasets/${segment(path.dataset)}/session/change`);
+    return route("change", "POST", `/operator/datasets/${segment(path.dataset)}/session/change`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/session/discard` */
 export function discard(path: operations["discard"]["parameters"]["path"]): Route<"discard"> {
-    return route("discard", "POST", `/operator/datasets/${segment(path.dataset)}/session/discard`);
+    return route("discard", "POST", `/operator/datasets/${segment(path.dataset)}/session/discard`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/session/open` */
 export function open_session(path: operations["open_session"]["parameters"]["path"]): Route<"open_session"> {
-    return route("open_session", "POST", `/operator/datasets/${segment(path.dataset)}/session/open`);
+    return route("open_session", "POST", `/operator/datasets/${segment(path.dataset)}/session/open`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/session/publish` */
 export function publish(path: operations["publish"]["parameters"]["path"]): Route<"publish"> {
-    return route("publish", "POST", `/operator/datasets/${segment(path.dataset)}/session/publish`);
+    return route("publish", "POST", `/operator/datasets/${segment(path.dataset)}/session/publish`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/session/take-over` */
 export function take_over(path: operations["take_over"]["parameters"]["path"]): Route<"take_over"> {
-    return route("take_over", "POST", `/operator/datasets/${segment(path.dataset)}/session/take-over`);
+    return route("take_over", "POST", `/operator/datasets/${segment(path.dataset)}/session/take-over`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/uploads` */
 export function upload(path: operations["upload"]["parameters"]["path"], query: NonNullable<operations["upload"]["parameters"]["query"]>): Route<"upload"> {
-    return route("upload", "POST", `/operator/datasets/${segment(path.dataset)}/uploads${search([["extension", query.extension]])}`);
+    return route("upload", "POST", `/operator/datasets/${segment(path.dataset)}/uploads${search([["extension", query.extension]])}`, path.dataset);
 }
 
 /** `POST /operator/datasets/{dataset}/withdraw` */
 export function withdraw(path: operations["withdraw"]["parameters"]["path"]): Route<"withdraw"> {
-    return route("withdraw", "POST", `/operator/datasets/${segment(path.dataset)}/withdraw`);
+    return route("withdraw", "POST", `/operator/datasets/${segment(path.dataset)}/withdraw`, path.dataset);
 }
 
 /** `POST /operator/log/issuance` */

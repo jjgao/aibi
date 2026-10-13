@@ -1581,7 +1581,9 @@ def classes() -> dict[str, dict[str, Any]]:
     return loaded
 
 
-def request_numbers(document: dict[str, Any]) -> set[str]:
+def request_numbers(document: dict[str, Any], prefix: str = "/") -> set[str]:
+    """The positions a request takes a number at, of the operations whose path starts with
+    ``prefix`` (every operation by default)."""
     found: set[str] = set()
 
     def walk(node: Any, at: str, seen: frozenset[str]) -> None:
@@ -1611,7 +1613,9 @@ def request_numbers(document: dict[str, Any]) -> set[str]:
                 for schema in value:
                     walk(schema, at, seen)
 
-    for _, _, operation in operations(document):
+    for _, path, operation in operations(document):
+        if not path.startswith(prefix):
+            continue
         for given in operation.get("parameters", []):
             walk(given["schema"], f"{given['in']}:{given['name']}", frozenset())
         for media in operation.get("requestBody", {}).get("content", {}).values():
@@ -1626,7 +1630,10 @@ def test_the_classes_are_four_each_with_its_reason() -> None:
     found = classes()
     assert list(found) == CLASS_NAMES
     for name, given in found.items():
-        assert list(given) == ["why", "positions"], name
+        members = (
+            ["why", "positions", "from", "until"] if name == "adapter_fed" else ["why", "positions"]
+        )
+        assert list(given) == members, name
         why = given["why"]
         assert isinstance(why, str), name
         assert len(why) > 30, name
@@ -1641,6 +1648,65 @@ def test_the_classes_are_four_each_with_its_reason() -> None:
     assert "person types" in found["typed_by_the_person"]["why"]
     assert "Typed by the person, or taken back" in found["both"]["why"]
     assert "D269" in found["never_in_the_client"]["why"]
+
+
+def _resolved(document: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema with its ``$ref`` followed, and a nullable ``anyOf`` (the schema or ``null``)
+    taken as the schema."""
+    while True:
+        if "$ref" in schema:
+            schema = components(document)[schema["$ref"].removeprefix(COMPONENTS)]
+            continue
+        variants = [found for found in schema.get("anyOf", []) if found.get("type") != "null"]
+        if len(variants) == 1 and len(schema.get("anyOf", [])) == 2:
+            schema = variants[0]
+            continue
+        return schema
+
+
+def test_each_request_id_is_fed_by_a_response_id_of_an_operator_read(
+    document: dict[str, Any],
+) -> None:
+    """``adapter_fed.from`` (D425): the positions with a feed are exactly the operator routes'
+    request numbers that a response feeds, but ``WithdrawRequest.release`` (the client sends a
+    release's manifest, D423); every other position of the class has ``null`` and an ``until``.
+    Each feed names an operator read (a GET, under ``/operator/datasets/{dataset}``: the client's
+    recorder stamps nothing for a route without a dataset), a path from its 200 answer's root to
+    an object (each step a property, ``[]`` an array's items), and a member of that object that
+    is a response number (``x-aibi-server-number``), an id with ``minimum`` 1, as the request
+    takes."""
+    fed = classes()["adapter_fed"]
+    assert list(fed["from"]) == fed["positions"]
+    feeds = {position: feed for position, feed in fed["from"].items() if feed is not None}
+    operator = request_numbers(document, "/operator/")
+    assert len(operator) == 7
+    assert set(feeds) == (operator & set(fed["positions"])) - {"WithdrawRequest.release"}
+    assert len(feeds) == 4
+    nulls = [position for position, feed in fed["from"].items() if feed is None]
+    assert list(fed["until"]) == nulls
+    assert fed["until"]["WithdrawRequest.release"].startswith("never: the client sends")
+    reads = {
+        operation["operationId"]: (method, path, operation)
+        for method, path, operation in operations(document)
+    }
+    for position, feed in feeds.items():
+        assert list(feed) == ["operation", "path", "read"], position
+        method, path, operation = reads[feed["operation"]]
+        assert method == "get", position
+        assert path.startswith("/operator/datasets/{dataset}"), position
+        schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        node = _resolved(document, schema)
+        for step in feed["path"].split("."):
+            name = step.removesuffix("[]")
+            node = _resolved(document, node["properties"][name])
+            if step.endswith("[]"):
+                assert node["type"] == "array", position
+                node = _resolved(document, node["items"])
+        assert node.get("type") == "object", position
+        read = _resolved(document, node["properties"][feed["read"]])
+        assert read == {**read, "type": "integer", "minimum": 1, "x-aibi-server-number": True}, (
+            position
+        )
 
 
 def test_every_request_number_is_classified(document: dict[str, Any]) -> None:

@@ -60,7 +60,10 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   and the operator entry (`src/operator/`, which reads nothing from its URL: the token's shell,
   the forget action, the confirmation step), the operator's client (`src/api/curator.ts`; the
   page's one, `src/api/operator.ts`, which the index never re-exports; the token, the CSRF token
-  and handles in its closure alone, the epoch, the idle lock: read D423 before touching it; the lint
+  and handles in its closure alone, the epoch, the idle lock: read D423 before touching it; its four
+  flows that send an id back take the decoded node and check its provenance, a private-field brand
+  stamped as `decode` reads a 2xx answer (`origin.ts`, `provenance.ts`, the grammar in `ids.ts`):
+  read D425 before touching them; the lint
   takes the page's objects, `window`, `location`, `history`, `navigator` and `document`, by member
   access alone, by name and by type (`aibi/page-objects`, whatever a value is called, its lists held against `lib.dom` by
   `tests/gates/page-types.test.ts`), and bans the channels out of the page's memory), the
