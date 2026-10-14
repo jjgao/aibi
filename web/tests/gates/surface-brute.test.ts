@@ -366,7 +366,8 @@ type File = keyof typeof FILES;
 
 const PREAMBLE = [
   'import { operator } from "../api/operator";',
-  'import type { JsonOut, ServerNumber } from "../api";',
+  'import type { components, ServerNumber } from "../api";',
+  'type JsonOut = components["schemas"]["OutputJson"];',
   'import { Colour, Holder, Level, type Curator, type Wrap } from "../api/curator";',
   "export type Unused = [typeof operator, typeof Colour, typeof Level, typeof Holder, Wrap<0>, Curator, JsonOut, ServerNumber];",
 ];

@@ -49,12 +49,15 @@ import { fileURLToPath } from "node:url";
 import openapiTS, { astToString } from "openapi-typescript";
 import ts from "typescript";
 
+import { renderShapes, ShapeError } from "./generate-shapes.mjs";
+
 const WEB = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DOCUMENT = path.join(WEB, "..", "schemas", "openapi.json");
 export const CLASSES = path.join(WEB, "src", "api", "classes.json");
 export const OUTPUTS = {
   openapi: path.join(WEB, "src", "api", "generated", "openapi.ts"),
   routes: path.join(WEB, "src", "api", "generated", "routes.ts"),
+  shapes: path.join(WEB, "src", "api", "generated", "shapes.ts"),
 };
 
 export const SERVER_NUMBER = "x-aibi-server-number";
@@ -410,19 +413,28 @@ export function ${name}(${signature.join(", ")}): Route<"${name}"> {
 }
 
 /**
- * Generate both files from `document`.
+ * Generate the three files from `document` (`text`: the document's own text, whose digest the
+ * typed answers' table records; the committed document's by default).
  * @param {JsonObject} document
- * @returns {Promise<{ openapi: string, routes: string }>}
+ * @param {string} [text]
+ * @returns {Promise<{ openapi: string, routes: string, shapes: string }>}
  */
-export async function generate(document) {
-  return { openapi: await renderTypes(document, { ids: idPositions(committedClasses()) }), routes: renderRoutes(document) };
+export async function generate(document, text = readFileSync(DOCUMENT, "utf8")) {
+  let shapes;
+  try {
+    shapes = renderShapes(document, text);
+  } catch (error) {
+    throw error instanceof ShapeError ? new GenerationError(`the typed answers' table: ${error.message}`) : error;
+  }
+  return { openapi: await renderTypes(document, { ids: idPositions(committedClasses()) }), routes: renderRoutes(document), shapes };
 }
 
 /**
  * @param {string[]} argv
  * @param {(line: string) => void} say
- * @param {{ document: string, outputs: { openapi: string, routes: string } }} [files] where the
- *   document is read and the outputs written (the committed ones but in a test)
+ * @param {{ document: string, outputs: { openapi: string, routes: string, shapes?: string } }} [files] where the
+ *   document is read and the outputs written (the committed ones but in a test; an output not
+ *   given is neither checked nor written)
  * @returns {Promise<number>}
  */
 export async function main(argv, say, files = { document: DOCUMENT, outputs: OUTPUTS }) {
@@ -431,15 +443,16 @@ export async function main(argv, say, files = { document: DOCUMENT, outputs: OUT
     say("usage: generate-types.mjs [--check]");
     return 2;
   }
+  const text = readFileSync(files.document, "utf8");
   /** @type {unknown} */
-  const document = JSON.parse(readFileSync(files.document, "utf8"));
+  const document = JSON.parse(text);
   if (!isObject(document)) {
     say("generate-types: the document is no object");
     return 2;
   }
   let made;
   try {
-    made = await generate(document);
+    made = await generate(document, text);
   } catch (error) {
     if (error instanceof GenerationError) {
       say(`generate-types: ${error.message}`);
@@ -447,10 +460,15 @@ export async function main(argv, say, files = { document: DOCUMENT, outputs: OUT
     }
     throw error;
   }
-  const stale = /** @type {const} */ (["openapi", "routes"]).filter((key) => {
+  const outputs = files.outputs;
+  const stale = /** @type {const} */ (["openapi", "routes", "shapes"]).filter((key) => {
+    const target = outputs[key];
+    if (target === undefined) {
+      return false;
+    }
     let current = null;
     try {
-      current = readFileSync(files.outputs[key], "utf8");
+      current = readFileSync(target, "utf8");
     } catch {
       // missing: stale
     }
@@ -458,13 +476,13 @@ export async function main(argv, say, files = { document: DOCUMENT, outputs: OUT
   });
   if (check) {
     for (const key of stale) {
-      say(`generate-types: ${path.relative(WEB, files.outputs[key])} is stale: run npm run generate`);
+      say(`generate-types: ${path.relative(WEB, outputs[key] ?? "")} is stale: run npm run generate`);
     }
     return stale.length === 0 ? 0 : 1;
   }
   for (const key of stale) {
-    writeFileSync(files.outputs[key], made[key]);
-    say(`generate-types: wrote ${path.relative(WEB, files.outputs[key])}`);
+    writeFileSync(outputs[key] ?? "", made[key]);
+    say(`generate-types: wrote ${path.relative(WEB, outputs[key] ?? "")}`);
   }
   return 0;
 }

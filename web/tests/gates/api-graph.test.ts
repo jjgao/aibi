@@ -33,7 +33,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { isTooling } from "../../scripts/tooling.mjs";
 import { appOptions, check, WEB } from "./program";
 import { surface } from "./surface";
-import { takes, type Takes } from "./takers";
+import { gives, takes, takesText, type Takes } from "./takers";
 
 const SRC = path.join(WEB, "src");
 const API = path.join(SRC, "api");
@@ -221,6 +221,11 @@ describe("the internals are named where they belong alone", () => {
     ["decode.ts", "revive", ["src/api/decode.ts"]],
     ["decode.ts", "decodedCount", ["src/api/decode.ts", "src/api/oracle.ts", "src/harness/Harness.tsx"]],
     ["client.ts", "send", ["src/api/client.ts", "src/api/curator.ts"]],
+    ["client.ts", "exchange", ["src/api/client.ts", "src/api/oracle.ts", "src/api/typed.ts"]],
+    ["box.ts", "boxText", ["src/api/box.ts", "src/api/typed.ts"]],
+    ["box.ts", "boxMap", ["src/api/box.ts", "src/api/typed.ts"]],
+    ["box.ts", "readText", ["src/api/box.ts", "src/api/text.ts"]],
+    ["typed.ts", "walkComponent", ["src/api/typed.ts"]],
     ["curator.ts", "createCurator", ["src/api/curator.ts", "src/api/operator.ts"]],
     ["operator.ts", "operator", ["src/api/operator.ts", "src/harness/Harness.tsx", "src/operator/Shell.tsx"]],
   ])("%s's %s", (file, name, expected) => {
@@ -237,25 +242,54 @@ describe("the internals are named where they belong alone", () => {
 
 /** The exports of `src/api/index.ts`, reviewed: a new one fails here until it is added. */
 const EXPORTS = [
-  "Answer",
+  "Answered",
+  "Boxed",
+  "BoxedJson",
+  "BoxedMap",
+  "BoxedRefusals",
+  "BoxedSegment",
+  "Choice",
   "ClientError",
+  "DatasetId",
   "DecodeError",
+  "GrammarName",
+  "InvalidCause",
   "JsonIn",
   "JsonInNull",
-  "JsonOut",
+  "Kind",
+  "Member",
   "OperationId",
+  "Outcome",
   "REFUSALS",
   "RESPONSE_CAP_BYTES",
   "RequestBody",
   "Route",
+  "SHAPE_MISMATCH",
   "ServerNumber",
+  "ServerText",
+  "TypedOperation",
+  "UNREACHABLE",
+  "VocabularyName",
+  "choiceOf",
+  "compareText",
   "components",
-  "exchange",
+  "countCohort",
+  "describeDataset",
+  "entriesOf",
+  "explain",
+  "idOf",
   "isServerNumber",
+  "kindOf",
+  "listAnalyses",
+  "memberOf",
   "operations",
   "paths",
   "routes",
+  "runAnalysis",
+  "sameText",
+  "searchCatalog",
   "start",
+  "validateDocument",
 ];
 
 describe("src/api/index.ts", () => {
@@ -286,6 +320,11 @@ describe("src/api/index.ts", () => {
       declared("provenance.ts", "idAt"),
       declared("route.ts", "urlOf"),
       declared("route.ts", "datasetOf"),
+      declared("client.ts", "exchange"),
+      declared("box.ts", "boxText"),
+      declared("box.ts", "boxMap"),
+      declared("box.ts", "readText"),
+      declared("typed.ts", "walkComponent"),
     ];
     for (const symbol of found) {
       const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
@@ -354,7 +393,8 @@ describe("src/api/index.ts", () => {
     }
     const { takers, functions, guards, generics } = exportTakers(program, checker, root);
     expect(takers).toEqual([]);
-    expect(generics).toEqual(["exchange"]);
+    // `BoxedMap` is exported as a type alone; its class's (private) constructor is generic.
+    expect(generics.sort()).toEqual(["BoxedMap", "entriesOf", "kindOf", "memberOf"]);
     expect(guards).toBe(Object.keys(GUARDS).length);
     expect(functions).toBeGreaterThan(30);
   });
@@ -400,5 +440,95 @@ describe("src/api/index.ts", () => {
     const [signature] = checker.getTypeOfSymbol(exported("box.ts", "textOf")).getCallSignatures();
     const [parameter] = signature?.getParameters() ?? [];
     expect(parameter !== undefined && taker(checker.getTypeOfSymbol(parameter))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+/** The modules a module outside `src/api/` may import (the app's import rules: the index; the
+ * operator entry's `operator.ts`; the harness's `oracle.ts` and `operator.ts`). */
+const DOORS = ["src/api/index.ts", "src/api/operator.ts", "src/api/oracle.ts"];
+
+/** Each value an exported module gives, by its name (a namespace's members by theirs). */
+function values(prog: ts.Program, chk: ts.TypeChecker, file: string): { name: string; type: ts.Type; symbol: ts.Symbol }[] {
+  const source = prog.getSourceFile(path.join(WEB, file));
+  const root = source === undefined ? undefined : chk.getSymbolAtLocation(source);
+  if (root === undefined) {
+    throw new Error(`no ${file}`);
+  }
+  const found: { name: string; type: ts.Type; symbol: ts.Symbol }[] = [];
+  const inspect = (symbol: ts.Symbol, name: string): void => {
+    // An export of a type alone (`export type { BoxedMap }`) is no value at run time.
+    if ((symbol.declarations ?? []).some((declaration) => ts.isTypeOnlyExportDeclaration(declaration) || ts.isTypeOnlyImportDeclaration(declaration))) {
+      return;
+    }
+    const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? chk.getAliasedSymbol(symbol) : symbol;
+    if ((target.flags & ts.SymbolFlags.Module) !== 0) {
+      chk.getExportsOfModule(target).forEach((member) => {
+        inspect(member, `${name}.${member.name}`);
+      });
+      return;
+    }
+    if ((target.flags & ts.SymbolFlags.Value) !== 0) {
+      found.push({ name, type: chk.getTypeOfSymbol(target), symbol: target });
+    }
+  };
+  chk.getExportsOfModule(root).forEach((symbol) => {
+    inspect(symbol, symbol.name);
+  });
+  return found;
+}
+
+/**
+ * The index's takers of a server text (D426): each function a `ServerText` or a `BoxedMap` can be
+ * handed to, pinned by its exact signature with its reason; any other is a failure (a function that
+ * takes two boxes, or one, and gives anything is reviewed here first).
+ */
+const TEXT_PINS: Readonly<Record<string, readonly [string, string]>> = {
+  isServerNumber: ["(value: unknown): value is ServerNumber", "the number box's brand check: a boolean"],
+  kindOf: ["<K extends VocabularyName>(text: ServerText, vocabulary: K): Kind<K>", "a generated vocabulary's own member (a literal of the code), or null; Severity fail-closed"],
+  idOf: ["(text: ServerText): DatasetId | null", "a DatasetId, whose generated grammar bounds its characters"],
+  choiceOf: ['(text: ServerText, grammar: "dataset" | "table" | "column" | "analysis"): Choice | null', "an opaque Choice holding the box"],
+  sameText: ["(a: ServerText, b: ServerText): boolean", "the sanctioned equality: a boolean"],
+  compareText: ["(a: ServerText, b: ServerText): number", "the sanctioned order: a number (an ordering oracle for deliberate code, D426's residual)"],
+  entriesOf: ["<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[]", "a map's entries, keys boxed"],
+  memberOf: ["<V>(map: BoxedMap<V>, name: string): Member<V>", "a member's value by the page's own word, or found: false"],
+};
+
+/**
+ * What the exports of the doors may give that is a raw string or a door (`takers.ts`' `gives`), each
+ * path pinned with its reason; any other path fails the gate (m1, m2 of the typed answers' round 4).
+ */
+const OUTPUT_PINS: Readonly<Record<string, string>> = {
+  "index.ts:ClientError(): Error": "the client's own refusal: its message is REFUSALS' fixed words, its name a constant",
+  "index.ts:DecodeError(): Error": "the decoder's refusal: its message is UNDECODABLE's fixed words",
+  "index.ts:idOf(): DatasetId": "a dataset id, a string whose generated grammar bounds its characters (the brand proves form, not provenance)",
+  ...Object.fromEntries(
+    ["acceptProposal", "change", "dataset", "datasets", "discard", "open", "publish", "queue", "queueAt", "rejectProposal", "takeOver", "withdraw"].flatMap((member) => [
+      [`operator.ts:operator.${member}()<0>.body: string`, "the operator side stays raw (D426): no operator screen renders a body until the curation screens' plan reads it through the seam"],
+      [`operator.ts:operator.${member}()<0>.codes<0>: string`, "the operator side stays raw (D426): a refusal's codes, read by the shell against its fixed vocabulary, rendered by no screen"],
+    ]),
+  ),
+  "operator.ts:operator.unlock()<0>.codes<0>: string": "the operator side stays raw (D426): an unlock's refusal codes, read against the shell's fixed vocabulary",
+};
+
+describe("D426: the typed answers' doors", () => {
+  it("the index's takers of a server text are exactly the pinned ones, each by its exact signature", () => {
+    const takesBox = takesText(program, checker);
+    const found: string[] = [];
+    for (const { name, type } of values(program, checker, "src/api/index.ts")) {
+      for (const signature of [...type.getCallSignatures(), ...type.getConstructSignatures()]) {
+        if (signature.getParameters().some((parameter) => takesBox(checker.getTypeOfSymbol(parameter)))) {
+          found.push(`${name} ${checker.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call)}`);
+        }
+      }
+    }
+    expect(found.sort()).toEqual(Object.entries(TEXT_PINS).map(([name, [signature]]) => `${name} ${signature}`).sort());
+  });
+
+  it("no export of a module app code may import gives a raw string or a door, but the pinned ones", () => {
+    const giving = gives(program, checker);
+    const found = new Set(DOORS.flatMap((file) => values(program, checker, file).flatMap(({ name, type }) => giving(type, `${file.replace("src/api/", "")}:${name}`))));
+    expect([...found].sort()).toEqual(Object.keys(OUTPUT_PINS).sort());
   });
 });
