@@ -82,6 +82,8 @@ export async function gated(
   plugins: Plugin[] = [],
   /** Documents the build starts from beyond the two (project-relative names). */
   more: readonly string[] = [],
+  /** The modules the display table names (the gate's (f)); null: the table's check is not made. */
+  display: ReadonlySet<string> | null = null,
 ): Promise<{ chunks: GateChunk[] } | { error: string }> {
   try {
     const output = await build({
@@ -89,7 +91,7 @@ export async function gated(
       configFile: false,
       logLevel: "silent",
       publicDir: false,
-      plugins: [...plugins, operatorGate({ harness })],
+      plugins: [...plugins, operatorGate({ harness, display })],
       build: {
         write: false,
         assetsInlineLimit: 0,
@@ -111,8 +113,14 @@ export async function gated(
   }
 }
 
-export async function refused(root: string, harness = false, plugins: Plugin[] = [], more: readonly string[] = []): Promise<string> {
-  const found = await gated(root, harness, plugins, more);
+export async function refused(
+  root: string,
+  harness = false,
+  plugins: Plugin[] = [],
+  more: readonly string[] = [],
+  display: ReadonlySet<string> | null = null,
+): Promise<string> {
+  const found = await gated(root, harness, plugins, more, display);
   if (!("error" in found)) {
     throw new Error("the build passed the gate");
   }

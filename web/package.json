@@ -8,8 +8,8 @@
   },
   "scripts": {
     "licenses": "node scripts/check-licenses.mjs package-lock.json",
-    "generate": "node scripts/generate-types.mjs",
-    "generate:check": "node scripts/generate-types.mjs --check",
+    "generate": "node scripts/generate-types.mjs && node scripts/display-table.mjs",
+    "generate:check": "node scripts/generate-types.mjs --check && node scripts/display-table.mjs --check",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint --max-warnings 0 .",
     "test": "vitest run",

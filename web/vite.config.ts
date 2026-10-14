@@ -11,7 +11,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig, type UserConfig } from "vite";
 
-import { noWorker, operatorGate } from "./plugins/gate.ts";
+import { displayModules, noWorker, operatorGate } from "./plugins/gate.ts";
+import { readTable } from "./scripts/display-table.mjs";
 import {
   ASSET_FILE_NAMES,
   CHUNK_FILE_NAMES,
@@ -30,7 +31,9 @@ export function buildConfig(mode: string): UserConfig {
     base: "/",
     publicDir: false,
     define: { __AIBI_E2E__: JSON.stringify(e2e) },
-    plugins: [react(), operatorGate({ harness: e2e })],
+    // The gate also holds every module of either bundle under src/ (outside src/api/) to the display
+    // table's names (D427), read through the table's one reader.
+    plugins: [react(), operatorGate({ harness: e2e, display: displayModules(readTable()) })],
     // Vite builds each worker in a build of its own, which `plugins` never sees: the gate refuses
     // any worker there (D418).
     worker: { plugins: () => [noWorker()] },
