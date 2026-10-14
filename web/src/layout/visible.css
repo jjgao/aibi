@@ -1,0 +1,25 @@
+/* The visible form's styling (D312, D428), a stylesheet the build emits (D411: no inline style).
+ * A text from data keeps its tabs and line feeds (`pre-wrap`: `a\nb` and `a b`, ` x` and `x`, look
+ * apart); an escaped run is boxed apart from the data, left to right whatever the data's direction
+ * (so a backslash never shows after its hex in a right-to-left text); a data token is marked as
+ * data; a cut is marked. */
+.data {
+  white-space: pre-wrap;
+}
+
+.escape {
+  unicode-bidi: isolate;
+  direction: ltr;
+  border: 1px dotted currentColor;
+  border-radius: 3px;
+  padding: 0 0.15em;
+  font-size: 0.85em;
+}
+
+.token {
+  border-bottom: 1px dashed currentColor;
+}
+
+.cut {
+  color: GrayText;
+}

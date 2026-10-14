@@ -507,6 +507,44 @@ def hits_of(description: str | None = None) -> CatalogHits:
     return validated(CatalogHits, json.dumps(body))
 
 
+def test_a_text_is_cut_before_its_carriage_returns_are_folded_and_the_cut_text_escaped() -> None:
+    """D312's order, which ``visible-form.json`` records (cut, fold, escape) and the web holds: a
+    carriage return that the cut separates from its line feed is no longer "before a line feed", so
+    it is escaped (one run, one span) at the end of the cut text, before the cut's mark. Folding
+    first would drop it and keep the line feed, and the page would show another text (round 1 of
+    #117)."""
+    cut = page.VALUE_CHARACTERS
+    for after in ("\n", "\nrest"):
+        shown = page.catalogue_page("", hits_of("x" * (cut - 1) + "\r" + after), 0).decode("utf-8")
+        assert (
+            '<bdi class="data">' + "x" * (cut - 1) + '<span class="escape">\\x0d</span></bdi>'
+            '<span class="cut" title="cut">…</span>'
+        ) in shown, repr(after)
+    # One character earlier the pair is whole, so it is folded to a line feed, and the cut is
+    # marked after it.
+    whole = "x" * (cut - 2) + "\r\n" + "rest"
+    folded = page.catalogue_page("", hits_of(whole), 0).decode("utf-8")
+    assert '<bdi class="data">' + "x" * (cut - 2) + "\n</bdi>" in folded
+    assert '<span class="escape">' not in folded.split("x" * (cut - 2), 1)[1].split("</bdi>", 1)[0]
+    # A pair that ends exactly at the cut is folded, and the text is not cut.
+    exact = page.catalogue_page("", hits_of("x" * (cut - 2) + "\r\n"), 0).decode("utf-8")
+    assert '<bdi class="data">' + "x" * (cut - 2) + "\n</bdi>" in exact
+    assert '<span class="cut"' not in exact
+    # The same vectors as the web's `visible.test.tsx` (the two sides agree by parallel examples,
+    # D428): a pair at the cut is kept whole (the cut counts code points), and the cut comes
+    # before the escape, so 2,000 overrides are kept, each escaped, and the rest is dropped.
+    pair = page.catalogue_page("", hits_of("x" * (cut - 1) + "\U0001f600z"), 0).decode("utf-8")
+    assert (
+        '<bdi class="data">'
+        + "x" * (cut - 1)
+        + '\U0001f600</bdi><span class="cut" title="cut">…</span>'
+    ) in pair
+    overrides = page.catalogue_page("", hits_of("\u202e" * (cut + 500)), 0).decode("utf-8")
+    assert ('<span class="escape">' + "\\u202e" * cut + "</span>") in overrides
+    assert overrides.count('<span class="escape">') == 1
+    assert overrides.count('<span class="cut"') == 1
+
+
 def test_the_catalogue_says_when_nothing_is_published_and_cuts_long_texts_and_lists() -> None:
     empty = parsed(page.catalogue_page("", hits_of(), 0))
     assert "No dataset has a published release yet." in empty.text

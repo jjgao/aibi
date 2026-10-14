@@ -2,10 +2,11 @@
 
 ``Markup`` is HTML this module wrote; every ``str`` handed to ``element`` beside it is text,
 escaped where it is written, so no text reaches the page as markup whatever it holds. A text's
-*unsafe* characters are its control characters (C0 but tab and line feed, DEL and C1), its
-format characters (Unicode's category ``Cf``, the bidi formatting among them, but the zero-width
-non-joiner and joiner that scripts and emoji need), lone surrogates (``Cs``, which UTF-8 cannot
-carry) and the line and paragraph separators; each is written as a visible ``\\xNN``,
+*unsafe* characters (``aibi.core.schema.visible``, whose classes the web bundle shares through
+``schemas/visible-form.json``, D428) are its control characters (C0 but tab and line feed, DEL
+and C1), its format characters (Unicode's category ``Cf``, the bidi formatting among them, but
+the zero-width non-joiner and joiner that scripts and emoji need), lone surrogates (``Cs``, which
+UTF-8 cannot carry) and the line and paragraph separators; each is written as a visible ``\\xNN``,
 ``\\uNNNN`` or ``\\UNNNNNNNN``, as the operator CLI writes control and bidi characters
 (``operator.cli.escaped``), and a carriage return before a line feed is dropped. ``escaped``
 gives a text as an attribute's value; in an element's text each run of consecutive unsafe
@@ -23,13 +24,13 @@ with an optional trailing ``/`` and a query of those characters, ``=`` and ``&``
 
 import html
 import re
-import unicodedata
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from typing import LiteralString
 
 from aibi.core.schema.output import DataSegment, Segment, TextSegment
+from aibi.core.schema.visible import escape, unsafe
 
 ELEMENTS = frozenset(
     {
@@ -69,7 +70,6 @@ ELEMENTS = frozenset(
 ATTRIBUTES = frozenset({"charset", "class", "content", "href", "id", "lang", "name", "title"})
 """The attributes an element may have."""
 _VOID = frozenset({"meta", "br"})
-_KEPT = frozenset({"\t", "\n", chr(0x200C), chr(0x200D)})
 _ASCII_UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f]")
 _SEGMENT = r"(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+"
 _QUERY = r"(?:[A-Za-z0-9._~=&-]|%[0-9A-Fa-f]{2})*"
@@ -87,28 +87,12 @@ Child = Markup | str
 """What an element holds: markup, or text to escape."""
 
 
-@cache
-def _unsafe(character: str) -> bool:
-    if character in _KEPT:
-        return False
-    point = ord(character)
-    return (
-        point < 0x20
-        or 0x7F <= point <= 0x9F
-        or point in (0x2028, 0x2029)
-        or unicodedata.category(character) in ("Cf", "Cs")
-    )
-
-
-def _escape(character: str) -> str:
-    point = ord(character)
-    if point < 0x100:
-        return f"\\x{point:02x}"
-    return f"\\u{point:04x}" if point < 0x10000 else f"\\U{point:08x}"
+_unsafe = cache(unsafe)
+"""``visible.unsafe``, cached per character (the page's texts repeat their characters)."""
 
 
 def _visible(run: str) -> str:
-    return "".join(_escape(character) for character in run)
+    return "".join(escape(character) for character in run)
 
 
 def _runs(text: str) -> Iterator[tuple[bool, str]]:
