@@ -165,7 +165,7 @@ jobs:
         run: npm run licenses
       - name: Advisories in the runtime closure
         run: npm audit --omit=dev --audit-level=high
-      - name: The generated API types are those of schemas/openapi.json
+      - name: The generated API types are those of schemas/openapi.json, and SPEC's Appendix C is the display table's (D427)
         run: npm run generate:check
       - name: Type check
         run: npm run typecheck

@@ -62,6 +62,29 @@
  *     installs listeners and which holds the curator token), its factory (`src/api/curator.ts`)
  *     and the operator entry's modules (`src/operator/`).
  *
+ * (f) **Which modules ship (D427).** Every module in the closure of a document that is under
+ *     `src/` outside `src/api/` (the seam, which (d) holds to `API_MODULES`) and is code is named by
+ *     the display table (`src/display/rows.ts`, read by `vite.config.ts` through the table's one
+ *     reader, `scripts/display-table.mjs`): a row's `module`, an exemption or a helper, or the
+ *     build fails with the list of the modules that are not. The bundler's graph is the one
+ *     resolver: an `imports` condition (`package.json`), an exact key after a pattern, a package
+ *     subpath that climbs back into `src/` (`scheduler/../../src/x.tsx`), an alias, a glob or a
+ *     re-export are all resolved before the gate sees them, so no form of import that reaches the
+ *     bundle passes unnamed. `gate.test.ts` builds a project through the first three and a plain
+ *     import; a glob, a re-export and a plugin's `resolveId` redirect were built by hand on the real
+ *     tree (round 3 of the code review) and failed it, and an alias was not built: none of those is
+ *     a test. Each build (production and end-to-end) is its own graph; the harness is a helper of
+ *     the table, and (a) keeps it out of production. What the check does not say:
+ *     that a named module shows no data (the exemptions and helpers are reviewed, not checked), and
+ *     that a row's module is reached. Closed here, not by the display gate: a worker, a raw
+ *     `new URL(...)` asset, a third document (`ROOT_ASSETS`) and an extension off `SRC_EXTENSIONS`
+ *     (`.cts` among them) fail the build by (c) and (d). A symlink is resolved by Vite to its target,
+ *     which (f) checks like any module (a link to a named module passes, as the named module).
+ *     Not closed: what a plugin's `load` or `transform` of a named module, or a `define`, of
+ *     `vite.config.ts` could add (a reviewed edit of that file), and a classic `<script src>` in a
+ *     document that names a module under `src/`, which passes (f) and check-bundle but ships
+ *     nothing (Vite leaves the tag unbundled and the loader refuses the file).
+ *
  * The plugin can only fail the build: a report it wrote into `dist/` would be refused by the
  * loader, which admits nothing at a bundle's root but its own files.
  */
@@ -71,6 +94,7 @@ import path from "node:path";
 import type { Plugin } from "vite";
 
 import { EXTENSIONS } from "../scripts/check-bundle.mjs";
+import type { Table } from "../scripts/display-table.mjs";
 import { SRC_EXTENSIONS, srcKind } from "../scripts/tooling.mjs";
 
 export const OPERATOR_ENTRY = "operator.html";
@@ -115,6 +139,10 @@ export interface GateChunk {
 export interface GateOptions {
   /** Whether the build may hold the harness: true for the end-to-end build alone. */
   readonly harness: boolean;
+  /** The modules the display table names (`displayModules`), for (f); `null` or absent: the table's
+   * check is not made (a synthetic project's tests that are about another rule; `vite.config.ts`
+   * always gives the table's, and a test holds that). */
+  readonly display?: ReadonlySet<string> | null;
 }
 
 /** The packages a path is in: one for each `node_modules` segment of it, scopes included,
@@ -438,7 +466,34 @@ function importerProblem(root: string, file: string, entry: ApiModule, importer:
   return `the importer ${JSON.stringify(importer)} is not one of ${file}'s (${[...entry.importers.keys(), ...(entry.outside === undefined ? [] : ["the modules of src/ outside src/api/"])].join(", ")})`;
 }
 
-/** Every problem of the module graph (module docstring, (d)). `built` are the documents the build
+/** The modules the display table names, relative to the project: every row's module, every
+ * exemption and every helper. */
+export function displayModules(table: Pick<Table, "rows" | "exempt" | "helpers">): ReadonlySet<string> {
+  return new Set([...table.rows.map((row) => row.module), ...table.exempt.map((entry) => entry.module), ...table.helpers.map((entry) => entry.module)].filter((module) => module !== ""));
+}
+
+/** The modules of the closures of `documents` under `src/` outside `src/api/` (code) that the
+ * display table does not name (module docstring, (f)), as one problem listing them, or none. */
+export function displayProblems(root: string, graph: GateGraph, documents: readonly string[], named: ReadonlySet<string>): string[] {
+  const unnamed = new Set<string>();
+  for (const document of documents) {
+    const entry = path.join(root, document);
+    if (!graph.has(entry)) {
+      continue;
+    }
+    for (const id of reached(graph, entry)) {
+      const relative = id.startsWith("\0") ? null : placeOf(root, id).relative;
+      if (relative !== null && inside(relative, "src") && !inside(relative, "src/api") && srcKind(relative, ["code"]) && !named.has(relative)) {
+        unnamed.add(relative);
+      }
+    }
+  }
+  return unnamed.size === 0
+    ? []
+    : [`modules of the bundle under src/ outside src/api/ that are no row's module and no exemption or helper of the display table (D427: a module that shows data is a row's module, named in src/display/rows.ts by the pull request that adds it; an exemption or a helper is reviewed, not checked): ${[...unnamed].sort().join(", ")}`];
+}
+
+/** Every problem of the module graph (module docstring, (d), (f)). `built` are the documents the build
  * starts from beyond `ENTRIES` (relative to the project), each walked as well; `real` gives a
  * file's real path (the plugin passes `realpathSync.native`), which every module under `src/`
  * must be spelled as: a symlink or a different case on a case-insensitive file system places a
@@ -448,6 +503,7 @@ export function graphProblems(
   graph: GateGraph,
   built: readonly string[] = [],
   real: (file: string) => string = (file) => file,
+  display: ReadonlySet<string> | null = null,
 ): string[] {
   const problems: string[] = [];
   const documents = [...new Set([...ENTRIES, ...built])];
@@ -497,6 +553,9 @@ export function graphProblems(
         }
       }
     }
+  }
+  if (display !== null) {
+    problems.push(...displayProblems(root, graph, documents, display));
   }
   return [...new Set(problems)];
 }
@@ -629,7 +688,7 @@ export function operatorGate(options: GateOptions): Plugin<GateOptions> {
       }
       const problems = [
         ...gateProblems(root, chunks, options),
-        ...graphProblems(root, graph, built, (file) => realpathSync.native(file)),
+        ...graphProblems(root, graph, built, (file) => realpathSync.native(file), options.display ?? null),
         ...strays.map((name) => `the build has an entry that is no document: ${JSON.stringify(name)}`),
         ...assetProblems(assets),
       ];
