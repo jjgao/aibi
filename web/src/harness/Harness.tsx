@@ -4,8 +4,9 @@
  * marker).
  *
  * - The run-time oracle's flow (D419): its button sends requests through the client to `/api` and
- *   `/operator`, answers and refusals, and then writes how many bodies the decoder was given to
- *   its `data-oracle`; the matrix compares that with the responses the page received.
+ *   `/operator`, answers and refusals (`oracle.ts`'s `exercise`: the public tools through the typed
+ *   answers' seam, D426), and then writes how many bodies the decoder was given to its
+ *   `data-oracle`; the matrix compares that with the responses the page received.
  * - The operator's flows (D423): a button for each operation of the page's operator client (the
  *   one the shell unlocks), over the dataset, manifest and descriptor its fields hold; the request
  *   half's four (D425) read the node they send back from through the client first, and pass it
@@ -20,20 +21,14 @@
  */
 import { useRef, useState } from "react";
 
-import { exchange, isServerNumber, type JsonOut, routes } from "../api";
-import { decodedCount } from "../api/oracle";
+import { isServerNumber } from "../api";
+import { decodedCount, exercise } from "../api/oracle";
 import { operator, type Outcome } from "../api/operator";
 
 export const HARNESS_MARKER = "aibi-e2e-harness-1b6f0c";
 
-async function oracle(): Promise<number> {
-  await exchange(routes.health());
-  await exchange(routes.search_catalog(), { limit: 5 });
-  await exchange(routes.list_analyses(), {});
-  await exchange(routes.describe_dataset(), { dataset: "no_such_dataset" });
-  await exchange(routes.datasets());
-  return decodedCount();
-}
+/** A decoded node of the operator client's raw answers (the operator side stays raw, D426). */
+type JsonOut = Extract<Outcome, { readonly kind: "answer" }>["body"];
 
 /** A member of a decoded record, `null` for anything else (read by its entries: the harness asserts
  * no type). */
@@ -109,7 +104,7 @@ export default function Harness() {
         aria-label="oracle"
         data-oracle={count ?? ""}
         onClick={() => {
-          void oracle().then(setCount);
+          void exercise().then(setCount);
         }}
       />
       <input ref={dataset} aria-label="dataset" type="text" autoComplete="off" />

@@ -249,6 +249,8 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
         ["src/api/index.ts", "re-exports isServerNumber, the brand check, which gives nothing of a number"],
         ["src/api/curator.ts", "the operator's client reads answers and asks isServerNumber whether a value is a box, which gives nothing of a number"],
         ["src/api/provenance.ts", "the recorder asks isServerNumber whether a node is a box, and idAt, the one function that reads a box's text (textOf), reads a request id's (D425)"],
+        ["src/api/typed.ts", "the walk of an answer boxes each string (boxText) and each map of data keys (boxMap), and asks isServerNumber whether a value is a number's box (D426)"],
+        ["src/api/text.ts", "the takers of a server text read it (readText) and a map's entries (entriesOf), giving a member, an id, a choice, a boolean or an order (D426)"],
       ]),
     },
   ],
@@ -266,8 +268,10 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
     "src/api/client.ts",
     {
       importers: new Map([
-        ["src/api/index.ts", "re-exports exchange, start, REFUSALS and the cap: the one place of I/O"],
+        ["src/api/index.ts", "re-exports start, REFUSALS, the cap and the client's errors"],
         ["src/api/curator.ts", "the operator's client sends through send, the one function that sets the operator's credentials (D423)"],
+        ["src/api/typed.ts", "the typed answers send through exchange and walk its raw answer: the seam (D426)"],
+        ["src/api/oracle.ts", "the harness's oracle sends the health check and the operator's datasets through exchange (D419)"],
       ]),
     },
   ],
@@ -290,6 +294,8 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/index.ts", "re-exports the generated functions as routes"],
         ["src/api/curator.ts", "the operator's client makes the routes of its operations"],
+        ["src/api/typed.ts", "each typed function makes its operation's route (D426)"],
+        ["src/api/oracle.ts", "the harness's oracle makes the health check's route and the operator's datasets'"],
       ]),
     },
   ],
@@ -324,6 +330,28 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/operator/Shell.tsx", "the token's shell unlocks, shows and forgets the page's operator client (D423)"],
         ["src/harness/Harness.tsx", "the end-to-end harness drives the page's operator client for the matrix"],
+      ]),
+    },
+  ],
+  [
+    "src/api/typed.ts",
+    {
+      importers: new Map([
+        ["src/api/index.ts", "re-exports the typed functions, their outcome and the boxed types: the seam (D426)"],
+        ["src/api/oracle.ts", "the harness's oracle reads three public tools through the seam (D426)"],
+      ]),
+    },
+  ],
+  [
+    "src/api/text.ts",
+    { importers: new Map([["src/api/index.ts", "re-exports the takers of a server text, each pinned by its signature (D426)"]]) },
+  ],
+  [
+    "src/api/generated/shapes.ts",
+    {
+      importers: new Map([
+        ["src/api/typed.ts", "the walk reads the table generated from the document (D426)"],
+        ["src/api/text.ts", "the takers read the generated vocabularies and grammars (D426)"],
       ]),
     },
   ],

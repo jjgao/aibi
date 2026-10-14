@@ -1,0 +1,81 @@
+{
+  "annotations": [
+    "default",
+    "description",
+    "title",
+    "x-aibi-computed",
+    "x-aibi-data",
+    "x-aibi-server-number"
+  ],
+  "consumes": {
+    "allOf": [
+      "allOf"
+    ],
+    "alternatives": [
+      "anyOf",
+      "oneOf",
+      "type"
+    ],
+    "any": [],
+    "boolean": [
+      "type"
+    ],
+    "const": [
+      "const",
+      "type"
+    ],
+    "enum": [
+      "enum",
+      "type"
+    ],
+    "failClosed": [
+      "enum",
+      "type"
+    ],
+    "json": [
+      "anyOf",
+      "x-aibi-json"
+    ],
+    "list": [
+      "items",
+      "prefixItems",
+      "type"
+    ],
+    "map": [
+      "additionalProperties",
+      "patternProperties",
+      "propertyNames",
+      "required",
+      "type"
+    ],
+    "null": [
+      "type"
+    ],
+    "number": [
+      "type"
+    ],
+    "record": [
+      "additionalProperties",
+      "properties",
+      "required",
+      "type"
+    ],
+    "ref": [
+      "$ref"
+    ],
+    "segments": [
+      "anyOf",
+      "oneOf"
+    ],
+    "string": [
+      "type"
+    ],
+    "typeList": [
+      "type"
+    ]
+  },
+  "delegating": [
+    "allOf",
+    "typeList"
+  ]
+}

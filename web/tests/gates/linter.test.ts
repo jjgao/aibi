@@ -23,7 +23,7 @@ const OPTIONS: ESLint.Options = {
 
 const INDEX = path.join(WEB, "src/api/index.ts");
 const PROBE = path.join(WEB, "src/probe.tsx");
-const DEPENDS = "import { exchange, routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst ids: Id[] = [];\nexport const f = (): unknown[] => ids.map((proposal) => exchange(routes.reject({ dataset: 'd', proposal }), {}));\n";
+const DEPENDS = "import { routes, searchCatalog } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst ids: Id[] = [];\nexport const f = (): unknown[] => ids.map((proposal) => [routes.reject({ dataset: 'd', proposal }), searchCatalog({ limit: 5 })]);\n";
 
 const rules = async (linter: ESLint, code: string, file: string): Promise<string[]> => ((await linter.lintText(code, { filePath: file }))[0]?.messages ?? []).map((message) => message.ruleId ?? "fatal");
 

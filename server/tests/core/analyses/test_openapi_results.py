@@ -16,23 +16,42 @@ two synthetic ones, as their JSON goes over the wire:
   ``x-aibi-server-number`` or in a response's ``x-aibi-json`` value (the web client's rule for
   numbers it may not compute with, M5.1c-1);
 - **the web client's fixture**: ``web/tests/fixtures/envelopes.json``, which the web package's
-  gate compiles as ``ResultEnvelope`` literals against the generated types (D419), is what
-  ``scripts/export_envelopes.py`` writes from these envelopes now.
+  gate compiles as ``ResultEnvelope`` literals against the generated types (D419) and walks with
+  the typed answers' seam (D426), is what ``scripts/export_envelopes.py`` writes from these
+  envelopes now (``AIBI_WRITE_WEB_FIXTURES=1`` writes it from this test too);
+- **the orchard's answers**: ``web/tests/fixtures/orchard-answers.json``, a second writer here,
+  holds the server's own answers, as the text it writes, for the seven public tools the web calls
+  (D426's seam) over the orchard (``tests/core/catalog/world.py``'s CSV files, imported by the
+  core's file importer, uncurated): each answer and two refusals, which the web package's tests
+  decode, walk, hold to their ``Boxed`` types and scan for a raw string. The state is made with a
+  clock and issuance ids that are the same on every run; a change to what the server answers fails
+  here until the file is written again (from ``server/``:
+  ``AIBI_WRITE_WEB_FIXTURES=1 uv run pytest tests/core/analyses/test_openapi_results.py``).
 """
 
 import copy
 import importlib.util
 import json
+import os
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import jsonschema
 import pytest
+from tests.core.catalog.world import World, orchard_files
 
+from aibi.core.api.errors import refused
+from aibi.core.catalog.service import Catalog
+from aibi.core.catalog.tools import BY_NAME
+from aibi.core.engine.worker import Workers
 from aibi.core.schema.export import result_schema
+from aibi.core.schema.limits import QueryLimits
+from aibi.core.store import derivations
+from aibi.core.store.store import Store
 
 GOLDEN = Path(__file__).parent / "golden" / "results.json"
 EXPORT = Path(__file__).resolve().parents[3] / "scripts" / "export_envelopes.py"
@@ -140,11 +159,170 @@ def test_the_web_client_s_fixture_is_the_golden_envelopes(
     envelopes: dict[str, dict[str, Any]],
 ) -> None:
     """A changed envelope (a member, a type, a new golden case) fails here until the fixture the
-    web client's type gate compiles is written again (``scripts/export_envelopes.py``)."""
+    web client's type gate compiles is written again (``scripts/export_envelopes.py``, or this test
+    with ``AIBI_WRITE_WEB_FIXTURES=1``)."""
     script = _export()
     assert script.GOLDEN == GOLDEN
     assert list(envelopes) == list(json.loads(GOLDEN.read_text(encoding="utf-8")))
-    assert script.TARGET.read_text(encoding="utf-8") == script.render(envelopes)
+    rendered = script.render(envelopes)
+    if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
+        script.TARGET.write_text(rendered, encoding="utf-8")
+    assert script.TARGET.read_text(encoding="utf-8") == rendered
+
+
+ORCHARD_ANSWERS = (
+    Path(__file__).resolve().parents[4] / "web" / "tests" / "fixtures" / "orchard-answers.json"
+)
+"""The orchard's answers, for the web client's typed answers (D426)."""
+
+_COHORTS = {
+    "apple": {"all": [{"kind": "value", "column": "trees.variety", "values": ["apple"]}]},
+    "all_trees": {"all": []},
+    "pear": {"all": [{"kind": "value", "column": "trees.variety", "values": ["pear"]}]},
+}
+
+
+def _document(view: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "aibi": "1",
+        "dataset": "orchard",
+        "unit": "trees",
+        "cohorts": _COHORTS,
+        "views": [view],
+    }
+
+
+_DISTRIBUTION = _document(
+    {
+        "analysis": "summary.distribution",
+        "cohorts": ["apple", "all_trees"],
+        "params": {"columns": [{"column": "trees.height_m"}, {"column": "trees.variety"}]},
+    }
+)
+_MEMBERS = _document({"analysis": "summary.members", "cohorts": ["apple"], "params": {}})
+_EXISTENCE = _document(
+    {
+        "analysis": "compare.existence",
+        "cohorts": ["apple", "pear"],
+        "params": {
+            "predicates": [
+                {
+                    "kind": "exists",
+                    "table": "harvests",
+                    "where": [{"kind": "value", "column": "harvests.kg", "range": {"gte": 15}}],
+                }
+            ]
+        },
+    }
+)
+_WRONG = _document(
+    {
+        "analysis": "summary.distribution",
+        "cohorts": ["apple"],
+        "params": {"columns": ["trees.height_m"]},
+    }
+)
+
+
+def _answer(world: World, catalog: Any, operation: str, body: Any) -> dict[str, Any]:
+    """One answer as the HTTP route writes it (``api.tools``): the output's JSON, or the
+    refusals with the first one's status and its headers (``errors.refused``)."""
+    found = world.tool(catalog, operation, body)
+    if isinstance(found, list):
+        response = refused(found)
+        headers = {name: value for name, value in response.headers.items() if name == "retry-after"}
+        text = bytes(response.body).decode("utf-8")
+        return {
+            "operation": operation,
+            "status": response.status_code,
+            "headers": headers,
+            "body": text,
+        }
+    return {"operation": operation, "status": 200, "headers": {}, "body": found.model_dump_json()}
+
+
+def _orchard_answers(world: World) -> list[dict[str, Any]]:
+    world.publish("orchard", orchard_files(rows=40, harvests=60))
+    catalog = Catalog(world.store, workers=Workers(QueryLimits()))
+    answers = [
+        _answer(world, catalog, "search_catalog", {}),
+        _answer(world, catalog, "describe_dataset", {"dataset": "orchard"}),
+        _answer(world, catalog, "list_analyses", {"dataset": "orchard"}),
+        _answer(world, catalog, "validate_document", {"document": _DISTRIBUTION}),
+        _answer(world, catalog, "validate_document", {"document": _WRONG}),
+        _answer(world, catalog, "count_cohort", {"document": {**_DISTRIBUTION, "views": []}}),
+        _answer(world, catalog, "run_analysis", {"document": _DISTRIBUTION}),
+        _answer(world, catalog, "run_analysis", {"document": _MEMBERS}),
+        _answer(world, catalog, "run_analysis", {"document": _EXISTENCE}),
+    ]
+    result = json.loads(answers[6]["body"])["results"][0]
+    answers.append(_answer(world, catalog, "explain", {"id": result["derivation"]["id"]}))
+    answers.append(_answer(world, catalog, "explain", {"id": result["issuance"]["id"]}))
+    answers.append(_answer(world, catalog, "describe_dataset", {"dataset": "no_such_dataset"}))
+    answers.append(_answer(world, catalog, "run_analysis", {"document": _WRONG}))
+    return answers
+
+
+def test_the_web_client_s_orchard_answers_are_the_server_s(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchard's answers as the server writes them, on a store whose clock ticks from a fixed
+    start and whose issuance ids are made from a fixed clock and fixed bits (``derivations``'
+    one source of ULIDs), so that the file is the same on every run."""
+    ticks = iter(range(1_767_225_600_000, 1_767_225_600_000 + 10_000))
+    monkeypatch.setattr(derivations._ULIDS, "_clock", lambda: next(ticks) * 1_000_000)
+    monkeypatch.setattr(derivations._ULIDS, "_entropy", lambda size: bytes(size))
+    monkeypatch.setattr(derivations._ULIDS, "_last", -1)
+    (tmp_path / "imports").mkdir()
+    clock = iter(range(10_000))
+    world = World(
+        tmp_path,
+        Store(
+            tmp_path / "data",
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=next(clock)),
+        ),
+    )
+    try:
+        answers = _orchard_answers(world)
+    finally:
+        world.store.close()
+    rendered = json.dumps({"answers": answers}, indent=2, ensure_ascii=False) + "\n"
+    if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
+        ORCHARD_ANSWERS.write_text(rendered, encoding="utf-8")
+    assert ORCHARD_ANSWERS.read_text(encoding="utf-8") == rendered
+
+
+def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
+    """Every typed operation answers, the first validation is valid and the second is not (a 200
+    either way), the three analyses run, and two refusals: a 404 and a 422."""
+    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
+    by = [(found["operation"], found["status"]) for found in answers]
+    assert by == [
+        ("search_catalog", 200),
+        ("describe_dataset", 200),
+        ("list_analyses", 200),
+        ("validate_document", 200),
+        ("validate_document", 200),
+        ("count_cohort", 200),
+        ("run_analysis", 200),
+        ("run_analysis", 200),
+        ("run_analysis", 200),
+        ("explain", 200),
+        ("explain", 200),
+        ("describe_dataset", 404),
+        ("run_analysis", 422),
+    ]
+    assert [json.loads(answers[n]["body"])["valid"] for n in (3, 4)] == [True, False]
+    assert {found["operation"] for found in answers} == {
+        "search_catalog",
+        "describe_dataset",
+        "list_analyses",
+        "validate_document",
+        "count_cohort",
+        "run_analysis",
+        "explain",
+    }
+    assert all(name in BY_NAME for name, _ in by)
 
 
 def test_the_web_client_s_fixture_is_rendered_one_envelope_a_line() -> None:

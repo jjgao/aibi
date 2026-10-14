@@ -11,7 +11,8 @@
  *   the manifest gives): the loader serves an unhashed name with `no-cache`, so a name the build
  *   failed to hash would pass it and lose the year's cache;
  * - the files' count and sizes are under the loader's caps, and their bytes under the checked-in
- *   budget (`budget.json`: the measured build and 15%);
+ *   budget (`budget.json`: the measured build and 15%, rounded up; re-measured at M5.1c-2a's code
+ *   review, round 1: 361,280 B prod and 368,651 B e2e, so 415,472 and 423,949);
  * - the build's own HTML holds no inline script or style (the server never serves it, but a build
  *   that writes one has code the policy would refuse);
  * - the harness's marker is absent from every script of a production build (`--mode prod`) and
