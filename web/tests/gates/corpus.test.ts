@@ -20,7 +20,7 @@ import { check, nodeAfter, type Checked, WEB } from "./program";
 const eslint = new Linter({
   cwd: WEB,
   overrideConfig: {
-    languageOptions: { parserOptions: { projectService: { allowDefaultProject: ["src/*.tsx", "src/probe.ts", "src/api/probe.ts", "src/harness/probe.ts", "scripts/probe.ts", "shared/probe.ts"], defaultProject: "tsconfig.app.json" } } },
+    languageOptions: { parserOptions: { projectService: { allowDefaultProject: ["src/*.tsx", "src/probe.ts", "src/api/probe.ts", "src/harness/probe.ts", "src/operator/probe.ts", "scripts/probe.ts", "shared/probe.ts"], defaultProject: "tsconfig.app.json" } } },
   },
 });
 
@@ -32,7 +32,8 @@ async function lintIds(code: string, file = "src/probe.tsx"): Promise<string[]> 
   return messages.map((message) => message.ruleId ?? "inline-configuration");
 }
 
-const HEAD = `import type { components, ServerNumber, JsonOut } from "./api";
+const HEAD = `import type { components, ServerNumber } from "./api";
+type JsonOut = components["schemas"]["OutputJson"];
 type S = components["schemas"];
 declare const n: ServerNumber;
 declare const m: ServerNumber;
@@ -301,6 +302,23 @@ describe("the corpus's own controls", () => {
       "@typescript-eslint/no-restricted-imports",
     );
     expect(await lintIds(code, "src/probe.ts")).toContain("@typescript-eslint/no-restricted-imports");
+  });
+
+  // Each layer's own import pattern (m9 of the typed answers' round 1): what it names beside the
+  // index, and no other module of `src/api/`. `start` is the client's and no internal: the path
+  // alone decides.
+  it.each([
+    ["the app", "src/probe.ts", "./api/", [], ["client", "oracle", "operator", "typed", "curator"]],
+    ["the operator entry", "src/operator/probe.ts", "../api/", ["operator"], ["client", "oracle", "typed", "curator"]],
+    ["the harness", "src/harness/probe.ts", "../api/", ["oracle", "operator"], ["client", "typed", "curator"]],
+  ])("%s imports the index and what it names, and no other module of src/api/", async (_layer, file, prefix, named, refused) => {
+    const importing = (module: string): string => `import { start } from '${prefix}${module}';\nexport const f = start;\n`;
+    for (const module of ["index", ...named]) {
+      expect(await lintIds(importing(module), file), `${file} imports ${module}`).not.toContain("@typescript-eslint/no-restricted-imports");
+    }
+    for (const module of refused) {
+      expect(await lintIds(importing(module), file), `${file} imports ${module}`).toContain("@typescript-eslint/no-restricted-imports");
+    }
   });
 
   it("lets src/api/ convert numbers, but not do I/O outside client.ts", async () => {

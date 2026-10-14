@@ -1,0 +1,298 @@
+{
+  "vocabularies": {
+    "Analysed.not_estimable{^(?:/(?:[^~/]|~[01])*)+$}": [
+      "suppressed"
+    ],
+    "Analysed.not_estimable{key}": [
+      "/n",
+      "/excluded",
+      "/excluded_units"
+    ],
+    "AnalysedVariable.not_estimable{^(?:/(?:[^~/]|~[01])*)+$}": [
+      "suppressed"
+    ],
+    "AnalysedVariable.not_estimable{key}": [
+      "/n",
+      "/excluded",
+      "/excluded_units"
+    ],
+    "AnalysisEntry.kind": [
+      "analysis"
+    ],
+    "ApplicableAnalysis.status": [
+      "available",
+      "unavailable",
+      "available_with_caveats"
+    ],
+    "Caveat.code": [
+      "UNKNOWN_EXCLUDED",
+      "INVALID_EXCLUDED",
+      "SCOPE_PARTIAL",
+      "COVERAGE_PROPOSED",
+      "UNCONFIRMED_SEMANTICS",
+      "UNMAPPED_COMPARISON",
+      "TIME_ORIGIN_MISMATCH",
+      "CONFOUNDED_WITH_DATASET",
+      "COHORTS_OVERLAP",
+      "SMALL_N",
+      "PH_VIOLATED",
+      "DRAFT_RELEASE",
+      "SUPPRESSED",
+      "NOT_ESTIMABLE",
+      "LIFT_DIFFERS",
+      "POOLED_ACROSS_DATASETS"
+    ],
+    "CohortCheck.status": [
+      "issued",
+      "not_issued",
+      "withdrawn",
+      "discarded",
+      "unknown_release",
+      "erased"
+    ],
+    "ColumnBrief.datatype": [
+      "number",
+      "integer",
+      "string",
+      "boolean",
+      "category",
+      "list<category>",
+      "date",
+      "datetime",
+      "time_offset"
+    ],
+    "DenominatorDefinition.counts": [
+      "known",
+      "unit_table",
+      "rows"
+    ],
+    "DerivationRecord.kind": [
+      "cohort",
+      "result"
+    ],
+    "ExclusionReason": [
+      "NOT_ASSESSED",
+      "NOT_COVERED",
+      "NO_INFORMATION",
+      "NO_PARENT",
+      "OUT_OF_SCOPE",
+      "NO_ROWS",
+      "NOT_APPLICABLE",
+      "INVALID_VALUE"
+    ],
+    "Explanation.status": [
+      "issued",
+      "not_issued",
+      "unknown",
+      "withdrawn",
+      "discarded",
+      "unknown_release",
+      "erased"
+    ],
+    "GraphEdge.cardinality": [
+      "many-to-one",
+      "one-to-one"
+    ],
+    "IssuanceRecord.tool": [
+      "count_cohort",
+      "run_analysis"
+    ],
+    "NotEstimableReason": [
+      "no_units",
+      "no_events",
+      "zero_denominator",
+      "zero_variance",
+      "not_reached",
+      "beyond_follow_up",
+      "separation",
+      "not_converged",
+      "degenerate_table",
+      "overlapping_cohorts",
+      "confounded_with_dataset",
+      "suppressed"
+    ],
+    "Population.suppressed[]": [
+      "/n_true",
+      "/n_false",
+      "/n_unknown",
+      "/unknown_by_reason",
+      "/unknown_by_leaf",
+      "/lift_differs"
+    ],
+    "Proportion.not_estimable./denominator": [
+      "suppressed"
+    ],
+    "Proportion.not_estimable./excluded": [
+      "suppressed"
+    ],
+    "Proportion.not_estimable./numerator": [
+      "suppressed"
+    ],
+    "Proportion.not_estimable{key}": [
+      "/estimate",
+      "/numerator",
+      "/denominator",
+      "/excluded",
+      "/ci/low",
+      "/ci/high"
+    ],
+    "Reason": [
+      "NOT_ASSESSED",
+      "NOT_COVERED",
+      "NO_INFORMATION",
+      "NO_PARENT",
+      "OUT_OF_SCOPE",
+      "NO_ROWS"
+    ],
+    "RefusalCode": [
+      "INVALID_JSON",
+      "DUPLICATE_KEY",
+      "NON_FINITE_NUMBER",
+      "INTEGER_OUT_OF_RANGE",
+      "NULL_NOT_ALLOWED",
+      "MISSING_MEMBER",
+      "UNKNOWN_MEMBER",
+      "WRONG_TYPE",
+      "INVALID_VALUE",
+      "UNKNOWN_KIND",
+      "CONFLICTING_MEMBERS",
+      "UNKNOWN_PARAMETER",
+      "INVALID_PARAMETER_REFERENCE",
+      "UNKNOWN_COHORT",
+      "COHORT_CYCLE",
+      "COHORT_MISMATCH",
+      "LEAF_NOT_ALLOWED",
+      "DATASET_MISSING",
+      "DUPLICATE_ENTRY",
+      "REFERENCE_NOT_IN_VIEW",
+      "CONCEPT_REQUIRED",
+      "CROSS_DATASET_ONLY",
+      "UNKNOWN_DATASET",
+      "LIMIT_EXCEEDED",
+      "UNKNOWN_DESCRIPTOR",
+      "UNKNOWN_TABLE",
+      "UNKNOWN_COLUMN",
+      "UNKNOWN_RELATIONSHIP",
+      "INVALID_UNIT",
+      "INVALID_PATH",
+      "NO_PATH",
+      "AMBIGUOUS_PATH",
+      "QUANTIFIER_MISMATCH",
+      "EXCLUDE_SELF_NOT_ALLOWED",
+      "UNDECLARED_DATATYPE",
+      "INVALID_CONSTANT",
+      "NOT_PERMISSIBLE",
+      "UNITS_UNCONVERTIBLE",
+      "RANGE_NOT_ALLOWED",
+      "MEMBER_NOT_APPLICABLE",
+      "SCOPE_COLUMN_MENTION",
+      "FILTER_COLUMN_MENTION",
+      "UNKNOWN_SCOPE_COLUMN",
+      "ROW_IDS_NOT_ALLOWED",
+      "WITHHELD_UNDER_K",
+      "INVALID_KEY",
+      "MIXED_RELEASES",
+      "NOT_SUPPORTED",
+      "PACK_UNAVAILABLE",
+      "PACK_FAILED",
+      "UNKNOWN_ANALYSIS",
+      "COHORTS_OVERLAP",
+      "AGGREGATE_REQUIRED",
+      "AGGREGATE_NOT_ALLOWED",
+      "OPEN_SCOPE",
+      "UNPARSEABLE_SOURCE",
+      "COLUMNS_CHANGED",
+      "UNKNOWN_RELEASE",
+      "RELEASE_WITHDRAWN",
+      "ERASURE_BLOCKED",
+      "KEY_NULL",
+      "KEY_NOT_UNIQUE",
+      "CARDINALITY_VIOLATED",
+      "DANGLING_REFERENCE",
+      "COVERAGE_NULL",
+      "COVERAGE_UNKNOWN",
+      "OUTSIDE_RECORD_FILTER",
+      "NOT_APPLICABLE_IN_FILTER",
+      "PATH_NOT_CONFINED",
+      "ARCHIVE_REFUSED",
+      "UNSUPPORTED_FORMAT",
+      "EMPTY_SOURCE",
+      "DATASET_BUSY",
+      "DATASET_EXISTS",
+      "CONFLICT",
+      "NO_SESSION",
+      "NO_CHANGE",
+      "UNKNOWN_PROPOSAL",
+      "INVALID_EXTENSION",
+      "HOST_NOT_ALLOWED",
+      "ORIGIN_NOT_ALLOWED",
+      "TOKEN_REQUIRED",
+      "OPERATOR_REQUIRED",
+      "CSRF_REQUIRED",
+      "NOT_FOUND",
+      "METHOD_NOT_ALLOWED",
+      "UNSUPPORTED_MEDIA_TYPE",
+      "LENGTH_REQUIRED",
+      "INTERNAL_ERROR"
+    ],
+    "ReleaseOut.label": [
+      "draft"
+    ],
+    "ReleaseOut.status": [
+      "published",
+      "draft"
+    ],
+    "ReleaseRef.label": [
+      "draft"
+    ],
+    "ReleaseRef.status": [
+      "published",
+      "draft"
+    ],
+    "RequirementOut.datatype": [
+      "number",
+      "integer",
+      "string",
+      "boolean",
+      "category",
+      "list<category>",
+      "date",
+      "datetime",
+      "time_offset"
+    ],
+    "RequirementOut.kind": [
+      "endpoint",
+      "column",
+      "table"
+    ],
+    "RequirementOut.on": [
+      "unit"
+    ],
+    "Severity": [
+      "info",
+      "warn",
+      "block"
+    ],
+    "StatCount.not_estimable{key}": [
+      "/count"
+    ],
+    "TableSummary.role": [
+      "entity",
+      "link",
+      "measurement",
+      "event",
+      "coverage"
+    ],
+    "ViewCheck.status": [
+      "issued",
+      "not_issued",
+      "withdrawn",
+      "discarded",
+      "unknown_release",
+      "erased"
+    ]
+  },
+  "fallbacks": {
+    "Severity": "block"
+  }
+}
