@@ -17,8 +17,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
 - `core/schema/`: the models of M0 (identifiers, analysis documents, descriptors, results, cohort
   counts, caveats, refusals, the pack API, whose `PackRegistry` keeps core-made copies of what a pack
   gives and hands out `Hook`s, one guard (`guards.py`, `copiers.py`) for each call of pack code),
-  `digests.py`, which hashes and digests, and `vocabulary.py`, the form renderer's partition of the
-  2020-12 keywords (`schemas/vocabulary.json`, D422).
+  `digests.py`, which hashes and digests, `vocabulary.py`, the form renderer's partition of the
+  2020-12 keywords (`schemas/vocabulary.json`, D422), and `visible.py`, D312's code-point classes,
+  which the server's page and the web share (`schemas/visible-form.json`, D428).
 - `core/store/`: blobs, raw snapshots, typed tables, manifests, the app DB, pins, the sweep, erasure,
   the validation gate, the release lifecycle (operation slots, curation sessions with handles, the
   proposal and curation queues), the checks of every descriptor write against the installed packs
@@ -181,9 +182,14 @@ After changing a model in `core/schema/` or a route, regenerate the checked-in J
 the OpenAPI document; a test fails while either is stale:
 
 ```bash
-uv run python -m aibi.core.schema.export ../schemas   # schemas/*.schema.json
+uv run python -m aibi.core.schema.export ../schemas   # schemas/*.schema.json, visible-form.json
 uv run python -m aibi.core.api.openapi ../schemas     # schemas/openapi.json (generated, never served)
 ```
+
+`schemas/visible-form.json` is D312's code-point classes (`core/schema/visible.py`, D428) under the
+writer's Unicode version, which it records: write it under the pinned Python
+(`server/.python-version`; its test compares under that version alone), then run
+`npm run generate` in `web/`, which writes `src/api/visible-ranges.ts` from it.
 
 Frontend (`web/`): React + TypeScript + Vite; API types are generated from the server's
 OpenAPI document (`schemas/openapi.json`), not written by hand, but for the one exception SPEC

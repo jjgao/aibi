@@ -18,12 +18,19 @@
  *   is written to `output`'s data attributes: its kind, status, refusal codes, reason, what was
  *   invalid, whether the client holds a handle for the dataset, and the decoder's count. Never the
  *   token, a handle or the CSRF token, which the client gives no one.
+ * - The injection corpus (D428): its button renders the oracle's corpus (boxes the walk made)
+ *   through each component that opens a box (`Text`, `Ref`, `Segments`, `Option`), for the policy
+ *   matrix's cell, which asserts that no text became an element and nothing violated the policy.
  */
 import { useRef, useState } from "react";
 
-import { isServerNumber } from "../api";
-import { decodedCount, exercise } from "../api/oracle";
+import { type BoxedSegment, isServerNumber } from "../api";
+import { corpus, decodedCount, exercise } from "../api/oracle";
 import { operator, type Outcome } from "../api/operator";
+import { keyOf } from "../layout/key";
+import { Option } from "../layout/Option";
+import { Segments } from "../layout/Segments";
+import { Ref, Text } from "../layout/Text";
 
 export const HARNESS_MARKER = "aibi-e2e-harness-1b6f0c";
 
@@ -81,6 +88,28 @@ const OPERATIONS: Readonly<Record<string, (fields: Fields) => Promise<Outcome>>>
   take_over_copy: ({ dataset }) => read(operator.dataset(dataset), (state) => operator.takeOver(Object.fromEntries(Object.entries(member(state, "session") ?? {})))),
 };
 
+/** The corpus through every component that opens a box. */
+function Corpus({ segments }: { readonly segments: readonly BoxedSegment[] }) {
+  const boxes = segments.map((segment) => (segment.kind === "text" ? segment.text : segment.data));
+  return (
+    <div data-corpus="">
+      {boxes.map((box, index) => (
+        <p key={keyOf(index)}>
+          <Text value={box} /> <Ref value={box} />
+        </p>
+      ))}
+      <p>
+        <Segments value={segments} />
+      </p>
+      <select aria-label="corpus list">
+        {boxes.map((box, index) => (
+          <Option key={keyOf(index)} label={box} at={keyOf(index)} />
+        ))}
+      </select>
+    </div>
+  );
+}
+
 interface Shown {
   readonly outcome: Outcome;
   readonly holds: boolean;
@@ -91,6 +120,7 @@ interface Shown {
 export default function Harness() {
   const [count, setCount] = useState<number | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
+  const [segments, setSegments] = useState<readonly BoxedSegment[] | null>(null);
   const runs = useRef(0);
   const dataset = useRef<HTMLInputElement>(null);
   const manifest = useRef<HTMLInputElement>(null);
@@ -107,6 +137,14 @@ export default function Harness() {
           void exercise().then(setCount);
         }}
       />
+      <button
+        type="button"
+        aria-label="corpus"
+        onClick={() => {
+          setSegments(corpus());
+        }}
+      />
+      {segments === null ? null : <Corpus segments={segments} />}
       <input ref={dataset} aria-label="dataset" type="text" autoComplete="off" />
       <input ref={manifest} aria-label="manifest" type="text" autoComplete="off" />
       <input ref={descriptor} aria-label="descriptor" type="text" autoComplete="off" />

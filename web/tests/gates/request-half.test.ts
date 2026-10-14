@@ -201,8 +201,9 @@ describe("(a) the operator client's surface: an allow-list over every place it i
     const { problems, members, roots, inputs } = surfaceProblems(real);
     expect(problems).toEqual([]);
     expect(members).toBe(18);
-    // `exercise` (D426): the harness's oracle requests, a root with no parameter.
-    expect(roots).toEqual(["IDLE_LIMIT_MS", "NAME_LIMIT", "operator", "exercise", "decodedCount", "createCurator"]);
+    // `exercise` (D426): the harness's oracle requests, a root with no parameter; `corpus` (D428): the
+    // injection corpus as boxes the walk made, a root with no parameter whose boxes are leaves.
+    expect(roots).toEqual(["IDLE_LIMIT_MS", "NAME_LIMIT", "operator", "exercise", "corpus", "decodedCount", "createCurator"]);
     expect(inputs).toBe(21);
     expect(Object.keys(PINS).sort()).toEqual([
       "createCurator(#0)",
@@ -665,7 +666,7 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
     ["curator", "createCurator", "src/api/operator.ts"],
     ["box", "boxText", "src/api/typed.ts"],
     ["box", "boxMap", "src/api/typed.ts"],
-    ["box", "readText", "src/api/text.ts"],
+    ["box", "readText", "src/api/text.tsx"],
     ["client", "exchange", "src/api/typed.ts"],
   ];
 

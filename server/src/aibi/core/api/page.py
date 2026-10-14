@@ -60,6 +60,7 @@ from aibi.core.api.markup import Child, Markup, data, document, element, joined,
 from aibi.core.catalog.tools import BY_NAME, call
 from aibi.core.classify import root_of
 from aibi.core.mcp.calls import Calls
+from aibi.core.schema import visible
 from aibi.core.schema.catalog import (
     MAX_HITS,
     MAX_OFFSET,
@@ -86,7 +87,7 @@ TABLES = 50
 """Tables a dataset's page shows at a time; the next page starts at the columns of the next."""
 LISTED = 64
 """Members of a list from data (tags, facet values) shown before the rest are counted."""
-VALUE_CHARACTERS = 2_000
+VALUE_CHARACTERS = visible.CUT
 """Characters of a descriptor field's value shown; the rest is cut and marked (D312)."""
 _OFFSET = re.compile(r"^[0-9]{1,16}$")
 _ENVELOPE = ("kind", "id", "version", "label", "fields", "curation")
