@@ -1,6 +1,6 @@
 /**
- * The router's surface (D428), a STOPGAP that 2b-1L's raw-text rule (R90, D427) supersedes, in two
- * layers.
+ * The router's surface (D428), the stopgap kept as defence in depth beside 2b-1L's rules (D429: R90
+ * at JSX positions, R91, R92; R90's flow class OPEN until 2b-1L2), in two layers.
  *
  * **First, a walk at run time of the routes the app gives the router** (`catalogueRoutes()`, and each
  * `lazy` result, in both of `lazy`'s forms): every route's own keys must be in an ALLOW-LIST (`path`,
@@ -23,9 +23,11 @@
  * component's own is no hit; a
  * value the compiler does not type as the router's (an untyped route literal, a `middleware` or a
  * `shouldRevalidate` in one, a router a main passes to a structurally typed parameter) is not
- * seen by it: the walk holds the first, and the rest is OPEN until 2b-1L's rule over the sink (D428,
- * "Residuals"), with the address's other readers (an element's `baseURI`, the navigation entry's
- * `name`, a `hashchange` listener's `oldURL`), and any text that reaches a JSX string position unchecked.
+ * seen by it: the walk holds the first, and the rest, with the address's other readers (an element's
+ * `baseURI`, the navigation entry's `name`, a `hashchange` listener's `oldURL`), was OPEN until 2b-1L
+ * (D428) and is closed by D429's rules where its text lands at a JSX position, a DOM write or call or
+ * an address member (`tests/gates/display-lint.ts`'s `OPEN_CASES`, a probe each), and OPEN where it
+ * reaches a render slot other than at a JSX position, until 2b-1L2.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";

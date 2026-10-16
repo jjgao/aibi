@@ -21,7 +21,8 @@
  * owner's pull request may move it (an edit of this table, reviewed like any other).
  *
  * **Owners are pull requests, in landing order** (`OWNERS`): a built row of an owner fails the gate
- * while any owner before it has a row not built, so 2b-1L's lint lands before M5.2 renders data.
+ * while any owner before it has a row not built, so 2b-1L's lint lands before M5.2 renders data,
+ * and 2b-1L2's (R90's flow, R90f) after M5.4 and before M5.5.
  * 2b-0, which writes this table and its gate, builds no screen and owns no row. `server` rows are
  * the server's (or a gate's that has landed): they name no module and never fall due here.
  *
@@ -35,14 +36,14 @@
  * sees it; a module that shows data is a row's.
  *
  * **Not checked, by design** (D427's residuals): that a lint rule of 2b-1L is wired into
- * `eslint.config.mjs` and refuses what it should (2b-1L's own pull request adds a canary: a violating
- * file linted through `eslint.config.mjs` with `new ESLint({ cwd })`, which a side-effect import
- * that registers nothing does not pass); that a built row's module is reached by an entry; what a
- * module does with a name it imports.
+ * `eslint.config.mjs` and refuses what it should (the gate sees its module and its tests alone; 2b-1L's
+ * own tests are the canary: each row's corpus linted through `eslint.config.mjs` with
+ * `new ESLint({ cwd })`, `tests/unit/lint-display.test.ts`, D429); that a built row's module is
+ * reached by an entry; what a module does with a name it imports.
  */
 
 /** The owners, in the order they land; `server` last, outside the order. */
-export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "M5.5", "M5.6", "server"] as const;
+export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.6", "server"] as const;
 
 /** The screens a row may bind. */
 export const SCREENS = ["all", "catalogue", "dataset", "column", "builder", "result", "refusal", "operator"] as const;
@@ -845,21 +846,31 @@ export const ROWS: readonly Row[] = [
     module: "src/operator/Curation.tsx",
     test: "tests/unit/curation.test.tsx",
   },
-  // H. The lint (2b-1L): the line that holds the box's class in every module.
+  // H. The lint (2b-1L, and 2b-1L2's flow): the line that holds the box's class in every module.
   {
     id: "R90",
     basis: "spec statement",
-    must: "No non-literal string, number or bigint reaches a JSX child or attribute value in app code, every member of `ReactNode` checked through the type checker; only the sanctioned components open a box.",
+    must: "No value whose type holds a non-literal string, number or bigint stands at a JSX position or as what a component returns, in app code: a JSX child or attribute value (a function there by what it returns), the return of a function named as a component, what a component returns by its tag's type, whoever declares it (a `ComponentType` or `FC` tag returns a `ReactNode`, and is refused; a tag whose type React declares as an exotic component, or that has a `$$typeof` a package declares, inherited or intersected, is exempt and not read, so its render function is R90f's, OPEN); every member of `ReactNode` is walked through the type checker, so a `ReactNode`-typed value at a JSX position is refused; no JSX tag is of string type; a component's own destructured `children` passes only when never written in it, which holds as far as its callers' JSX positions are read; the elements, attributes and bare specifiers are allow-lists, so that no element is made past JSX (`react/jsx-runtime`, `createElement`) and only the layout's components open a box. A render slot reached other than at a JSX position is R90f's (OPEN until 2b-1L2, D429).",
     screens: ["all"],
-    spec: ["A6", "D419", "D426"],
+    spec: ["A6", "D419", "D426", "D428"],
     owner: "2b-1L",
     module: "scripts/lint/display.mjs",
     test: "tests/unit/lint-display.test.ts",
   },
   {
+    id: "R90f",
+    basis: "spec statement",
+    must: "R90 at every render slot, by flow: no raw text reaches a render slot other than at a JSX position (a route's `element`, `errorElement` or `children`, built apart or nested; `root.render`; a component called as a function or passed as a value, by an alias, `call`, `apply` or `bind`; a setter handed to a promise; a library's container; an iterable spread; an index signature; a tag typed as one of React's exotic components, whose render function R90 does not read: `ExoticComponent`, `NamedExoticComponent`, `ProviderExoticComponent`, `ForwardRefExoticComponent`, `Provider`, `MemoExoticComponent`, `ComponentClass`, an app type that extends or intersects one, a lazy so typed), by a source/target walk or its inversion (a slot-typed value is raw at every slot unless it is an unwritten own `children` or a library-declared slot type; refused wherever the walk cannot relate), and the library's slots written in place; its corpus generated from the checker's relation kinds, with a mutation gate, and the component types a tag may have enumerated through the checker (every type `react` exports with a call or construct signature, each placed as a tag, refused or exempt with a reason).",
+    screens: ["all"],
+    spec: ["A6", "D419", "D428", "D429"],
+    owner: "2b-1L2",
+    module: "scripts/lint/display-flow.mjs",
+    test: "tests/unit/lint-display-flow.test.ts",
+  },
+  {
     id: "R91",
     basis: "spec statement",
-    must: "No write to a DOM node and no call on one outside a read-only list in app code, and no `alert`, `confirm`, `prompt` or `Notification`; the reviewed sites are named with their reasons.",
+    must: "No write to a member of a value of a type the DOM library declares, or to a member it declares, and no reference to a function, method or constructor it declares outside a list measured on the app, in app code (the DOM's text APIs, `alert`, `confirm`, `prompt`, `Notification` and `navigator.share` among them); the reviewed sites are named with their reasons.",
     screens: ["all"],
     spec: ["A6", "§14", "D423"],
     owner: "2b-1L",
@@ -869,9 +880,9 @@ export const ROWS: readonly Row[] = [
   {
     id: "R92",
     basis: "spec statement",
-    must: "The address's sources (`location`, `document.URL`, `document.referrer` and the like) are read in the router module alone.",
+    must: "The members of the DOM library that give the page's address (`location`'s, the document's URLs, a node's `baseURI`, a link's `href`, a form's action, a `hashchange` event's URLs, the navigation entry's name, a request's and a `URL`'s, a URL's query and credentials included) are read in the router module alone, beside the names the lint refuses; no list of the sources is complete, so R90 and R91 are the line, where the text would land.",
     screens: ["all"],
-    spec: ["D314", "A6", "§14"],
+    spec: ["D314", "A6", "§14", "D428"],
     owner: "2b-1L",
     module: "scripts/lint/display.mjs",
     test: "tests/unit/lint-display.test.ts",
@@ -879,7 +890,7 @@ export const ROWS: readonly Row[] = [
   {
     id: "R93",
     basis: "spec statement",
-    must: "No app module outside `src/api/` reads an operator answer's `body` or `codes`: operator answers stay off every screen until read through the seam (R86).",
+    must: "No app module outside `src/api/` names an operator answer's `body` or `codes` (a member, a computed literal, a destructured key) but the end-to-end harness's named sites: operator answers stay off every screen until read through the seam (R86).",
     screens: ["operator"],
     spec: ["D423", "D426"],
     owner: "2b-1L",
@@ -929,7 +940,7 @@ export const EXEMPT: readonly Exemption[] = [
   {
     module: "src/operator/Shell.tsx",
     reason:
-      "D423's shell: fixed words and the lock's states (why it is locked, Cancel, forget the token), held by `tests/unit/shell.test.tsx`; it reads an unlock's `kind`, `what` and `reason` (closed words) alone. Its operator client also returns answers whose `body` and `codes` are raw, and the shell does not render them today; nothing checks that, and 2b-1L's rule against reading `.body` and `.codes` outside `src/api/` (R93) is the line.",
+      "D423's shell: fixed words and the lock's states (why it is locked, Cancel, forget the token), held by `tests/unit/shell.test.tsx`; it reads an unlock's `kind`, `what` and `reason` (closed words) alone. Its operator client also returns answers whose `body` and `codes` are raw, which the shell does not read: R93 refuses naming them outside `src/api/`, and R90 (at a JSX position) and R91 (a DOM write or call) refuse a raw text where it would land (D429; a render slot reached past JSX is R90f's, OPEN).",
   },
   {
     module: "src/operator/Confirm.tsx",
@@ -955,7 +966,7 @@ export const HELPERS: readonly Helper[] = [
   {
     module: "src/harness/Harness.tsx",
     reason:
-      "The end-to-end harness, in the end-to-end build alone (`plugins/gate.ts` (a) fails any other build that holds it). It does write response text: an outcome's kind, status, refusal codes, reason and invalid cause go into data attributes for Playwright, and the operator client's raw answers pass through it; its hooks are 2b-1L's named sites. It is no screen of any row.",
+      "The end-to-end harness, in the end-to-end build alone (`plugins/gate.ts` (a) fails any other build that holds it). It does write response text: an outcome's kind, status, refusal codes, reason and invalid cause go into data attributes for Playwright, and the operator client's raw answers pass through it: its `data-*` attributes are exempt from R90 and its two reads of `body` and `codes` are D429's named sites (`scripts/lint/display.mjs`). It is no screen of any row.",
   },
 ];
 

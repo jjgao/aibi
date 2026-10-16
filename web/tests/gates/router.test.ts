@@ -1,7 +1,8 @@
 /**
  * The router module (D428): `src/router/address.tsx` is the one file of `src/` that reads the
  * address through the router's `useParams` and `location.pathname` (the readers beyond what these
- * tests name are OPEN until 2b-1L's rule over the sink: `router-surface.test.ts` and D428), and what
+ * tests name were OPEN until 2b-1L, and are closed by D429's rules at the positions they read, R90's
+ * flow class OPEN until 2b-1L2), and what
  * the app may name of the router package is an ALLOW-LIST, not a list of the
  * readers someone thought of (round 1 of #117: `useMatches`, `useMatch`, `useResolvedPath`,
  * `useHref` and `UNSAFE_LocationContext` put the raw address in the DOM past a gate that named six
