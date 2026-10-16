@@ -51,6 +51,21 @@
  * `datasetOf` `client.ts`'s). The
  * box makes every conversion throw at run time besides; the lint is defence in depth. The `api/` import patterns match without regard to case (the rule's default for a `regex`, `caseSensitive: false`, which the corpus holds: `./API/Box`), as a case-insensitive file system resolves them.
  *
+ * **The layout's form and the router (D428).** `src/layout/form.ts` (the context that sets the
+ * visible form) is imported by `src/layout/` and `src/api/text.tsx` alone (`FORM_PATTERNS`,
+ * `FORM_SYNTAX`: an import in any spelling, a dynamic import, an import type), so that each layout
+ * component's form is its own and no screen sets one around it; `showText`, the one door from a
+ * server text to the DOM, is `src/layout/`'s alone (`SHOW_PATTERNS`, `SHOW_SYNTAX`: the index's pinned
+ * export, which only the layout imports, and `./text` is the index's alone), so that no screen shows
+ * a text without the isolate and the form a layout component gives it. The router package's names are an
+ * allow-list outside `src/router/address.tsx` (`ROUTER_ALLOWED`, per name: `allowImportNames`; any
+ * other specifier of the package, a dynamic import and an import type refused), and the page's
+ * address is read in the router module alone (`ADDRESS_SYNTAX`: `location`'s `pathname`, `search`,
+ * `hash` and `href`, a `.location` of the window or the document, `document.URL`, `referrer`,
+ * `baseURI`, `documentURI`);
+ * `tests/gates/router.test.ts` and `tests/gates/layout-form.test.ts` hold each with its cells (the
+ * latter also scans the symbols the program resolves, which a re-export in a layout module cannot get past).
+ *
  * **What the lint sees, and what it does not (D419).** It reads names written out: an identifier
  * (a callee, a value, a property, a key, a binding), a string key or computed member, a destructured
  * key, an alias of a name written out. It does not see a member of an alias of the global object
@@ -90,9 +105,11 @@
  * holds one) may stand only as the object of a member access that is no channel of its type, no
  * member of one is written, and a member that reaches one (`REACHERS`: `defaultView`,
  * `ownerDocument`, `view`, ...) is refused, so that `const l = window.location`, `el.ownerDocument`,
- * `event.view` and a returned value are seen. `history.replaceState` stands in `src/operator/url.ts`
- * alone, which is nothing but one function and its one call, the path a literal (`URL_SYNTAX`,
- * `URL_FILE_SYNTAX`, the rule's option); `src/operator/` has no module-level `let` or `var`
+ * `event.view` and a returned value are seen. `history.replaceState` stands in `src/operator/url.ts`,
+ * which is nothing but one function and its one call, the path a literal (`URL_SYNTAX`,
+ * `URL_FILE_SYNTAX`, the rule's option), and in the router module, `src/router/address.tsx` (D428:
+ * `redirectAddress`'s one call, to `/` or to `/#/datasets/` and a value the checker types
+ * `DatasetId`: `ROUTER_SYNTAX`, the rule's option), alone; `src/operator/` has no module-level `let` or `var`
  * (`OPERATOR_SYNTAX`). What it does not see is D419's residual: a value the checker types `any`, a
  * `declare` or an assertion that lies, another realm, a patched builtin, and the channels that are no
  * page object's member (an anchor's `href` and `click()`, a form's `submit()`, `<meta refresh>`,
@@ -369,6 +386,22 @@ const URL_SYNTAX = [
   },
 ];
 
+/** The storage rules of `src/router/address.tsx`, the router module (D428): the one file of the
+ * catalogue that writes the address, its one call of `history.replaceState` stating `null` and `""`
+ * written out; the type-aware rule (`aibi/page-objects`, its option) holds the address it writes
+ * (`/`, or `/#/datasets/` and a `DatasetId`), the global `history` and the one exported function,
+ * `redirectAddress`, once. @type {Restriction[]} */
+const ROUTER_SYNTAX = [
+  ...STORAGE_SYNTAX.filter(({ selector }) => !selector.includes("pushState|replaceState")),
+  { selector: "Identifier[name='pushState']", message: CHANNEL },
+  { selector: "Literal[value=/^(pushState|replaceState)$/]", message: CHANNEL },
+  {
+    selector:
+      "Identifier[name='replaceState']:not(CallExpression[arguments.length=3][arguments.0.raw='null'][arguments.1.type='Literal'][arguments.1.value=''] > MemberExpression.callee[object.name='history'] > Identifier.property)",
+    message: CHANNEL,
+  },
+];
+
 const URL_FILE = "src/operator/url.ts is one exported function, forgetAddress, with no parameter, whose body is its one call of history.replaceState (D412, D423).";
 
 /** `src/operator/url.ts` is nothing but `export function forgetAddress(): void { history.replaceState(null, "", "/curate"); }`:
@@ -465,11 +498,6 @@ const NUMBER_SYNTAX = [
   { selector: "ImportExpression:not([source.type='Literal'])", message: IMPORT },
 ];
 
-/** No dynamic `import()` in `src/api/` (MA3 of round 3): an internal's owner is its static
- * importer, and a dynamic import reaches a module's names past `no-restricted-imports`. No module of
- * `src/api/` has one. @type {Restriction[]} */
-const API_IMPORT_SYNTAX = [{ selector: "ImportExpression", message: "No dynamic import in src/api/: each internal is its owner's alone, by a static import (D425)." }];
-
 /** The internals of `src/api/`: each module's names that its owner alone imports, within
  * `src/api/` (outside it, every import is of the index, or of the modules the operator entry and
  * the harness name). */
@@ -499,8 +527,8 @@ const API_INTERNALS = [
   {
     module: "box",
     names: ["readText"],
-    owners: ["src/api/text.ts"],
-    message: "readText, the reading of a server text, is text.ts's takers' alone: they give a vocabulary's member, an id, a choice, a boolean or an order, never the text (D426).",
+    owners: ["src/api/text.tsx"],
+    message: "readText, the reading of a server text, is text.tsx's takers' alone: they give a vocabulary's member, an id, a choice, a boolean or an order, never the text (D426).",
   },
   {
     module: "client",
@@ -508,7 +536,24 @@ const API_INTERNALS = [
     owners: ["src/api/typed.ts", "src/api/oracle.ts"],
     message: "exchange, whose answer is raw, is typed.ts's (the seam that walks it) and the harness's oracle's alone (D426).",
   },
-  { module: "typed", names: ["walkComponent"], owners: [], message: "walkComponent is the tests' door to the walk: no module of src/ imports it (D426)." },
+  {
+    module: "typed",
+    names: ["walkComponent"],
+    owners: ["src/api/oracle.ts"],
+    message: "walkComponent is the tests' door to the walk, and the end-to-end harness's oracle's (its corpus, D428): no other module of src/ imports it (D426).",
+  },
+  {
+    module: "text",
+    names: ["showText"],
+    owners: ["src/api/index.ts"],
+    message: "showText, the one door from a server text to the DOM, is exported by the index alone, for src/layout/: no other module of src/api/ shows a text (D428).",
+  },
+  {
+    module: "visible",
+    names: ["visibleForm", "ENGINE"],
+    owners: ["src/api/text.tsx"],
+    message: "visibleForm, the visible form of a raw text, is showText's alone: the one door from a server text to the DOM (D428).",
+  },
 ];
 
 /** Every spelling the resolver maps a specifier of a module of `src/` to (m15 of round 4, m6 of the
@@ -516,17 +561,118 @@ const API_INTERNALS = [
  * twin (`moduleResolution: bundler` reads `./box.js` as `./box.ts` and `./x.jsx` as `./x.tsx`). */
 const SPELLED = [...SRC_EXTENSIONS].filter(([, kind]) => kind === "code").flatMap(([extension]) => [extension.slice(1), extension.slice(1).replace(/^ts/u, "js")]);
 
+/** The visible form's context (`src/layout/form.ts`), every spelling of its specifier: imported by
+ * `src/layout/` and `src/api/text.tsx` alone (D428), so that each layout component's form is its
+ * own and no screen sets a position's form around one (`tests/gates/layout-form.test.ts` holds the
+ * imports the program resolves, and this table's cells). */
+const FORM_MODULE = `(^|/)layout/form(\\.(${SPELLED.join("|")}))?$`;
+const FORM = "The visible form's context is imported by src/layout/ and src/api/text.tsx alone: each layout component sets its own form, so no screen sets one around a component (D428).";
+
+/** The import patterns of every module but the form's two importers. */
+const FORM_PATTERNS = [{ regex: FORM_MODULE, message: FORM }];
+
+/** The same module as a dynamic import or a type import (`import("../layout/form")`,
+ * `typeof import("../layout/form")`), anywhere but the form's two importers. @type {Restriction[]} */
+const FORM_SYNTAX = [
+  { selector: `ImportExpression[source.value=/${FORM_MODULE.replaceAll("/", "\\/")}/i]`, message: FORM },
+  { selector: `TSImportType[source.value=/${FORM_MODULE.replaceAll("/", "\\/")}/i]`, message: FORM },
+];
+
+/** `showText`, from the index in any spelling (`api`, `api/index`, with or without an extension):
+ * the index's pinned export that `src/layout/` alone imports (D428). A named import, an alias, a
+ * namespace import, a type import and a re-export are each refused by the rule's `importNames`; the
+ * deep path (`api/text`) is refused by `IMPORT` already. `tests/gates/layout-form.test.ts` holds the
+ * symbol it resolves to over every file of `src/`, which a layout module's re-export cannot get past.
+ * The index's own file is not outside it: nothing imports itself. */
+const SHOW_MODULE = `(^|/)api(/index(\\.(${SPELLED.join("|")}))?)?$`;
+const SHOW =
+  "showText, the one door from a server text to the DOM, is src/layout/'s alone: a screen shows a text through Text, Ref, Segments or Option, which isolate it, mark it as data and set its form (D428).";
+const SHOW_PATTERNS = [{ regex: SHOW_MODULE, importNames: ["showText"], message: SHOW }];
+
+/** `showText` from the index as a module of `src/api/` spells it (`.`, `./`, `./index`, with or without
+ * an extension): every module of `src/api/` but the index itself (m4 of round 3 of #117: `SHOW_PATTERNS`
+ * names the index by its directory, which a sibling does not write). */
+const API_INDEX_PATTERNS = [{ regex: `^\\.(/index(\\.(${SPELLED.join("|")}))?)?/?$`, importNames: ["showText"], message: SHOW }];
+
+/** The index as a dynamic import (`import("../api")`) or an import type that names the door
+ * (`typeof import("../api").showText`), anywhere but the layout, where it reaches `showText` past the
+ * import names. (An import type of the whole index, `typeof import("../api")`, is a type and no
+ * door, and stays allowed: `tests/gates/typed.test.ts`.) @type {Restriction[]} */
+const SHOW_SYNTAX = [
+  { selector: `ImportExpression[source.value=/${SHOW_MODULE.replaceAll("/", "\\/")}/i]`, message: SHOW },
+  { selector: `TSImportType[source.value=/${SHOW_MODULE.replaceAll("/", "\\/")}/i][qualifier.name='showText']`, message: SHOW },
+];
+
+/** What the app may import of the router package, by specifier and name (D428): an allow-list, so
+ * that a reader the package adds, or one this list never heard of (`useMatches`, `useMatch`,
+ * `useResolvedPath`, `useHref`, `UNSAFE_LocationContext`, ...), is refused until someone allows it
+ * here, with a reason. `tests/gates/router.test.ts` enumerates the installed package's exports and
+ * holds each but these refused, and holds the module's own list (`useParams`, the one reader of the
+ * address's hash route, `src/router/address.tsx`'s alone).
+ * @type {{ module: string, names: string[] }[]} */
+const ROUTER_ALLOWED = [
+  { module: "react-router", names: ["createHashRouter", "RouteObject"] },
+  { module: "react-router/dom", names: ["RouterProvider"] },
+];
+const ROUTER = "Outside src/router/address.tsx, the router package's names are an allow-list (createHashRouter, RouteObject, RouterProvider): a reader of the address puts its raw text in the DOM (D428).";
+
+/** The router package's import patterns for a file that may name `allowed` of it (the module's own,
+ * or the app's): each specifier allows its names, every other specifier that holds the package's
+ * name (any other path, `react-router-dom`, a path into `node_modules`) is refused whole.
+ * @param {{ module: string, names: string[] }[]} allowed @returns {{ regex: string, allowImportNames?: string[], message: string }[]} */
+const routerPatterns = (allowed) => [
+  ...allowed.map(({ module, names }) => ({ regex: `^${module}$`, allowImportNames: names, message: ROUTER })),
+  // Not anchored at the start: `../../node_modules/react-router/dist/...` is the package too (m4 of round 2 of #117).
+  { regex: `^(?!(${allowed.map(({ module }) => module).join("|")})$).*react-router`, message: ROUTER },
+];
+
+/** The router package as a dynamic import or a type import (`import("react-router")`,
+ * `typeof import("react-router").useParams`), anywhere but where it is allowed whole.
+ * @type {Restriction[]} */
+const ROUTER_IMPORT_SYNTAX = [
+  { selector: "ImportExpression[source.value=/react-router/i]", message: ROUTER },
+  { selector: "TSImportType[source.value=/react-router/i]", message: ROUTER },
+];
+
+const ADDRESS = "The address is read in src/router/address.tsx alone (D428): location's pathname, search, hash and href, document.URL, referrer, baseURI, documentURI and document.location put the adversary's raw text where it is shown.";
+
+/** The page's address by name, outside the router module: the members of `location` that carry the
+ * address (`pathname`, `search`, `hash`, `href`, and `toString` and `valueOf`, which give it), a
+ * `.location` of the window, the frames or the document, and the document's URLs. (`origin`, `host`
+ * and the like are the server's own, not the adversary's.) Reached by a name written out: D419's
+ * residual, as the channel rules'; the page-objects rule holds the types. @type {Restriction[]} */
+const ADDRESS_SYNTAX = [
+  { selector: `${onObject(["location"])}:matches([property.name=/^(pathname|search|hash|href|toString|valueOf)$/], [property.value=/^(pathname|search|hash|href|toString|valueOf)$/])`, message: ADDRESS },
+  { selector: `${onObject(GLOBAL_OBJECTS)}:matches([property.name='location'], [property.value='location'])`, message: ADDRESS },
+  { selector: `${onObject(["document"])}:matches([property.name=/^(URL|documentURI|baseURI|referrer|location)$/], [property.value=/^(URL|documentURI|baseURI|referrer|location)$/])`, message: ADDRESS },
+];
+
+/** No dynamic `import()` in `src/api/` (MA3 of round 3): an internal's owner is its static
+ * importer, and a dynamic import reaches a module's names past `no-restricted-imports`. No module of
+ * `src/api/` has one. @type {Restriction[]} */
+const API_IMPORT_SYNTAX = [
+  { selector: "ImportExpression", message: "No dynamic import in src/api/: each internal is its owner's alone, by a static import (D425)." },
+  ...FORM_SYNTAX,
+  ...SHOW_SYNTAX,
+  ...ROUTER_IMPORT_SYNTAX,
+];
+
 /** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns. A
  * module is named by every spelling the resolver maps to it: none, `.ts` and `.js` (`moduleResolution:
  * bundler` reads `./box.js` as `./box.ts`, which a pattern of the first two alone let pass, m15 of
  * round 4).
  * @param {string | null} owner */
 const internals = (owner) => ({
-  patterns: API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
-    regex: `(^|/)${module}(\\.(${SPELLED.join("|")}))?$`,
-    importNames: names,
-    message,
-  })),
+  patterns: [
+    ...API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
+      regex: `(^|/)${module}(\\.(${SPELLED.join("|")}))?$`,
+      importNames: names,
+      message,
+    })),
+    ...(owner === "src/api/text.tsx" ? [] : FORM_PATTERNS),
+    ...(owner === "src/api/index.ts" ? [] : API_INDEX_PATTERNS),
+    ...routerPatterns([]),
+  ],
 });
 
 /** The properties no file of `src/` names, but those `client.ts` needs to seal the readers.
@@ -549,9 +695,11 @@ const globals = (...tables) => ["error", ...tables.flatMap(([names, message]) =>
 /** The inline plugin of the lint's own rules (the rule: `scripts/page-objects.mjs`). */
 const aibi = { rules: { "page-objects": pageObjects } };
 
-/** The syntax rules of a file of `src/` outside `src/api/`, given its storage rules.
- * @param {Restriction[]} storage @returns {Restriction[]} */
-const appSyntax = (storage) => [
+/** The syntax rules of a file of `src/` outside `src/api/`, given its storage rules (and whether
+ * it may not import the visible form's context, every file but the layout's, and may not read the
+ * address, every file but the router module).
+ * @param {Restriction[]} storage @param {{ form?: boolean, address?: boolean, show?: boolean }} [lifted] @returns {Restriction[]} */
+const appSyntax = (storage, { form = true, address = true, show = true } = {}) => [
   ...SINK_SYNTAX,
   ...storage,
   ...IO_SYNTAX,
@@ -562,6 +710,10 @@ const appSyntax = (storage) => [
   ...PATCH_SYNTAX,
   ...CHAIN_SYNTAX,
   ...NUMBER_SYNTAX,
+  ...(form ? FORM_SYNTAX : []),
+  ...(show ? SHOW_SYNTAX : []),
+  ...(address ? ADDRESS_SYNTAX : []),
+  ...ROUTER_IMPORT_SYNTAX,
 ];
 
 /** The rules every file of `src/` has, whichever its layer.
@@ -618,7 +770,16 @@ export default defineConfig(
       "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX)],
       "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
-      "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }] }],
+      "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }, ...FORM_PATTERNS, ...SHOW_PATTERNS, ...routerPatterns(ROUTER_ALLOWED)] }],
+    },
+  },
+  {
+    // The layout (D428): each component sets its own form, so the layout alone imports the context
+    // that sets it (and `src/api/text.tsx`, the door that reads it).
+    files: ["src/layout/**"],
+    rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX, { form: false, show: false })],
+      "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }, ...routerPatterns(ROUTER_ALLOWED)] }],
     },
   },
   {
@@ -629,7 +790,7 @@ export default defineConfig(
       "no-restricted-syntax": ["error", ...appSyntax(STORAGE_SYNTAX), ...OPERATOR_SYNTAX],
       "@typescript-eslint/no-restricted-imports": [
         "error",
-        { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }] },
+        { patterns: [{ regex: "(^|/)api/(?!(index|operator)(\\.ts)?$)", message: IMPORT }, ...FORM_PATTERNS, ...SHOW_PATTERNS, ...routerPatterns(ROUTER_ALLOWED)] },
       ],
     },
   },
@@ -642,13 +803,34 @@ export default defineConfig(
     },
   },
   {
+    // The router module (D428): the one file of the catalogue that reads the address and writes it
+    // (`redirectAddress`: `/datasets/<id>` replaced by `/#/datasets/<id>` or `/`).
+    files: ["src/router/address.tsx"],
+    rules: {
+      "no-restricted-syntax": ["error", ...appSyntax(ROUTER_SYNTAX, { address: false })],
+      "@typescript-eslint/no-restricted-imports": [
+        "error",
+        { patterns: [{ regex: "(^|/)api/(?!index(\\.ts)?$)", message: IMPORT }, ...FORM_PATTERNS, ...SHOW_PATTERNS, ...routerPatterns([{ module: "react-router", names: ["useParams"] }])] },
+      ],
+      "aibi/page-objects": ["error", { replaceState: "redirectAddress", addresses: ["/"], prefix: "/#/datasets/" }],
+    },
+  },
+  {
+    // The mints of the layout's brands (D428): `Typed` (what the person typed) and `Key` (an
+    // index), one type assertion each; `tests/gates/mints.test.ts` refuses a mint anywhere else.
+    files: ["src/layout/Field.tsx", "src/layout/key.ts"],
+    rules: {
+      "@typescript-eslint/consistent-type-assertions": "off",
+    },
+  },
+  {
     // The end-to-end harness: the one importer of the oracle's counter (`src/api/oracle.ts`), and
     // a driver of the page's operator client.
     files: ["src/harness/**"],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
-        { patterns: [{ regex: "(^|/)api/(?!(index|oracle|operator)(\\.ts)?$)", message: IMPORT }] },
+        { patterns: [{ regex: "(^|/)api/(?!(index|oracle|operator)(\\.ts)?$)", message: IMPORT }, ...FORM_PATTERNS, ...SHOW_PATTERNS, ...routerPatterns(ROUTER_ALLOWED)] },
       ],
     },
   },
@@ -659,7 +841,7 @@ export default defineConfig(
       ...SOURCE_RULES,
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX, ...ADDRESS_SYNTAX],
       "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
@@ -691,7 +873,7 @@ export default defineConfig(
     rules: {
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(true),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX, ...ADDRESS_SYNTAX],
       "aibi/page-objects": "error",
     },
   },

@@ -63,7 +63,7 @@ const PAGE_CHANNEL = "A channel out of the page's memory, on a value of the page
 const PAGE_WRITE = "No write to a member of a page object (D423).";
 const PAGE_REACHER = "A member that reaches a page object (defaultView, ownerDocument, view, window, self, top, parent, frames, opener) is refused (D423).";
 const PAGE_COMPUTED = "No computed member of a page object (D423).";
-const PAGE_ONCE = "history.replaceState stands once, in the one function that is allowed it (D423).";
+const PAGE_ONCE = "history.replaceState stands once, in the one function that is allowed it (D423, D428).";
 
 /** The names of the nodes that are no value: a key or a property name, a specifier, a label.
  * @param {unknown} value @returns {value is Record<string, unknown>} */
@@ -170,12 +170,22 @@ export function pageTypeOf(checker, program, type, seen = new Set(), depth = 0) 
  * the object of a member access, and that member is no channel of the type; no member of one is
  * written; a member that reaches a page object is refused; a computed member of one is refused. The
  * option `{ replaceState: "<function>" }` lets exactly one `history.replaceState(null, "", "/curate")`
- * stand, in the exported function of that name, and nowhere else.
+ * stand, in the exported function of that name, and nowhere else; `addresses` names the literal
+ * addresses it may write instead of `/curate`, and `prefix` a literal it may write followed by a
+ * `DatasetId` alone (a template `` `${prefix}${id}` `` whose one expression the checker types as
+ * `src/api/text.tsx`'s `DatasetId`, D428: the router module's redirect); a conditional of two such
+ * addresses is one.
  * @type {import("eslint").Rule.RuleModule} */
 export const pageObjects = {
   meta: {
     type: "problem",
-    schema: [{ type: "object", properties: { replaceState: { type: "string" } }, additionalProperties: false }],
+    schema: [
+      {
+        type: "object",
+        properties: { replaceState: { type: "string" }, addresses: { type: "array", items: { type: "string" } }, prefix: { type: "string" } },
+        additionalProperties: false,
+      },
+    ],
     messages: { object: PAGE_OBJECT, channel: PAGE_CHANNEL, write: PAGE_WRITE, reacher: PAGE_REACHER, computed: PAGE_COMPUTED, once: PAGE_ONCE },
   },
   create(context) {
@@ -188,7 +198,8 @@ export const pageObjects = {
     const checker = program.getTypeChecker();
     const windowChannels = new Set(WINDOW_CHANNELS);
     const option = /** @type {unknown} */ (context.options[0]);
-    const options = /** @type {{ replaceState?: string } | undefined} */ (option);
+    const options = /** @type {{ replaceState?: string, addresses?: string[], prefix?: string } | undefined} */ (option);
+    const addresses = options?.addresses ?? ["/curate"];
     let replaceStates = 0;
 
     /** @param {unknown} node @returns {string | null} */
@@ -222,6 +233,35 @@ export const pageObjects = {
       );
     };
 
+    /** Whether an address may be written: a literal of `addresses`; `prefix` then a `DatasetId`, as
+     * a template of one expression; or a conditional of two such addresses.
+     * @param {unknown} address @returns {boolean} */
+    const allowedAddress = (address) => {
+      const kind = kindOf(address);
+      if (kind === "Literal") {
+        const value = fieldOf(address, "value");
+        return typeof value === "string" && addresses.includes(value);
+      }
+      if (kind === "ConditionalExpression") {
+        return allowedAddress(fieldOf(address, "consequent")) && allowedAddress(fieldOf(address, "alternate"));
+      }
+      const quasis = fieldOf(address, "quasis");
+      const expressions = fieldOf(address, "expressions");
+      if (kind !== "TemplateLiteral" || options?.prefix === undefined || !Array.isArray(quasis) || !Array.isArray(expressions) || quasis.length !== 2 || expressions.length !== 1) {
+        return false;
+      }
+      const head = /** @type {unknown} */ (quasis[0]);
+      const tail = /** @type {unknown} */ (quasis[1]);
+      if (fieldOf(fieldOf(head, "value"), "cooked") !== options.prefix || fieldOf(fieldOf(tail, "value"), "cooked") !== "") {
+        return false;
+      }
+      const expression = /** @type {unknown} */ (expressions[0]);
+      const found = isRecord(expression) ? nodes.get(expression) : undefined;
+      const alias = found === undefined ? undefined : checker.getTypeAtLocation(found).aliasSymbol;
+      const declared = alias?.declarations?.[0]?.getSourceFile().fileName.replaceAll("\\", "/");
+      return alias?.getName() === "DatasetId" && declared !== undefined && declared.endsWith("/src/api/text.tsx");
+    };
+
     /** Whether `history.replaceState(null, "", "/curate")` stands here: a call of exactly that, on the
      * global `history`, in the exported function the option names, once.
      * @param {import("eslint").Rule.Node} member */
@@ -236,7 +276,7 @@ export const pageObjects = {
       const state = fieldOf(args, "0");
       const title = fieldOf(args, "1");
       const address = fieldOf(args, "2");
-      if (fieldOf(state, "raw") !== "null" || fieldOf(title, "value") !== "" || fieldOf(address, "value") !== "/curate" || kindOf(address) !== "Literal" || kindOf(title) !== "Literal") {
+      if (fieldOf(state, "raw") !== "null" || fieldOf(title, "value") !== "" || kindOf(title) !== "Literal" || !allowedAddress(address)) {
         return false;
       }
       if (kindOf(object) !== "Identifier" || fieldOf(object, "name") !== "history") {

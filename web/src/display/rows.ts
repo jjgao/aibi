@@ -157,7 +157,7 @@ export const ROWS: readonly Row[] = [
     spec: ["D311", "D314", "A6", "§14"],
     owner: "2b-1a",
     module: "src/router/address.tsx",
-    test: "tests/unit/address.test.tsx",
+    test: "tests/unit/address-row.test.tsx",
   },
   {
     id: "R09",
@@ -942,6 +942,16 @@ export const EXEMPT: readonly Exemption[] = [
 export const HELPERS: readonly Helper[] = [
   { module: "src/root.ts", reason: "The element both entries render into: no data." },
   { module: "src/operator/url.ts", reason: "Forgets the operator entry's address (its hash and query) without reading it: no data." },
+  {
+    module: "src/layout/form.ts",
+    reason:
+      "The visible form's context (D428): the form a position shows a server text in, set by each component of `src/layout/` and read by `showText`. It renders nothing and holds no text; R01, R02 and R07 hold what the components show.",
+  },
+  {
+    module: "src/layout/key.ts",
+    reason:
+      "`keyOf`, the one mint of the index an element's `key` and an `<option>`'s value are made of (D428): a whole number, never a text from data. It renders nothing; R07 holds the option's value.",
+  },
   {
     module: "src/harness/Harness.tsx",
     reason:

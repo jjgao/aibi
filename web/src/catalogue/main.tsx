@@ -5,11 +5,14 @@ import { RouterProvider } from "react-router/dom";
 
 import { REFUSALS, start } from "../api";
 import { rootElement } from "../root";
+import { redirectAddress } from "../router/address";
 import { catalogueRoutes } from "./routes";
 
 // The client starts before anything renders: it seals every body reader but its own (D419), or,
 // on an engine that cannot read a server number exactly, the page shows why and nothing else.
 if (start()) {
+  // `/datasets/<id>` becomes `/#/datasets/<id>` (or `/`) before the router reads the address (D428).
+  redirectAddress();
   const router = createHashRouter(catalogueRoutes());
   createRoot(rootElement()).render(
     <StrictMode>

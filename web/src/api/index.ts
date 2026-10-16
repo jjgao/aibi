@@ -3,9 +3,12 @@
  * of it is of this module (the lint holds it), and what this module exports is checked over the
  * TypeScript program (`tests/gates/api-graph.test.ts`): no `box`, `textOf`, `decode`, `exchange` or
  * other internal; no function that takes a server number and gives anything but a server number;
- * no function that takes a server text but the pinned takers (`text.ts`'s, and `entriesOf`); and no
- * export that gives a raw `string` but the pinned ones (`idOf`'s `DatasetId`, the client's errors'
- * fixed words). A public tool's answer is read through `typed.ts`'s functions alone, every string of
+ * no function that takes a server text but the pinned takers (`text.tsx`'s, and `entriesOf`), among
+ * them `showText`, the one door from a server text to the DOM (D428): the index's pinned export that
+ * `src/layout/` alone imports (a lint row, and a scan of the symbols the program resolves,
+ * `tests/gates/layout-form.test.ts`); and no export that gives a raw
+ * `string` or a door but the pinned ones (`idOf`'s and `idOfAddress`'s `DatasetId`, `showText`'s
+ * element, the client's errors' fixed words). A public tool's answer is read through `typed.ts`'s functions alone, every string of
  * it a `ServerText` and every data-keyed map a `BoxedMap` (D426); the raw `exchange` and the raw
  * `JsonOut` are not here (the end-to-end harness reaches the oracle's requests through `oracle.ts`,
  * and the operator entry's raw answers through `operator.ts`). The generated types, the request's
@@ -39,4 +42,4 @@ export {
   type Outcome,
   type TypedOperation,
 } from "./typed";
-export { choiceOf, compareText, idOf, kindOf, memberOf, sameText, type Choice, type DatasetId, type GrammarName, type Kind, type Member, type VocabularyName } from "./text";
+export { choiceOf, compareText, idOf, idOfAddress, kindOf, memberOf, sameText, showText, type Choice, type DatasetId, type GrammarName, type Kind, type Member, type VocabularyName } from "./text";
