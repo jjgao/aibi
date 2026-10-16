@@ -17,8 +17,9 @@ import { type SyntheticEvent, useRef, useState, useSyncExternalStore } from "rea
 
 import { type LockReason, operator, type Unlocked } from "../api/operator";
 
-/** Why the client is locked, in the shell's words. */
-export const LOCKED_WORDS: Readonly<Record<LockReason, string>> = {
+/** Why the client is locked, in the shell's words (a table of literals: what the shell shows is
+ * of a literal type, D429). */
+export const LOCKED_WORDS = {
   start: "Enter your name and the curator token to begin.",
   forgotten: "The token is forgotten. Enter it again to go on.",
   idle: "Locked after ten minutes without input. Enter the token again to go on.",
@@ -26,21 +27,29 @@ export const LOCKED_WORDS: Readonly<Record<LockReason, string>> = {
   failures: "Too many refused tokens from this address. Wait a minute, then enter the token again.",
   page: "Locked when the page was left. Enter the token again to go on.",
   restored: "Locked: the page was restored from the browser's cache. Enter the token again to go on.",
-};
+} as const satisfies Readonly<Record<LockReason, string>>;
 
 /** What an unlock that did not change why the client is locked comes to, in the shell's words. */
-export function unlockWords(outcome: Unlocked): string | null {
+export const UNLOCK_WORDS = {
+  name: "The name is not one the server accepts: 1 to 200 characters, with no control, line-break or bidi formatting character and no token in it.",
+  token: "The token is not in its form: aibi_ and 43 characters.",
+  aborted: "Unlocking was cancelled. Nothing is held. Enter the token again to go on.",
+  unknown: "The server could not be reached, or its answer could not be read. Nothing is known of the outcome: try again.",
+  refused: "The server refused the request.",
+} as const;
+
+/** Words of `UNLOCK_WORDS`. */
+export type UnlockWords = (typeof UNLOCK_WORDS)[keyof typeof UNLOCK_WORDS];
+
+/** What an unlock that did not change why the client is locked comes to, in the shell's words. */
+export function unlockWords(outcome: Unlocked): UnlockWords | null {
   switch (outcome.kind) {
     case "invalid":
-      return outcome.what === "name"
-        ? "The name is not one the server accepts: 1 to 200 characters, with no control, line-break or bidi formatting character and no token in it."
-        : "The token is not in its form: aibi_ and 43 characters.";
+      return outcome.what === "name" ? UNLOCK_WORDS.name : UNLOCK_WORDS.token;
     case "unknown":
-      return outcome.reason === "aborted"
-        ? "Unlocking was cancelled. Nothing is held. Enter the token again to go on."
-        : "The server could not be reached, or its answer could not be read. Nothing is known of the outcome: try again.";
+      return outcome.reason === "aborted" ? UNLOCK_WORDS.aborted : UNLOCK_WORDS.unknown;
     case "refused":
-      return "The server refused the request.";
+      return UNLOCK_WORDS.refused;
     case "unlocked":
     case "locked":
       return null;
@@ -58,7 +67,7 @@ export function Shell() {
   const token = useRef<HTMLInputElement>(null);
   const cancel = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false);
-  const [words, setWords] = useState<string | null>(null);
+  const [words, setWords] = useState<UnlockWords | null>(null);
 
   if (!state.locked) {
     return (
