@@ -44,6 +44,7 @@ const BASE_ROWS: readonly BaseRow[] = [
   { id: "R60", owner: "M5.5", module: "src/operator/Proposals.tsx", test: "tests/unit/proposals.test.ts", screens: `"operator"`, call: "Proposals()", shows: "proposals", built: false },
   { id: "R61", owner: "M5.3-min", module: "src/result/Builder.tsx", test: "tests/unit/builder.test.ts", screens: `"builder"`, call: "Builder()", shows: "builder", built: false },
   { id: "R90", owner: "2b-1L", module: "scripts/raw-text.mjs", test: "tests/unit/raw-text.test.ts", screens: `"all"`, call: "rule", shows: "raw-text", built: true },
+  { id: "R90f", owner: "2b-1L2", module: "scripts/raw-flow.mjs", test: "tests/unit/raw-flow.test.ts", screens: `"all"`, call: "rule", shows: "raw-flow", built: false },
   // A second row for each late owner, so that a partly built owner can be told from an unbuilt one (the owner-complete cells).
   { id: "R62", owner: "M5.3-min", module: "src/result/Chart.tsx", test: "tests/unit/chart.test.ts", screens: `"builder"`, call: "Chart()", shows: "chart", built: false },
   { id: "R13", owner: "M5.4-min", module: "src/result/Table.tsx", test: "tests/unit/table.test.ts", screens: `"result"`, call: "Table()", shows: "table", built: false },
@@ -54,7 +55,7 @@ const row = (id: string, owner: string, module: string, test: string, screens: s
   `  { id: "${id}", basis: "spec statement", must: "a mock obligation", screens: [${screens}], spec: ["§8"], owner: "${owner}", module: "${module}", test: "${test}" },`;
 
 const ROWS_TS = [
-  `export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "M5.5", "server"];`,
+  `export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "server"];`,
   `export const SCREENS = ["all", "catalogue", "dataset", "builder", "result", "operator"];`,
   `export const BASES = ["spec MUST", "spec statement", "derived"];`,
   `export const ROWS = [`,
@@ -1140,7 +1141,7 @@ const RUNNER_NAME_CELLS: readonly Fixture[] = ["beforeEach", "afterEach", "befor
 // ---------------------------------------------------------------------------------------------
 // Owner order, every owner built alone (m8, N29): the first owner passes, every later owner fails.
 
-const OWNER_ORDER = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "M5.5"] as const;
+const OWNER_ORDER = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5"] as const;
 
 const OWNER_CELLS: readonly Fixture[] = OWNER_ORDER.map((owner, index): Fixture => ({
   name: `owner_alone_${owner}`,

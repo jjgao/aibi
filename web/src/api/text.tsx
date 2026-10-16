@@ -40,7 +40,7 @@
  *   `Text`, `Ref`, `Segments` and `Option` add the `<bdi>`, the data mark and the server's cut mark.
  *   Every form escapes the same code points. Residuals (D419's boundary, deliberate code): narrowing
  *   the element's `props` gives the box back, never its text; a detached `createRoot` and its
- *   `textContent`, or `react-dom/server`, read the visible form's text (closed by 2b-1L's
+ *   `textContent`, or `react-dom/server`, read the visible form's text (closed in the app by D429's
  *   specifier allow-list, `react-dom/client` in the entries alone).
  * - **`idOfAddress(raw)`** (D428): the one door for a dataset id from the address (a hash route's
  *   parameter, as the router decoded it, or the raw path segment of `/datasets/<id>`, never
