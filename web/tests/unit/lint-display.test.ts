@@ -65,6 +65,8 @@ describe("the display lint (D429), through eslint.config.mjs", () => {
       "src/catalogue/main.tsx: rootElement().textContent",
       "src/operator/main.tsx: rootElement().textContent",
       "src/operator/Shell.tsx: field.value",
+      "src/catalogue/load.ts: setTimeout",
+      "src/catalogue/load.ts: clearTimeout",
     ]);
   });
 

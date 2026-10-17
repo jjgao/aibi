@@ -5,7 +5,8 @@
  * configuration whose rates are raised so that reloads meet no limit (`token_failures` too: the
  * matrix spends it, D423); and another site's pages on another port. For the operator matrix
  * (D423): each main server holds the datasets `DATASETS` (the lending library and small CSV
- * datasets, one for each test that opens a session, since tests run in parallel), imported
+ * datasets, one for each test that opens a session, since tests run in parallel; the orchard and
+ * the hostile headers for the catalogue and dataset screens, D431), imported
  * through the operator router; a server of each bundle keeps the default `token_failures` limit
  * (`limits`), and one more end-to-end server is there to be killed (`mortal`). Each server is
  * started, and stopped, by its own PID.
@@ -34,8 +35,13 @@ const RATE = "{ per_minute = 60000, burst = 10000 }";
 const FIXTURES = path.join(WEB, "..", "fixtures");
 
 /** The datasets each main server holds: the lending library (`fixtures/library`, without its
- * formats and README), and a small CSV dataset for each test that opens a session. */
-export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals"] as const;
+ * formats and README), a small CSV dataset for each test that opens a session, and, for the
+ * catalogue and dataset screens (D431), the orchard (`fixtures/orchard`) and the hostile headers
+ * (`fixtures/hostile`), each without its README. */
+export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals", "orchard", "hostile"] as const;
+
+/** The datasets copied from a directory of `fixtures/` of the same name. */
+const COPIED: ReadonlySet<string> = new Set(["library", "orchard", "hostile"]);
 
 
 async function freePort(): Promise<number> {
@@ -144,8 +150,8 @@ async function importDatasets(origin: string, imports: string, token: string): P
   const { csrf: key } = (await csrf.json()) as { csrf: string };
   for (const dataset of DATASETS) {
     const source = path.join(imports, dataset);
-    if (dataset === "library") {
-      cpSync(path.join(FIXTURES, "library"), source, { recursive: true, filter: (from) => !from.endsWith(".md") && path.basename(from) !== "formats" });
+    if (COPIED.has(dataset)) {
+      cpSync(path.join(FIXTURES, dataset), source, { recursive: true, filter: (from) => !from.endsWith(".md") && path.basename(from) !== "formats" });
     } else {
       mkdirSync(source);
       writeFileSync(path.join(source, "items.csv"), "id,label\n1,a\n2,b\n3,c\n");

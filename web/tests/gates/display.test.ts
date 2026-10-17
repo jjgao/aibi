@@ -180,11 +180,15 @@ describe("the display table's gate on this package (D427)", () => {
     });
 
     it("passes a row retired with a reason, and fails a blank reason, a retired id that is a row, an id not listed", () => {
-      const retired = (reason: string): string => without(rowsText, "R45").replace("export const RETIRED: readonly Retired[] = [];", `export const RETIRED: readonly Retired[] = [{ id: "R45", reason: ${JSON.stringify(reason)} }];`);
+      // The table's RETIRED holds D431's four already: R45 is added before them.
+      const RETIRED_HEAD = "export const RETIRED: readonly Retired[] = [\n";
+      expect(rowsText).toContain(RETIRED_HEAD);
+      const retiredAs = (text: string, reason: string): string => text.replace(RETIRED_HEAD, `${RETIRED_HEAD}  { id: "R45", reason: ${JSON.stringify(reason)} },\n`);
+      const retired = (reason: string): string => retiredAs(without(rowsText, "R45"), reason);
       const spec = spliceAppendix(specText, renderAppendix(checkTableOf(retired("folded into R46"))));
       expect(run(retired("folded into R46"), idsText, spec, ["--check"]).code).toBe(0);
       expect(run(retired(" "), idsText, spec, ["--check"]).said).toContain("not a non-blank string");
-      expect(run(rowsText.replace("export const RETIRED: readonly Retired[] = [];", 'export const RETIRED: readonly Retired[] = [{ id: "R45", reason: "no" }];'), idsText, specText, ["--check"]).said).toContain("both a row and in RETIRED");
+      expect(run(retiredAs(rowsText, "no"), idsText, specText, ["--check"]).said).toContain("both a row and in RETIRED");
       const unlisted = JSON.stringify({ ids: readIds().filter((id) => id !== "R45") }, null, 2) + "\n";
       expect(run(retired("folded"), unlisted, spec, ["--check"]).said).toContain("does not list it");
     });

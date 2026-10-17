@@ -8,25 +8,43 @@
  */
 import { createHashRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { catalogueRoutes, type NotFoundModule } from "../../src/catalogue/routes";
 import { NotFound } from "../../src/catalogue/NotFound";
 import { redirectAddress } from "../../src/router/address";
 import { isUnsafe } from "./injection";
 import { render, type Rendered } from "./render";
+import { orchard, type Sent, serving } from "./screens";
 
 const NOT_FOUND = "aibi Nothing is here. The catalogue";
 const REFUSED = "aibi No dataset has that address. The catalogue";
 const FAILURE = "aibi This screen failed to load. Reload the page to try again.";
+/** The dataset's screen over the server's 404 (`UNKNOWN_DATASET`), which echoes nothing of the address. */
+const DATASET_REFUSED = "The dataset could not be described. The request was refused. UNKNOWN_DATASET at /dataset : No release of the dataset was published; these datasets have one Available (not applied): orchard";
+/** The attribute values the screens of the corpus write: fixed. */
+const ATTRIBUTES = new Set(["#/", "not-found", "", "dataset", "state", "refused", "refusal", "list", "listitem", "data", "data token", "alternatives"]);
 
 let shown: Rendered | undefined;
+
+let sent: Sent[] = [];
+
+beforeEach(() => {
+  // Every tool call the routes make, answered by the server's own answers over the orchard: the
+  // catalogue, the dataset, and the 404 for any other dataset.
+  sent = serving((one) => (one.tool === "search_catalog" ? orchard("search_catalog") : one.body === '{"dataset":"orchard"}' && answering ? orchard("describe_dataset") : orchard("describe_dataset", 404)));
+});
 
 afterEach(() => {
   shown?.unmount();
   shown = undefined;
+  answering = false;
   window.history.replaceState(null, "", "/");
+  vi.unstubAllGlobals();
 });
+
+/** Whether the orchard's own description answers `orchard` (else the 404 answers every dataset). */
+let answering = false;
 
 const load = (): Promise<NotFoundModule> => Promise.resolve({ NotFound });
 
@@ -81,15 +99,18 @@ describe("the dataset route through the real hash router", () => {
     window.history.replaceState(null, "", `/#/datasets/${segment}`);
     const router = createHashRouter(catalogueRoutes(load));
     shown = await render(<RouterProvider router={router} />);
-    const words = await shown.until((found) => found === NOT_FOUND || found === REFUSED || found === FAILURE);
-    // Until M5.2, an id lands on the not-found screen; anything else on the fixed words, never echoed.
-    expect(words).toBe(segment === "" || segment === "/" || segment === "a/b" || segment === "?" || segment === "#" ? NOT_FOUND : isId ? NOT_FOUND : REFUSED);
+    const words = await shown.until((found) => found === NOT_FOUND || found === REFUSED || found === FAILURE || found === DATASET_REFUSED);
+    // An id lands on the dataset's screen, its id in the request's body alone (the 404 echoes none of
+    // it); anything else on the fixed words, never echoed.
+    expect(words).toBe(segment === "" || segment === "/" || segment === "a/b" || segment === "?" || segment === "#" ? NOT_FOUND : isId ? DATASET_REFUSED : REFUSED);
+    const bodies = sent.map((one) => [one.tool, one.body]);
+    expect(bodies).toEqual(isId && words === DATASET_REFUSED ? [["describe_dataset", JSON.stringify({ dataset: segment === "orch%61rd" ? "orchard" : segment.replace(/[?#].*$/u, "") })]] : []);
     const text = shown.container.textContent;
     expect(Array.from(text).filter((character) => isUnsafe(character.codePointAt(0) ?? 0))).toEqual([]);
     expect(shown.container.querySelectorAll("img, script, b")).toHaveLength(0);
     for (const element of shown.container.querySelectorAll("*")) {
       for (const attribute of element.attributes) {
-        expect(attribute.value === "#/" || attribute.value === "not-found" || attribute.value === "").toBe(true);
+        expect(ATTRIBUTES.has(attribute.value), attribute.value).toBe(true);
       }
     }
   });
@@ -137,16 +158,20 @@ describe("the pre-router redirect", () => {
     expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe(address);
   });
 
-  it("lands an id on its hash route, through the real hash router, and a refused segment on the home page", async () => {
+  it("lands an id on its hash route, the dataset's screen, through the real hash router, and a refused segment on the catalogue", async () => {
+    answering = true;
     window.history.replaceState(null, "", "/datasets/orchard");
     redirectAddress();
     shown = await render(<RouterProvider router={createHashRouter(catalogueRoutes(load))} />);
-    expect(await shown.until((found) => found === NOT_FOUND)).toBe(NOT_FOUND);
+    expect(await shown.until((found) => found.startsWith("Dataset orchard Release @"))).toContain("Applicable analyses");
+    expect(sent.map((one) => [one.tool, one.body])).toEqual([["describe_dataset", '{"dataset":"orchard"}']]);
     shown.unmount();
     window.history.replaceState(null, "", "/datasets/%E2%80%AEtxt.exe");
     redirectAddress();
     shown = await render(<RouterProvider router={createHashRouter(catalogueRoutes(load))} />);
-    expect(shown.words()).toBe("aibi The catalogue opens here. Curate");
+    expect(await shown.until((found) => found.startsWith("Catalogue The latest published release"))).toMatch(/ Curate$/u);
+    expect(shown.container.textContent.includes("\u202e")).toBe(false);
+    expect(sent.map((one) => one.tool)).toEqual(["describe_dataset", "search_catalog"]);
   });
 });
 
@@ -154,7 +179,7 @@ describe("the root's error element", () => {
   it("shows fixed words, never the error's message, whatever it holds", async () => {
     window.history.replaceState(null, "", "/#/datasets/orchard");
     const secret = "\u202esecret <img src=x onerror=alert(1)> from the address";
-    shown = await render(<RouterProvider router={createHashRouter(catalogueRoutes(() => Promise.reject(new Error(secret))))} />);
+    shown = await render(<RouterProvider router={createHashRouter(catalogueRoutes(load, () => Promise.reject(new Error(secret))))} />);
     expect(await shown.until((found) => found === FAILURE)).toBe(FAILURE);
     expect(shown.container.innerHTML).not.toContain("secret");
     expect(shown.container.textContent.includes("\u202e")).toBe(false);

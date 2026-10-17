@@ -23,9 +23,13 @@ two synthetic ones, as their JSON goes over the wire:
   holds the server's own answers, as the text it writes, for the seven public tools the web calls
   (D426's seam) over the orchard (``tests/core/catalog/world.py``'s CSV files, imported by the
   core's file importer, uncurated): each answer and two refusals, which the web package's tests
-  decode, walk, hold to their ``Boxed`` types and scan for a raw string. The state is made with a
-  clock and issuance ids that are the same on every run; a change to what the server answers fails
-  here until the file is written again (from ``server/``:
+  decode, walk, hold to their ``Boxed`` types and scan for a raw string; then four answers the
+  catalogue and dataset screens need (D431), from a world of their own (the orchard and a second
+  dataset): a first page of the catalogue with its ``next_offset``, a dataset's first three
+  columns with its ``columns_next``, and both tools under a disclosure floor of 50 (the trees'
+  40 rows suppressed), appended after the thirteen, which stay as they were. The state is made
+  with a clock and issuance ids that are the same on every run; a change to what the server
+  answers fails here until the file is written again (from ``server/``:
   ``AIBI_WRITE_WEB_FIXTURES=1 uv run pytest tests/core/analyses/test_openapi_results.py``).
 """
 
@@ -263,6 +267,23 @@ def _orchard_answers(world: World) -> list[dict[str, Any]]:
     return answers
 
 
+def _screen_answers(world: World) -> list[dict[str, Any]]:
+    """The four answers of D431's screens, from a world of their own: the orchard and a second
+    small dataset published, the catalogue's first page of one hit (``next_offset``), the
+    orchard's first three columns (``columns_next``), and the catalogue and the orchard under a
+    disclosure floor of 50 (the trees' 40 rows suppressed, *k* shown)."""
+    world.publish("orchard", orchard_files(rows=40, harvests=60))
+    world.publish("walnuts", {"walnuts.csv": b"walnut_id,kg\nw1,3\nw2,4\n"})
+    catalog = Catalog(world.store, workers=Workers(QueryLimits()))
+    floored = Catalog(world.store, workers=Workers(QueryLimits()), floor=50)
+    return [
+        _answer(world, catalog, "search_catalog", {"limit": 1}),
+        _answer(world, catalog, "describe_dataset", {"dataset": "orchard", "columns_limit": 3}),
+        _answer(world, floored, "search_catalog", {}),
+        _answer(world, floored, "describe_dataset", {"dataset": "orchard"}),
+    ]
+
+
 def test_the_web_client_s_orchard_answers_are_the_server_s(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -286,6 +307,20 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         answers = _orchard_answers(world)
     finally:
         world.store.close()
+    second = tmp_path / "screens"
+    (second / "imports").mkdir(parents=True)
+    later = iter(range(10_000))
+    screens = World(
+        second,
+        Store(
+            second / "data",
+            clock=lambda: datetime(2026, 2, 1, tzinfo=UTC) + timedelta(seconds=next(later)),
+        ),
+    )
+    try:
+        answers += _screen_answers(screens)
+    finally:
+        screens.store.close()
     rendered = json.dumps({"answers": answers}, indent=2, ensure_ascii=False) + "\n"
     if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
         ORCHARD_ANSWERS.write_text(rendered, encoding="utf-8")
@@ -311,8 +346,24 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         ("explain", 200),
         ("describe_dataset", 404),
         ("run_analysis", 422),
+        ("search_catalog", 200),
+        ("describe_dataset", 200),
+        ("search_catalog", 200),
+        ("describe_dataset", 200),
     ]
     assert [json.loads(answers[n]["body"])["valid"] for n in (3, 4)] == [True, False]
+    page, columns, hits, described = (json.loads(answers[n]["body"]) for n in range(13, 17))
+    assert (len(page["hits"]), page["next_offset"], page["total"]) == (1, 1, 2)
+    assert (len([c for t in columns["tables"] for c in t["columns"]]), columns["columns_next"]) == (
+        3,
+        3,
+    )
+    assert "next_offset" not in hits
+    assert "columns_next" not in described
+    assert [hit["disclosure"]["min_cell_count"] for hit in hits["hits"]] == [50, 50]
+    assert described["disclosure"]["min_cell_count"] == 50
+    rows = {t["rows"]["reference"].split("/")[-2]: t["rows"]["count"] for t in described["tables"]}
+    assert rows == {"harvests": 60, "trees": None}
     assert {found["operation"] for found in answers} == {
         "search_catalog",
         "describe_dataset",
