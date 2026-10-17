@@ -39,7 +39,9 @@
  *     `provenance.ts`'s and (for the page alone, D430) `numbers.ts`'s, whose glyphs are `format.tsx`'s
  *     alone, `requestId` and `originOf` `provenance.ts`'s, and `idAt` `curator.ts`'s;
  *     (g) holds that a member added to the operator client that reads a box's digits (the review's
- *     X1-X3) is a lint error by its import, whatever the member count is.
+ *     X1-X3) is a lint error by its import, whatever the member count is. The document seam's
+ *     internals (D432: `choiceFor`, `choiceText`, `ofTable`, `walkedAs`, `DATATYPES` and the three
+ *     functions that send a document) are `document.ts`'s alone, and the index re-exports none.
  * (e) **The launder corpus** (L1-L4, n01-n04, n34 of the plan's reviews): each route is a compile
  *     error or a lint error.
  * (f) **`FEEDS` is `classes.json`'s `from`** (m16): the same four, the same feeds.
@@ -639,6 +641,12 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
     ["curator.ts, the ids' module as a namespace", "import * as I from './ids';\nexport const f = I;\n", "src/api/curator.ts", true],
     ["curator.ts, the origin module as a namespace", "import * as O from './origin';\nexport const f = O;\n", "src/api/curator.ts", true],
     ["curator.ts, the RequestId type alone (a type gives no text)", "import type { RequestId } from './ids';\nexport type T = RequestId;\n", "src/api/curator.ts", false],
+    ["index.ts, validateDocument re-exported (the raw document doors leave the index, D432)", "export { validateDocument } from './typed';\n", "src/api/index.ts", true],
+    ["index.ts, countCohort and runAnalysis re-exported (D432)", "export { countCohort, runAnalysis } from './typed';\n", "src/api/index.ts", true],
+    ["index.ts, choiceFor re-exported (a choice is minted by optionsOf alone, D432)", "export { choiceFor } from './text';\n", "src/api/index.ts", true],
+    ["oracle.ts, validateDocument (D432)", "import { validateDocument } from './typed';\nexport const f = validateDocument;\n", "src/api/oracle.ts", true],
+    ["document.ts, validateDocument (D432)", "import { validateDocument } from './typed';\nexport const f = validateDocument;\n", "src/api/document.ts", false],
+    ["format.tsx, choiceText (D432)", "import { choiceText } from './text';\nexport const f = choiceText;\n", "src/api/format.tsx", true],
   ])("%s: refused %s", async (_case, code, file, refused) => {
     const found = await lintIds(code, file);
     expect(found.includes("@typescript-eslint/no-restricted-imports")).toBe(refused);
@@ -672,6 +680,14 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
     ["numbers", "glyphsOf", "src/api/format.tsx"],
     ["numbers", "countGlyphs", "src/api/format.tsx"],
     ["numbers", "remainingOf", "src/api/format.tsx"],
+    ["text", "choiceFor", "src/api/document.ts"],
+    ["text", "choiceText", "src/api/document.ts"],
+    ["text", "ofTable", "src/api/document.ts"],
+    ["typed", "walkedAs", "src/api/document.ts"],
+    ["typed", "validateDocument", "src/api/document.ts"],
+    ["typed", "countCohort", "src/api/document.ts"],
+    ["typed", "runAnalysis", "src/api/document.ts"],
+    ["datatypes", "DATATYPES", "src/api/document.ts"],
   ];
 
   const importing = (module: string, name: string, spelling: string, specifier = "."): string => `import { ${name} } from '${specifier}/${module}${spelling}';\nexport const f = ${name};\n`;

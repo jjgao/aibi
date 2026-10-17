@@ -76,8 +76,8 @@ const EVENT =
 /** `curator.ts`'s `Listens`: the page's `addEventListener`, which the client calls. */
 const LISTENS = `{ method addEventListener: (string, (${EVENT}) => void, ?AddEventListenerOptions | undefined) => void }`;
 
-/** A decoded node, `json.ts`'s `JsonOut`. */
-const NODE = "ReadonlyArray<@JsonOut> | ServerNumber | false | null | string | true | { readonly [string]: @JsonOut }";
+/** A decoded node, `json.ts`'s `JsonOut` (named, where it recurs, by its declaration). */
+const NODE = "ReadonlyArray<@src/api/json.ts:JsonOut> | ServerNumber | false | null | string | true | { readonly [string]: @src/api/json.ts:JsonOut }";
 
 /** The pinned inputs, derived from the real client's members: each a place (`root.member(#i)`,
  * the i-th parameter) and the exact shape it takes, with why the client takes it. A pin holds at
@@ -196,12 +196,53 @@ function isMethod(member: ts.Symbol): boolean {
   return (member.declarations ?? []).some((declaration) => ts.isMethodSignature(declaration) || ts.isMethodDeclaration(declaration));
 }
 
+/** Where a symbol is declared, as `file:name` (the file relative to the package, a default library's
+ * by its base name): what a name printed by `shapeOf` is told apart by, never the checker's own
+ * name, which for a unique symbol is `__@name@<id>`, an id of TypeScript's process-global counter
+ * (round 2 of the seam's plan, S2). */
+export function declarationOf(program: ts.Program, symbol: ts.Symbol | undefined): string {
+  const declaration = symbol?.declarations?.[0];
+  if (symbol === undefined || declaration === undefined) {
+    return "?";
+  }
+  const file = declaration.getSourceFile();
+  const where = program.isSourceFileDefaultLibrary(file) ? path.basename(file.fileName) : path.relative(WEB, file.fileName);
+  const name = ts.getNameOfDeclaration(declaration);
+  return `${where}:${name !== undefined && (ts.isIdentifier(name) || ts.isPrivateIdentifier(name)) ? name.text : symbol.getName()}`;
+}
+
+/** A member's name as `shapeOf` prints it: its own, or, for a key that is a unique symbol (a brand's,
+ * `[Symbol.toPrimitive]`), the declaration of that symbol in brackets, `[file:name]`. */
+export function memberName(program: ts.Program, checker: ts.TypeChecker, member: ts.Symbol): string {
+  const declared = member.declarations?.[0];
+  const name = declared === undefined ? undefined : ts.getNameOfDeclaration(declared);
+  if (name !== undefined && ts.isComputedPropertyName(name)) {
+    const key = checker.getSymbolAtLocation(name.expression);
+    return `[${declarationOf(program, key !== undefined && (key.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(key) : key)}]`;
+  }
+  // A symbol-keyed member with no computed name to read (a mapped type's): the checker's name, whose
+  // id is not stable, so it never equals a pin.
+  return member.getName().startsWith("__@") ? `[?${member.getName()}]` : member.getName();
+}
+
+/** A tuple's elements as `shapeOf` prints them: each with its flag (`B?`, `...C[]`, `...V`), a
+ * union or an intersection in parentheses where a flag stands beside it. */
+function tupleElements(target: ts.TupleType, elements: readonly string[]): string[] {
+  return elements.map((element, index) => {
+    const flag = target.elementFlags[index] ?? ts.ElementFlags.Required;
+    const one = flag !== ts.ElementFlags.Required && (element.includes(" | ") || element.includes(" & ")) ? `(${element})` : element;
+    return (flag & ts.ElementFlags.Optional) !== 0 ? `${one}?` : (flag & ts.ElementFlags.Rest) !== 0 ? `...${one}[]` : (flag & ts.ElementFlags.Variadic) !== 0 ? `...${one}` : one;
+  });
+}
+
 /** The exact shape of a type: its structure printed, the program's types expanded member by member
  * (names of parameters left out, members sorted), a library type by its name and type arguments,
- * and the box (`box.ts`'s class, whose members are private or throw) by its name.
- * A type met again while it is printed is `@` and its name. Kinds without a structure (a
- * conditional type, an indexed one) are printed as `?` and the checker's text, never equal to a
- * pin. */
+ * and the box (`box.ts`'s class, whose members are private or throw) by its name. A key that is a
+ * unique symbol is printed by its declaration (`memberName`), a tuple with its elements' flags
+ * (`readonly [A, B?, ...C[]]`), and a type met again while it is printed as `@` and its declaration
+ * (`declarationOf`: the program's types are named by their file, so that a same-named type of
+ * another module differs). Kinds without a structure (a conditional type, an indexed one) are
+ * printed as `?` and the checker's text, never equal to a pin. */
 export function shapeOf(program: ts.Program, checker: ts.TypeChecker, type: ts.Type): string {
   const box = boxOf(program, checker);
   const stack: ts.Type[] = [];
@@ -218,7 +259,8 @@ export function shapeOf(program: ts.Program, checker: ts.TypeChecker, type: ts.T
   };
   const print = (found: ts.Type): string => {
     if (stack.includes(found)) {
-      return `@${found.aliasSymbol?.getName() ?? found.getSymbol()?.getName() ?? "cycle"}`;
+      const named = found.aliasSymbol ?? found.getSymbol();
+      return named === undefined ? "@cycle" : `@${declarationOf(program, named)}`;
     }
     if (found === box) {
       return "ServerNumber";
@@ -239,7 +281,7 @@ export function shapeOf(program: ts.Program, checker: ts.TypeChecker, type: ts.T
     try {
       if (reference !== undefined && checker.isTupleType(found)) {
         const tuple = reference.target as ts.TupleType;
-        return `${tuple.readonly ? "readonly " : ""}[${checker.getTypeArguments(reference).map(print).join(", ")}]`;
+        return `${tuple.readonly ? "readonly " : ""}[${tupleElements(tuple, checker.getTypeArguments(reference).map(print)).join(", ")}]`;
       }
       const symbol = (reference?.target ?? found).getSymbol();
       if (defaultLibrary(program, symbol)) {
@@ -251,7 +293,7 @@ export function shapeOf(program: ts.Program, checker: ts.TypeChecker, type: ts.T
         .map((member) => {
           const optional = (member.flags & ts.SymbolFlags.Optional) !== 0 ? "?" : "";
           const kind = isMethod(member) ? "method " : writeType(checker, member) === undefined ? "readonly " : "";
-          return `${kind}${member.getName()}${optional}: ${print(checker.getTypeOfSymbol(member))}`;
+          return `${kind}${memberName(program, checker, member)}${optional}: ${print(checker.getTypeOfSymbol(member))}`;
         })
         .sort();
       const indexes = checker.getIndexInfosOfType(found).map((info) => `${info.isReadonly ? "readonly " : ""}[${print(info.keyType)}]: ${print(info.type)}`);

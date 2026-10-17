@@ -145,7 +145,7 @@ describe("what the brands are for, held by the checker", () => {
       "import { keyOf } from './layout/key';",
       "import { Link } from './layout/Link';",
       "import { Option } from './layout/Option';",
-      "declare const choice: Choice;",
+      "declare const choice: Choice<\"unit\">;",
       "declare const box: ServerText;",
       "const id = idOfAddress('orchard');",
       `export const probe = ${expression};`,

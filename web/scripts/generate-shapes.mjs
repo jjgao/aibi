@@ -18,7 +18,7 @@
  * `x-aibi-json` components (`OutputJson`) as any JSON value. The enum and const vocabularies are
  * listed by their place (`VOCABULARIES`, for `text.tsx`'s `kindOf`), a fail-closed one (`Severity`)
  * is not enumerated by the walk (an unknown severity is read as `block`, never refused), and the
- * grammars of four id positions (`GRAMMARS`, for `idOf` and `choiceOf`) are read from their
+ * grammars of four id positions (`GRAMMARS`, for `idOf` and `choiceFor`, D432) are read from their
  * `pattern`, `maxLength` and `not`.
  *
  * **The keyword census, by position.** Each node builder declares the keywords it consumes
@@ -79,8 +79,8 @@ export const REFUSALS = "Refusals";
  * (an unknown severity is `block`: shown, and the result read as no answer). */
 export const FAIL_CLOSED = new Map([["Severity", "block"]]);
 
-/** The id positions whose grammars `idOf` and `choiceOf` read: a component's member of the
- * answers, by the name a `Choice` is made under. */
+/** The id positions whose grammars `idOf` and `choiceFor` read: a component's member of the
+ * answers, by the name of the grammar a `Choice`'s role is made under (D432). */
 export const GRAMMAR_POSITIONS = new Map([
   ["dataset", ["CatalogHit", "dataset"]],
   ["table", ["TableSummary", "id"]],
@@ -743,7 +743,7 @@ export function renderShapes(document, text) {
       .join("")}} as const);\n`,
     `\n/** The vocabularies read fail-closed, each as the member given (the walk does not enumerate them). */\n`,
     `export const FALLBACKS = frozen(${json(fallbacks)} as const);\n`,
-    `\n/** The grammars of the id positions \`idOf\` and \`choiceOf\` read. */\n`,
+    `\n/** The grammars of the id positions \`idOf\` and \`choiceFor\` read. */\n`,
     `export const GRAMMARS: { readonly [name in ${Object.keys(grammars).map(json).join(" | ")}]: Grammar } = frozen(${json(grammars)});\n`,
   ];
   return lines.join("");

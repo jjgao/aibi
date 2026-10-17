@@ -236,6 +236,15 @@ describe("the internals are named where they belong alone", () => {
     ["visible.ts", "visibleForm", ["src/api/text.tsx", "src/api/visible.ts"]],
     ["visible.ts", "ENGINE", ["src/api/text.tsx", "src/api/visible.ts"]],
     ["curator.ts", "createCurator", ["src/api/curator.ts", "src/api/operator.ts"]],
+    ["text.tsx", "choiceFor", ["src/api/document.ts", "src/api/text.tsx"]],
+    ["text.tsx", "choiceText", ["src/api/document.ts", "src/api/text.tsx"]],
+    ["text.tsx", "ofTable", ["src/api/document.ts", "src/api/text.tsx"]],
+    ["typed.ts", "walkedAs", ["src/api/document.ts", "src/api/typed.ts"]],
+    ["typed.ts", "validateDocument", ["src/api/document.ts", "src/api/typed.ts"]],
+    ["typed.ts", "countCohort", ["src/api/document.ts", "src/api/typed.ts"]],
+    ["typed.ts", "runAnalysis", ["src/api/document.ts", "src/api/typed.ts"]],
+    ["datatypes.ts", "DATATYPES", ["src/api/datatypes.ts", "src/api/document.ts"]],
+    ["datatypes.ts", "LEFT_OUT", ["src/api/datatypes.ts"]],
     ["operator.ts", "operator", ["src/api/operator.ts", "src/harness/Harness.tsx", "src/operator/Shell.tsx"]],
   ])("%s's %s", (file, name, expected) => {
     const allowed = ALLOWED[name] ?? [];
@@ -250,6 +259,73 @@ describe("the internals are named where they belong alone", () => {
   });
 });
 
+/** An export's declared type, of a module of `src/api/` of a program. */
+function declaredType(prog: ts.Program, chk: ts.TypeChecker, file: string, name: string): ts.Type {
+  const source = prog.getSourceFile(path.join(API, file));
+  const module = source === undefined ? undefined : chk.getSymbolAtLocation(source);
+  const found = module === undefined ? undefined : chk.getExportsOfModule(module).find((member) => member.name === name);
+  if (found === undefined) {
+    throw new Error(`${file} exports no ${name}`);
+  }
+  return chk.getDeclaredTypeOfSymbol((found.flags & ts.SymbolFlags.Alias) !== 0 ? chk.getAliasedSymbol(found) : found);
+}
+
+/** The one call signature of a function a module of `src/api/` exports. */
+function signatureOf(prog: ts.Program, chk: ts.TypeChecker, file: string, name: string): ts.Signature {
+  const source = prog.getSourceFile(path.join(API, file));
+  const module = source === undefined ? undefined : chk.getSymbolAtLocation(source);
+  const found = module === undefined ? undefined : chk.getExportsOfModule(module).find((member) => member.name === name);
+  const [signature, ...more] = found === undefined ? [] : chk.getTypeOfSymbol(found).getCallSignatures();
+  if (signature === undefined || more.length > 0) {
+    throw new Error(`${file}'s ${name} is no function of one signature`);
+  }
+  return signature;
+}
+
+/** The `value` of an `Outcome`'s `ok` arm, from a typed function's return type. */
+export function okValueOf(chk: ts.TypeChecker, returned: ts.Type): ts.Type | undefined {
+  const [outcome] = chk.getTypeArguments(returned as ts.TypeReference);
+  const arms = outcome === undefined ? [] : outcome.isUnion() ? outcome.types : [outcome];
+  const ok = arms.find((arm) => {
+    const kind = chk.getPropertyOfType(arm, "kind");
+    return kind !== undefined && chk.typeToString(chk.getTypeOfSymbol(kind)) === '"ok"';
+  });
+  const value = ok === undefined ? undefined : chk.getPropertyOfType(ok, "value");
+  return value === undefined ? undefined : chk.getTypeOfSymbol(value);
+}
+
+/**
+ * The signatures pinned by the identity of their types (minor 4 of the seam's plan round 3): the
+ * document seam's four print multi-KB (the walked answer types, expanded), so each is written as the
+ * short text below when its one parameter and its return are the very types named (by type-object
+ * identity in the program's checker: `optionsOf`'s parameter is `describeDataset`'s ok value, a
+ * `*Draft`'s is `document.ts`' `Draft` and its return is `typed.ts`' own function's), and as the
+ * checker's text otherwise, which no pin equals.
+ */
+export function signatureText(prog: ts.Program, chk: ts.TypeChecker, name: string, signature: ts.Signature): string {
+  const checked = chk.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call);
+  const [parameter, ...more] = signature.getParameters();
+  if (parameter === undefined || more.length > 0 || (signature.typeParameters?.length ?? 0) > 0 || signature.thisParameter !== undefined) {
+    return checked;
+  }
+  const taken = chk.getTypeOfSymbol(parameter);
+  const given = signature.getReturnType();
+  const identities: Readonly<Record<string, () => readonly [ts.Type | undefined, ts.Type, string]>> = {
+    optionsOf: () => [okValueOf(chk, signatureOf(prog, chk, "typed.ts", "describeDataset").getReturnType()), declaredType(prog, chk, "document.ts", "Options"), '(answer: Answered<"describe_dataset">): Options'],
+    validateDraft: () => [declaredType(prog, chk, "document.ts", "Draft"), signatureOf(prog, chk, "typed.ts", "validateDocument").getReturnType(), '(draft: Draft): Promise<Outcome<Answered<"validate_document">>>'],
+    countDraft: () => [declaredType(prog, chk, "document.ts", "Draft"), signatureOf(prog, chk, "typed.ts", "countCohort").getReturnType(), '(draft: Draft): Promise<Outcome<Answered<"count_cohort">>>'],
+    runDraft: () => [declaredType(prog, chk, "document.ts", "Draft"), signatureOf(prog, chk, "typed.ts", "runAnalysis").getReturnType(), '(draft: Draft): Promise<Outcome<Answered<"run_analysis">>>'],
+  };
+  const identity = Object.hasOwn(identities, name) ? identities[name] : undefined;
+  if (identity === undefined) {
+    return checked;
+  }
+  const [parameterType, returnType, text] = identity();
+  return parameterType !== undefined && taken === parameterType && given === returnType && !(parameter.valueDeclaration !== undefined && ts.isParameter(parameter.valueDeclaration) && (parameter.valueDeclaration.questionToken !== undefined || parameter.valueDeclaration.dotDotDotToken !== undefined || parameter.valueDeclaration.initializer !== undefined))
+    ? text
+    : checked;
+}
+
 /** The exports of `src/api/index.ts`, reviewed: a new one fails here until it is added. */
 const EXPORTS = [
   "Answered",
@@ -260,8 +336,10 @@ const EXPORTS = [
   "BoxedSegment",
   "Choice",
   "ClientError",
+  "CohortDraft",
   "DatasetId",
   "DecodeError",
+  "Draft",
   "Facet",
   "GrammarName",
   "InvalidCause",
@@ -269,6 +347,7 @@ const EXPORTS = [
   "JsonInNull",
   "Kind",
   "LISTED",
+  "LeafDraft",
   "ListShown",
   "Listed",
   "Lists",
@@ -276,23 +355,26 @@ const EXPORTS = [
   "NOT_READ",
   "Num",
   "OperationId",
+  "Option",
+  "Options",
   "Outcome",
   "REFUSALS",
   "RESPONSE_CAP_BYTES",
   "Refused",
   "RequestBody",
   "RetryAfter",
+  "Role",
   "Route",
   "SHAPE_MISMATCH",
   "ServerNumber",
   "ServerText",
   "TypedOperation",
   "UNREACHABLE",
+  "UnitOption",
   "VocabularyName",
-  "choiceOf",
   "compareText",
   "components",
-  "countCohort",
+  "countDraft",
   "describeDataset",
   "entriesOf",
   "explain",
@@ -307,14 +389,15 @@ const EXPORTS = [
   "listOf",
   "memberOf",
   "operations",
+  "optionsOf",
   "paths",
   "routes",
-  "runAnalysis",
+  "runDraft",
   "sameText",
   "searchCatalog",
   "showText",
   "start",
-  "validateDocument",
+  "validateDraft",
 ];
 
 describe("the surface walk's leaves: the two boxes' methods take no parameter (round 1 of #117)", () => {
@@ -413,6 +496,15 @@ describe("src/api/index.ts", () => {
       declared("numbers.ts", "glyphsOf"),
       declared("numbers.ts", "countGlyphs"),
       declared("numbers.ts", "remainingOf"),
+      declared("text.tsx", "choiceFor"),
+      declared("text.tsx", "choiceText"),
+      declared("text.tsx", "ofTable"),
+      declared("typed.ts", "walkedAs"),
+      declared("typed.ts", "validateDocument"),
+      declared("typed.ts", "countCohort"),
+      declared("typed.ts", "runAnalysis"),
+      declared("datatypes.ts", "DATATYPES"),
+      declared("datatypes.ts", "LEFT_OUT"),
     ];
     for (const symbol of found) {
       const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
@@ -439,6 +531,10 @@ describe("src/api/index.ts", () => {
       "a sanctioned predicate (Q4 of D427): the key of one map's largest count, a box the server sent, never a number; a map with a null (suppressed) member is refused by type",
     ],
     RetryAfter: ["({ refused }: { readonly refused: Refused; }): ReactElement<unknown, string | JSXElementConstructor<any>> | null", "a refusal's Retry-After, as an element: the client's parse of a header, never a server number"],
+    optionsOf: [
+      '(answer: Answered<"describe_dataset">): Options',
+      "the document seam (D432): it reads, of the describe answer's numbers, whether the disclosure's min_cell_count is null and whether columns_next is present, two booleans of the page's lists, and gives choices, boxes the server sent and booleans, never a number or its text (pinned by identity: signatureText)",
+    ],
   };
 
   /** The takers among everything a module exports as a function (a namespace's included), with how
@@ -466,7 +562,7 @@ describe("src/api/index.ts", () => {
       const signatures = [...type.getCallSignatures(), ...type.getConstructSignatures()];
       for (const signature of signatures) {
         functions += 1;
-        const written = chk.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call);
+        const written = signatureText(prog, chk, name, signature);
         if (GUARDS[name] === written || NUMBER_PINS[name]?.[0] === written) {
           guards += 1;
           continue;
@@ -496,8 +592,9 @@ describe("src/api/index.ts", () => {
     }
     const { takers, functions, guards, generics } = exportTakers(program, checker, root);
     expect(takers).toEqual([]);
-    // `BoxedMap` is exported as a type alone; its class's (private) constructor is generic.
-    expect(generics.sort()).toEqual(["BoxedMap", "entriesOf", "kindOf", "memberOf"]);
+    // `BoxedMap` and `Choice` (D432) are exported as types alone; their classes' (private)
+    // constructors are generic.
+    expect(generics.sort()).toEqual(["BoxedMap", "Choice", "entriesOf", "kindOf", "memberOf"]);
     expect(guards).toBe(Object.keys(GUARDS).length + Object.keys(NUMBER_PINS).length);
     expect(functions).toBeGreaterThan(30);
   });
@@ -665,7 +762,22 @@ const TEXT_PINS: Readonly<Record<string, readonly [string, string]>> = {
   isServerNumber: ["(value: unknown): value is ServerNumber", "the number box's brand check: a boolean"],
   kindOf: ["<K extends VocabularyName>(text: ServerText, vocabulary: K): Kind<K>", "a generated vocabulary's own member (a literal of the code), or null; Severity fail-closed"],
   idOf: ["(text: ServerText): DatasetId | null", "a DatasetId, whose generated grammar bounds its characters"],
-  choiceOf: ['(text: ServerText, grammar: "dataset" | "table" | "column" | "analysis"): Choice | null', "an opaque Choice holding the box"],
+  optionsOf: [
+    '(answer: Answered<"describe_dataset">): Options',
+    "the document seam (D432): opaque choices of a walked describe answer's ids (holding the boxes), the answer's own boxes as labels, its DatasetId and booleans of the page's lists (pinned by identity: signatureText)",
+  ],
+  validateDraft: [
+    '(draft: Draft): Promise<Outcome<Answered<"validate_document">>>',
+    "the document seam (D432): a Draft's choices hold their boxes as ES private members, read by documentOf alone at their role's positions; the answer is typed.ts' walk (pinned by identity: signatureText)",
+  ],
+  countDraft: [
+    '(draft: Draft): Promise<Outcome<Answered<"count_cohort">>>',
+    "the document seam (D432): a Draft's choices hold their boxes as ES private members, read by documentOf alone at their role's positions; the answer is typed.ts' walk (pinned by identity: signatureText)",
+  ],
+  runDraft: [
+    '(draft: Draft): Promise<Outcome<Answered<"run_analysis">>>',
+    "the document seam (D432): a Draft's choices hold their boxes as ES private members, read by documentOf alone at their role's positions; the answer is typed.ts' walk (pinned by identity: signatureText)",
+  ],
   sameText: ["(a: ServerText, b: ServerText): boolean", "the sanctioned equality: a boolean"],
   compareText: ["(a: ServerText, b: ServerText): number", "the sanctioned order: a number (an ordering oracle for deliberate code, D426's residual)"],
   entriesOf: ["<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[]", "a map's entries, keys boxed"],
@@ -696,6 +808,8 @@ const OUTPUT_PINS: Readonly<Record<string, string>> = {
   "index.ts:ClientError(): Error": "the client's own refusal: its message is REFUSALS' fixed words, its name a constant",
   "index.ts:DecodeError(): Error": "the decoder's refusal: its message is UNDECODABLE's fixed words",
   "index.ts:idOf(): DatasetId": "a dataset id, a string whose generated grammar bounds its characters (the brand proves form, not provenance)",
+  "index.ts:optionsOf().dataset: DatasetId":
+    "the describe answer's dataset id (D432), idOf's: a string whose generated grammar bounds its characters, which a Draft hands back as its dataset (documentOf holds it to the one its choices were minted from)",
   "index.ts:idOfAddress(): DatasetId": "the address's dataset id (D428): the router module's door, idOf's generated grammar over a text of the address, so its characters are bounded and nothing else of the address is given back",
   "index.ts:Num(): ReactElement (an unlisted library type)":
     "shows a server number by its exact source text (D430): its props hold the box, never its digits, which a module-private context hands to the digits as they render; a detached root's textContent reads them by deliberate code (D419's boundary; react-dom/client entry-only, D429)",
@@ -720,11 +834,28 @@ describe("D426: the typed answers' doors", () => {
     for (const { name, type } of values(program, checker, "src/api/index.ts")) {
       for (const signature of [...type.getCallSignatures(), ...type.getConstructSignatures()]) {
         if (signature.getParameters().some((parameter) => takesBox(checker.getTypeOfSymbol(parameter)))) {
-          found.push(`${name} ${checker.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call)}`);
+          found.push(`${name} ${signatureText(program, checker, name, signature)}`);
         }
       }
     }
     expect(found.sort()).toEqual(Object.entries(TEXT_PINS).map(([name, [signature]]) => `${name} ${signature}`).sort());
+  });
+
+  it.each([
+    ["optionsOf of another operation's answer", 'export function optionsOf(answer: Answered<"describe_dataset">): Options {', 'export function optionsOf(answer: Answered<"search_catalog">): Options {', "optionsOf"],
+    ["optionsOf of the answer and more", 'export function optionsOf(answer: Answered<"describe_dataset">): Options {', 'export function optionsOf(answer: Answered<"describe_dataset">, notes?: string): Options {', "optionsOf"],
+    ["validateDraft giving count_cohort's answer", 'export function validateDraft(draft: Draft): Promise<Outcome<Answered<"validate_document">>> {\n  return validateDocument(', 'export function validateDraft(draft: Draft): Promise<Outcome<Answered<"count_cohort">>> {\n  return countCohort(', "validateDraft"],
+    ["runDraft of a draft and more", 'export function runDraft(draft: Draft): Promise<Outcome<Answered<"run_analysis">>> {', 'export function runDraft(draft: Draft & { readonly notes: string }): Promise<Outcome<Answered<"run_analysis">>> {', "runDraft"],
+  ])("signatureText pins by identity: %s is no pinned text (its control)", (_case, from, to, name) => {
+    const original = readFileSync(path.join(API, "document.ts"), "utf8");
+    expect(original).toContain(from);
+    const checked = check({ "src/api/document.ts": original.replace(from, to), "src/probe-identity.ts": "export * from './api';\n" });
+    const signature = signatureOf(checked.program, checked.checker, "document.ts", name);
+    const written = signatureText(checked.program, checked.checker, name, signature);
+    expect(written).not.toBe(TEXT_PINS[name]?.[0]);
+    expect(written).toBe(checked.checker.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call));
+    const real = signatureOf(program, checker, "document.ts", name);
+    expect(signatureText(program, checker, name, real)).toBe(TEXT_PINS[name]?.[0]);
   });
 
   it("no export of a module app code may import gives a raw string or a door, but the pinned ones", () => {

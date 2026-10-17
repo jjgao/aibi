@@ -2,9 +2,10 @@
  * The takers of a server text (D426): the one module that reads a `ServerText`'s text
  * (`readText`, `box.ts`'s, which the lint and the import-graph test let this module alone import),
  * and gives back what is not data: a vocabulary's member (`kindOf`), an id that only its grammar
- * makes (`idOf`, a `DatasetId`), an opaque choice (`choiceOf`), a boolean (`sameText`) or an order
- * (`compareText`). Each is pinned by its exact signature in the index's gate
- * (`tests/gates/api-graph.test.ts`), and no other export of the index takes a box.
+ * makes (`idOf`, a `DatasetId`), an opaque choice of a role (`choiceFor`, `document.ts`'s alone,
+ * D432), a boolean (`sameText`) or an order (`compareText`). Each the index exports is pinned by its
+ * exact signature in the index's gate (`tests/gates/api-graph.test.ts`), and no other export of the
+ * index takes a box but the document seam's, each pinned there by identity (D432).
  *
  * - **`kindOf(text, vocabulary)`**: the member of a generated vocabulary (`VOCABULARIES`, by place
  *   in the document: `"Severity"`, `"ApplicableAnalysis.status"`, ...) that the text is, or `null`
@@ -16,9 +17,13 @@
  *   length and `not`, generated from the document: `GRAMMARS.dataset`) bounds its characters, so it
  *   can stand in a request and a fragment; `null` otherwise. The brand proves the form, not the
  *   provenance: a label that happens to match the grammar makes a valid `DatasetId`.
- * - **`choiceOf(text, grammar)`**: a picker's choice (a table, a column, an analysis, a dataset), an
- *   opaque object that holds the box (never a string, so it is no React child), made when the text
- *   matches the id position's generated grammar; `null` otherwise. M5.3's request half reads it.
+ * - **`Choice<R>`** (D432): a picker's choice of a role (`Role`: a document's `unit` table, a value
+ *   leaf's `leaf` column, an analysis's `view` column), an opaque object that holds the box, its role
+ *   (an ES private member typed `R`, so `Choice<"unit">` is no `Choice<"leaf">`) and the answer it was
+ *   minted from (never a string, so it is no React child). It is made by `choiceFor` and read by
+ *   `choiceText`, internals that `document.ts` alone imports (a lint row, the import-graph test):
+ *   `optionsOf` mints every choice from a `describe_dataset` answer the walk returned, and
+ *   `documentOf` reads each at its role's position. The index exports the type alone.
  * - **`memberOf(map, name)`**: the value of a map's member named by the page's own word (a
  *   values table's `numerator`, `estimate`, a `not_estimable` pointer: the members of an
  *   `x-aibi-json` value, which the walk does not check, m4 of round 4), as `{found: true, value}`,
@@ -128,31 +133,51 @@ export function idOfAddress(raw: string): DatasetId | null {
 }
 
 /** The words of a refused construction of a choice: fixed. */
-export const FORGED_CHOICE = "A choice is made by choiceOf alone (D426).";
+export const FORGED_CHOICE = "A choice is made by optionsOf alone (D432).";
 
 const CHOICE_TOKEN: unique symbol = Symbol("aibi.choice");
 
-let makeChoice: (text: ServerText) => Choice;
+/** The roles a choice stands in (D432): a document's unit table, a value leaf's column, and a
+ * column of an analysis's view. */
+export type Role = "unit" | "leaf" | "view";
 
-/** A picker's choice: the box of an id position's text that matched the position's grammar,
- * opaque (M5.3's request half reads it; nothing does yet). */
-export class Choice {
+/** The grammar of each role's position: a table's id, or a column's. */
+const GRAMMAR_OF: { readonly [R in Role]: GrammarName } = Object.freeze({ unit: "table", leaf: "column", view: "column" });
+
+/** A choice's text and the token of the answer it was minted from, as `choiceText` gives them. */
+export interface ChoiceRead {
+  readonly text: string;
+  readonly source: symbol;
+}
+
+let makeChoice: <R extends Role>(text: ServerText, role: R, source: symbol) => Choice<R>;
+let readChoice: (choice: unknown, role: Role) => ChoiceRead | null;
+
+/** A picker's choice of a role: the box of an answer's id that matched its role's grammar, the
+ * role, and the token of the answer it came from, opaque (`document.ts` reads it through `choiceText`). */
+export class Choice<R extends Role> {
   readonly #text: ServerText;
+  readonly #role: R;
+  readonly #source: symbol;
 
-  private constructor(token: typeof CHOICE_TOKEN, text: ServerText) {
+  private constructor(token: typeof CHOICE_TOKEN, text: ServerText, role: R, source: symbol) {
     if (token !== CHOICE_TOKEN) {
       throw new TypeError(FORGED_CHOICE);
     }
     this.#text = text;
+    this.#role = role;
+    this.#source = source;
     Object.freeze(this);
   }
 
   static {
-    makeChoice = (text) => new Choice(CHOICE_TOKEN, text);
+    makeChoice = (text, role, source) => new Choice(CHOICE_TOKEN, text, role, source);
+    readChoice = (choice, role) =>
+      typeof choice === "object" && choice !== null && #role in choice && choice.#role === role ? Object.freeze({ text: readText(choice.#text), source: choice.#source }) : null;
   }
 
   /** Whether `value` is a choice this class made. */
-  static holds(value: unknown): value is Choice {
+  static holds(value: unknown): value is Choice<Role> {
     return typeof value === "object" && value !== null && #text in value;
   }
 }
@@ -160,9 +185,25 @@ export class Choice {
 Object.freeze(Choice.prototype);
 Object.freeze(Choice);
 
-/** A choice of the box, if its text matches the id position's grammar; `null` otherwise. */
-export function choiceOf(text: ServerText, grammar: GrammarName): Choice | null {
-  return matches(readText(text), grammar) ? makeChoice(text) : null;
+/** `document.ts`'s alone (D432): a choice of the role, minted from the answer `source` stands for
+ * (a symbol `document.ts` makes per answer), if the box's text matches the role's grammar; `null`
+ * otherwise. */
+export function choiceFor<R extends Role>(text: ServerText, role: R, source: symbol): Choice<R> | null {
+  return matches(readText(text), GRAMMAR_OF[role]) ? makeChoice(text, role, source) : null;
+}
+
+/** `document.ts`'s alone (D432): a choice's text and source, if it is a choice this class made of
+ * that role; `null` otherwise (another role, or no choice at all). */
+export function choiceText(choice: Choice<Role>, role: Role): ChoiceRead | null {
+  return readChoice(choice, role);
+}
+
+/** `document.ts`'s alone (D432): whether a column id's table part (before its one dot, which the
+ * column grammar gives it) is the table's id. */
+export function ofTable(column: ServerText, table: ServerText): boolean {
+  const raw = readText(column);
+  const dot = raw.indexOf(".");
+  return dot > 0 && raw.slice(0, dot) === readText(table);
 }
 
 /** What `memberOf` gives: the member's value, or that the map has none of that name. */

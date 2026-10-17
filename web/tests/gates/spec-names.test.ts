@@ -81,12 +81,12 @@ const TEST_NAMES: Readonly<Record<string, string>> = {
 /** The spans between backticks of the D430 row and the v0.8.76 entry of SPEC.md's change log. (Every
  * span of the entry is also in the row today, so scanning the entry adds no case a mutant of this
  * function that scans the row alone could be told from: it guards the entry against drift.) */
-export function spansOf(spec: string): string[] {
+export function spansOf(spec: string, decision = "D430", version = "v0.8.76"): string[] {
   const lines = spec.split("\n");
-  const row = lines.find((line) => line.startsWith("| D430 |"));
-  const start = lines.findIndex((line) => line.startsWith("- **v0.8.76**"));
+  const row = lines.find((line) => line.startsWith(`| ${decision} |`));
+  const start = lines.findIndex((line) => line.startsWith(`- **${version}**`));
   if (row === undefined || start < 0) {
-    throw new Error("SPEC.md has no D430 row or no v0.8.76 entry");
+    throw new Error(`SPEC.md has no ${decision} row or no ${version} entry`);
   }
   let end = start + 1;
   while ((lines[end] ?? "").startsWith("  ")) {
@@ -105,14 +105,21 @@ function declared(name: string, sources: ReadonlyMap<string, string>): boolean {
 
 /** The spans of `spans` that name nothing in the repository (a stale name), and the entries of
  * `NOT_DECLARED` that no span uses, by `sources` and `files`. */
-export function stale(spans: readonly string[], sources: ReadonlyMap<string, string>, python: ReadonlyMap<string, string>, files: readonly string[]): { readonly missing: string[]; readonly unused: string[] } {
+export function stale(
+  spans: readonly string[],
+  sources: ReadonlyMap<string, string>,
+  python: ReadonlyMap<string, string>,
+  files: readonly string[],
+  testNames: Readonly<Record<string, string>> = TEST_NAMES,
+  notDeclared: Readonly<Record<string, string>> = NOT_DECLARED,
+): { readonly missing: string[]; readonly unused: string[] } {
   const isTest = ([file]: readonly [string, string]): boolean => file.startsWith("web/tests/") || file.startsWith("web/e2e/");
   const tests = new Map([...sources].filter(isTest));
   const app = new Map([...sources].filter((entry) => !isTest(entry)));
   const missing: string[] = [];
   const used = new Set<string>();
   for (const span of new Set(spans)) {
-    if (span in NOT_DECLARED) {
+    if (span in notDeclared) {
       used.add(span);
       const tokens = [...sources.entries()].some(([file, text]) => file.startsWith("web/src/") && new RegExp(`\\b${escaped(span)}\\b`, "u").test(text));
       if (span === "WITHHELD_UNDER_K" && !tokens) {
@@ -140,12 +147,12 @@ export function stale(spans: readonly string[], sources: ReadonlyMap<string, str
     } else if (/^[A-Za-z_]\w*(?:\(.*\))?$/u.test(span) && /[A-Z]/u.test(span.replace(/\(.*$/u, ""))) {
       const name = span.replace(/\(.*$/u, "");
       used.add(name);
-      if (!declared(name, Object.hasOwn(TEST_NAMES, name) ? tests : app)) {
+      if (!declared(name, Object.hasOwn(testNames, name) ? tests : app)) {
         missing.push(span);
       }
     }
   }
-  return { missing, unused: [...Object.keys(NOT_DECLARED), ...Object.keys(TEST_NAMES)].filter((name) => !used.has(name)) };
+  return { missing, unused: [...Object.keys(notDeclared), ...Object.keys(testNames)].filter((name) => !used.has(name)) };
 }
 
 describe("the names D430 gives exist (MA-1 of #121 round 2)", () => {
@@ -192,5 +199,63 @@ describe("the names D430 gives exist (MA-1 of #121 round 2)", () => {
     const all = [...Object.keys(NOT_DECLARED), ...Object.keys(TEST_NAMES)];
     expect(stale([], SOURCES, PYTHON, FILES).unused).toEqual(all);
     expect(stale(["Map", "leafSweep"], SOURCES, PYTHON, FILES).unused).toEqual(all.filter((name) => name !== "Map" && name !== "leafSweep"));
+  });
+});
+
+/** The helpers of the tests D432 names, each declared in a test file alone. */
+const D432_TEST_NAMES: Readonly<Record<string, string>> = {
+  DRAFT_TABLE: "the seam's surface gate's checked-in table",
+  shapeOf: "the operator client's surface gate's printer",
+  TEXT_PINS: "the index gate's pins of the takers of a server text",
+  NUMBER_PINS: "the index gate's pins of the sanctioned predicates",
+  OUTPUT_PINS: "the index gate's pins of what an export gives",
+  signatureText: "the index gate's identity pins",
+};
+
+/** The names D432 gives that are no declaration of the web, each with why (the server's are held by
+ * name in its Python below). */
+const D432_NOT_DECLARED: Readonly<Record<string, string>> = {
+  R: "a type parameter",
+  WeakMap: "a builtin",
+  Proxy: "a builtin",
+  ReadonlyArray: "a builtin type",
+  toJSON: "a builtin's method",
+  Required: "a tuple element's flag, TypeScript's",
+  Rest: "a tuple element's flag, TypeScript's",
+  NOT_SUPPORTED: "a refusal's code, the server's",
+  NOT_PERMISSIBLE: "a refusal's code, the server's",
+  INVALID_JSON: "a refusal's code, the server's",
+  LIMIT_EXCEEDED: "a refusal's code, the server's",
+  UNKNOWN_PARAMETER: "a refusal's code, the server's",
+  MAX_STRING: "the server's limit (aibi.core.schema.limits), held below",
+  MAX_DOCUMENT_BYTES: "the server's limit (aibi.core.schema.limits), held below",
+  MAX_BODY_BYTES: "the server's limit (aibi.core.schema.limits), held below",
+  choiceOf: "the name choiceFor had before D432: the web must declare it nowhere",
+};
+
+describe("the names D432 gives exist (the class of MA-1 of #121 round 2, for the document seam)", () => {
+  const spans = spansOf(readFileSync(path.join(ROOT, "SPEC.md"), "utf8"), "D432", "v0.8.78");
+
+  it("names a good many symbols and files", () => {
+    expect(spans.length).toBeGreaterThan(60);
+    for (const span of ["optionsOf", "walkedAs", "choiceText", "DRAFT_TABLE", "web/src/api/datatypes.ts"]) {
+      expect(spans).toContain(span);
+    }
+  });
+
+  it("finds every identifier, constant and file D432 names in the repository, and no stale entry of its lists of exceptions", () => {
+    expect(stale(spans, SOURCES, PYTHON, FILES, D432_TEST_NAMES, D432_NOT_DECLARED)).toEqual({ missing: [], unused: [] });
+  });
+
+  it("the server's names it gives are the server's, and choiceOf is declared nowhere in the web", () => {
+    const limits = [...PYTHON].find(([file]) => file.endsWith("/aibi/core/schema/limits.py"))?.[1] ?? "";
+    for (const name of ["MAX_STRING", "MAX_DOCUMENT_BYTES", "MAX_BODY_BYTES"]) {
+      expect(new RegExp(`^${name}\\b\\s*=`, "mu").test(limits), name).toBe(true);
+    }
+    const refusals = [...PYTHON].find(([file]) => file.endsWith("/aibi/core/schema/refusals.py"))?.[1] ?? "";
+    for (const code of ["NOT_SUPPORTED", "NOT_PERMISSIBLE", "INVALID_JSON", "LIMIT_EXCEEDED", "UNKNOWN_PARAMETER"]) {
+      expect(refusals, code).toContain(`${code} = "${code}"`);
+    }
+    expect([...SOURCES].filter(([file, text]) => !file.startsWith("web/tests/") && /\bchoiceOf\b/u.test(text)).map(([file]) => file)).toEqual([]);
   });
 });
