@@ -17,6 +17,11 @@
  *   not one the page reads, `unreachable` (`UNREACHABLE`) when no answer arrived (the `fetch` failed
  *   or was aborted, or the body was cut off). Both are fixed words.
  *
+ * The three that take a document (`validateDocument`, `countCohort`, `runAnalysis`) are not the
+ * index's (D432): `document.ts` alone imports them (a lint row, the import-graph test), and sends
+ * through them the document it writes from a `Draft`, so a screen hands over choices and typed
+ * values, never a document.
+ *
  * A request this client refuses before sending (`ClientError`'s `notARoute`, `notFinite`: the
  * caller's own fault) is thrown, not an outcome.
  *
@@ -349,6 +354,18 @@ function isRefusals(value: unknown): value is Boxed<Schemas["Refusals"]> {
   return value !== INVALID;
 }
 
+/** Every `ok` value the walk gave, with its operation (D432): `optionsOf` mints choices from a
+ * `describe_dataset` answer this seam returned alone, so a composed object (a spread, a copy, a
+ * `Proxy`, another operation's answer cast) mints nothing. A module `WeakMap`: a patched
+ * `WeakMap.prototype.get` is deliberate code, D419's boundary. */
+const WALKED = new WeakMap<object, TypedOperation>();
+
+/** `document.ts`'s alone (D432): the operation whose answer this seam walked into `value`, or
+ * `undefined` for any other value. */
+export function walkedAs(value: object): TypedOperation | undefined {
+  return WALKED.get(value);
+}
+
 /** The refusals of the client's own that are the caller's fault, thrown: the rest of what a request
  * meets (no answer, an unreadable one) is an `invalid` outcome. */
 const THROWN = new Set(["notARoute", "notFinite"]);
@@ -368,7 +385,14 @@ async function asked<O extends TypedOperation>(operation: O, send: () => Promise
   }
   if (answer.status === 200) {
     const walked = walkComponent(OPERATIONS[operation], answer.body);
-    return walked.ok && isAnswered(operation, walked.value) ? Object.freeze({ kind: "ok", value: walked.value }) : INVALID_SHAPE;
+    if (walked.ok && isAnswered(operation, walked.value)) {
+      // Every component an operation answers is an object (the walk froze it).
+      if (typeof walked.value === "object" && walked.value !== null) {
+        WALKED.set(walked.value, operation);
+      }
+      return Object.freeze({ kind: "ok", value: walked.value });
+    }
+    return INVALID_SHAPE;
   }
   if (answer.status >= 400) {
     const walked = walkComponent(REFUSALS, answer.body);

@@ -151,5 +151,5 @@ export const VOCABULARIES = frozen({
 /** The vocabularies read fail-closed, each as the member given (the walk does not enumerate them). */
 export const FALLBACKS = frozen({"Severity":"block"} as const);
 
-/** The grammars of the id positions `idOf` and `choiceOf` read. */
+/** The grammars of the id positions `idOf` and `choiceFor` read. */
 export const GRAMMARS: { readonly [name in "dataset" | "table" | "column" | "analysis"]: Grammar } = frozen({"dataset":{"p":"^[a-z][a-z0-9_]{0,63}$","m":64,"x":["__"]},"table":{"p":"^[a-z][a-z0-9_]{0,63}$","m":64,"x":["__"]},"column":{"p":"^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$","m":129,"x":["__"]},"analysis":{"p":"^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$","m":129,"x":["__","^(?:cohort|core|cov|covered|dataset|drv|ep|exists|ids|iss|leaf|model|rel|sha256|stat|value)\\."]}});

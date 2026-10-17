@@ -50,7 +50,9 @@
  * request, and `numbers.ts`'s, which reads it for the page alone, D430 (its glyphs, `glyphsOf`,
  * `format.tsx`'s alone, and the sanctioned predicates; both modules held to the number rules above);
  * `requestId`, `originOf` and `stamp` `provenance.ts`'s, `idAt` `curator.ts`'s, `recorder`, `urlOf`
- * and `datasetOf` `client.ts`'s). The
+ * and `datasetOf` `client.ts`'s; and the document seam's, D432: `choiceFor`, `choiceText`,
+ * `ofTable`, `walkedAs`, the datatypes and the three functions that send a document
+ * `document.ts`'s). The
  * box makes every conversion throw at run time besides; the lint is defence in depth. The `api/` import patterns match without regard to case (the rule's default for a `regex`, `caseSensitive: false`, which the corpus holds: `./API/Box`), as a case-insensitive file system resolves them.
  *
  * **The layout's form and the router (D428).** `src/layout/form.ts` (the context that sets the
@@ -572,6 +574,26 @@ const API_INTERNALS = [
     names: ["walkComponent"],
     owners: ["src/api/oracle.ts"],
     message: "walkComponent is the tests' door to the walk, and the end-to-end harness's oracle's (its corpus, D428): no other module of src/ imports it (D426).",
+  },
+  {
+    module: "text",
+    names: ["choiceFor", "choiceText", "ofTable"],
+    owners: ["src/api/document.ts"],
+    message:
+      "choiceFor, choiceText and ofTable are document.ts's alone: optionsOf mints every choice from a describe_dataset answer the walk returned, and documentOf reads each at its role's position (D432).",
+  },
+  {
+    module: "typed",
+    names: ["validateDocument", "countCohort", "runAnalysis", "walkedAs"],
+    owners: ["src/api/document.ts"],
+    message:
+      "The functions that send a document, and walkedAs, are document.ts's alone: a document is written from a Draft of choices and typed values, never handed over (D432).",
+  },
+  {
+    module: "datatypes",
+    names: ["DATATYPES", "LEFT_OUT"],
+    owners: ["src/api/document.ts"],
+    message: "The datatypes the seam offers are document.ts's alone (D432).",
   },
   {
     module: "text",

@@ -302,6 +302,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
         ["src/api/curator.ts", "the operator's client sends through send, the one function that sets the operator's credentials (D423)"],
         ["src/api/typed.ts", "the typed answers send through exchange and walk its raw answer: the seam (D426)"],
         ["src/api/oracle.ts", "the harness's oracle sends the health check and the operator's datasets through exchange (D419)"],
+        ["src/api/document.ts", "the document seam refuses a draft that is not one with the client's own refusal, notAChoice (D432)"],
       ]),
     },
   ],
@@ -369,8 +370,17 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/index.ts", "re-exports the typed functions, their outcome and the boxed types: the seam (D426)"],
         ["src/api/oracle.ts", "the harness's oracle reads three public tools through the seam (D426)"],
+        ["src/api/document.ts", "the document seam sends the document it writes through validateDocument, countCohort and runAnalysis, and asks walkedAs whether an answer is one the walk returned (D432)"],
       ]),
     },
+  ],
+  [
+    "src/api/document.ts",
+    { importers: new Map([["src/api/index.ts", "re-exports optionsOf and the three functions that send a Draft's document: the document seam (D432)"]]) },
+  ],
+  [
+    "src/api/datatypes.ts",
+    { importers: new Map([["src/api/document.ts", "optionsOf offers the columns of the datatypes the server takes at each role (D432)"]]) },
   ],
   [
     "src/api/text.tsx",
@@ -379,6 +389,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
         ["src/api/index.ts", "re-exports the takers of a server text, each pinned by its signature (D426), showText, the one door from a server text to the DOM, and idOfAddress, the address's (D428)"],
         ["src/api/numbers.ts", "largestOf breaks a tie by the Reason vocabulary's order, reading a key's member through kindOf (D430)"],
         ["src/api/format.tsx", "listOf finds a facet by its key through sameText (D430)"],
+        ["src/api/document.ts", "optionsOf mints each choice through choiceFor and reads a datatype through kindOf, and documentOf reads each choice through choiceText (D432)"],
       ]),
     },
   ],

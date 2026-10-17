@@ -1,0 +1,20 @@
+{
+ "leaf": [
+  "category",
+  "string"
+ ],
+ "view": [
+  "boolean",
+  "category",
+  "integer",
+  "number",
+  "time_offset"
+ ],
+ "view_under_k": [
+  "boolean",
+  "category"
+ ],
+ "left_out": {
+  "list<category>": "a leaf's list<category> column takes a typed string, under the server's chosen quantifier (some): offering it, with its quantifier, is M5.3-rest's choice"
+ }
+}

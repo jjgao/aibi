@@ -52,6 +52,7 @@ export const REFUSALS = Object.freeze({
   interrupted: "The server's answer was cut off before its end.",
   notARoute: "A request goes to a route the client made, on this origin.",
   notFinite: "A request holds a number that is not finite.",
+  notAChoice: "A document holds the choices and values of its own draft (D432).",
   notCredential: "A credential the operator's client sends is not in its form; it was not sent.",
   sealed: "A body is read by the client's decoder alone (D419).",
   unsupported:
