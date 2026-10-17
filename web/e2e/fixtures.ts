@@ -169,7 +169,6 @@ export function other(): { readonly site: string; readonly port: string } {
 
 /** The words a page shows, its text nodes joined by one space. */
 export const WORDS = {
-  home: "aibi The catalogue opens here. Curate",
   notFound: "aibi Nothing is here. The catalogue",
   refused: "aibi No dataset has that address. The catalogue",
   failure: "aibi This screen failed to load. Reload the page to try again.",

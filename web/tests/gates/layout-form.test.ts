@@ -116,6 +116,7 @@ const LAYOUT_EXPORTS = [
   "src/layout/ReleaseRef.tsx: DISAGREE",
   "src/layout/ReleaseRef.tsx: ReleaseRef",
   "src/layout/Segments.tsx: Segments",
+  "src/layout/StatCount.tsx: StatCount",
   "src/layout/Text.tsx: Ref",
   "src/layout/Text.tsx: Text",
   "src/layout/form.ts: FORM",

@@ -275,8 +275,17 @@ export interface Swept {
  * counts (`countTexts`), and it made one rendering for each leaf and row, or it throws (so that a
  * sweep that finds none, or renders fewer, cannot pass); the sweep of `injection.test.tsx`, over a
  * component that renders one leaf raw, holds that a leaf rendered raw is found at the rows React
- * does not escape, and a sentinel at every row. */
-export async function leafSweep<T>(value: T, make: (value: T) => ReactElement, own: readonly string[] = [], classes: readonly string[] = [], rows: readonly Row[] = HOSTILE): Promise<Swept> {
+ * does not escape, and a sentinel at every row. `inspect`, when given, is asked of every rendering (the
+ * leaf's path, the row and the rendering's container) for further problems of its own: what a position
+ * shows beyond the visible form's safety, such as the cut at 2,000 code points (round 1 of #123, m1). */
+export async function leafSweep<T>(
+  value: T,
+  make: (value: T) => ReactElement,
+  own: readonly string[] = [],
+  classes: readonly string[] = [],
+  rows: readonly Row[] = HOSTILE,
+  inspect?: (path: readonly string[], row: Row, container: Element) => readonly string[],
+): Promise<Swept> {
   const paths = leavesOf(value);
   const counted = countTexts(value);
   if (paths.length !== counted) {
@@ -288,7 +297,7 @@ export async function leafSweep<T>(value: T, make: (value: T) => ReactElement, o
     for (const row of rows) {
       const shown = await render(make(replacedAt(value, path, boxText(row.text)) as T));
       renders += 1;
-      problems.push(...problemsOf(shown.container, row, own, classes).map((problem) => `@/${path.join("/")}: ${problem}`));
+      problems.push(...[...problemsOf(shown.container, row, own, classes), ...(inspect?.(path, row, shown.container) ?? [])].map((problem) => `@/${path.join("/")}: ${problem}`));
       shown.unmount();
     }
   }

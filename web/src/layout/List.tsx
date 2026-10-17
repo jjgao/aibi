@@ -6,7 +6,8 @@
  * what the server sent, every member of which is disclosed, and only for these lists). `ServerList` shows a list **the server
  * cut** (a hit's `tables`, with `tables_left_out`): every member it sent, then the server's own
  * number of the rest through `Num`, never one the page counted, so no count §8.4 governs is made
- * on the page.
+ * on the page (the comma before it only when members were sent: a server that sent none and left
+ * some out reads "and 3 more", never ", and 3 more").
  */
 import { Fragment, type ReactElement } from "react";
 
@@ -45,7 +46,7 @@ export function ServerList<T>({ members, each, leftOut }: { readonly members: re
       ))}
       {isZero(leftOut) ? null : (
         <>
-          ,{" "}
+          {members.length === 0 ? null : ", "}
           <span className="more">
             and <Num value={leftOut} /> more, left out by the server
           </span>

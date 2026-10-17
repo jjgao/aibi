@@ -28,6 +28,7 @@ export interface Case {
 /** The probe paths the tests lint at (no file on disk: the project service's default project). */
 export const PROBES = [
   "src/catalogue/probe-display.tsx",
+  "src/dataset/probe-display.tsx",
   "src/layout/probe-display.tsx",
   "src/harness/probe-display.tsx",
   "src/api/probe-display.ts",
@@ -347,6 +348,8 @@ export const DOM_CASES: readonly Case[] = [
   { id: "a write through an optional chain's object", code: "if (maybe !== null) { maybe.textContent = raw; }", refused: ["dom"] },
   { id: "a field's custom validity", code: "input.setCustomValidity(raw);", refused: ["dom"] },
   { id: "a timer (deny by default: not reviewed)", code: "setTimeout(() => undefined, 0);", refused: ["dom"] },
+  { id: "a timer's extra arguments handed to a function (R90f's spelling; refused outside SITES, D431)", code: "declare const setWords: (words: string) => void;\nsetTimeout(setWords, 0, raw);", refused: ["dom"] },
+  { id: "a timer cleared (not reviewed outside SITES, D431)", code: "clearTimeout(0);", refused: ["dom"] },
   { id: "the title", code: "document.title = raw;", refused: ["dom"] },
   { id: "a type of the app's that extends one of the DOM's", code: "interface Mine extends HTMLElement { readonly mine: true }\ndeclare const mine: Mine;\nmine.title = raw;", refused: ["dom"] },
   { id: "a type parameter bounded by one of the DOM's", code: "export function bounded<T extends HTMLElement>(e: T): void { e.title = raw; }", refused: ["dom"] },

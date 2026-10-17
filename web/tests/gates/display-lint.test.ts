@@ -368,6 +368,37 @@ describe("the reviewed sites stand once, and the exemptions are where D429 says"
     expect(said).toEqual([expect.stringContaining("(a whole module)"), expect.stringContaining("(a side-effect import)"), expect.stringContaining("{ createElement }")]);
   });
 
+  it("the queue's two timer sites (D431): load.ts lints clean, a second timer stands twice, and a timer in another module is refused", async () => {
+    const QUEUE = "src/catalogue/load.ts";
+    const queue = readFileSync(path.join(WEB, QUEUE), "utf8");
+    const call = "const timer = setTimeout(expire, DEADLINE_MS);";
+    expect(queue).toContain(call);
+    expect(await displayIds(QUEUE, queue)).toEqual([]);
+    expect((await displayIds(QUEUE, queue.replace(call, `${call}\n        const again = setTimeout(expire, DEADLINE_MS);\n        void again;`))).join("\n")).toMatch(/display\/dom: A reviewed site/u);
+    expect((await displayIds(QUEUE, queue.replace("clearTimeout(timer);", ""))).join("\n")).toMatch(/display\/dom: A reviewed site/u);
+    // The site matches the identifier (D429's `dom` reports the callee): an extra argument in load.ts
+    // stands at the site, a residual held by the source cell of `tests/unit/load.test.ts`, not by the lint.
+    expect(await displayIds(QUEUE, queue.replace(call, "const timer = setTimeout(expire, DEADLINE_MS, 1);"))).toEqual([]);
+    const cases: Case[] = [
+      { id: "the queue's timer, in another module", code: "export const t = setTimeout(() => undefined, 45_000);", refused: ["dom"] },
+      { id: "the queue's clear, in another module", code: "clearTimeout(0);", refused: ["dom"] },
+      { id: "a timer's extra argument handed to a function, in another module", code: "declare const setWords: (words: string) => void;\ndeclare const words: string;\nsetTimeout(setWords, 0, words);", refused: ["dom"] },
+    ];
+    for (const file of [CATALOGUE, "src/dataset/probe-display.tsx", "src/layout/probe-display.tsx"]) {
+      const linted = await lintCases(linter, file, "", cases);
+      expect(wrong(linted, cases), file).toEqual([]);
+    }
+  });
+
+  it("each module of D431's screens holds R90: a raw string child appended is refused, the module as it is lints clean (the control)", async () => {
+    for (const file of ["src/catalogue/Catalogue.tsx", "src/dataset/Dataset.tsx", "src/dataset/Graph.tsx", "src/dataset/Tables.tsx", "src/layout/StatCount.tsx", "src/catalogue/routes.tsx"]) {
+      const text = readFileSync(path.join(WEB, file), "utf8");
+      expect(await displayIds(file, text), file).toEqual([]);
+      const probed = await displayIds(file, `${text}\nexport const rawProbe = (raw: string) => <p>{raw}</p>;\n`);
+      expect(probed.join("\n"), file).toMatch(/display\/raw-text/u);
+    }
+  });
+
   it("a site's code elsewhere is refused (a site is its file's)", async () => {
     const cases: Case[] = [
       { id: "Shell's write, in another module", code: "export function f(field: HTMLInputElement): void { field.value = \"\"; }", refused: ["dom"] },

@@ -22,7 +22,8 @@
  *
  * **Owners are pull requests, in landing order** (`OWNERS`): a built row of an owner fails the gate
  * while any owner before it has a row not built, so 2b-1L's lint lands before M5.2 renders data,
- * and 2b-1L2's (R90's flow, R90f) after M5.4 and before M5.5.
+ * and 2b-1L2's (R90's flow, R90f) after M5.4 and before M5.5; M5.2-rest's (the descriptors' members
+ * and the paging controls, D431) after M5.5 and before M5.6.
  * 2b-0, which writes this table and its gate, builds no screen and owns no row. `server` rows are
  * the server's (or a gate's that has landed): they name no module and never fall due here.
  *
@@ -43,7 +44,7 @@
  */
 
 /** The owners, in the order they land; `server` last, outside the order. */
-export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.6", "server"] as const;
+export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "M5.6", "server"] as const;
 
 /** The screens a row may bind. */
 export const SCREENS = ["all", "catalogue", "dataset", "column", "builder", "result", "refusal", "operator"] as const;
@@ -614,14 +615,24 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/catalogue-hits.test.tsx",
   },
   {
-    id: "R53",
+    id: "R53a",
     basis: "spec statement",
-    must: "The hits' caveats (R21) and the total and paging are shown.",
+    must: "The hits' caveats (R21), the total and where the next page starts are shown.",
     screens: ["catalogue"],
     spec: ["§8.3", "D311"],
     owner: "M5.2-min",
     module: "src/catalogue/Catalogue.tsx",
     test: "tests/unit/catalogue-hits.test.tsx",
+  },
+  {
+    id: "R53b",
+    basis: "spec statement",
+    must: "A control pages the catalogue from `next_offset` (ADAPTER_FED), one page an action, never on load.",
+    screens: ["catalogue"],
+    spec: ["§8.3", "D311"],
+    owner: "M5.2-rest",
+    module: "src/catalogue/Paging.tsx",
+    test: "tests/unit/paging.test.tsx",
   },
   {
     id: "R54",
@@ -633,6 +644,16 @@ export const ROWS: readonly Row[] = [
     module: "src/catalogue/Catalogue.tsx",
     test: "tests/unit/catalogue-hits.test.tsx",
   },
+  {
+    id: "R55",
+    basis: "spec statement",
+    must: "A link to a dataset's screen is `#/datasets/<id>`, composed by `Link` from a `DatasetId` alone, never from text, the address or another origin.",
+    screens: ["catalogue"],
+    spec: ["D312", "D428", "D429"],
+    owner: "M5.2-min",
+    module: "src/layout/Link.tsx",
+    test: "tests/unit/link.test.tsx",
+  },
   // E. The dataset page and its descriptors (`describe_dataset`, `describe_column`).
   {
     id: "R60",
@@ -640,7 +661,7 @@ export const ROWS: readonly Row[] = [
     must: "Every descriptor member is shown with its curation status and who set it.",
     screens: ["dataset"],
     spec: ["A5", "§5.1", "D311"],
-    owner: "M5.2-min",
+    owner: "M5.2-rest",
     module: "src/dataset/Descriptor.tsx",
     test: "tests/unit/descriptor.test.tsx",
   },
@@ -650,7 +671,7 @@ export const ROWS: readonly Row[] = [
     must: "`proposed`, `imported_default` and `undeclared` are told from `asserted` and `imported` in words, not by colour alone: a proposal is visible until confirmed (derived: A5 says a proposal is visible until confirmed and §5.1 gives the statuses; \"in words, not by colour alone\" is D427's own decision, with no spec text).",
     screens: ["dataset"],
     spec: ["A5", "§5.1"],
-    owner: "M5.2-min",
+    owner: "M5.2-rest",
     module: "src/dataset/Descriptor.tsx",
     test: "tests/unit/descriptor.test.tsx",
   },
@@ -660,7 +681,7 @@ export const ROWS: readonly Row[] = [
     must: "A field the engine reads that the descriptor lacks is shown as undeclared, for the fields §5.1 names alone (a numeric column's units, a coverage's `parents`, an endpoint's `entry`), and a relationship without coverage as its coverage undeclared (Q5; derived: an absent member is undeclared, and these are the ones the engine reads).",
     screens: ["dataset"],
     spec: ["§5.1", "§5.6", "§5.8", "D195"],
-    owner: "M5.2-min",
+    owner: "M5.2-rest",
     module: "src/dataset/Descriptor.tsx",
     test: "tests/unit/descriptor.test.tsx",
   },
@@ -685,9 +706,9 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/dataset.test.tsx",
   },
   {
-    id: "R65",
+    id: "R65a",
     basis: "spec statement",
-    must: "The table graph is shown: the tables but coverage tables, and each relationship with its child and parent columns and cardinality.",
+    must: "The table graph is shown as a list: the tables but coverage tables, and each relationship with its child and parent tables and its cardinality.",
     screens: ["dataset"],
     spec: ["§6.1", "D311", "§15"],
     owner: "M5.2-min",
@@ -695,9 +716,19 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/graph.test.tsx",
   },
   {
-    id: "R66",
+    id: "R65b",
     basis: "spec statement",
-    must: "Tables are shown with grain, role and row count (with its reference); columns with id, label, datatype and identifier flag; and the coverage and endpoint descriptors.",
+    must: "Each relationship's child and parent columns are shown (from its descriptor).",
+    screens: ["dataset"],
+    spec: ["§6.1", "D311", "§15"],
+    owner: "M5.2-rest",
+    module: "src/dataset/Relationships.tsx",
+    test: "tests/unit/relationships.test.tsx",
+  },
+  {
+    id: "R66a",
+    basis: "spec statement",
+    must: "Each table is shown with its row count and its reference, which names the table; its columns with id, label, datatype and identifier flag.",
     screens: ["dataset"],
     spec: ["§5.3", "§5.4", "§5.6", "§5.8", "D311"],
     owner: "M5.2-min",
@@ -705,24 +736,44 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/tables.test.tsx",
   },
   {
+    id: "R66b",
+    basis: "spec statement",
+    must: "Each table's grain and role, and the coverage and endpoint descriptors, are shown.",
+    screens: ["dataset"],
+    spec: ["§5.3", "§5.4", "§5.6", "§5.8", "D311"],
+    owner: "M5.2-rest",
+    module: "src/dataset/TableDescriptors.tsx",
+    test: "tests/unit/table-descriptors.test.tsx",
+  },
+  {
     id: "R67",
     basis: "spec statement",
     must: "The column page shows observation-state counts and the distribution, each count with its `stat:` reference, suppressed ones as suppressed, the pooled suppressed-categories row, histogram bins with their open and inclusive ends, no minimum or maximum under *k*, and the reason a distribution is not given.",
     screens: ["column"],
     spec: ["§8.4", "§11.1", "§5.4"],
-    owner: "M5.2-min",
+    owner: "M5.2-rest",
     module: "src/dataset/Column.tsx",
     test: "tests/unit/column.test.tsx",
   },
   {
-    id: "R68",
+    id: "R68a",
     basis: "spec statement",
-    must: "The release, the effective disclosure and the columns' paging (`columns_total`, `columns_next`) are shown.",
+    must: "The release, the effective disclosure, `columns_total` and where the next columns start are shown.",
     screens: ["dataset"],
     spec: ["D311", "D422"],
     owner: "M5.2-min",
     module: "src/dataset/Dataset.tsx",
     test: "tests/unit/dataset.test.tsx",
+  },
+  {
+    id: "R68b",
+    basis: "spec statement",
+    must: "A control pages the columns from `columns_next`, at most D422's three `describe_dataset` pages a load.",
+    screens: ["dataset"],
+    spec: ["D311", "D422"],
+    owner: "M5.2-rest",
+    module: "src/dataset/Paging.tsx",
+    test: "tests/unit/dataset-paging.test.tsx",
   },
   // F. Refusals and errors.
   {
@@ -860,7 +911,7 @@ export const ROWS: readonly Row[] = [
   {
     id: "R90f",
     basis: "spec statement",
-    must: "R90 at every render slot, by flow: no raw text reaches a render slot other than at a JSX position (a route's `element`, `errorElement` or `children`, built apart or nested; `root.render`; a component called as a function or passed as a value, by an alias, `call`, `apply` or `bind`; a setter handed to a promise; a library's container; an iterable spread; an index signature; a tag typed as one of React's exotic components, whose render function R90 does not read: `ExoticComponent`, `NamedExoticComponent`, `ProviderExoticComponent`, `ForwardRefExoticComponent`, `Provider`, `MemoExoticComponent`, `ComponentClass`, an app type that extends or intersects one, a lazy so typed), by a source/target walk or its inversion (a slot-typed value is raw at every slot unless it is an unwritten own `children` or a library-declared slot type; refused wherever the walk cannot relate), and the library's slots written in place; its corpus generated from the checker's relation kinds, with a mutation gate, and the component types a tag may have enumerated through the checker (every type `react` exports with a call or construct signature, each placed as a tag, refused or exempt with a reason).",
+    must: "R90 at every render slot, by flow: no raw text reaches a render slot other than at a JSX position (a route's `element`, `errorElement` or `children`, built apart or nested; `root.render`; a component called as a function or passed as a value, by an alias, `call`, `apply` or `bind`; a setter handed to a promise; a timer's extra arguments handed to a function (refused by `display/dom` outside `SITES`; at `src/catalogue/load.ts`'s site, held by its source cell); a library's container; an iterable spread; an index signature; a tag typed as one of React's exotic components, whose render function R90 does not read: `ExoticComponent`, `NamedExoticComponent`, `ProviderExoticComponent`, `ForwardRefExoticComponent`, `Provider`, `MemoExoticComponent`, `ComponentClass`, an app type that extends or intersects one, a lazy so typed), by a source/target walk or its inversion (a slot-typed value is raw at every slot unless it is an unwritten own `children` or a library-declared slot type; refused wherever the walk cannot relate), and the library's slots written in place; its corpus generated from the checker's relation kinds, with a mutation gate, and the component types a tag may have enumerated through the checker (every type `react` exports with a call or construct signature, each placed as a tag, refused or exempt with a reason).",
     screens: ["all"],
     spec: ["A6", "D419", "D428", "D429"],
     owner: "2b-1L2",
@@ -925,11 +976,8 @@ export const EXEMPT: readonly Exemption[] = [
   },
   {
     module: "src/catalogue/routes.tsx",
-    reason: "The route table: elements and lazy screens, no text of its own; its error element is `Failure`.",
-  },
-  {
-    module: "src/catalogue/Home.tsx",
-    reason: "Fixed words and one fixed link (`/curate`), importing nothing of the package, until M5.2 builds the catalogue, whose rows (R50–R54) name `src/catalogue/Catalogue.tsx`.",
+    reason:
+      "The route table: elements written in place (the catalogue, the dataset's screen through the address door, keyed by its `DatasetId`, and the not-found screen, the last two lazy), no text of its own and no `Component` (D431; `tests/gates/router-surface.test.ts` walks them); its error element is `Failure`.",
   },
   { module: "src/catalogue/NotFound.tsx", reason: "Fixed words and its stylesheet: the address is never echoed (R08 holds the address's door)." },
   { module: "src/catalogue/Failure.tsx", reason: "The root error element: fixed words, never the error's message." },
@@ -952,6 +1000,11 @@ export const EXEMPT: readonly Exemption[] = [
  * checked**, like the exemptions: the build's gate lets them into a bundle by name alone. */
 export const HELPERS: readonly Helper[] = [
   { module: "src/root.ts", reason: "The element both entries render into: no data." },
+  {
+    module: "src/catalogue/load.ts",
+    reason:
+      "The tab's one queue of public tool calls and the outcomes React reads (D431): it renders nothing and holds no text; its two timer calls are D429's `SITES`, held by `tests/unit/load.test.ts`' source cell.",
+  },
   { module: "src/operator/url.ts", reason: "Forgets the operator entry's address (its hash and query) without reading it: no data." },
   {
     module: "src/layout/form.ts",
@@ -971,9 +1024,13 @@ export const HELPERS: readonly Helper[] = [
 ];
 
 /** Rows that left the table, each with its reason (never blank); `scripts/display-ids.json` lists
- * every id the table ever held, and `generate` fails while an id of it is neither a row nor here.
- * None yet. */
-export const RETIRED: readonly Retired[] = [];
+ * every id the table ever held, and `generate` fails while an id of it is neither a row nor here. */
+export const RETIRED: readonly Retired[] = [
+  { id: "R53", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
+  { id: "R65", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
+  { id: "R66", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
+  { id: "R68", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
+];
 
 /** The server's alone: not display obligations, listed so that none is forgotten. */
 export const NOT_ROWS: readonly NotRow[] = [
