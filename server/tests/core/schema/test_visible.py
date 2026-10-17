@@ -8,6 +8,7 @@ this interpreter's is another (m13 of the plan's round 1). The pinned Python (``
 must be the one whose Unicode version the file records.
 """
 
+import ast
 import json
 import sys
 import unicodedata
@@ -16,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from aibi.core.api import markup
+from aibi.core.api import markup, page
 from aibi.core.schema import export, visible
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -96,6 +97,109 @@ def test_the_page_writes_the_escapes_of_the_module() -> None:
     assert markup.escape is visible.escape
     assert markup._unsafe.__wrapped__ is visible.unsafe  # pyright: ignore[reportPrivateUsage, reportFunctionMemberAccess]
     assert markup.escaped("a\u202eb\r\nc\ud800\U000e0001") == "a\\u202eb\nc\\ud800\\U000e0001"
+
+
+def test_the_list_cut_is_held_equal_on_the_page_and_in_the_export() -> None:
+    """D312's lists (domain tags, facet values) are cut after ``LISTED`` members on the server's
+    page and in the web's ``List``: the page's name is bound to the export's, and the web's literal
+    is the generator's, which refuses a ``listed`` other than 64 (D430: held equal).
+    """
+    assert visible.LISTED == 64
+    assert visible.document()["listed"] == visible.LISTED
+    assert _file()["listed"] == visible.LISTED
+    assert page.LISTED == visible.LISTED
+
+
+_FOLDS = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.FloorDiv: lambda a, b: a // b if b else None,
+    ast.Mod: lambda a, b: a % b if b else None,
+    ast.Pow: lambda a, b: a**b if 0 <= b <= 64 and abs(a) <= 1024 else None,
+    ast.LShift: lambda a, b: a << b if 0 <= b <= 64 else None,
+    ast.RShift: lambda a, b: a >> b if 0 <= b <= 64 else None,
+    ast.BitOr: lambda a, b: a | b,
+    ast.BitAnd: lambda a, b: a & b,
+    ast.BitXor: lambda a, b: a ^ b,
+}
+_UNARY = {ast.USub: lambda a: -a, ast.UAdd: lambda a: a, ast.Invert: lambda a: ~a}
+
+
+def _fold(node: ast.AST) -> int | None:
+    """The integer a constant expression of integer literals evaluates to (the operators of
+    ``_FOLDS`` and ``_UNARY``), or None: ``2**6``, ``1 << 6`` and ``128 // 2`` are 64."""
+    if isinstance(node, ast.Constant):
+        return node.value if type(node.value) is int else None
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY:
+        inner = _fold(node.operand)
+        return None if inner is None else _UNARY[type(node.op)](inner)
+    if isinstance(node, ast.BinOp) and type(node.op) in _FOLDS:
+        left, right = _fold(node.left), _fold(node.right)
+        return None if left is None or right is None else _FOLDS[type(node.op)](left, right)
+    return None
+
+
+def _spelled(source: str, value: int) -> list[int]:
+    """The lines of ``source`` where an expression evaluates to ``value`` by constants alone."""
+    return sorted(
+        {
+            node.lineno
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.expr) and _fold(node) == value
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "64",
+        "2**6",
+        "1 << 6",
+        "128 // 2",
+        "0b1000000",
+        "0x40",
+        "-(-64)",
+        "60 + 4",
+        "8 * 8",
+        "~(-65)",
+    ],
+)
+def test_a_cut_of_64_is_seen_by_value_however_it_is_spelled(spelling: str) -> None:
+    assert _spelled(f"x = values[:{spelling}]\n", 64) == [1]
+    assert _spelled("x = values[:LISTED]\n", 64) == []
+    assert _spelled("x = values[:65]\n", 64) == []
+
+
+@pytest.mark.parametrize("spelling", ["(1 << 65) >> 59", "2**100 // 2**94"])
+def test_a_64_that_needs_an_exponent_or_a_shift_count_above_64_is_not_seen(spelling: str) -> None:
+    """The residual D430 names: ``_FOLDS`` folds ``**``, ``<<`` and ``>>`` only up to 64."""
+    assert _spelled(f"x = values[:{spelling}]\n", 64) == []
+
+
+def test_the_page_binds_its_list_cut_to_the_export_and_writes_no_64_of_its_own() -> None:
+    """``page.LISTED`` is assigned ``visible.LISTED`` (the name bound to the export), and no
+    expression of ``page.py`` evaluates to 64 by integer constants under ``_FOLDS`` and ``_UNARY``
+    (``64``, ``2**6``, ``1 << 6``: an ``is`` between two 64s proves nothing, CPython caches small
+    integers). What this does not hold: a 64 reached through a name or a call, a subscript, a
+    conditional or a boolean (``(32, 32)[0] * 2``, ``True << 6``), or one that needs an exponent or
+    a shift count above 64, which ``_FOLDS`` does not fold (``(1 << 65) >> 59``,
+    ``2**100 // 2**94``); the page's cut is 64 by ``test_page``. The web's 64 is held equal by the
+    generator."""
+    source = Path(page.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assigned = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "LISTED" for t in node.targets)
+    ]
+    assert len(assigned) == 1
+    assert ast.dump(assigned[0]) == ast.dump(
+        ast.Attribute(value=ast.Name(id="visible", ctx=ast.Load()), attr="LISTED", ctx=ast.Load())
+    )
+    assert _spelled(source, visible.LISTED) == []
 
 
 def test_the_kept_members_and_the_classes() -> None:

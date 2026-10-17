@@ -279,6 +279,8 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
         ["src/api/provenance.ts", "the recorder asks isServerNumber whether a node is a box, and idAt, the one function that reads a box's text (textOf), reads a request id's (D425)"],
         ["src/api/typed.ts", "the walk of an answer boxes each string (boxText) and each map of data keys (boxMap), and asks isServerNumber whether a value is a number's box (D426)"],
         ["src/api/text.tsx", "the takers of a server text read it (readText) and a map's entries (entriesOf), giving a member, an id, a choice, a boolean or an order (D426)"],
+        ["src/api/numbers.ts", "the numbers' module reads a box's text (textOf) for the page alone: its glyphs, for format.tsx, and the sanctioned predicates, a boolean or a key (D430)"],
+        ["src/api/format.tsx", "listOf reads a hit's facets (entriesOf) to find the one its position names (D430)"],
       ]),
     },
   ],
@@ -375,6 +377,8 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
     {
       importers: new Map([
         ["src/api/index.ts", "re-exports the takers of a server text, each pinned by its signature (D426), showText, the one door from a server text to the DOM, and idOfAddress, the address's (D428)"],
+        ["src/api/numbers.ts", "largestOf breaks a tie by the Reason vocabulary's order, reading a key's member through kindOf (D430)"],
+        ["src/api/format.tsx", "listOf finds a facet by its key through sameText (D430)"],
       ]),
     },
   ],
@@ -388,6 +392,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/visible.ts", "the visible form escapes the server's list of unsafe code points (D428)"],
         ["src/api/text.tsx", "showText cuts a text from data at the visible form's cut (D428)"],
+        ["src/api/numbers.ts", "D312's lists are cut at the visible form's LISTED, the number the server's page cuts at (D430)"],
       ]),
     },
   ],
@@ -397,7 +402,23 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
       importers: new Map([
         ["src/api/typed.ts", "the walk reads the table generated from the document (D426)"],
         ["src/api/text.tsx", "the takers read the generated vocabularies and grammars (D426)"],
+        ["src/api/numbers.ts", "largestOf reads the Reason vocabulary's order, its tie-break (D430)"],
       ]),
+    },
+  ],
+  [
+    "src/api/numbers.ts",
+    {
+      importers: new Map([
+        ["src/api/index.ts", "re-exports the sanctioned predicates (isZero, isPositive, largestOf), each pinned by its signature, and LISTED (D430)"],
+        ["src/api/format.tsx", "shows a number by its glyphs (glyphsOf) and the page's counts (countGlyphs, remainingOf), its internals alone (D430)"],
+      ]),
+    },
+  ],
+  [
+    "src/api/format.tsx",
+    {
+      importers: new Map([["src/api/index.ts", "re-exports Num, listOf and RetryAfter, each pinned by its signature: the one module that shows a number (D430)"]]),
     },
   ],
 ]);

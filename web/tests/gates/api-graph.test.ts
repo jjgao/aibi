@@ -10,17 +10,20 @@
  *   resolves to `src/api/index.ts` (the harness's also to `oracle.ts`), and no file uses
  *   `import.meta.glob`, which resolves modules no specifier names.
  * - The box's internals are named, through any alias or namespace, where they belong alone (`box`
- *   in `src/api/box.ts` and `src/api/decode.ts`, `textOf` in `box.ts` and `provenance.ts`, where
- *   `idAt` is the one function that reads a box's text and `curator.ts` alone names it, D425), as
+ *   in `src/api/box.ts` and `src/api/decode.ts`, `textOf` in `box.ts`, `provenance.ts`, where
+ *   `idAt` is the one function that reads a box's text for a request and `curator.ts` alone names
+ *   it, D425, and `numbers.ts`, which reads it for the page, D430, its glyphs `format.tsx`'s alone), as
  *   are the request half's (`requestId`, `stamp`, `originOf`, `recorder`, `urlOf`, `datasetOf`);
  *   the decoder's (`decode`, `revive`) in
  *   `src/api/decode.ts` and `src/api/client.ts` alone; the counter (`decodedCount`) in
  *   `src/api/decode.ts`, `src/api/oracle.ts` and the harness alone.
  * - `src/api/index.ts` exports exactly the reviewed list, none of them an internal, and no exported
  *   function (a namespace's included) takes a parameter that can hold a `ServerNumber` (by the
- *   checker's assignability, `takers.ts`, never a name; the type guard `isServerNumber` alone is
- *   pinned, and a generic is judged instantiated, `request-half.test.ts` (b)): nothing it exports
- *   turns a server number into anything (a number, digits, a request's material).
+ *   checker's assignability, `takers.ts`, never a name; the type guard `isServerNumber` and
+ *   `NUMBER_PINS` (D430: `Num`, `isZero`, `isPositive`, `largestOf`, `RetryAfter`) alone are pinned,
+ *   each by its exact signature, each taking one number or one map, none comparing two given
+ *   apart, and a generic is judged instantiated, `request-half.test.ts` (b)): nothing it exports
+ *   turns a server number into a number, digits as text or a request's material.
  * - `src/api/operator.ts` exports the reviewed list, and the operator client holds to its
  *   allow-list (`surface.ts`).
  */
@@ -210,7 +213,10 @@ describe("the internals are named where they belong alone", () => {
 
   it.each([
     ["box.ts", "box", ["src/api/box.ts", "src/api/decode.ts"]],
-    ["box.ts", "textOf", ["src/api/box.ts", "src/api/provenance.ts"]],
+    ["box.ts", "textOf", ["src/api/box.ts", "src/api/numbers.ts", "src/api/provenance.ts"]],
+    ["numbers.ts", "glyphsOf", ["src/api/format.tsx", "src/api/numbers.ts"]],
+    ["numbers.ts", "countGlyphs", ["src/api/format.tsx", "src/api/numbers.ts"]],
+    ["numbers.ts", "remainingOf", ["src/api/format.tsx", "src/api/numbers.ts"]],
     ["ids.ts", "requestId", ["src/api/ids.ts", "src/api/provenance.ts"]],
     ["origin.ts", "stamp", ["src/api/origin.ts", "src/api/provenance.ts"]],
     ["origin.ts", "originOf", ["src/api/origin.ts", "src/api/provenance.ts"]],
@@ -236,10 +242,11 @@ describe("the internals are named where they belong alone", () => {
     expect(namers(declared(file, name)).filter((named) => !allowed.includes(named) || expected.includes(named))).toEqual(expected);
   });
 
-  it("textOf's owners are decode.ts and provenance.ts: the files that name it are among them, and provenance.ts is its one caller (m17 of round 4)", () => {
+  it("textOf's owners are decode.ts, provenance.ts and numbers.ts (D430): the files that name it are among them, and provenance.ts and numbers.ts its callers (m17 of round 4)", () => {
     const named = namers(declared("box.ts", "textOf"));
-    expect(named.filter((file) => file !== "src/api/box.ts" && !["src/api/decode.ts", "src/api/provenance.ts"].includes(file))).toEqual([]);
+    expect(named.filter((file) => file !== "src/api/box.ts" && !["src/api/decode.ts", "src/api/provenance.ts", "src/api/numbers.ts"].includes(file))).toEqual([]);
     expect(named).toContain("src/api/provenance.ts");
+    expect(named).toContain("src/api/numbers.ts");
   });
 });
 
@@ -255,17 +262,26 @@ const EXPORTS = [
   "ClientError",
   "DatasetId",
   "DecodeError",
+  "Facet",
   "GrammarName",
   "InvalidCause",
   "JsonIn",
   "JsonInNull",
   "Kind",
+  "LISTED",
+  "ListShown",
+  "Listed",
+  "Lists",
   "Member",
+  "NOT_READ",
+  "Num",
   "OperationId",
   "Outcome",
   "REFUSALS",
   "RESPONSE_CAP_BYTES",
+  "Refused",
   "RequestBody",
+  "RetryAfter",
   "Route",
   "SHAPE_MISMATCH",
   "ServerNumber",
@@ -282,9 +298,13 @@ const EXPORTS = [
   "explain",
   "idOf",
   "idOfAddress",
+  "isPositive",
   "isServerNumber",
+  "isZero",
   "kindOf",
+  "largestOf",
   "listAnalyses",
+  "listOf",
   "memberOf",
   "operations",
   "paths",
@@ -390,6 +410,9 @@ describe("src/api/index.ts", () => {
       declared("typed.ts", "walkComponent"),
       declared("visible.ts", "visibleForm"),
       declared("visible.ts", "ENGINE"),
+      declared("numbers.ts", "glyphsOf"),
+      declared("numbers.ts", "countGlyphs"),
+      declared("numbers.ts", "remainingOf"),
     ];
     for (const symbol of found) {
       const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
@@ -403,6 +426,20 @@ describe("src/api/index.ts", () => {
    * hands back nothing (`isServerNumber`), pinned by its exact signature (any other signature of
    * the name is checked like the rest). */
   const GUARDS: Readonly<Record<string, string>> = { isServerNumber: "(value: unknown): value is ServerNumber" };
+
+  /** The exports that take a server number by design (D430), each pinned by its exact signature with
+   * its reason: what they give is an element that shows a number, a boolean of one number, or a key
+   * of one map, never a number or its text, and none compares two numbers given apart (below). */
+  const NUMBER_PINS: Readonly<Record<string, readonly [string, string]>> = {
+    Num: ["({ value }: { readonly value: ServerNumber; }): ReactElement<unknown, string | JSXElementConstructor<any>>", "shows a server number by its exact source text: an element whose props hold the box, never its digits"],
+    isZero: ["(number: ServerNumber): boolean", "a sanctioned predicate (Q4 of D427): whether one shown number is zero, a boolean"],
+    isPositive: ["(number: ServerNumber): boolean", "a sanctioned predicate (Q4 of D427): whether one shown number is above zero, a boolean"],
+    largestOf: [
+      "(map: BoxedMap<ServerNumber> | null): ServerText | null",
+      "a sanctioned predicate (Q4 of D427): the key of one map's largest count, a box the server sent, never a number; a map with a null (suppressed) member is refused by type",
+    ],
+    RetryAfter: ["({ refused }: { readonly refused: Refused; }): ReactElement<unknown, string | JSXElementConstructor<any>> | null", "a refusal's Retry-After, as an element: the client's parse of a header, never a server number"],
+  };
 
   /** The takers among everything a module exports as a function (a namespace's included), with how
    * many functions were looked at, how many were the pinned guards, and the generic ones, which are
@@ -429,7 +466,8 @@ describe("src/api/index.ts", () => {
       const signatures = [...type.getCallSignatures(), ...type.getConstructSignatures()];
       for (const signature of signatures) {
         functions += 1;
-        if (GUARDS[name] === chk.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call)) {
+        const written = chk.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call);
+        if (GUARDS[name] === written || NUMBER_PINS[name]?.[0] === written) {
           guards += 1;
           continue;
         }
@@ -460,7 +498,7 @@ describe("src/api/index.ts", () => {
     expect(takers).toEqual([]);
     // `BoxedMap` is exported as a type alone; its class's (private) constructor is generic.
     expect(generics.sort()).toEqual(["BoxedMap", "entriesOf", "kindOf", "memberOf"]);
-    expect(guards).toBe(Object.keys(GUARDS).length);
+    expect(guards).toBe(Object.keys(GUARDS).length + Object.keys(NUMBER_PINS).length);
     expect(functions).toBeGreaterThan(30);
   });
 
@@ -478,6 +516,80 @@ describe("src/api/index.ts", () => {
       throw new Error("no probe module");
     }
     expect(exportTakers(checked.program, checked.checker, root).takers).toEqual(expected);
+  });
+
+  /** The most parameters of one of each export's signatures that can be handed a server number
+   * (`takes`), generics left out. */
+  function numberParameters(prog: ts.Program, chk: ts.TypeChecker, root: ts.Symbol): Map<string, number> {
+    const takes_ = takes(prog, chk);
+    const found = new Map<string, number>();
+    for (const symbol of chk.getExportsOfModule(root)) {
+      const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? chk.getAliasedSymbol(symbol) : symbol;
+      if ((target.flags & ts.SymbolFlags.Value) === 0) {
+        continue;
+      }
+      const type = chk.getTypeOfSymbol(target);
+      for (const signature of [...type.getCallSignatures(), ...type.getConstructSignatures()]) {
+        // A generic is judged instantiated elsewhere (`request-half.test.ts` (b)), as `exportTakers` does.
+        if ((signature.typeParameters?.length ?? 0) > 0) {
+          continue;
+        }
+        const count = signature.getParameters().filter((parameter) => takes_(chk.getTypeOfSymbol(parameter))).length;
+        found.set(symbol.name, Math.max(found.get(symbol.name) ?? 0, count));
+      }
+    }
+    return found;
+  }
+
+  it("D430: the exports that take a server number are NUMBER_PINS' and the guard, each takes one, and none compares two numbers given apart", () => {
+    const source = program.getSourceFile(INDEX);
+    const root = source === undefined ? undefined : checker.getSymbolAtLocation(source);
+    if (root === undefined) {
+      throw new Error("no index");
+    }
+    const taking = [...numberParameters(program, checker, root)].filter(([, count]) => count > 0);
+    expect(taking.map(([name]) => name).sort()).toEqual([...Object.keys(NUMBER_PINS), ...Object.keys(GUARDS)].sort());
+    expect(taking.filter(([, count]) => count !== 1)).toEqual([]);
+    for (const [name, [signature, reason]] of Object.entries(NUMBER_PINS)) {
+      expect(EXPORTS, name).toContain(name);
+      expect(signature, name).not.toBe("");
+      expect(reason, name).not.toBe("");
+    }
+  });
+
+  it("D430: would see an export that compares two numbers, and one pinned under another signature (the check's own controls)", () => {
+    const checked = check({ "src/probe-compare.ts": "import type { ServerNumber } from './api';\nexport * from './api';\nexport function above(a: ServerNumber, b: ServerNumber): boolean { return a === b; }\n" });
+    const root = checked.checker.getSymbolAtLocation(checked.source("src/probe-compare.ts"));
+    if (root === undefined) {
+      throw new Error("no probe module");
+    }
+    expect(numberParameters(checked.program, checked.checker, root).get("above")).toBe(2);
+    expect(exportTakers(checked.program, checked.checker, root).takers).toEqual(["above(a)", "above(b)"]);
+    const original = readFileSync(path.join(API, "numbers.ts"), "utf8");
+    const from = "export function isZero(number: ServerNumber): boolean {";
+    expect(original).toContain(from);
+    const widened = check({ "src/api/numbers.ts": original.replace(from, "export function isZero(number: ServerNumber, other?: ServerNumber): boolean {"), "src/probe-pin.ts": "export * from './api';\n" });
+    const pinned = widened.checker.getSymbolAtLocation(widened.source("src/probe-pin.ts"));
+    if (pinned === undefined) {
+      throw new Error("no probe module");
+    }
+    expect(exportTakers(widened.program, widened.checker, pinned).takers).toEqual(["isZero(number)", "isZero(other)"]);
+  });
+
+  it("D430: largestOf refuses a map with a null (suppressed) member, by type, and takes a map of numbers or null", () => {
+    const probe = [
+      "import type { BoxedMap, ServerNumber } from './api';",
+      "import { largestOf } from './api';",
+      "declare const counts: BoxedMap<ServerNumber>;",
+      "declare const withheld: BoxedMap<ServerNumber | null>;",
+      "export const a = largestOf(counts);",
+      "export const b = largestOf(null);",
+      "export const c = largestOf(withheld);",
+      "",
+    ].join("\n");
+    const checked = check({ "src/probe-largest.ts": probe });
+    const found = checked.diagnostics("src/probe-largest.ts").map((diagnostic) => [diagnostic.code, ts.getLineAndCharacterOfPosition(checked.source("src/probe-largest.ts"), diagnostic.start ?? 0).line]);
+    expect(found).toEqual([[2345, 6]]);
   });
 
   it("re-exports nothing of the operator client: no specifier of index.ts resolves to operator.ts or curator.ts (D423)", () => {
@@ -558,6 +670,18 @@ const TEXT_PINS: Readonly<Record<string, readonly [string, string]>> = {
   compareText: ["(a: ServerText, b: ServerText): number", "the sanctioned order: a number (an ordering oracle for deliberate code, D426's residual)"],
   entriesOf: ["<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[]", "a map's entries, keys boxed"],
   memberOf: ["<V>(map: BoxedMap<V>, name: string): Member<V>", "a member's value by the page's own word, or found: false"],
+  largestOf: [
+    "(map: BoxedMap<ServerNumber> | null): ServerText | null",
+    "a sanctioned predicate (D430, Q4 of D427): the key of one map's largest count, a box the server sent (a NUMBER_PINS row too)",
+  ],
+  listOf: [
+    "(hit: Lists, at: Listed): ListShown",
+    "one of D312's lists alone (D430), by position (a facet named by its key, compared by sameText), found once: its first LISTED members, boxes the server sent, and \"and N more\", an element of a count the page made of what the server sent",
+  ],
+  RetryAfter: [
+    "({ refused }: { readonly refused: Refused; }): ReactElement<unknown, string | JSXElementConstructor<any>> | null",
+    "a refusal's Retry-After (D430), as an element (a NUMBER_PINS row too): it reads no text of the refusals",
+  ],
   showText: [
     "(text: ServerText): ReactElement<unknown, string | JSXElementConstructor<any>>",
     "the one door from a server text to the DOM (D428): an element whose props hold the box, never its text, rendering the visible form (D312) as the position's form asks",
@@ -573,6 +697,11 @@ const OUTPUT_PINS: Readonly<Record<string, string>> = {
   "index.ts:DecodeError(): Error": "the decoder's refusal: its message is UNDECODABLE's fixed words",
   "index.ts:idOf(): DatasetId": "a dataset id, a string whose generated grammar bounds its characters (the brand proves form, not provenance)",
   "index.ts:idOfAddress(): DatasetId": "the address's dataset id (D428): the router module's door, idOf's generated grammar over a text of the address, so its characters are bounded and nothing else of the address is given back",
+  "index.ts:Num(): ReactElement (an unlisted library type)":
+    "shows a server number by its exact source text (D430): its props hold the box, never its digits, which a module-private context hands to the digits as they render; a detached root's textContent reads them by deliberate code (D419's boundary; react-dom/client entry-only, D429)",
+  "index.ts:RetryAfter(): ReactElement (an unlisted library type)": "a refusal's Retry-After in whole seconds (D430): a count the client parsed from a header, shown, never a server number",
+  "index.ts:listOf().more: ReactElement (an unlisted library type)":
+    "\"and N more\" for D312's lists alone (D430): a count the page made of the members the server sent, every one disclosed, never of a list §8.4 governs",
   "index.ts:showText(): ReactElement (an unlisted library type)":
     "the one door from a server text to the DOM (D428): its props (unknown to the caller) hold the box, never its text, and it renders the visible form; a detached root's textContent reads that form's text by deliberate code (D419's boundary; react-dom/client entry-only in 2b-1L)",
   ...Object.fromEntries(
