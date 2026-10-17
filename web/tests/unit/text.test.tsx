@@ -10,7 +10,7 @@
  *   and `JSON.stringify` over it: no raw key comes out of any (a call may throw, or give nothing).
  *   The same over `entriesOf`'s list: the keys are boxes, which throw where a string is needed.
  * - The takers: `kindOf` (a member, a miss, `Severity` read fail-closed), `idOf` (the generated
- *   grammar and the `__` rule), `choiceOf`, `sameText`, `compareText`, `memberOf`.
+ *   grammar and the `__` rule), `choiceFor` and `choiceText` (D432), `sameText`, `compareText`, `memberOf`.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { BoxedMap, entriesOf, FORGED_TEXT, OPAQUE_TEXT, readText, ServerText } from "../../src/api/box";
 import { decode } from "../../src/api/decode";
 import { GRAMMARS, VOCABULARIES } from "../../src/api/generated/shapes";
-import { choiceOf, compareText, idOf, kindOf, memberOf, sameText } from "../../src/api/text";
+import { Choice, choiceFor, choiceText, compareText, idOf, kindOf, memberOf, ofTable, sameText } from "../../src/api/text";
 import { walkComponent } from "../../src/api/typed";
 
 /** The marker of every raw key and text: a hit anywhere is a leak. */
@@ -267,15 +267,46 @@ describe("the takers", () => {
     expect(GRAMMARS.dataset).toEqual({ p: "^[a-z][a-z0-9_]{0,63}$", m: 64, x: ["__"] });
   });
 
-  it("choiceOf gives an opaque choice for a text of the grammar, and null otherwise", () => {
-    const choice = choiceOf(boxed("trees.height_m"), "column");
+  it("choiceFor gives an opaque choice of a role for a text of its grammar, and null otherwise (D432)", () => {
+    const source = Symbol("answer");
+    const choice = choiceFor(boxed("trees.height_m"), "leaf", source);
     expect(choice).not.toBeNull();
     expect(typeof choice).toBe("object");
     expect(Reflect.ownKeys(choice ?? {})).toEqual([]);
-    expect(choiceOf(boxed("trees"), "column")).toBeNull();
-    expect(choiceOf(boxed("summary.distribution"), "analysis")).not.toBeNull();
-    expect(choiceOf(boxed("drv.x"), "analysis")).toBeNull();
+    expect(Object.isFrozen(choice)).toBe(true);
+    expect(choiceFor(boxed("trees"), "leaf", source)).toBeNull();
+    expect(choiceFor(boxed("trees"), "view", source)).toBeNull();
+    expect(choiceFor(boxed("trees.height_m"), "unit", source)).toBeNull();
+    expect(choiceFor(boxed("trees"), "unit", source)).not.toBeNull();
+    expect(choiceFor(boxed("a__b"), "unit", source)).toBeNull();
+    expect(choiceFor(boxed("Trees"), "unit", source)).toBeNull();
     expect(() => renderToString(createElement("p", null, choice as unknown as ReactNode))).toThrow();
+  });
+
+  it("choiceText reads a choice at its own role alone, with the answer it was minted from; nothing for another role or a forgery (D432)", () => {
+    const source = Symbol("answer");
+    const leaf = choiceFor(boxed("trees.variety"), "leaf", source);
+    if (leaf === null) {
+      throw new Error("no choice");
+    }
+    expect(choiceText(leaf, "leaf")).toEqual({ text: "trees.variety", source });
+    expect(choiceText(leaf, "leaf")?.source).toBe(source);
+    expect(choiceText(leaf, "view")).toBeNull();
+    expect(choiceText(leaf, "unit")).toBeNull();
+    for (const forged of [{}, Object.create(leaf) as object, { ...(leaf as object) }, new Proxy(leaf, {}), null, "trees.variety", 1]) {
+      expect(choiceText(forged as typeof leaf, "leaf")).toBeNull();
+    }
+    expect(Choice.holds(leaf)).toBe(true);
+    expect(Choice.holds({})).toBe(false);
+  });
+
+  it("ofTable compares a column id's table part with a table's id, exactly", () => {
+    expect(ofTable(boxed("trees.variety"), boxed("trees"))).toBe(true);
+    expect(ofTable(boxed("trees.variety"), boxed("tree"))).toBe(false);
+    expect(ofTable(boxed("treesx.variety"), boxed("trees"))).toBe(false);
+    expect(ofTable(boxed("harvests.tree_id"), boxed("trees"))).toBe(false);
+    expect(ofTable(boxed(".trees"), boxed(""))).toBe(false);
+    expect(ofTable(boxed("trees"), boxed("trees"))).toBe(false);
   });
 
   it("memberOf reads a key's exact text, not a prefix of it: denominator beside denominator_definition and denominator_text (m4 of round 1)", () => {

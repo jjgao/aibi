@@ -32,7 +32,8 @@
  * definition that did not take refuses the start. Patching a builtin before `start` is out of
  * scope (deliberate code). `start` also refuses to start an
  * engine without JSON source text (`context.source`) or `JSON.rawJSON`, which the client needs to
- * read and send numbers exactly.
+ * read and send numbers exactly, or without symbols as `WeakMap` keys (ES2023), which the document
+ * seam keys an answer's choices by (D432).
  */
 import { decode, DecodeError, sourceTextSupported } from "./decode";
 import type { operations } from "./generated/openapi";
@@ -52,10 +53,11 @@ export const REFUSALS = Object.freeze({
   interrupted: "The server's answer was cut off before its end.",
   notARoute: "A request goes to a route the client made, on this origin.",
   notFinite: "A request holds a number that is not finite.",
+  notAChoice: "A document holds the choices and values of its own draft (D432).",
   notCredential: "A credential the operator's client sends is not in its form; it was not sent.",
   sealed: "A body is read by the client's decoder alone (D419).",
   unsupported:
-    "This browser cannot read the server's numbers exactly (it lacks JSON source text access). Use a current Chromium, Edge or Chrome.",
+    "This browser cannot run this app: it lacks JSON source text access, which reads the server's numbers exactly, or symbols as WeakMap keys. Use a current Chromium, Edge or Chrome.",
 } as const);
 
 export type Refusal = keyof typeof REFUSALS;
@@ -109,9 +111,22 @@ export function sealBodyReaders(): boolean {
   return true;
 }
 
-/** Whether this engine can run the app: JSON source text access and `JSON.rawJSON`. */
+/** Whether this engine takes a symbol as a `WeakMap` key (ES2023): the document seam keys one by
+ * the token of an answer (`document.ts`, D432). Probed by doing it, as the engine's own refusal is
+ * a `TypeError`. */
+function symbolKeysSupported(): boolean {
+  try {
+    new WeakMap<symbol, true>().set(Symbol("aibi.probe"), true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether this engine can run the app: JSON source text access, `JSON.rawJSON`, and symbols as
+ * `WeakMap` keys. */
 export function supported(): boolean {
-  return sourceTextSupported() && "rawJSON" in JSON && typeof JSON.rawJSON === "function";
+  return sourceTextSupported() && "rawJSON" in JSON && typeof JSON.rawJSON === "function" && symbolKeysSupported();
 }
 
 /** Start the client before anything renders: `false` (and nothing sealed) if the engine lacks

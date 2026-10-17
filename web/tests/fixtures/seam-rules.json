@@ -1,0 +1,509 @@
+{
+ "about": "D432's table of the server's rules the document seam follows: every row names the cells that hold it (a Python cell as path::function, a vitest cell as path::the string of its title). Read by web/tests/gates/spec-names.test.ts (every cell exists; D432's prose and the seam's source comments state no rule of the server outside this table; a why states a fact of the seam or of the corpus, never one of the server) and by server/tests/core/catalog/test_builder_documents.py (the bound rows are the bounds of the server's models, and every edge row has an edge pair in the corpus).",
+ "rows": [
+  {
+   "id": "view-lists",
+   "kind": "datatype",
+   "rule": "The datatypes a view's column may be of are distribution.SUMMARISED, and distribution._CATEGORIES under a floor: the seam's lists equal the server's sets, and the seam offers a unit's own table's columns of those datatypes (boolean and category under a floor; no number column).",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_the_view_lists_are_the_analysis_s_summarised_and_category_sets"
+   ]
+  },
+  {
+   "id": "leaf-list",
+   "kind": "datatype",
+   "rule": "The datatypes a value leaf's column may be of are those whose resolve.typed_constant takes every string (string, category and list<category>), less list<category>, which the seam leaves out (M5.3-rest's to offer); boolean is no leaf.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_the_leaf_list_is_typed_constant_s_every_string_datatypes_less_those_left_out",
+    "server/tests/core/analyses/test_web_datatypes.py::test_a_leaf_takes_every_string_exactly_for_the_leaf_datatypes_live"
+   ]
+  },
+  {
+   "id": "datatype-vocabulary",
+   "kind": "datatype",
+   "rule": "Every word of the lists is a member of ColumnBrief.datatype.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_word_is_a_column_datatype"
+   ]
+  },
+  {
+   "id": "view-codes",
+   "kind": "relation",
+   "rule": "A view column is valid, or refused with exactly one code at one path, by its relation to the unit (its own table, a parent or a grandparent above it, or another: a child, or a sibling below a shared child), its datatype and the floor: a string, date or datetime column is NOT_SUPPORTED at its column under every k; list<category> is AGGREGATE_REQUIRED; under a floor a number, integer or time_offset column is MISSING_MEMBER at its bins; a column of a table that is no unit or ancestor of the unit is AGGREGATE_REQUIRED whatever its datatype.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_view_column_the_seam_offers_is_valid_and_the_rest_is_named_live"
+   ]
+  },
+  {
+   "id": "view-ancestors",
+   "kind": "relation",
+   "rule": "The columns of an ancestor table of the unit (a parent, a grandparent) of the lists' datatypes are taken like the unit's own, and the seam does not offer them (a view choice is held to its unit's own table); a column of a table below the unit, or of a sibling's through a shared child, is AGGREGATE_REQUIRED.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_view_column_the_seam_offers_is_valid_and_the_rest_is_named_live"
+   ]
+  },
+  {
+   "id": "view-valid",
+   "kind": "outcome",
+   "rule": "Every view column the seam offers is valid at validate_document, count_cohort and run_analysis, under no floor, a floor of 5 and one of 50, in every unit of the orchard, the lab, a chain of three tables and two tables sharing a child.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_view_column_the_seam_offers_is_valid_and_the_rest_is_named_live"
+   ]
+  },
+  {
+   "id": "leaf-valid",
+   "kind": "outcome",
+   "rule": "In the four worlds of the cell (the orchard, the lab, a chain of three tables, two tables sharing a child), every leaf column the seam offers is valid whatever the unit (a lookup up, down or across the graph), and the one more the server takes is list<category>.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_leaf_column_the_seam_offers_is_valid_for_every_unit_and_the_rest_is_named_live"
+   ]
+  },
+  {
+   "id": "not-permissible",
+   "kind": "outcome",
+   "rule": "A category leaf of a column with permissible values refuses another value with NOT_PERMISSIBLE at the value (shown by the page through Refusal).",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_a_category_leaf_outside_its_permissible_values_is_not_permissible"
+   ]
+  },
+  {
+   "id": "any-leaf-any-position",
+   "kind": "outcome",
+   "rule": "In the four worlds of the cell, any leaf column of the answer stands at any leaf position: the server resolves the path or refuses it, and the cell holds that each world has a path for each.",
+   "cells": [
+    "server/tests/core/analyses/test_web_datatypes.py::test_every_leaf_column_the_seam_offers_is_valid_for_every_unit_and_the_rest_is_named_live"
+   ]
+  },
+  {
+   "id": "class-order",
+   "kind": "outcome",
+   "rule": "In the corpus's bodies (the orchard's, at most MAX_VALUES JSON values; a body of more is not stated), the classes are decided in this order: a body over the limit (D'), a value holding a noncharacter or a surrogate (C), a document over its bytes (D) (each entry that holds two of them is of the first); then the document's schema, all of its refusals together (a list of clauses over its bound: E; a value over its length: B; E precedes B); then the resolution, all of its refusals together (a cohort over its leaves: E; a view over its columns: F); otherwise A. count_cohort and run_analysis answer 422 with a first of the refusals.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_body_is_the_oracle_s_and_its_class_the_server_s"
+   ]
+  },
+  {
+   "id": "class-A",
+   "kind": "outcome",
+   "rule": "A valid document: each written (column, value) pair is in its cohort's canonical form, unescaped, and in its readback as the data token after \" is \" beside its column's label (a value of more than 200 code points a token marked truncated whose text is its first 200); never UNKNOWN_PARAMETER; count_cohort and run_analysis answer 200.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_the_controls_fail_the_oracles"
+   ]
+  },
+  {
+   "id": "class-D-prime",
+   "kind": "outcome",
+   "rule": "A body over MAX_BODY_BYTES is 413 LIMIT_EXCEEDED at every tool.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold"
+   ]
+  },
+  {
+   "id": "class-C",
+   "kind": "outcome",
+   "rule": "A value holding a noncharacter (U+FDD0 to U+FDEF, or U+nFFFE or U+nFFFF of any plane) or a surrogate is 422 INVALID_JSON at /document/cohorts/<name>/all/<i>/values/0, at validate_document.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold"
+   ]
+  },
+  {
+   "id": "class-D",
+   "kind": "outcome",
+   "rule": "In the corpus's bodies (the orchard's, at most MAX_VALUES JSON values; a body of more is not stated), a document over MAX_DOCUMENT_BYTES by the server's measure (its JSON as json.dumps writes it) is 200 valid: false at validate_document with one LIMIT_EXCEEDED and no path, and 422 at count_cohort and run_analysis.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold"
+   ]
+  },
+  {
+   "id": "class-B",
+   "kind": "outcome",
+   "rule": "A value over MAX_STRING code points (unescaped) in a document under the limit is 200 valid: false, LIMIT_EXCEEDED at that value, one for each such value; count_cohort and run_analysis answer 422 at a first.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_a_b_document_is_refused_by_count_cohort_at_its_value",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold"
+   ]
+  },
+  {
+   "id": "class-E",
+   "kind": "outcome",
+   "rule": "A cohort over the leaves its canonical form may hold, each down step of a path counted as a leaf of its own (a child table's leaf is two, a parent's one, a duplicate none), is 200 valid: false, LIMIT_EXCEEDED at /cohorts/<name>/all, one for each such cohort; a list over its clauses bound is refused earlier with the same code at the same path; count_cohort and run_analysis answer 422.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold",
+    "server/tests/core/catalog/test_builder_documents.py::test_the_controls_fail_the_oracles"
+   ]
+  },
+  {
+   "id": "class-F",
+   "kind": "outcome",
+   "rule": "A view of more columns than summary.distribution takes is 200 valid: false, LIMIT_EXCEEDED at /views/0/params/columns, beside a cohort's refusal when both are over; the server takes a column twice in one view.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_each_class_s_branch_fails_what_it_does_not_hold"
+   ]
+  },
+  {
+   "id": "escape",
+   "kind": "outcome",
+   "rule": "A value that starts with $ is a parameter reference unless written with one more $ (\u00a77.1): the corpus written without the escape fails on $x.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_controls_fail_the_oracles"
+   ]
+  },
+  {
+   "id": "bound-cohorts",
+   "kind": "bound",
+   "position": "/cohorts",
+   "keyword": "maxProperties",
+   "value": 6,
+   "reach": "never",
+   "rule": "The seam writes one or two cohorts, named first and second; a draft of none or three is refused before anything is sent.",
+   "cells": [
+    "web/tests/unit/document.test.tsx::a draft that is not one is refused with notAChoice, and nothing is sent"
+   ],
+   "why": "one or two cohorts are written"
+  },
+  {
+   "id": "bound-cohort-names",
+   "kind": "bound",
+   "position": "/cohorts/*key",
+   "keyword": "maxLength",
+   "value": 64,
+   "reach": "never",
+   "rule": "A cohort's name is a literal of the seam.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "the names are the literals first and second"
+  },
+  {
+   "id": "bound-clauses",
+   "kind": "bound",
+   "position": "/cohorts/*/all",
+   "keyword": "maxItems",
+   "value": 256,
+   "reach": "edge",
+   "rule": "A list of more than 256 clauses is refused by the document's schema, LIMIT_EXCEEDED at /cohorts/<name>/all, before any value is checked: a B value beside it is not reported.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "limit": "MAX_CLAUSES",
+   "quantity": "written_clauses",
+   "needs": [
+    "a_value_over_the_string_bound"
+   ],
+   "at": [
+    "B"
+   ],
+   "past": [
+    "E"
+   ]
+  },
+  {
+   "id": "bound-column",
+   "kind": "bound",
+   "position": "/cohorts/*/all/*/column",
+   "keyword": "maxLength",
+   "value": 256,
+   "reach": "never",
+   "rule": "A leaf's column is the text of a choice of a walked answer, of the column grammar (at most 129 code points).",
+   "cells": [
+    "web/tests/unit/document.test.tsx::optionsOf, held to an oracle of its own (minor 5 of round 3)"
+   ],
+   "why": "the grammar bounds a choice's text"
+  },
+  {
+   "id": "bound-values",
+   "kind": "bound",
+   "position": "/cohorts/*/all/*/values",
+   "keyword": "maxItems",
+   "value": 10000,
+   "reach": "never",
+   "rule": "A leaf holds one value.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "one value is written"
+  },
+  {
+   "id": "bound-value",
+   "kind": "bound",
+   "position": "/cohorts/*/all/*/values/*",
+   "keyword": "maxLength",
+   "value": 4096,
+   "reach": "edge",
+   "rule": "A value over 4,096 code points (unescaped) is refused, LIMIT_EXCEEDED at the value.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "limit": "MAX_STRING",
+   "quantity": "longest_value",
+   "at": [
+    "A"
+   ],
+   "past": [
+    "B"
+   ],
+   "needs": [
+    "alone"
+   ]
+  },
+  {
+   "id": "bound-dataset",
+   "kind": "bound",
+   "position": "/dataset",
+   "keyword": "maxLength",
+   "value": 136,
+   "reach": "never",
+   "rule": "The dataset is a draft's DatasetId, of the table grammar (at most 64 code points).",
+   "cells": [
+    "web/tests/unit/document.test.tsx::optionsOf, held to an oracle of its own (minor 5 of round 3)"
+   ],
+   "why": "the grammar bounds a DatasetId"
+  },
+  {
+   "id": "bound-unit",
+   "kind": "bound",
+   "position": "/unit",
+   "keyword": "maxLength",
+   "value": 256,
+   "reach": "never",
+   "rule": "The unit is the text of a choice of a walked answer, of the table grammar.",
+   "cells": [
+    "web/tests/unit/document.test.tsx::optionsOf, held to an oracle of its own (minor 5 of round 3)"
+   ],
+   "why": "the grammar bounds a choice's text"
+  },
+  {
+   "id": "bound-views",
+   "kind": "bound",
+   "position": "/views",
+   "keyword": "maxItems",
+   "value": 8,
+   "reach": "never",
+   "rule": "The seam writes one view.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "one view is written"
+  },
+  {
+   "id": "bound-analysis",
+   "kind": "bound",
+   "position": "/views/*/analysis",
+   "keyword": "maxLength",
+   "value": 129,
+   "reach": "never",
+   "rule": "The analysis is a literal of the seam.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "the analysis is the literal summary.distribution"
+  },
+  {
+   "id": "bound-view-cohorts",
+   "kind": "bound",
+   "position": "/views/*/cohorts",
+   "keyword": "maxItems",
+   "value": 6,
+   "reach": "never",
+   "rule": "The view's cohorts are the one or two names written.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "one or two names are written"
+  },
+  {
+   "id": "bound-view-cohort-name",
+   "kind": "bound",
+   "position": "/views/*/cohorts/*",
+   "keyword": "maxLength",
+   "value": 64,
+   "reach": "never",
+   "rule": "A cohort of the view is named by a literal of the seam.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "the names are the literals first and second"
+  },
+  {
+   "id": "bound-params-key",
+   "kind": "bound",
+   "position": "/views/*/params/*key",
+   "keyword": "maxLength",
+   "value": 4096,
+   "reach": "never",
+   "rule": "The view's only parameter is the literal columns.",
+   "cells": [
+    "web/tests/unit/document-property.test.tsx::every body is ajv-valid once cut, total, by position, and the same through the three senders and with excess members (i)-(iv), over seeded drafts"
+   ],
+   "why": "columns is the one key written"
+  },
+  {
+   "id": "bound-columns",
+   "kind": "bound",
+   "position": "/views/*/params/columns",
+   "keyword": "maxItems",
+   "value": 8,
+   "reach": "edge",
+   "rule": "A view of more than 8 columns is refused by summary.distribution's parameters, LIMIT_EXCEEDED at /views/0/params/columns; the seam sends any number of view columns.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "limit": "MAX_VARIABLES",
+   "quantity": "view_columns",
+   "at": [
+    "A"
+   ],
+   "past": [
+    "F"
+   ],
+   "needs": [
+    "alone"
+   ]
+  },
+  {
+   "id": "bound-view-column",
+   "kind": "bound",
+   "position": "/views/*/params/columns/*/column",
+   "keyword": "maxLength",
+   "value": 256,
+   "reach": "never",
+   "rule": "A view column is the text of a choice of a walked answer, of the column grammar.",
+   "cells": [
+    "web/tests/unit/document.test.tsx::optionsOf, held to an oracle of its own (minor 5 of round 3)"
+   ],
+   "why": "the grammar bounds a choice's text"
+  },
+  {
+   "id": "limit-body",
+   "kind": "limit",
+   "limit": "MAX_BODY_BYTES",
+   "value": 8388608,
+   "reach": "edge",
+   "rule": "A body over the limit is class D'.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "quantity": "body_bytes",
+   "at": [
+    "D"
+   ],
+   "past": [
+    "D'"
+   ]
+  },
+  {
+   "id": "limit-document",
+   "kind": "limit",
+   "limit": "MAX_DOCUMENT_BYTES",
+   "value": 2097152,
+   "reach": "edge",
+   "rule": "A document over the limit by the server's measure is class D.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "quantity": "document_measure",
+   "at": [
+    "B"
+   ],
+   "past": [
+    "D"
+   ]
+  },
+  {
+   "id": "limit-leaves",
+   "kind": "limit",
+   "limit": "MAX_LEAVES",
+   "value": 64,
+   "reach": "edge",
+   "rule": "A cohort's canonical form holds at most 64 leaves, counted by engine.resolved.measure.",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason"
+   ],
+   "quantity": "leaves",
+   "at": [
+    "A"
+   ],
+   "past": [
+    "E"
+   ],
+   "needs": [
+    "alone"
+   ]
+  },
+  {
+   "id": "limit-leaves-down-step",
+   "kind": "limit",
+   "limit": "MAX_LEAVES",
+   "value": 64,
+   "reach": "edge",
+   "rule": "A leaf of a child table is a leaf and a down step of its own: two leaves of the count (32 child-table leaves are the bound, 33 past it; 31 and two of the unit's, and 31 and three).",
+   "cells": [
+    "server/tests/core/catalog/test_builder_documents.py::test_the_server_s_verdict_on_every_entry",
+    "server/tests/core/catalog/test_builder_documents.py::test_every_bound_of_the_server_s_models_is_a_row_with_an_edge_pair_or_a_reason",
+    "server/tests/core/catalog/test_builder_documents.py::test_the_controls_fail_the_oracles"
+   ],
+   "quantity": "leaves",
+   "needs": [
+    "a_down_step_counted",
+    "alone"
+   ],
+   "at": [
+    "A"
+   ],
+   "past": [
+    "E"
+   ]
+  },
+  {
+   "id": "limit-clause-depth",
+   "kind": "limit",
+   "limit": "MAX_CLAUSE_DEPTH",
+   "value": 8,
+   "reach": "unreached",
+   "rule": "A cohort's canonical form nests at most 8 clauses deep, each down step of a path a level of its own.",
+   "cells": [
+    "server/tests/core/engine/test_resolve.py::test_a_cohort_nests_clauses_at_most_eight_deep",
+    "server/tests/core/engine/test_resolve.py::test_each_down_step_of_a_path_is_a_level_of_the_depth"
+   ],
+   "why": "not reached by the corpus (the orchard); not stated"
+  },
+  {
+   "id": "limit-depth",
+   "kind": "limit",
+   "limit": "MAX_DEPTH",
+   "value": 64,
+   "reach": "never",
+   "rule": "A document nests at most 64 deep.",
+   "cells": [
+    "server/tests/core/schema/test_jsonio.py::test_nesting_is_capped_with_a_pointer_where_there_is_one"
+   ],
+   "why": "the seam writes a document at most 7 deep"
+  },
+  {
+   "id": "limit-values",
+   "kind": "limit",
+   "limit": "MAX_VALUES",
+   "value": 200000,
+   "reach": "unreached",
+   "rule": "A document holds at most 200,000 JSON values (counted when the body is parsed).",
+   "cells": [
+    "server/tests/core/schema/test_jsonio.py::test_the_number_of_values_is_capped"
+   ],
+   "why": "not reached by the corpus (the orchard); not stated"
+  }
+ ]
+}

@@ -148,6 +148,37 @@ describe("start", () => {
     expect(supported()).toBe(true);
   });
 
+  it("refuses to start on an engine that takes no symbol as a WeakMap key (the document seam's, D432), and seals nothing", () => {
+    freshReaders();
+    const saved = Object.getOwnPropertyDescriptor(WeakMap.prototype, "set");
+    if (saved === undefined) {
+      throw new Error("WeakMap.prototype.set is gone");
+    }
+    const original = saved.value as (this: WeakMap<object, unknown>, key: object, value: unknown) => WeakMap<object, unknown>;
+    expect(supported()).toBe(true);
+    try {
+      // An engine before ES2023: a key that is no object is a TypeError.
+      Object.defineProperty(WeakMap.prototype, "set", {
+        value(this: WeakMap<object, unknown>, key: unknown, value: unknown): WeakMap<object, unknown> {
+          if (typeof key !== "object" || key === null) {
+            throw new TypeError("Invalid value used as weak map key");
+          }
+          return original.call(this, key, value);
+        },
+        configurable: true,
+        writable: true,
+      });
+      expect(supported()).toBe(false);
+      expect(start()).toBe(false);
+      for (const name of SEALED_READERS) {
+        expect(Object.getOwnPropertyDescriptor(Response.prototype, name)?.configurable).toBe(true);
+      }
+    } finally {
+      Object.defineProperty(WeakMap.prototype, "set", saved);
+    }
+    expect(supported()).toBe(true);
+  });
+
   it("refuses an engine whose JSON.rawJSON is no function", () => {
     freshReaders();
     const saved = Object.getOwnPropertyDescriptor(JSON, "rawJSON");

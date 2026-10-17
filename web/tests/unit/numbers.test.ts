@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { box, boxMap, boxText, type BoxedMap, entriesOf, readText, type ServerNumber } from "../../src/api/box";
 import { decode } from "../../src/api/decode";
 import { VOCABULARIES } from "../../src/api/generated/shapes";
-import { countGlyphs, GLYPHS, glyphsOf, isPositive, isZero, largestOf, LISTED, NOT_A_COUNT, NUMBER_TEXT, remainingOf, UNREAD } from "../../src/api/numbers";
+import { countGlyphs, GLYPHS, glyphsOf, isCountOf, isPositive, isZero, largestOf, LISTED, NOT_A_COUNT, NUMBER_TEXT, remainingOf, UNREAD } from "../../src/api/numbers";
 import { isNumberText, NOT_NUMBERS, NUMBER_TEXTS, signOf } from "./answers";
 
 function decoded(text: string): ServerNumber {
@@ -78,6 +78,24 @@ describe("the grammar and the glyphs", () => {
     for (const count of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 9007199254740992]) {
       expect(() => countGlyphs(count)).toThrow(NOT_A_COUNT);
       expect(() => remainingOf(count)).toThrow(NOT_A_COUNT);
+    }
+  });
+
+  it("tells whether a server number is exactly a count the page made (D432's partial): the plain whole number's text alone", () => {
+    for (const count of [0, 1, 9, 10, 40, 64, 1000, 9007199254740991]) {
+      expect(isCountOf(decoded(String(count)), count), String(count)).toBe(true);
+      expect(isCountOf(decoded(String(count + 1)), count), String(count)).toBe(false);
+    }
+    for (const text of ["3.0", "3e0", "0.3e1", "30e-1", "-3", "3.5", "-0"]) {
+      expect(isCountOf(decoded(text), 3), text).toBe(false);
+    }
+    expect(isCountOf(decoded("0"), 0)).toBe(true);
+    expect(isCountOf(box("three"), 3)).toBe(false);
+    expect(isCountOf(box("03"), 3)).toBe(false);
+    // No count is a negative, a fraction, a non-finite or a number past 2^53 - 1, even when the
+    // number's text is that of the value the page made.
+    for (const [text, count] of [["-1", -1], ["0.5", 0.5], ["9007199254740992", 9007199254740992], ["1", Number.NaN], ["1", Number.POSITIVE_INFINITY]] as const) {
+      expect(isCountOf(decoded(text), count), text).toBe(false);
     }
   });
 

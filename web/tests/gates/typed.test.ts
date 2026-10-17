@@ -163,7 +163,9 @@ export type ConfMapOfText = { readonly a: ServerText; readonly b?: BoxedMap<Serv
 
 describe("the typed functions: a request body of the generated types in, a boxed outcome out", () => {
   it("each gives its operation's Boxed component, and takes its RequestBody (compiled)", () => {
-    const code = `import { countCohort, describeDataset, explain, listAnalyses, runAnalysis, searchCatalog, validateDocument, type Boxed, type Outcome, type components } from "./api";
+    // The three that take a document are typed.ts's alone (D432): the probe imports them there.
+    const code = `import { describeDataset, explain, listAnalyses, searchCatalog, type Boxed, type Outcome, type components } from "./api";
+import { countCohort, runAnalysis, validateDocument } from "./api/typed";
 type S = components["schemas"];
 export const all = async () => [
   (await searchCatalog({ limit: 5 })) satisfies Outcome<Boxed<S["CatalogHits"]>>,
@@ -194,7 +196,7 @@ describe("a raw string is no server text (type level)", () => {
 declare const t: ServerText;
 declare const s: string;
 declare const n: ServerNumber;
-declare const c: Choice;
+declare const c: Choice<"leaf">;
 `;
 
   it.each([
