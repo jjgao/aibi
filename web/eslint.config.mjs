@@ -46,9 +46,11 @@
  * `src/api/ids.ts` alone escape). Outside `src/api/`, every import of the client is of
  * `src/api/index.ts`; inside it, each internal is its owner's alone (`API_INTERNALS`: `box`
  * `decode.ts`'s, `decode` and `revive` `client.ts`'s, and the request half's, D425: `textOf`
- * `decode.ts`'s and `provenance.ts`'s, so that one function, `idAt`, reads a box's text; `requestId`,
- * `originOf` and `stamp` `provenance.ts`'s, `idAt` `curator.ts`'s, `recorder`, `urlOf` and
- * `datasetOf` `client.ts`'s). The
+ * `decode.ts`'s and `provenance.ts`'s, so that one function, `idAt`, reads a box's text for a
+ * request, and `numbers.ts`'s, which reads it for the page alone, D430 (its glyphs, `glyphsOf`,
+ * `format.tsx`'s alone, and the sanctioned predicates; both modules held to the number rules above);
+ * `requestId`, `originOf` and `stamp` `provenance.ts`'s, `idAt` `curator.ts`'s, `recorder`, `urlOf`
+ * and `datasetOf` `client.ts`'s). The
  * box makes every conversion throw at run time besides; the lint is defence in depth. The `api/` import patterns match without regard to case (the rule's default for a `regex`, `caseSensitive: false`, which the corpus holds: `./API/Box`), as a case-insensitive file system resolves them.
  *
  * **The layout's form and the router (D428).** `src/layout/form.ts` (the context that sets the
@@ -218,6 +220,13 @@ const PROTOTYPE_NAMES = ["prototype", "getPrototypeOf", "setPrototypeOf", "__pro
 
 /** The names that turn a value into a number or digits, `src/api/`'s alone (matched exactly). */
 const NUMBER_NAMES = ["BigInt", "Number", "String", "parseInt", "parseFloat", "isNaN", "isFinite", "Math", "JSON", "valueAsNumber"];
+
+/** The names of a rounding or a formatting of a number, refused in `src/api/numbers.ts` and
+ * `src/api/format.tsx` alone (D430): the two modules that read and show a number's text, where
+ * `Intl` and these methods would round it. The lint holds these names, D419's `NUMBER_NAMES` and
+ * the number syntax, and no spelling else: a conversion by another name (`Float32Array.of(n)[0]`,
+ * a type predicate narrowing a number) is held by the tests' number corpus alone. */
+const ROUNDING_NAMES = ["Intl", "toFixed", "toPrecision", "toExponential", "toLocaleString"];
 
 /** The builtins no code assigns a member of. */
 const BUILTINS = [
@@ -521,8 +530,15 @@ const API_INTERNALS = [
   {
     module: "box",
     names: ["textOf"],
-    owners: ["src/api/decode.ts", "src/api/provenance.ts"],
-    message: "textOf, the reading of a box's text, is decode.ts's and provenance.ts's idAt alone: no member of the operator client reads a box's digits (D425).",
+    owners: ["src/api/decode.ts", "src/api/provenance.ts", "src/api/numbers.ts"],
+    message:
+      "textOf, the reading of a box's text, is decode.ts's, provenance.ts's idAt's and numbers.ts's alone (its glyphs for format.tsx and its predicates, D430): no member of the operator client reads a box's digits (D425).",
+  },
+  {
+    module: "numbers",
+    names: ["glyphsOf", "countGlyphs", "remainingOf"],
+    owners: ["src/api/format.tsx"],
+    message: "A number's glyphs and the page's counts are format.tsx's alone: the one module that shows a number, as an element (D430).",
   },
   { module: "ids", names: ["requestId"], owners: ["src/api/provenance.ts"], message: "requestId, the one maker of a RequestId, is provenance.ts's idAt's alone (D425)." },
   { module: "origin", names: ["stamp"], owners: ["src/api/provenance.ts"], message: "stamp is provenance.ts's alone: a node is stamped as it is decoded (D425)." },
@@ -860,6 +876,31 @@ export default defineConfig(
       "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
+    },
+  },
+  {
+    // The numbers' modules (D430): `numbers.ts` reads a box's text and `format.tsx` shows it, each
+    // held to D419's number names as the app is, and to `ROUNDING_NAMES`: these names are a lint
+    // error there; another spelling of a conversion or a rounding is held by the tests' corpus.
+    files: ["src/api/numbers.ts", "src/api/format.tsx"],
+    rules: {
+      "no-bitwise": "error",
+      "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [NUMBER_NAMES, NUMBER], [STORAGE_NAMES, STORE]),
+      "no-restricted-syntax": [
+        "error",
+        ...SINK_SYNTAX,
+        ...STORAGE_SYNTAX,
+        ...IO_SYNTAX,
+        ...JSON_READER_SYNTAX,
+        ...GLOB_SYNTAX,
+        ...AMBIENT_SYNTAX,
+        ...REQUIRE_SYNTAX,
+        ...PATCH_SYNTAX,
+        ...API_IMPORT_SYNTAX,
+        ...ADDRESS_SYNTAX,
+        ...NUMBER_SYNTAX,
+        ...everywhere(ROUNDING_NAMES, NUMBER),
+      ],
     },
   },
   {

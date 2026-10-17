@@ -35,8 +35,9 @@
  * (d) **The internals' owners** (n5, m16): the lint lets each internal of the request half be
  *     imported by its owner alone (`curator.ts` importing `stamp` is an error), and no file of
  *     `src/` outside `src/api/` imports `ids.ts`, `origin.ts`, `provenance.ts` or `route.ts`. The
- *     reading of a box's text is `idAt`'s (MA3 of round 3): `textOf` is `decode.ts`'s and
- *     `provenance.ts`'s, `requestId` and `originOf` `provenance.ts`'s, and `idAt` `curator.ts`'s;
+ *     reading of a box's text for a request is `idAt`'s (MA3 of round 3): `textOf` is `decode.ts`'s,
+ *     `provenance.ts`'s and (for the page alone, D430) `numbers.ts`'s, whose glyphs are `format.tsx`'s
+ *     alone, `requestId` and `originOf` `provenance.ts`'s, and `idAt` `curator.ts`'s;
  *     (g) holds that a member added to the operator client that reads a box's digits (the review's
  *     X1-X3) is a lint error by its import, whatever the member count is.
  * (e) **The launder corpus** (L1-L4, n01-n04, n34 of the plan's reviews): each route is a compile
@@ -51,8 +52,8 @@
  *     `nodesAt` and `recorder` (and their types), its imports are the ones listed, and `textOf`,
  *     `requestId` and `originOf` are each called once, inside `idAt` (a wrapper exported beside it,
  *     round 4's P1, fails). (d) names every spelling a module is imported by (`./box`, `./box.ts`,
- *     `./box.js`: m15) and holds `textOf`'s owners (`decode.ts`, `provenance.ts`) over every file of
- *     `src/api/` (m17).
+ *     `./box.js`: m15) and holds `textOf`'s owners (`decode.ts`, `provenance.ts`, `numbers.ts`) over
+ *     every file of `src/api/`, `.tsx` included (m17; D430).
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -668,6 +669,9 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
     ["box", "boxMap", "src/api/typed.ts"],
     ["box", "readText", "src/api/text.tsx"],
     ["client", "exchange", "src/api/typed.ts"],
+    ["numbers", "glyphsOf", "src/api/format.tsx"],
+    ["numbers", "countGlyphs", "src/api/format.tsx"],
+    ["numbers", "remainingOf", "src/api/format.tsx"],
   ];
 
   const importing = (module: string, name: string, spelling: string, specifier = "."): string => `import { ${name} } from '${specifier}/${module}${spelling}';\nexport const f = ${name};\n`;
@@ -688,11 +692,12 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
   });
 
   /** The modules of `src/api/` (`generated/` included), by project-relative name. */
-  const API_FILES = [...readdirSync(path.join(WEB, "src/api")).filter((name) => name.endsWith(".ts")).map((name) => `src/api/${name}`), "src/api/generated/routes.ts"];
+  const API_FILES = [...readdirSync(path.join(WEB, "src/api")).filter((name) => name.endsWith(".ts") || name.endsWith(".tsx")).map((name) => `src/api/${name}`), "src/api/generated/routes.ts"];
 
-  it("textOf's owners are decode.ts and provenance.ts alone, over every file of src/api/, whichever the spelling: the same owners the import-graph test states (m17 of round 4)", async () => {
+  it("textOf's owners are decode.ts, provenance.ts and numbers.ts alone (D430), over every file of src/api/, whichever the spelling: the same owners the import-graph test states (m17 of round 4)", async () => {
     expect(API_FILES.length).toBeGreaterThanOrEqual(12);
-    const owners = ["src/api/decode.ts", "src/api/provenance.ts"];
+    expect(API_FILES).toContain("src/api/format.tsx");
+    const owners = ["src/api/decode.ts", "src/api/provenance.ts", "src/api/numbers.ts"];
     for (const file of API_FILES.filter((one) => one !== "src/api/box.ts")) {
       for (const spelling of SPELLINGS) {
         const specifier = file.startsWith("src/api/generated/") ? ".." : ".";
@@ -773,6 +778,40 @@ const READERS: readonly (readonly [string, string])[] = [
     ),
   ],
 ];
+
+describe("(i) D430: numbers.ts and format.tsx, which read and show a box's text, are held to D419's number rules as the app is", () => {
+  /** Each a conversion or a rounding a lazy hand might write where a number is shown. */
+  const CONVERSIONS: readonly (readonly [string, string])[] = [
+    ["Math.round", "export const f = (n: number): number => Math.round(n);\n"],
+    ["Math.floor through an alias", "const M = Math;\nexport const f = (n: number): number => M.floor(n);\n"],
+    ["Number", "export const f = (t: string): number => Number(t);\n"],
+    ["Number(t).toFixed", "export const f = (t: string): string => Number(t).toFixed(2);\n"],
+    ["parseFloat", "export const f = (t: string): number => parseFloat(t);\n"],
+    ["parseInt", "export const f = (t: string): number => parseInt(t, 10);\n"],
+    ["String", "export const f = (n: number): string => String(n);\n"],
+    ["unary plus", "export const f = (t: string): number => +t;\n"],
+    ["a bitwise or", "export const f = (n: number): number => n | 0;\n"],
+    ["JSON.parse", "export const f = (t: string): unknown => JSON.parse(t);\n"],
+    ["BigInt", "export const f = (t: string): bigint => BigInt(t);\n"],
+    ["Intl.NumberFormat", 'export const f = (t: number): string => new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6 }).format(t);\n'],
+    ["toFixed", "export const f = (n: { toFixed: (digits: number) => string }): string => n.toFixed(2);\n"],
+    ["toPrecision", "export const f = (n: { toPrecision: (digits: number) => string }): string => n.toPrecision(6);\n"],
+    ["toExponential", "export const f = (n: { toExponential: (digits: number) => string }): string => n.toExponential(3);\n"],
+    ["toLocaleString", "export const f = (n: { toLocaleString: () => string }): string => n.toLocaleString();\n"],
+  ];
+  const NUMBER_RULES = ["no-restricted-globals", "no-restricted-syntax", "no-bitwise"];
+
+  it.each(["src/api/numbers.ts", "src/api/format.tsx"].flatMap((file) => CONVERSIONS.map(([name, code]) => [file, name, code] as const)))("%s: %s is refused", async (file, _name, code) => {
+    const found = await lintIds(code, file);
+    expect(found.filter((id) => NUMBER_RULES.includes(id)).length).toBeGreaterThan(0);
+  });
+
+  it("another module of src/api/ keeps its numbers (the control: the rules are these two files', not the seam's)", async () => {
+    for (const [, code] of CONVERSIONS.filter(([name]) => name !== "a bitwise or")) {
+      expect((await lintIds(code, "src/api/probe.ts")).filter((id) => NUMBER_RULES.includes(id))).toEqual([]);
+    }
+  });
+});
 
 describe("(g) one function reads a box's text, and no member of the operator client's closure can (MA3 of round 3)", () => {
   it("the real curator.ts passes the lint as src/api/curator.ts: the controls below differ from it by what they import", async () => {

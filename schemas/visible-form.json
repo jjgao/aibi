@@ -14,6 +14,7 @@
     8204,
     8205
   ],
+  "listed": 64,
   "order": [
     "cut",
     "fold",
@@ -120,6 +121,7 @@
     "cut": "a text from data is cut at `cut` code points (never splitting a surrogate pair), before it is folded or escaped, and the cut is marked; pointers, statistic references and data tokens are not cut",
     "escape": "each unsafe code point is written \\xNN below U+0100, \\uNNNN below U+10000, \\UNNNNNNNN above, in lower-case hex, one per code point (a lone surrogate is one)",
     "fold": "a carriage return immediately before a line feed is dropped (after the cut)",
+    "listed": "a list from data (domain tags, facet values) shows its first `listed` members, then how many more it holds",
     "runs": "each maximal run of unsafe code points is one escaped run (one span)"
   },
   "unidata_version": "15.0.0",

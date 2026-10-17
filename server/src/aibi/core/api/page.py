@@ -85,8 +85,9 @@ COLUMNS = 500
 """Columns a dataset's page lists at a time."""
 TABLES = 50
 """Tables a dataset's page shows at a time; the next page starts at the columns of the next."""
-LISTED = 64
-"""Members of a list from data (tags, facet values) shown before the rest are counted."""
+LISTED = visible.LISTED
+"""Members of a list from data (tags, facet values) shown before the rest are counted (D312: the
+visible form's export; the web's ``List`` cuts at the same number, held equal to it, D430)."""
 VALUE_CHARACTERS = visible.CUT
 """Characters of a descriptor field's value shown; the rest is cut and marked (D312)."""
 _OFFSET = re.compile(r"^[0-9]{1,16}$")

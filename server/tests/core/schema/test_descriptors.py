@@ -1191,7 +1191,11 @@ def test_derived_column_cycles_take_linear_time() -> None:
     release = _release(table("loans"), *chain)
     start = time.perf_counter()
     refusals = check_release(release)
-    assert time.perf_counter() - start < 1.0
+    # 0.05-0.1 s on a developer machine. The bound is 5 s because a loaded CI runner measured 1.04
+    # and 1.09 s against the former 1.0 s. It catches a cubic walk or a set-based quadratic one
+    # (several seconds), not a lean quadratic one (about 4 s idle): a ratio test (n=1,000 vs 4,000)
+    # would hold the shape: follow-up.
+    assert time.perf_counter() - start < 5.0
     assert len(refusals) == 1001
 
 
