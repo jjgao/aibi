@@ -100,7 +100,7 @@ export const BRANDS = [
  * there today; a pull request that needs another adds it here, with its reason): none loads, embeds,
  * navigates or runs (`script`, `iframe`, `object`, `embed`, `img`, `link`, `meta`, `base`, `style`,
  * `title`), each a channel or a sink of its own (D411, D423). */
-export const ELEMENTS = ["a", "bdi", "button", "div", "form", "h1", "input", "label", "main", "option", "output", "p", "section", "select", "span"];
+export const ELEMENTS = ["a", "bdi", "button", "div", "form", "h1", "h2", "h3", "input", "label", "main", "option", "output", "p", "section", "select", "span"];
 
 /** The one module that writes an `<option>` (D428: a screen's own `<option>` would flatten a `<Text>`
  * and lose the escape's mark). */
@@ -216,6 +216,20 @@ export const SITES = [
     file: "src/operator/Shell.tsx",
     code: "field.value",
     reason: "D423: the uncontrolled token field is emptied (`\"\"`) as the form is sent, so that the token stands in the DOM no longer than the call that hands it to the client (a controlled field would write it into the DOM).",
+  },
+  {
+    rule: "dom",
+    file: "src/catalogue/load.ts",
+    code: "setTimeout",
+    reason:
+      "The queue's deadline (D431): `dom` reports a call's callee, so the site matches the identifier, once in this file; `tests/unit/load.test.ts`' source cell holds the call's text, `setTimeout(expire, DEADLINE_MS)`, a closure with no argument and no text.",
+  },
+  {
+    rule: "dom",
+    file: "src/catalogue/load.ts",
+    code: "clearTimeout",
+    reason:
+      "The queue's deadline stopped (D431) by its one `stop()`, when the call settles, the deadline fires or the store is dropped: the site matches the identifier, once in this file; `tests/unit/load.test.ts`' source cell holds the call's text, `clearTimeout(timer)`.",
   },
   {
     rule: "answers",

@@ -4,7 +4,10 @@
  *
  * **First, a walk at run time of the routes the app gives the router** (`catalogueRoutes()`, and each
  * `lazy` result, in both of `lazy`'s forms): every route's own keys must be in an ALLOW-LIST (`path`,
- * `index`, `element`, `Component`, `lazy`, which must be a function, `children`, `errorElement`), so
+ * `index`, `element`, `lazy`, which must be a function, `children`, `errorElement`: no `Component`,
+ * D431, so that no component is handed to the router as a value), and every `element` and
+ * `errorElement` must be an element (`isValidElement`) of one of the app's route screens
+ * (`ELEMENT_TYPES`: written in place, never a string, a number or another component), so
  * that a `loader`, an `action`, a `middleware`, a `shouldRevalidate` or a `handle` is refused whatever
  * its typing (a route's `loader({ params, request })` and `middleware` receive the decoded address;
  * round 3 of #117 rendered a raw U+202E through an untyped literal's `loader` and a `middleware`, past
@@ -32,15 +35,35 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { createElement, isValidElement } from "react";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { Catalogue } from "../../src/catalogue/Catalogue";
+import { Failure } from "../../src/catalogue/Failure";
+import { NotFound } from "../../src/catalogue/NotFound";
 import { catalogueRoutes } from "../../src/catalogue/routes";
+import { DatasetAddress } from "../../src/router/address";
 import { check, type Checked, WEB } from "./program";
 import { sources } from "./router-scan";
 
-/** The keys of a route the app may give the router (D428); `lazy` only as a function. */
-const ROUTE_KEYS: ReadonlySet<PropertyKey> = new Set(["path", "index", "element", "Component", "lazy", "children", "errorElement"]);
+/** The keys of a route the app may give the router (D428, D431); `lazy` only as a function. */
+const ROUTE_KEYS: ReadonlySet<PropertyKey> = new Set(["path", "index", "element", "lazy", "children", "errorElement"]);
+
+/** The types an `element` or `errorElement` may be an element of (D431): the app's route screens. */
+const ELEMENT_TYPES: ReadonlySet<unknown> = new Set([Catalogue, DatasetAddress, NotFound, Failure]);
+
+/** What is wrong with a route's `element` or `errorElement`: none if absent or an element of a type
+ * of `ELEMENT_TYPES`. */
+function refusedElement(value: unknown, where: string): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isValidElement(value)) {
+    return [`${where}: not an element`];
+  }
+  return ELEMENT_TYPES.has(value.type) ? [] : [`${where}: an element of another type`];
+}
 
 type Walked = Readonly<Record<PropertyKey, unknown>>;
 
@@ -67,7 +90,8 @@ async function refusedRoute(route: unknown, where: string): Promise<string[]> {
   const found = Reflect.ownKeys(route)
     .filter((key) => !ROUTE_KEYS.has(key))
     .map((key) => `${where}: ${String(key)}`);
-  const { lazy, children } = route;
+  const { lazy, children, element, errorElement } = route;
+  found.push(...refusedElement(element, `${where}.element`), ...refusedElement(errorElement, `${where}.errorElement`));
   if (typeof lazy === "function") {
     const loaded: unknown = await Reflect.apply(lazy, undefined, []);
     found.push(...(await refusedRoute(loaded, `${where}.lazy()`)));
@@ -204,7 +228,7 @@ describe("the routes the app gives the router hold the allow-list's keys alone (
 
   /** The probes of round 3 of #117: rendered through the real hash router there, each put a raw U+202E in the DOM. */
   const NOT: readonly (readonly [string, unknown, readonly string[]])[] = [
-    ["an untyped literal's loader", [{ path: "leak/:id", loader: ({ params }: { readonly params: Record<string, string | undefined> }) => params["id"] ?? "", Component: () => null }], ["routes[0]: loader"]],
+    ["an untyped literal's loader", [{ path: "leak/:id", loader: ({ params }: { readonly params: Record<string, string | undefined> }) => params["id"] ?? "", element: createElement(NotFound) }], ["routes[0]: loader"]],
     [
       "a loader in method syntax",
       [
@@ -217,7 +241,7 @@ describe("the routes the app gives the router hold the allow-list's keys alone (
       ],
       ["routes[0]: loader"],
     ],
-    ["a middleware", [{ path: "mw/:id", middleware: [async (_context: unknown, next: () => Promise<unknown>) => next()], Component: () => null }], ["routes[0]: middleware"]],
+    ["a middleware", [{ path: "mw/:id", middleware: [async (_context: unknown, next: () => Promise<unknown>) => next()], element: createElement(NotFound) }], ["routes[0]: middleware"]],
     ["an action, a shouldRevalidate and a handle", [{ action: () => null, shouldRevalidate: () => true, handle: {} }], ["routes[0]: action", "routes[0]: shouldRevalidate", "routes[0]: handle"]],
     ["a loader that is undefined", [{ loader: undefined }], ["routes[0]: loader"]],
     ["a loader a lazy function returns", [{ path: "l/:id", lazy: () => Promise.resolve({ loader: () => null }) }], ["routes[0].lazy(): loader"]],
@@ -228,14 +252,31 @@ describe("the routes the app gives the router hold the allow-list's keys alone (
     ["a key that is not enumerable", [Object.defineProperty({ path: "n" }, "loader", { value: () => null, enumerable: false })], ["routes[0]: loader"]],
     ["a route that is no object", [() => null], ["routes[0]: not an object"]],
     ["routes that are no list", { path: "x" }, ["routes: not a list"]],
+    ["a Component (D431: a component handed as a value)", [{ path: "a", Component: () => null }], ["routes[0]: Component"]],
+    ["a Component a lazy function returns", [{ path: "b", lazy: () => Promise.resolve({ Component: NotFound }) }], ["routes[0].lazy(): Component"]],
+    ["an element that is a string", [{ index: true, element: "\u202e raw" }], ["routes[0].element: not an element"]],
+    ["an element that is a number", [{ index: true, element: 3 }], ["routes[0].element: not an element"]],
+    ["an element that is null", [{ index: true, element: null }], ["routes[0].element: not an element"]],
+    ["an element of another type", [{ index: true, element: createElement("p", null, "raw") }], ["routes[0].element: an element of another type"]],
+    ["an errorElement of another component", [{ errorElement: createElement(() => null), children: [] }], ["routes[0].errorElement: an element of another type"]],
+    ["a lazy element of another type", [{ path: "c", lazy: () => Promise.resolve({ element: createElement("span") }) }], ["routes[0].lazy().element: an element of another type"]],
   ];
 
   it.each(NOT)("refuses %s", async (_name, routes, expected) => {
     expect(await refusedKeys(routes)).toEqual(expected);
   });
 
-  it("accepts every key of the allow-list, and a lazy function's element or Component (the control)", async () => {
-    const routes = [{ errorElement: null, children: [{ index: true, element: null }, { path: "a", Component: () => null }, { path: "b", lazy: () => Promise.resolve({ element: null }) }] }];
+  it("accepts every key of the allow-list, and an element of each route screen, in place or from a lazy function (the control)", async () => {
+    const routes = [
+      {
+        errorElement: createElement(Failure),
+        children: [
+          { index: true, element: createElement(Catalogue) },
+          { path: "a", lazy: () => Promise.resolve({ element: createElement(DatasetAddress, { screen: () => createElement(NotFound) }) }) },
+          { path: "b", lazy: () => Promise.resolve({ element: createElement(NotFound) }) },
+        ],
+      },
+    ];
     expect(await refusedKeys(routes)).toEqual([]);
   });
 });

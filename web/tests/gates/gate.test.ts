@@ -556,12 +556,12 @@ describe("(f) which modules ship: the display table's names, from the bundler's 
   it.each(["production", "e2e"] as const)("holds the real tree to the table in %s mode: the build fails where a module of the bundle is unnamed", async (mode) => {
     const config = buildConfig(mode);
     const table = displayModules(readTable());
-    const names = new Set([...table].filter((name) => name !== "src/catalogue/Home.tsx"));
+    const names = new Set([...table].filter((name) => name !== "src/catalogue/NotFound.tsx"));
     const plugins = ((config.plugins ?? []).flat() as Plugin[]).map((plugin) => (plugin.name === "aibi:operator-gate" ? operatorGate({ harness: mode === "e2e", display: names }) : plugin));
     const saved = process.env["NODE_ENV"];
     delete process.env["NODE_ENV"];
     try {
-      await expect(build({ ...config, root: WEB, mode, configFile: false, logLevel: "silent", plugins, build: { ...config.build, write: false } })).rejects.toThrow(/src\/catalogue\/Home\.tsx/u);
+      await expect(build({ ...config, root: WEB, mode, configFile: false, logLevel: "silent", plugins, build: { ...config.build, write: false } })).rejects.toThrow(/src\/catalogue\/NotFound\.tsx/u);
     } finally {
       if (saved !== undefined) {
         process.env["NODE_ENV"] = saved;

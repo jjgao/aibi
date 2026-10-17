@@ -1,0 +1,10 @@
+.hit {
+  margin: 1em 0;
+  border-top: 1px solid #ccc;
+}
+.meta {
+  color: #555;
+}
+.state {
+  font-style: italic;
+}

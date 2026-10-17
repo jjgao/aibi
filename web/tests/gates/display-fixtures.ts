@@ -49,13 +49,16 @@ const BASE_ROWS: readonly BaseRow[] = [
   { id: "R62", owner: "M5.3-min", module: "src/result/Chart.tsx", test: "tests/unit/chart.test.ts", screens: `"builder"`, call: "Chart()", shows: "chart", built: false },
   { id: "R13", owner: "M5.4-min", module: "src/result/Table.tsx", test: "tests/unit/table.test.ts", screens: `"result"`, call: "Table()", shows: "table", built: false },
   { id: "R63", owner: "M5.5", module: "src/operator/Queue.tsx", test: "tests/unit/queue.test.ts", screens: `"operator"`, call: "Queue()", shows: "queue", built: false },
+  // D431's owner after M5.5: two rows, so that it can be built alone, partly, or not at all.
+  { id: "R64", owner: "M5.2-rest", module: "src/dataset/Descriptor.tsx", test: "tests/unit/descriptor.test.ts", screens: `"dataset"`, call: "Descriptor()", shows: "descriptor", built: false },
+  { id: "R65", owner: "M5.2-rest", module: "src/dataset/Paging.tsx", test: "tests/unit/paging.test.ts", screens: `"dataset"`, call: "Paging()", shows: "paging", built: false },
 ];
 
 const row = (id: string, owner: string, module: string, test: string, screens: string): string =>
   `  { id: "${id}", basis: "spec statement", must: "a mock obligation", screens: [${screens}], spec: ["§8"], owner: "${owner}", module: "${module}", test: "${test}" },`;
 
 const ROWS_TS = [
-  `export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "server"];`,
+  `export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "server"];`,
   `export const SCREENS = ["all", "catalogue", "dataset", "builder", "result", "operator"];`,
   `export const BASES = ["spec MUST", "spec statement", "derived"];`,
   `export const ROWS = [`,
@@ -397,7 +400,7 @@ it("R45: dataset", () => { expect.hasAssertions(); expect.soft(Dataset()).toBeDe
     why: "an owner with no row",
     sharedRun: true,
     edit: (tree) => {
-      swap(tree, "src/display/rows.ts", `"M5.5", "server"]`, `"M5.5", "M5.6", "server"]`);
+      swap(tree, "src/display/rows.ts", `"M5.2-rest", "server"]`, `"M5.2-rest", "M5.6", "server"]`);
     },
   },
   {
@@ -865,7 +868,7 @@ it("R45: dataset", () => { expect.hasAssertions(); expect(Dataset()).toBe("datas
     why: "NM40: an owner listed twice",
     sharedRun: true,
     edit: (tree) => {
-      swap(tree, "src/display/rows.ts", `"M5.5", "server"]`, `"M5.5", "M5.5", "server"]`);
+      swap(tree, "src/display/rows.ts", `"M5.2-rest", "server"]`, `"M5.2-rest", "M5.5", "server"]`);
     },
   },
   {
@@ -1141,7 +1144,7 @@ const RUNNER_NAME_CELLS: readonly Fixture[] = ["beforeEach", "afterEach", "befor
 // ---------------------------------------------------------------------------------------------
 // Owner order, every owner built alone (m8, N29): the first owner passes, every later owner fails.
 
-const OWNER_ORDER = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5"] as const;
+const OWNER_ORDER = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest"] as const;
 
 const OWNER_CELLS: readonly Fixture[] = OWNER_ORDER.map((owner, index): Fixture => ({
   name: `owner_alone_${owner}`,
@@ -1250,7 +1253,7 @@ export const KILLS: Readonly<Record<string, readonly string[]>> = {
   M78: ["s128_it_imported_under_another_name"],
   M79: ["s129_describe_with_a_variable_title"],
   M80: ["s130_hasAssertions_with_an_argument"],
-  M81: ["owner_alone_M5.5"],
+  M81: ["owner_alone_M5.2-rest"],
   M82: ["s121_module_exports_nothing", "s122_module_with_types_alone"],
   M83: ["s122_module_with_types_alone"],
   M84: ["s131_orphan_behind_a_symlinked_directory"],

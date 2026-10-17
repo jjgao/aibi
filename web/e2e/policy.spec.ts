@@ -11,6 +11,9 @@ const POLICY =
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; " +
   "trusted-types 'none'";
 
+/** R54's sentence on the catalogue (D431). */
+const CATALOGUE_SENTENCE = "The latest published release of each dataset is listed; text in the descriptors comes from the datasets and is shown as it is.";
+
 const DOCUMENT_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "content-security-policy": POLICY,
@@ -23,33 +26,37 @@ const DOCUMENT_HEADERS = {
 };
 
 test.describe("the catalogue entry under the policy", () => {
-  test("shows its home screen", async ({ page, origin, watcher }) => {
+  test("shows the catalogue (D431): its heading, R54's sentence, the orchard's hit and the fixed /curate link", async ({ page, origin, watcher }) => {
     await page.goto(`${origin}/`);
     await expect(page.getByRole("link", { name: "Curate" })).toBeVisible();
-    expect(await words(page)).toBe(WORDS.home);
+    await expect(page.getByRole("heading", { level: 1, name: "Catalogue" })).toBeVisible();
+    await expect(page.getByText(CATALOGUE_SENTENCE)).toBeVisible();
+    await expect(page.getByRole("link", { name: "orchard", exact: true })).toHaveAttribute("href", "#/datasets/orchard");
     watcher.clean();
   });
 
   test("serves the same entry at /datasets/<id>, which replaces its address by /#/datasets/<id> (D428)", async ({ page, origin, watcher }) => {
+    // `x` is an id: the dataset's screen asks describe_dataset, and the server has no such dataset.
+    watcher.expect(`${origin}/api/tools/describe_dataset`, 404);
     await page.goto(`${origin}/datasets/x?q=1`);
-    // Until M5.2 builds the dataset's screen, an id lands on the not-found screen.
-    await expect(page.getByText("Nothing is here.")).toBeVisible();
-    expect(await words(page)).toBe(WORDS.notFound);
+    await expect(page.getByText("The dataset could not be described.")).toBeVisible();
+    await expect(page.getByText("UNKNOWN_DATASET", { exact: true })).toBeVisible();
     // The address is the redirect's (the router's own `history.state`, `{idx: 0}`, is not): and the
     // redirect added no entry, and ran before the router (a router that started at `/datasets/x`
-    // would have shown the home screen, `/` having no hash, and a missing redirect leaves the path).
+    // would have shown the catalogue, `/` having no hash, and a missing redirect leaves the path).
     expect(await page.evaluate(() => [location.pathname, location.search, location.hash] as const)).toEqual(["/", "", "#/datasets/x"]);
     const direct = await page.context().newPage();
     await direct.goto(`${origin}/#/datasets/x`);
-    await expect(direct.getByText("Nothing is here.")).toBeVisible();
+    await expect(direct.getByText("The dataset could not be described.")).toBeVisible();
     expect(await page.evaluate(() => history.length)).toBe(await direct.evaluate(() => history.length));
     watcher.clean();
   });
 
-  test("lands an address that names no dataset on the home page, echoing nothing of it (D428)", async ({ page, origin, watcher }) => {
+  test("lands an address that names no dataset on the catalogue, echoing nothing of it (D428)", async ({ page, origin, watcher }) => {
     await page.goto(`${origin}/datasets/%E2%80%AEtxt.exe`);
     await expect(page.getByRole("link", { name: "Curate" })).toBeVisible();
-    expect(await words(page)).toBe(WORDS.home);
+    await expect(page.getByRole("heading", { level: 1, name: "Catalogue" })).toBeVisible();
+    expect(await words(page)).not.toContain("txt.exe");
     expect(await page.evaluate(() => `${location.pathname}${location.search}${location.hash}`)).toBe("/");
     const fresh = await page.context().newPage();
     await fresh.goto(`${origin}/#/datasets/%E2%80%AEtxt.exe`);

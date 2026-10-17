@@ -515,11 +515,12 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
 /** The set's shape, pinned as `census.json` pins the keyword lists (a change of the document or of an arm is a
  * reviewed change to this table, not a silent one): the inputs of each arm, the candidates the dedupe by
  * place merged, and the bodies. Without it an arm thinned (to the root, to the last step of a path) still
- * passes while it tests less. */
+ * passes while it tests less. Last moved by D431's four orchard answers (175 bodies to 179, and the
+ * places they add). */
 const INPUT_COUNTS = {
-  inputs: { additions: 1706, bodies: 175, drops: 2638, keys: 235, misses: 2048, renames: 2638, swaps: 3660, values: 12320, words: 1283 },
-  merged: { additions: 11686, drops: 14381, keys: 1117, misses: 33670, renames: 14381, swaps: 10080, values: 63465, words: 9656 },
-  bodies: { all: 175, small: 173, over: 2 },
+  inputs: { additions: 1706, bodies: 179, drops: 2638, keys: 235, misses: 2048, renames: 2638, swaps: 3682, values: 12332, words: 1283 },
+  merged: { additions: 12260, drops: 15177, keys: 1120, misses: 34757, renames: 15177, swaps: 10651, values: 67049, words: 10103 },
+  bodies: { all: 179, small: 177, over: 2 },
 };
 
 describe("the walk agrees with an independent validator of the document, over a bounded set of inputs (MA3)", () => {
