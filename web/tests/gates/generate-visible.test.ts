@@ -36,6 +36,7 @@ describe("the generator reads the visible form's file strictly", () => {
     const text = renderVisible(COMMITTED);
     expect(text).toContain('export const UNIDATA_VERSION = "15.0.0";');
     expect(text).toContain("export const CUT = 2000;");
+    expect(text).toContain("export const LISTED = 64;");
     expect(text).toContain("export const KEPT: readonly number[] = Object.freeze([0x9, 0xa, 0x200c, 0x200d]);");
     expect(renderVisible(COMMITTED)).toBe(text);
   });
@@ -77,6 +78,20 @@ describe("the generator reads the visible form's file strictly", () => {
         delete file["cut"];
       }),
       "the cut is not 2000",
+    ],
+    [
+      "a list cut of 65 (D430)",
+      edited((file) => {
+        file["listed"] = 65;
+      }),
+      "the list cut is not 64",
+    ],
+    [
+      "no list cut (D430)",
+      edited((file) => {
+        delete file["listed"];
+      }),
+      "the list cut is not 64",
     ],
     [
       "the order fold, cut, escape",

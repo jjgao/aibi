@@ -17,6 +17,10 @@ export const UNIDATA_VERSION = "15.0.0";
 /** The code points of a text from data that are shown; the rest is cut and marked. */
 export const CUT = 2000;
 
+/** The members of a list from data (domain tags, facet values) shown before the rest are counted
+ * (D312): the server's page cuts there too (D430). */
+export const LISTED = 64;
+
 /** The code points that stay raw whatever the classes say: tab, line feed, ZWNJ and ZWJ. */
 export const KEPT: readonly number[] = Object.freeze([0x9, 0xa, 0x200c, 0x200d]);
 

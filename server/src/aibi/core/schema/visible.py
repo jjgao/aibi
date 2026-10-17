@@ -35,6 +35,11 @@ VISIBLE_FILE = "visible-form.json"
 CUT = 2_000
 """The code points of a text from data that are shown; the rest is cut and marked (D312)."""
 
+LISTED = 64
+"""The members of a list from data (domain tags, facet values) shown before the rest are counted
+(D312): the server's page binds its cut to this name, and the web's ``List`` cuts at the same
+number, held equal to the export's ``listed`` by the generator (D430)."""
+
 KEPT = frozenset({0x09, 0x0A, 0x200C, 0x200D})
 """The code points of the unsafe categories that stay raw: tab, line feed, and the zero-width
 non-joiner and joiner that scripts and emoji need."""
@@ -168,6 +173,7 @@ def document() -> dict[str, JsonValue]:
         ),
         "unidata_version": unicodedata.unidata_version,
         "cut": CUT,
+        "listed": LISTED,
         "order": ["cut", "fold", "escape"],
         "rules": {
             "cut": (
@@ -181,6 +187,10 @@ def document() -> dict[str, JsonValue]:
                 "\\UNNNNNNNN above, in lower-case hex, one per code point (a lone surrogate is one)"
             ),
             "runs": "each maximal run of unsafe code points is one escaped run (one span)",
+            "listed": (
+                "a list from data (domain tags, facet values) shows its first `listed` members, "
+                "then how many more it holds"
+            ),
         },
         "classes": [
             "C0 controls but tab and line feed",
