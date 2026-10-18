@@ -24,6 +24,20 @@
  * that reads a box's text, from a node stamped for its feed in its era: D425, MA3 of round 3), and a
  * test over the TypeScript program holds that no other module of `src/` names them and that
  * `src/api/index.ts` exports neither.
+ *
+ * **The text box (D426).** `ServerText` is the number box's twin for every string of a public
+ * tool's answer: `typed.ts`'s walk makes one of each string (`boxText`, its alone) as it validates
+ * the answer against the generated table, so that no component holds a response's text as a
+ * `string`: a box is shown through `Text` (M5.1c-2b), and every conversion throws (React refuses it
+ * as a child, a `title`, an `href`, a `key` or a `style`, the DOM as text, a template, `String`,
+ * `JSON.stringify`, a comparison, a sort). Its text is read by `text.ts` alone (`readText`), whose
+ * takers give a vocabulary member, a `DatasetId`, a `Choice`, a boolean or an order, never the text.
+ * A map whose keys are data (`additionalProperties`, `patternProperties`, every object of an
+ * `x-aibi-json` value) is a `BoxedMap` (`boxMap`, the walk's alone): its entries, keys boxed, are in
+ * an ES private field and read through `entriesOf`, so no raw key exists after the walk
+ * (`Object.keys`, `for...in`, a spread, `URLSearchParams` and `Headers` over it give nothing).
+ * Neither box is equal to another of the same text (`===` compares identity): `text.ts`'s
+ * `sameText` and `compareText` are the sanctioned equality and order.
  */
 
 /** The words of every refused conversion: fixed, and never the number's text. */
@@ -100,4 +114,135 @@ export function textOf(number: ServerNumber): string {
  * of the number. */
 export function isServerNumber(value: unknown): value is ServerNumber {
   return ServerNumber.holds(value);
+}
+
+/** The words of every refused conversion of a server text: fixed, and never its text. */
+export const OPAQUE_TEXT = "A server text is opaque: it is shown through Text, never converted (D426).";
+
+/** The words of a refused construction of a server text or map: fixed. */
+export const FORGED_TEXT = "A server text is made by the typed answers' walk alone (D426).";
+
+/** The construction token of the text box and the map: held by this module alone. */
+const TEXT_TOKEN: unique symbol = Symbol("aibi.server-text");
+
+let makeText: (text: string) => ServerText;
+let readOfText: (text: ServerText) => string;
+
+/** A string of a public tool's answer (D426): opaque, as a `ServerNumber` is. */
+export class ServerText {
+  readonly #text: string;
+
+  private constructor(token: typeof TEXT_TOKEN, text: string) {
+    if (token !== TEXT_TOKEN) {
+      throw new TypeError(FORGED_TEXT);
+    }
+    this.#text = text;
+    Object.freeze(this);
+  }
+
+  static {
+    makeText = (text) => new ServerText(TEXT_TOKEN, text);
+    readOfText = (text) => text.#text;
+  }
+
+  /** Whether `value` is a text box this class made (the brand check of the private field). */
+  static holds(value: unknown): value is ServerText {
+    return typeof value === "object" && value !== null && #text in value;
+  }
+
+  valueOf(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toString(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toLocaleString(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toJSON(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  [Symbol.toPrimitive](): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+}
+
+Object.freeze(ServerText.prototype);
+Object.freeze(ServerText);
+
+/** A box of a response's string. `typed.ts`'s walk alone calls it. */
+export function boxText(text: string): ServerText {
+  return makeText(text);
+}
+
+/** The text a text box holds; a value that is no box throws (the brand check). `text.ts`'s takers
+ * and the tests alone call it. */
+export function readText(text: ServerText): string {
+  return readOfText(text);
+}
+
+let makeMap: <V>(entries: readonly (readonly [ServerText, V])[]) => BoxedMap<V>;
+let entriesOfMap: <V>(map: BoxedMap<V>) => readonly (readonly [ServerText, V])[];
+
+/** A map of an answer whose keys are data (D426): its entries, each key a `ServerText`, in a
+ * private field, in the order the engine gave the decoded object's keys (integer-like keys first,
+ * ascending; the JSON text's order is lost at the parse), so that nothing may cut or rank by it. */
+export class BoxedMap<V> {
+  readonly #entries: readonly (readonly [ServerText, V])[];
+
+  private constructor(token: typeof TEXT_TOKEN, entries: readonly (readonly [ServerText, V])[]) {
+    if (token !== TEXT_TOKEN) {
+      throw new TypeError(FORGED_TEXT);
+    }
+    this.#entries = Object.freeze(entries.map((entry) => Object.freeze([entry[0], entry[1]] as const)));
+    Object.freeze(this);
+  }
+
+  static {
+    makeMap = (entries) => new BoxedMap(TEXT_TOKEN, entries);
+    entriesOfMap = (map) => map.#entries;
+  }
+
+  /** Whether `value` is a map this class made. */
+  static holds(value: unknown): value is BoxedMap<unknown> {
+    return typeof value === "object" && value !== null && #entries in value;
+  }
+
+  valueOf(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toString(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toLocaleString(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  toJSON(): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+
+  [Symbol.toPrimitive](): never {
+    throw new TypeError(OPAQUE_TEXT);
+  }
+}
+
+Object.freeze(BoxedMap.prototype);
+Object.freeze(BoxedMap);
+
+/** A map of boxed keys. `typed.ts`'s walk alone calls it. */
+export function boxMap<V>(entries: readonly (readonly [ServerText, V])[]): BoxedMap<V> {
+  return makeMap(entries);
+}
+
+/** A map's entries, each key a `ServerText`: the one way to read a `BoxedMap` (D426), in the
+ * engine's key order, which nothing may cut or rank by. */
+export function entriesOf<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[] {
+  return entriesOfMap(map);
 }

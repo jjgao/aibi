@@ -49,7 +49,8 @@ type Json = Record<string, unknown>;
 const document = JSON.parse(readFileSync(DOCUMENT, "utf8")) as Json;
 const GENERATED = "src/api/generated/openapi.ts";
 
-const HEAD = `import type { components, JsonIn, JsonInNull, JsonOut, ServerNumber } from "./api";
+const HEAD = `import type { components, JsonIn, JsonInNull, ServerNumber } from "./api";
+type JsonOut = components["schemas"]["OutputJson"];
 type S = components["schemas"];
 declare const n: ServerNumber;
 declare const m: ServerNumber;

@@ -105,7 +105,7 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 import { pageObjects } from "./scripts/page-objects.mjs";
-import { SCRIPT_EXTENSIONS, TOOLING_PATTERNS } from "./scripts/tooling.mjs";
+import { SCRIPT_EXTENSIONS, SRC_EXTENSIONS, TOOLING_PATTERNS } from "./scripts/tooling.mjs";
 
 const SINK = "No HTML or script sink: the policy refuses one (D411).";
 const IO = "I/O is src/api/client.ts's alone, and a body is read by its decoder alone (D419).";
@@ -448,6 +448,10 @@ const CHAIN_SYNTAX = [
   // A JSON module (`import(url, { with: { type: "json" } })`) is a body read that no seal reaches.
   { selector: "ImportExpression[options]", message: IMPORT },
   { selector: ":matches(ImportDeclaration, ExportNamedDeclaration, ExportAllDeclaration)[attributes.length>0]", message: IMPORT },
+  // A type import of a module of `src/api/` past the index (`typeof import("../api/client")`,
+  // `import("../api/json").JsonOut`): a type alone, harmless at run time, refused all the same so
+  // that the import ban has no spelling around it (m14 of the typed answers' round 4).
+  { selector: "TSImportType[source.value=/(^|\\/)api\\/(?!index(\\.ts)?$)/i]", message: IMPORT },
 ];
 
 /** The number rules, outside `src/api/` (D419). @type {Restriction[]} */
@@ -486,7 +490,31 @@ const API_INTERNALS = [
   { module: "decode", names: ["decode", "revive"], owners: ["src/api/client.ts"], message: "decode is client.ts's alone (D419)." },
   { module: "client", names: ["send"], owners: ["src/api/curator.ts"], message: "send, which sets the operator's credentials, is curator.ts's alone (D423)." },
   { module: "curator", names: ["createCurator"], owners: ["src/api/operator.ts"], message: "createCurator is operator.ts's alone: the page has one operator client (D423)." },
+  {
+    module: "box",
+    names: ["boxText", "boxMap"],
+    owners: ["src/api/typed.ts"],
+    message: "boxText and boxMap are typed.ts's alone: a server text and a map of boxed keys are made by the walk of an answer (D426).",
+  },
+  {
+    module: "box",
+    names: ["readText"],
+    owners: ["src/api/text.ts"],
+    message: "readText, the reading of a server text, is text.ts's takers' alone: they give a vocabulary's member, an id, a choice, a boolean or an order, never the text (D426).",
+  },
+  {
+    module: "client",
+    names: ["exchange"],
+    owners: ["src/api/typed.ts", "src/api/oracle.ts"],
+    message: "exchange, whose answer is raw, is typed.ts's (the seam that walks it) and the harness's oracle's alone (D426).",
+  },
+  { module: "typed", names: ["walkComponent"], owners: [], message: "walkComponent is the tests' door to the walk: no module of src/ imports it (D426)." },
 ];
+
+/** Every spelling the resolver maps a specifier of a module of `src/` to (m15 of round 4, m6 of the
+ * typed answers' round 2): none, a source extension of `SRC_EXTENSIONS`' code, and its JavaScript
+ * twin (`moduleResolution: bundler` reads `./box.js` as `./box.ts` and `./x.jsx` as `./x.tsx`). */
+const SPELLED = [...SRC_EXTENSIONS].filter(([, kind]) => kind === "code").flatMap(([extension]) => [extension.slice(1), extension.slice(1).replace(/^ts/u, "js")]);
 
 /** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns. A
  * module is named by every spelling the resolver maps to it: none, `.ts` and `.js` (`moduleResolution:
@@ -495,7 +523,7 @@ const API_INTERNALS = [
  * @param {string | null} owner */
 const internals = (owner) => ({
   patterns: API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
-    regex: `(^|/)${module}(\\.(ts|js))?$`,
+    regex: `(^|/)${module}(\\.(${SPELLED.join("|")}))?$`,
     importNames: names,
     message,
   })),

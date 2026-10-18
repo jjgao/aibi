@@ -18,15 +18,17 @@
  *     place alone, within a pinned member too (`unlock`, `change`, `subscribe`: a second place of
  *     the same shape is refused), and `entries` and `receivers` see a dynamic import, a re-export
  *     and an operator.ts that names `this` or `arguments`.
- * (b) **Generics, instantiated** (m7): every generic function the index exports (`exchange`, and
- *     a namespace's) is instantiated at every member of its type parameter's constraint, the
+ * (b) **Generics, instantiated** (m7): every generic function the index exports (`kindOf`, and
+ *     a namespace's; `entriesOf` and `memberOf`, unconstrained, are pinned by their exact
+ *     signatures, D426) is instantiated at every member of its type parameter's constraint, the
  *     instantiation derived from the checker's constraint (never a hand-written table), and no
  *     instantiation's parameters can hold a `ServerNumber` (`takers.ts`). Control: a generic whose
  *     parameters reach a `ServerNumber` at one operation alone fails at that one, instantiated
  *     (uninstantiated, the check fails closed on its conditional type).
  * (c) **The four positions** (m6, n7): in the generated types they are `RequestId` and no other
  *     position is; a plain number, a box and a `RequestId`-shaped literal at each, through
- *     `exchange` or `routes`, do not compile; the index exports no `RequestId` and nothing that
+ *     `routes` and a *declared* `exchange` of the probe's own over `RequestBody<O>` (the index
+ *     exports no real one, D426), do not compile; the index exports no `RequestId` and nothing that
  *     makes one. Ways of minting one without a cast that the checker allows exist and are not
  *     closed (an overload with an `unknown` implementation, method-parameter bivariance, array and
  *     mutable-property covariance, a library method's bivariance): (c') pins examples, not a list.
@@ -199,7 +201,8 @@ describe("(a) the operator client's surface: an allow-list over every place it i
     const { problems, members, roots, inputs } = surfaceProblems(real);
     expect(problems).toEqual([]);
     expect(members).toBe(18);
-    expect(roots).toEqual(["IDLE_LIMIT_MS", "NAME_LIMIT", "operator", "decodedCount", "createCurator"]);
+    // `exercise` (D426): the harness's oracle requests, a root with no parameter.
+    expect(roots).toEqual(["IDLE_LIMIT_MS", "NAME_LIMIT", "operator", "exercise", "decodedCount", "createCurator"]);
     expect(inputs).toBe(21);
     expect(Object.keys(PINS).sort()).toEqual([
       "createCurator(#0)",
@@ -382,15 +385,26 @@ function instantiatedTakers(checked: Checked, file: string, count: number): stri
   return takers;
 }
 
+/** The index's generics whose type parameter is unconstrained, each pinned by its exact signature
+ * (D426, `api-graph.test.ts`' `TEXT_PINS`): they give back the values of the map they are handed,
+ * boxes and all, and turn nothing into anything; every other generic is instantiated. */
+const PINNED_GENERICS: Readonly<Record<string, string>> = {
+  entriesOf: "<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[]",
+  memberOf: "<V>(map: BoxedMap<V>, name: string): Member<V>",
+};
+
 describe("(b) every generic the index exports, instantiated at every operation, takes no ServerNumber (m7)", () => {
-  it("holds for the real index (exchange, at every operation)", () => {
-    const generics = genericExports(real, "src/api/index.ts");
-    expect(generics.map(({ name }) => name)).toContain("exchange");
+  it("holds for the real index (kindOf, at every vocabulary; the index exports no exchange, D426)", () => {
+    const all = genericExports(real, "src/api/index.ts");
+    const pinned = all.filter(({ name, signature }) => PINNED_GENERICS[name] === real.checker.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call));
+    expect(pinned.map(({ name }) => name).sort()).toEqual(Object.keys(PINNED_GENERICS).sort());
+    const generics = all.filter((generic) => !pinned.includes(generic));
+    expect(generics.map(({ name }) => name)).toEqual(["kindOf"]);
     const probe = instantiations(real, generics, "./api");
     const checked = check({ "src/probe-generics.ts": probe });
     expect(checked.codes("src/probe-generics.ts")).toEqual([]);
     expect(instantiatedTakers(checked, "src/probe-generics.ts", generics.length)).toEqual([]);
-    expect(probe).toContain('"take_over": Parameters<typeof api.exchange<"take_over">>');
+    expect(probe).toContain('"Severity": Parameters<typeof api.kindOf<"Severity">>');
   });
 
   it("fails for a generic that takes a box at one operation alone, instantiated at that operation alone; uninstantiated, the check fails closed on its conditional type (the control)", () => {
@@ -462,7 +476,11 @@ function requestIds(checked: Checked): string[] {
   return [...new Set(found)].sort();
 }
 
-const HEAD = `import { exchange, routes, type components, type ServerNumber } from "./api";
+// `exchange` below is a DECLARED function of the probe, over the generated `RequestBody<O>`: no real
+// export of `src/api/` is left to type the request positions through (the index exports no
+// `exchange`, D426), and the class under test is the request body's type, not any function's body.
+const HEAD = `import { routes, type components, type OperationId, type RequestBody, type ServerNumber } from "./api";
+declare function exchange<O extends OperationId>(route: { readonly operation: O }, body: RequestBody<O>): void;
 declare const n: ServerNumber;
 type S = components["schemas"];
 declare const queue: S["CurationQueue"];
@@ -522,8 +540,8 @@ describe("(c') what the brand does not stop: the lint refuses an any; ways of mi
   // `RequestId` without `requestId` and without a cast, which the lint does not refuse either. These
   // are examples of the class (TypeScript's unsound variance and overload implementations), not a
   // closed list, and no lint rule is added for them. What holds is structural: a `RequestId` so
-  // minted reaches only `exchange` and `routes`, which carry no credentials (the server answers
-  // 401): the operator client has no place that takes one, its four flows taking nodes and building
+  // minted reaches only `routes`, whose route no module outside `src/api/` can send (the index
+  // exports no `exchange`, D426; it carried no credentials, the server answering 401): the operator client has no place that takes one, its four flows taking nodes and building
   // the URL and the body inside `src/api/`. The same variance does reach a *box* to a primitive place
   // of the operator client (the last example below: round 3's V2, which showed the earlier wording,
   // "never the operator client", false for boxes), and that is harmless for one reason, held
@@ -532,23 +550,23 @@ describe("(c') what the brand does not stop: the lint refuses an any; ways of mi
   it.each([
     [
       "an overload whose implementation returns unknown",
-      "import { exchange, routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nfunction mint(value: number): Id;\nfunction mint(value: unknown): unknown {\n  return value;\n}\nexport const f = (): unknown => exchange(routes.reject({ dataset: 'd', proposal: mint(7) }), {});\n",
+      "import { routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nfunction mint(value: number): Id;\nfunction mint(value: unknown): unknown {\n  return value;\n}\nexport const f = (): unknown => routes.reject({ dataset: 'd', proposal: mint(7) });\n",
     ],
     [
       "method-parameter bivariance",
-      "import { exchange, routes } from './api';\ntype Id = NonNullable<NonNullable<Parameters<typeof routes.queue>[1]>['release']>;\nlet minted: Id | undefined;\nconst sink = {\n  put(value: Id): void {\n    minted = value;\n  },\n};\nconst loose: { put(value: number): void } = sink;\nloose.put(7);\nexport const f = (): unknown => (minted === undefined ? null : exchange(routes.queue({ dataset: 'd' }, { release: minted })));\n",
+      "import { routes } from './api';\ntype Id = NonNullable<NonNullable<Parameters<typeof routes.queue>[1]>['release']>;\nlet minted: Id | undefined;\nconst sink = {\n  put(value: Id): void {\n    minted = value;\n  },\n};\nconst loose: { put(value: number): void } = sink;\nloose.put(7);\nexport const f = (): unknown => (minted === undefined ? null : routes.queue({ dataset: 'd' }, { release: minted }));\n",
     ],
     [
       "array covariance",
-      "import { exchange, routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst ids: Id[] = [];\nconst sink: number[] = ids;\nsink.push(7);\nexport const f = (): unknown[] => ids.map((proposal) => exchange(routes.reject({ dataset: 'd', proposal }), {}));\n",
+      "import { routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst ids: Id[] = [];\nconst sink: number[] = ids;\nsink.push(7);\nexport const f = (): unknown[] => ids.map((proposal) => routes.reject({ dataset: 'd', proposal }));\n",
     ],
     [
       "mutable property covariance",
-      "import { exchange, routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst held: { v?: Id } = {};\nconst loose: { v?: number } = held;\nloose.v = 7;\nexport const f = (): unknown => (held.v === undefined ? null : exchange(routes.reject({ dataset: 'd', proposal: held.v }), {}));\n",
+      "import { routes } from './api';\ntype Id = Parameters<typeof routes.reject>[0]['proposal'];\nconst held: { v?: Id } = {};\nconst loose: { v?: number } = held;\nloose.v = 7;\nexport const f = (): unknown => (held.v === undefined ? null : routes.reject({ dataset: 'd', proposal: held.v }));\n",
     ],
     [
       "a library method's bivariance (Map.set)",
-      "import { exchange, routes } from './api';\ntype Id = NonNullable<NonNullable<Parameters<typeof routes.queue>[1]>['release']>;\nconst ids = new Map<string, Id>();\nconst loose: Map<string, number> = ids;\nloose.set('a', 2);\nconst release = ids.get('a');\nexport const f = (): unknown => (release === undefined ? null : exchange(routes.queue({ dataset: 'd' }, { release })));\n",
+      "import { routes } from './api';\ntype Id = NonNullable<NonNullable<Parameters<typeof routes.queue>[1]>['release']>;\nconst ids = new Map<string, Id>();\nconst loose: Map<string, number> = ids;\nloose.set('a', 2);\nconst release = ids.get('a');\nexport const f = (): unknown => (release === undefined ? null : routes.queue({ dataset: 'd' }, { release }));\n",
     ],
   ])("an example of the class, %s, mints a RequestId without a cast: tsc and the lint pass", async (_case, code) => {
     expect(check({ "src/probe-residual.ts": code }).codes("src/probe-residual.ts")).toEqual([]);
@@ -570,7 +588,7 @@ describe("(c') what the brand does not stop: the lint refuses an any; ways of mi
   });
 
   it("an any at a request id is refused by the lint (the brand's residual: any is assignable to it)", async () => {
-    const code = "import { exchange, routes } from './api';\nexport const f = (o: object) => exchange(routes.reject({ dataset: 'd', proposal: Reflect.get(o, 'k') }), {});\n";
+    const code = "import { routes } from './api';\nexport const f = (o: object) => routes.reject({ dataset: 'd', proposal: Reflect.get(o, 'k') });\n";
     const found = await lintIds(code, "src/probe.tsx");
     expect(found).toContain("@typescript-eslint/no-unsafe-assignment");
   });
@@ -626,8 +644,9 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
 
   /** Every spelling the resolver maps a specifier to a module by (`moduleResolution: bundler` reads
    * `./box.js` as `./box.ts`): none, `.ts` and `.js` (m15 of round 4: the pattern matched the first
-   * two alone, so `./box.js` passed every row, as it did on main). */
-  const SPELLINGS = ["", ".ts", ".js"] as const;
+   * two alone, so `./box.js` passed every row, as it did on main), and `.tsx` and `.jsx` (m6 of the
+   * typed answers' round 2: the lint's pattern is derived from `SRC_EXTENSIONS`). */
+  const SPELLINGS = ["", ".ts", ".tsx", ".js", ".jsx"] as const;
 
   /** Each internal of the table: its module, a name, an owner (who may import it), and a file that may not. */
   const INTERNALS: readonly (readonly [string, string, string])[] = [
@@ -644,6 +663,10 @@ describe("(d) each internal of the request half is its owner's alone (n5, m16)",
     ["decode", "revive", "src/api/client.ts"],
     ["client", "send", "src/api/curator.ts"],
     ["curator", "createCurator", "src/api/operator.ts"],
+    ["box", "boxText", "src/api/typed.ts"],
+    ["box", "boxMap", "src/api/typed.ts"],
+    ["box", "readText", "src/api/text.ts"],
+    ["client", "exchange", "src/api/typed.ts"],
   ];
 
   const importing = (module: string, name: string, spelling: string, specifier = "."): string => `import { ${name} } from '${specifier}/${module}${spelling}';\nexport const f = ${name};\n`;

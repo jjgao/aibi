@@ -440,7 +440,7 @@ describe("graphProblems on a graph (the rule's own cells)", () => {
   it("holds the importers of an internal to the table, statically and dynamically apart", () => {
     const graph = graphOf(root, { ...base, "src/a.ts": { imports: ["src/api/box.ts"] }, "src/b.ts": { dynamicImports: ["src/api/box.ts"] } });
     expect(graphProblems(root, graph)).toEqual([
-      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts, src/api/curator.ts, src/api/provenance.ts)'),
+      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts, src/api/curator.ts, src/api/provenance.ts, src/api/typed.ts, src/api/text.ts)'),
       expect.stringContaining('src/api/box.ts is imported dynamically: the importer "/w/src/b.ts"'),
     ]);
   });
@@ -577,8 +577,9 @@ describe("the table API_MODULES is the real graph's", () => {
   });
 
   it("states, for each importer the table lists, a reason", () => {
-    // The request half's three (D425): ids.ts, origin.ts, provenance.ts.
-    expect(API_MODULES.size).toBe(12);
+    // The request half's three (D425): ids.ts, origin.ts, provenance.ts; the typed answers' three (D426):
+    // typed.ts, text.ts, generated/shapes.ts.
+    expect(API_MODULES.size).toBe(15);
   });
 });
 

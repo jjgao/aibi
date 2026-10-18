@@ -197,11 +197,19 @@ export type RequestBody<O extends OperationId> = operations[O] extends {
  * one. */
 export type BodyArgument<O extends OperationId> = [RequestBody<O>] extends [never] ? [] : [body: RequestBody<O>];
 
-/** An answer: its HTTP status and its decoded body. */
+/** An answer: its HTTP status, its decoded body, and its `Retry-After` in whole seconds (D422: a
+ * 429 and a 503 may carry one), `null` without one or with one in another form (an HTTP date, which
+ * the server never sends): parsed, never the header's text. */
 export interface Answer<O extends OperationId = OperationId> {
   readonly operation: O;
   readonly status: number;
   readonly body: JsonOut;
+  readonly retryAfter: number | null;
+}
+
+/** A `Retry-After` header's whole seconds (`delay-seconds`, at most ten digits), or `null`. */
+export function retryAfterOf(value: string | null): number | null {
+  return value !== null && /^[0-9]{1,10}$/u.test(value) ? Number(value) : null;
 }
 
 /** A request's `RequestInit`: the method, no ambient credential (`omit`: the server sets no
@@ -240,7 +248,8 @@ async function received<O extends OperationId>(route: Route<O>, response: Respon
     throw new ClientError("notJson");
   }
   const text = await readCapped(response);
-  return { operation: route.operation, status: response.status, body: decode(text, recording(route, response.status, era)) };
+  const body = decode(text, recording(route, response.status, era));
+  return { operation: route.operation, status: response.status, body, retryAfter: retryAfterOf(response.headers.get("Retry-After")) };
 }
 
 /** Send a request to a route `routes.ts` made, with the operation's JSON body (its type the
@@ -293,6 +302,17 @@ const UNREAD: ReadonlyMap<Refusal, Unknown> = new Map([
   ["notJson", "notJson"],
   ["notUtf8", "notUtf8"],
 ]);
+
+/** Whether an error of `exchange` is no answer arriving, as against an answer this client does not
+ * read: a `fetch` that failed or was aborted (anything but the client's own refusals and the
+ * decoder's), or an answer cut off (`interrupted`). `typed.ts`'s `invalid` outcome tells its two
+ * causes by it. */
+export function noAnswer(error: unknown): boolean {
+  if (error instanceof ClientError) {
+    return error.refusal === "interrupted";
+  }
+  return !(error instanceof DecodeError);
+}
 
 /** What `send` gives: the answer, or why the outcome is unknown. */
 export type Sent<O extends OperationId = OperationId> =
