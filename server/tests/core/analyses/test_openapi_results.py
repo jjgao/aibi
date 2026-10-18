@@ -284,6 +284,67 @@ def _screen_answers(world: World) -> list[dict[str, Any]]:
     ]
 
 
+def _builder(
+    first: list[dict[str, Any]], second: list[dict[str, Any]] | None, columns: list[str]
+) -> dict[str, Any]:
+    """A document as the web's document seam writes it (D432's ``documentOf``): cohorts
+    ``first`` and, when given, ``second``, and one ``summary.distribution`` view of ``columns``."""
+    cohorts: dict[str, Any] = {"first": {"all": first}}
+    if second is not None:
+        cohorts["second"] = {"all": second}
+    return {
+        "aibi": "1",
+        "dataset": "orchard",
+        "unit": "trees",
+        "cohorts": cohorts,
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "cohorts": list(cohorts),
+                "params": {"columns": [{"column": column} for column in columns]},
+            }
+        ],
+    }
+
+
+_APPLE = [{"kind": "value", "column": "trees.variety", "values": ["apple"]}]
+_BUILT = _builder(_APPLE, [], ["trees.height_m", "trees.variety"])
+_BUILT_CATEGORY = _builder(_APPLE, None, ["trees.variety"])
+_BUILT_NUMBER = _builder(_APPLE, None, ["trees.height_m"])
+_BUILT_STRING = _builder(_APPLE, None, ["trees.tree_id"])
+
+
+def _asked(world: World, catalog: Any, operation: str, document: dict[str, Any]) -> dict[str, Any]:
+    """An answer of the builder's with the request it answers (``request``: the body as the web
+    page sends it, ``JSON.stringify`` of ``{document}``), so that the web's cells hold the page's
+    body to the request the server answered."""
+    body = {"document": document}
+    return {
+        **_answer(world, catalog, operation, body),
+        "request": json.dumps(body, separators=(",", ":"), ensure_ascii=False),
+    }
+
+
+def _builder_answers(world: World) -> list[dict[str, Any]]:
+    """The eight answers of the builder's screens (D433), from a world of their own, each with its
+    request: the two-cohort document validated, counted and run; its category view validated and
+    counted under a floor of 50 (every count suppressed); a numeric view validated and counted under
+    that floor; and a string view column validated."""
+    world.publish("orchard", orchard_files(rows=40, harvests=60))
+    catalog = Catalog(world.store, workers=Workers(QueryLimits()))
+    floored = Catalog(world.store, workers=Workers(QueryLimits()), floor=50)
+    return [
+        _asked(world, catalog, "validate_document", _BUILT),
+        _asked(world, catalog, "count_cohort", _BUILT),
+        _asked(world, floored, "validate_document", _BUILT_CATEGORY),
+        _asked(world, floored, "count_cohort", _BUILT_CATEGORY),
+        _asked(world, catalog, "run_analysis", _BUILT),
+        _asked(world, floored, "validate_document", _BUILT_NUMBER),
+        _asked(world, floored, "count_cohort", _BUILT_NUMBER),
+        _asked(world, catalog, "validate_document", _BUILT_STRING),
+    ]
+
+
 def test_the_web_client_s_orchard_answers_are_the_server_s(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -321,6 +382,20 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         answers += _screen_answers(screens)
     finally:
         screens.store.close()
+    third = tmp_path / "builder"
+    (third / "imports").mkdir(parents=True)
+    latest = iter(range(10_000))
+    builder = World(
+        third,
+        Store(
+            third / "data",
+            clock=lambda: datetime(2026, 3, 1, tzinfo=UTC) + timedelta(seconds=next(latest)),
+        ),
+    )
+    try:
+        answers += _builder_answers(builder)
+    finally:
+        builder.store.close()
     rendered = json.dumps({"answers": answers}, indent=2, ensure_ascii=False) + "\n"
     if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
         ORCHARD_ANSWERS.write_text(rendered, encoding="utf-8")
@@ -350,8 +425,49 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         ("describe_dataset", 200),
         ("search_catalog", 200),
         ("describe_dataset", 200),
+        ("validate_document", 200),
+        ("count_cohort", 200),
+        ("validate_document", 200),
+        ("count_cohort", 200),
+        ("run_analysis", 200),
+        ("validate_document", 200),
+        ("count_cohort", 422),
+        ("validate_document", 200),
     ]
     assert [json.loads(answers[n]["body"])["valid"] for n in (3, 4)] == [True, False]
+    built, counted, category, floored, ran, numeric, refused_count, text = (
+        json.loads(answers[n]["body"]) for n in range(17, 25)
+    )
+    requests = [json.loads(answers[n]["request"])["document"] for n in range(17, 25)]
+    assert requests == [
+        _BUILT,
+        _BUILT,
+        _BUILT_CATEGORY,
+        _BUILT_CATEGORY,
+        _BUILT,
+        _BUILT_NUMBER,
+        _BUILT_NUMBER,
+        _BUILT_STRING,
+    ]
+    assert all("request" not in answers[n] for n in range(17))
+    population = [found["count"]["population"] for found in counted["counts"]]
+    assert built["valid"] is True
+    assert category["valid"] is True
+    assert [(p["n_true"], p["n_false"], p["n_unknown"]) for p in population] == [
+        (13, 27, 0),
+        (40, 0, 0),
+    ]
+    [suppressed] = [found["count"]["population"] for found in floored["counts"]]
+    assert suppressed["n_true"] is None
+    assert len(suppressed["suppressed"]) == 6
+    assert len(ran["results"]) == 1
+    bins = "/views/0/params/columns/0/bins"
+    assert numeric["valid"] is False
+    assert [(r["code"], r["path"]) for r in numeric["refusals"]] == [("MISSING_MEMBER", bins)]
+    assert [(r["code"], r["path"]) for r in refused_count["refusals"]] == [("MISSING_MEMBER", bins)]
+    assert [(r["code"], r["path"]) for r in text["refusals"]] == [
+        ("NOT_SUPPORTED", "/views/0/params/columns/0/column")
+    ]
     page, columns, hits, described = (json.loads(answers[n]["body"]) for n in range(13, 17))
     assert (len(page["hits"]), page["next_offset"], page["total"]) == (1, 1, 2)
     assert (len([c for t in columns["tables"] for c in t["columns"]]), columns["columns_next"]) == (

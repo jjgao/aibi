@@ -5,8 +5,8 @@
  * one: its code, its `path` as data (or the document's top level for a `null` path), its message
  * from its segments, its alternatives **listed, never applied** (text, never a control that would
  * act on one), the limit it hit (its name, and its maximum through `Num`) and, for a refusal that
- * carries cohort counts, that it does (they are shown as cohort counts are, D427's R71, M5.4's
- * `Population`: until then the page says so in fixed words, never a number). `WITHHELD_UNDER_K`
+ * carries cohort counts, the counts, each shown as cohort counts are (D427's R71, D433: `Counted`,
+ * with its `Population`). `WITHHELD_UNDER_K`
  * (§8.4, D353) is led by fixed words: the output is withheld under the disclosure setting its
  * message names, no value is shown, and its alternatives (`count_cohort` and the disclosed
  * analyses) are offered instead, never run.
@@ -15,6 +15,7 @@ import { Fragment, type ReactElement } from "react";
 
 import { type BoxedRefusals, kindOf, Num, type Refused, RetryAfter } from "../api";
 import { keyOf } from "./key";
+import { Counted } from "./Population";
 import { Segments } from "./Segments";
 import { Ref } from "./Text";
 
@@ -30,8 +31,8 @@ export const DOCUMENT_LEVEL = "the document as a whole";
 /** The words that lead a refusal withheld under the disclosure setting: fixed. */
 export const WITHHELD = "Withheld under the disclosure setting (§8.4): no value is shown. The message names the setting that binds; the alternatives below are offered instead, and none is run.";
 
-/** The words of a refusal that carries cohort counts: fixed (R71 shows them, with `Population`). */
-export const CARRIES_COUNTS = "This refusal carries cohort counts, shown with the cohort counts (not here).";
+/** The words before a refusal's cohort counts: fixed (R71 shows them, with `Population`). */
+export const CARRIES_COUNTS = "This refusal carries cohort counts:";
 
 /** One refusal: its code, where, its message, its alternatives, its limit. */
 export function Refusal({ value }: { readonly value: BoxedRefusal }): ReactElement {
@@ -64,7 +65,18 @@ export function Refusal({ value }: { readonly value: BoxedRefusal }): ReactEleme
           Limit: <Ref value={value.limit.name} />, at most <Num value={value.limit.max} />.
         </p>
       )}
-      {counts.length === 0 ? null : <p className="counts">{CARRIES_COUNTS}</p>}
+      {counts.length === 0 ? null : (
+        <div className="counts">
+          <p>{CARRIES_COUNTS}</p>
+          <div role="list">
+            {counts.map((count, index) => (
+              <div role="listitem" key={keyOf(index)}>
+                <Counted value={count} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

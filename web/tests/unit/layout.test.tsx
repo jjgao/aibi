@@ -13,7 +13,7 @@ import { Field, type Typed, UNTYPED } from "../../src/layout/Field";
 import { type Form, FORM } from "../../src/layout/form";
 import { keyOf, NO_INDEX } from "../../src/layout/key";
 import { Link } from "../../src/layout/Link";
-import { Option } from "../../src/layout/Option";
+import { NO_OPTION, NoOption, Option } from "../../src/layout/Option";
 import { Segments } from "../../src/layout/Segments";
 import { Ref, Text } from "../../src/layout/Text";
 import { injectionProblems } from "./injection";
@@ -211,6 +211,24 @@ describe("Option", () => {
     expect(options[1]?.textContent).toBe(`${"q".repeat(2000)}…`);
     expect(options[1]?.value).toBe("1");
     expect(shown.container.textContent.includes("\u202e")).toBe(false);
+    shown.unmount();
+  });
+
+  it("R07: NoOption chooses nothing: fixed words, its value empty, never an index", async () => {
+    expect.hasAssertions();
+    const shown = await render(
+      <select aria-label="list" defaultValue="">
+        <NoOption />
+        <Option label={boxText("a")} at={keyOf(0)} />
+      </select>,
+    );
+    const options = [...shown.container.querySelectorAll("option")];
+    expect(options.map((option) => [option.textContent, option.value])).toEqual([
+      [NO_OPTION, ""],
+      ["a", "0"],
+    ]);
+    expect(NO_OPTION).toBe("(choose)");
+    expect(shown.container.querySelector("select")?.selectedIndex).toBe(0);
     shown.unmount();
   });
 });

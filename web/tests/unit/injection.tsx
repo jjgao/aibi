@@ -169,8 +169,8 @@ function segmentOf(key: string | symbol, index: number): string {
  * result, a prototype's members, a class's private fields (a box's own `#text` is the leaf itself)
  * and a typed array; and the sweep replaces a leaf of the value it is given alone (pass every prop
  * of the component in the value: `{ hit, at }`, not `hit`). */
-export function leavesOf(value: unknown, at: readonly string[] = [], ancestors: readonly object[] = []): (readonly string[])[] {
-  if (isText(value)) {
+export function leavesOf(value: unknown, at: readonly string[] = [], ancestors: readonly object[] = [], isLeaf: (value: unknown) => boolean = isText): (readonly string[])[] {
+  if (isLeaf(value)) {
     return [at];
   }
   if (typeof value !== "object" || value === null) {
@@ -180,7 +180,7 @@ export function leavesOf(value: unknown, at: readonly string[] = [], ancestors: 
     throw new Error(`a cycle at @/${at.join("/")}`);
   }
   const inside = [...ancestors, value];
-  const walk = (member: unknown, segment: string): (readonly string[])[] => leavesOf(member, [...at, segment], inside);
+  const walk = (member: unknown, segment: string): (readonly string[])[] => leavesOf(member, [...at, segment], inside, isLeaf);
   if (Array.isArray(value)) {
     return value.flatMap((member: unknown, index) => walk(member, String(index)));
   }
@@ -231,8 +231,9 @@ export function countTexts(value: unknown): number {
 }
 
 /** `value` with the leaf at `path` replaced by `by`: a copy, the data around the leaf as it was
- * (an object's descriptors, symbol keys and non-enumerable properties included). */
-function replacedAt(value: unknown, path: readonly string[], by: ServerText): unknown {
+ * (an object's descriptors, symbol keys and non-enumerable properties included). `by` is a text box
+ * for the sweeps, or any leaf (a number box) for the coverage sweeps (`coverage.tsx`). */
+export function replacedAt(value: unknown, path: readonly string[], by: unknown): unknown {
   const [head, ...rest] = path;
   if (head === undefined) {
     return by;

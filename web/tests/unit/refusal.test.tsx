@@ -79,7 +79,7 @@ describe("Refusal", () => {
   it("R42a: shows a refusal's code, its message from its segments, its alternatives listed and never applied, and its path as data, or the document level for a null path", async () => {
     expect.hasAssertions();
     const orchard = ORCHARD.filter((answer) => answer.status >= 400);
-    expect(orchard.map((answer) => answer.status).sort()).toEqual([404, 422]);
+    expect(orchard.map((answer) => answer.status).sort()).toEqual([404, 422, 422]);
     for (const answer of orchard) {
       const { items, text } = await shownOf(refused(answer.status, refusalsOf(answer.body)));
       expect(text.startsWith(REFUSED)).toBe(true);
@@ -136,7 +136,11 @@ describe("Refusal", () => {
     expect(html).toContain('class="refusal withheld"');
   });
 
-  it("says a refusal carries cohort counts, in fixed words, never a number of them, for one count or several", async () => {
+  it("leads a refusal's cohort counts with these words, by value", () => {
+    expect(CARRIES_COUNTS).toBe("This refusal carries cohort counts:");
+  });
+
+  it("shows a refusal's cohort counts, after fixed words, each as a cohort count (R71's Counted), for one count or several", async () => {
     const envelope = ORCHARD.find((answer) => answer.operation === "count_cohort" && answer.status === 200);
     const count = (JSON.parse(envelope?.body ?? "{}") as { counts: { count: unknown }[] }).counts[0]?.count;
     for (const length of [1, 2, 3]) {
@@ -148,9 +152,12 @@ describe("Refusal", () => {
       }
       const walkedCounts = refusalsOf(JSON.stringify(withCounts));
       expect(walkedCounts[0]?.counts?.length).toBe(length);
-      const { text, html } = await shownOf(refused(422, walkedCounts));
+      const { text } = await shownOf(refused(422, walkedCounts));
       expect(text).toContain(CARRIES_COUNTS);
-      expect(html).not.toContain('class="number"');
+      const shown = await render(<Refusals refused={refused(422, walkedCounts)} />);
+      expect(shown.container.querySelectorAll(".counts .counted")).toHaveLength(length);
+      expect(shown.container.querySelectorAll(".counts .population")).toHaveLength(length);
+      shown.unmount();
     }
     const { text } = await shownOf(refused(422, refusalsOf(LIMIT_BODY)));
     expect(text).not.toContain(CARRIES_COUNTS);
@@ -177,7 +184,8 @@ describe("Refusal", () => {
     ["a refusal with cohort counts", COUNTS_BODY],
   ])("shows a hostile text in every position of %s as text alone, by construction", { timeout: 60_000 }, async (_name, body) => {
     const OWN = ["DIV", "SECTION", "P"];
-    const CLASSES = ["", "number"];
+    // A count's own spans (R71's `Counted`: its releases, its population's suppressed counts and lists, its caveats).
+    const CLASSES = ["", "number", "release", "label", "label draft", "disagree", "suppressed", "none", "largest", "affects"];
     const found = await leafSweep(refusalsOf(body), (refusals) => <Refusals refused={refused(422, refusals)} />, OWN, CLASSES);
     expect(found.problems).toEqual([]);
     expect(found.leaves).toBeGreaterThan(0);
@@ -201,7 +209,7 @@ describe("Refusals contain their parts", () => {
   it("M1: the refusals of Refusals are Refusal's own, each as it shows alone, in order, over every corpus of the rows", async () => {
     expect.hasAssertions();
     const corpora = [...ORCHARD.filter((answer) => answer.status >= 400).map((answer) => refusalsOf(answer.body)), MIXED_BODY, LIMIT_BODY, WITHHELD_BODY, COUNTS_BODY].map((body) => (typeof body === "string" ? refusalsOf(body) : body));
-    expect(corpora.length).toBe(6);
+    expect(corpora.length).toBe(7);
     for (const refusals of corpora) {
       const whole = await refusalItems(<Refusals refused={refused(422, refusals)} />);
       const parts: (string | undefined)[] = [];

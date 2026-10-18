@@ -23,7 +23,9 @@
  * **Owners are pull requests, in landing order** (`OWNERS`): a built row of an owner fails the gate
  * while any owner before it has a row not built, so 2b-1L's lint lands before M5.2 renders data,
  * and 2b-1L2's (R90's flow, R90f) after M5.4 and before M5.5; M5.2-rest's (the descriptors' members
- * and the paging controls, D431) after M5.5 and before M5.6.
+ * and the paging controls, D431) after M5.5; M5.3-rest's (live counts, the parameter forms, the
+ * analysis menu and the rest of the builder, D433) after M5.2-rest and before M5.6. M5.3-min
+ * (D433) builds the builder-lite screens.
  * 2b-0, which writes this table and its gate, builds no screen and owns no row. `server` rows are
  * the server's (or a gate's that has landed): they name no module and never fall due here.
  *
@@ -44,7 +46,7 @@
  */
 
 /** The owners, in the order they land; `server` last, outside the order. */
-export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "M5.6", "server"] as const;
+export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "M5.3-rest", "M5.6", "server"] as const;
 
 /** The screens a row may bind. */
 export const SCREENS = ["all", "catalogue", "dataset", "column", "builder", "result", "refusal", "operator"] as const;
@@ -167,7 +169,7 @@ export const ROWS: readonly Row[] = [
     must: "A shareable URL reads and writes the same Analysis document: a document read from the address is untrusted input, read through the router module's own door and checked by `validate_document` before anything is shown or run, and shown only through the visible form.",
     screens: ["builder", "result"],
     spec: ["A2", "A6", "D314", "§14"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/router/document.tsx",
     test: "tests/unit/document-address.test.tsx",
   },
@@ -258,7 +260,7 @@ export const ROWS: readonly Row[] = [
     must: "When `n_unknown` is above zero (the sanctioned `isPositive`, Q4) it is shown next to the cohort size with its largest reason (`largestOf`, ties in the vocabulary's order); a suppressed `n_unknown` or a null map shows no reason and says suppressed.",
     screens: ["result", "builder"],
     spec: ["§6.6", "§8.4", "§15"],
-    owner: "M5.4-min",
+    owner: "M5.3-min",
     module: "src/layout/Population.tsx",
     test: "tests/unit/population.test.tsx",
   },
@@ -278,7 +280,7 @@ export const ROWS: readonly Row[] = [
     must: "Population counts (`n_true`, `n_false`, `n_unknown`, by reason, by leaf, `lift_differs`) are each shown as a value or as suppressed by the entry's `suppressed` pointers; `lift_differs` is suppressed under any *k*, a 0 included, and never shown as 0 under *k*.",
     screens: ["result", "builder"],
     spec: ["§8.4", "D297"],
-    owner: "M5.4-min",
+    owner: "M5.3-min",
     module: "src/layout/Population.tsx",
     test: "tests/unit/population.test.tsx",
   },
@@ -469,19 +471,29 @@ export const ROWS: readonly Row[] = [
     must: "A translated document's notes (a pack translator's, and the core's at every negation) are shown beside the translation, each at its pointer, server words and data kept apart.",
     screens: ["builder"],
     spec: ["D303", "§10.1"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Notes.tsx",
     test: "tests/unit/notes.test.tsx",
   },
   {
-    id: "R40",
+    id: "R40a",
     basis: "spec MUST",
-    must: "Live counts include unknowns: the size as a proportion of the unit table, and `n_unknown` by reason (R18, R20); the `n_unknown` part is §6.6's MUST, as R18's, and the proportion of the unit table is derived from §15's builder.",
+    must: "Counts include unknowns: `n_unknown` by reason beside the true and false counts (§6.6's MUST; R18, R20).",
     screens: ["builder"],
-    spec: ["§15", "§8.1", "§6.6"],
-    owner: "M5.4-min",
+    spec: ["§6.6", "§8.1"],
+    owner: "M5.3-min",
     module: "src/layout/Population.tsx",
     test: "tests/unit/population.test.tsx",
+  },
+  {
+    id: "R40b",
+    basis: "derived",
+    must: "Live counts show the size as a proportion of the unit table (R12), counted as the document is edited (derived: §15's builder, and R12).",
+    screens: ["builder"],
+    spec: ["§15", "§8.1"],
+    owner: "M5.3-rest",
+    module: "src/builder/LiveCount.tsx",
+    test: "tests/unit/live-count.test.tsx",
   },
   {
     id: "R41",
@@ -509,7 +521,7 @@ export const ROWS: readonly Row[] = [
     must: "A refusal's `path` anchors it at the place it points to in the document as written, and a null path at the document's top.",
     screens: ["builder"],
     spec: ["A3", "§8.6", "D299"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Refusals.tsx",
     test: "tests/unit/builder-refusals.test.tsx",
   },
@@ -529,7 +541,7 @@ export const ROWS: readonly Row[] = [
     must: "Parameter forms show JSON Schema's annotations, `format` included, and never apply them; a schema that holds a refused or unknown keyword is refused, never drawn in part.",
     screens: ["builder"],
     spec: ["D422", "A3"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Params.tsx",
     test: "tests/unit/params.test.tsx",
   },
@@ -539,7 +551,7 @@ export const ROWS: readonly Row[] = [
     must: "The analysis menu comes from the registry, each analysis shown available, unavailable (naming what is missing, `min_cell_count` and `allow_row_ids` included) or available with caveats (naming the unconfirmed fields).",
     screens: ["builder"],
     spec: ["P5", "§9.4", "§8.4"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Analyses.tsx",
     test: "tests/unit/analyses.test.tsx",
   },
@@ -549,7 +561,7 @@ export const ROWS: readonly Row[] = [
     must: "Registry, pack and leaf-kind text (labels, definitions, schemas, methods) is data, shown only through the visible form.",
     screens: ["builder"],
     spec: ["A6", "§7.3", "D417", "D421"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Analyses.tsx",
     test: "tests/unit/analyses.test.tsx",
   },
@@ -559,7 +571,7 @@ export const ROWS: readonly Row[] = [
     must: "A numeric constant's units are shown where the person enters it, and a numeric column whose units are undeclared is flagged (derived: D49 has units always in readbacks, and a constant typed without them is read in the column's).",
     screens: ["builder"],
     spec: ["D49", "§6.4", "§5.4"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Constant.tsx",
     test: "tests/unit/constant.test.tsx",
   },
@@ -569,19 +581,29 @@ export const ROWS: readonly Row[] = [
     must: "The clause that leaves units unknown is shown: `unknown_by_leaf`'s keys are mapped to the clauses as written (derived: §6.6 gives `unknown_by_leaf` per top-level clause and a map from the leaves as written; showing the clause that leaves units unknown follows).",
     screens: ["builder"],
     spec: ["§6.6", "§8.1"],
-    owner: "M5.3-min",
+    owner: "M5.3-rest",
     module: "src/builder/Unknowns.tsx",
     test: "tests/unit/unknowns.test.tsx",
   },
   {
-    id: "R49",
+    id: "R49a",
     basis: "spec statement",
-    must: "Overlap and cross-dataset caveats and descriptive-only results are shown (`COHORTS_OVERLAP`, `CONFOUNDED_WITH_DATASET`, `UNMAPPED_COMPARISON`, pooled values).",
-    screens: ["builder", "result"],
+    must: "Overlap and cross-dataset caveats (`COHORTS_OVERLAP`, `CONFOUNDED_WITH_DATASET`, `UNMAPPED_COMPARISON`, `POOLED_ACROSS_DATASETS`) are shown wherever the builder's answers carry them: a validation's cohorts and views, a count's counts and a run's results.",
+    screens: ["builder"],
     spec: ["§7.4", "§7.5"],
     owner: "M5.3-min",
     module: "src/builder/Builder.tsx",
     test: "tests/unit/builder.test.tsx",
+  },
+  {
+    id: "R49b",
+    basis: "spec statement",
+    must: "Descriptive-only results and pooled values are marked on the result screen.",
+    screens: ["result"],
+    spec: ["§7.4", "§7.5"],
+    owner: "M5.4-min",
+    module: "src/result/Figures.tsx",
+    test: "tests/unit/result-figures.test.tsx",
   },
   // D. The catalogue (`search_catalog`).
   {
@@ -792,7 +814,7 @@ export const ROWS: readonly Row[] = [
     must: "A refusal's `counts` (cohort counts with their ids, such as an overlap's) are shown as cohort counts are (R18, R20, R25, R26).",
     screens: ["refusal", "builder"],
     spec: ["§8.6", "§7.4"],
-    owner: "M5.4-min",
+    owner: "M5.3-min",
     module: "src/layout/Population.tsx",
     test: "tests/unit/population.test.tsx",
   },
@@ -812,9 +834,9 @@ export const ROWS: readonly Row[] = [
     must: "A refused live count waits out its `Retry-After` and is never sent again before it (derived: D422's place policy has the server refuse a place with `Retry-After`, and a request sent again before it is refused again).",
     screens: ["builder"],
     spec: ["D265", "D422", "§14"],
-    owner: "M5.3-min",
-    module: "src/builder/Builder.tsx",
-    test: "tests/unit/builder.test.tsx",
+    owner: "M5.3-rest",
+    module: "src/builder/LiveCount.tsx",
+    test: "tests/unit/live-count.test.tsx",
   },
   {
     id: "R73",
@@ -825,6 +847,16 @@ export const ROWS: readonly Row[] = [
     owner: "2b-1b",
     module: "src/layout/Refusal.tsx",
     test: "tests/unit/refusal.test.tsx",
+  },
+  {
+    id: "R74",
+    basis: "derived",
+    must: "What the person types (`Typed`, `Field`'s mint) is one value leaf's string value alone: never a key, a name, an id, a number or a parameter reference; it is sent as §7.1's literal, never empty, and shown back only through its own field and the server's readback, as data (derived: §7.1, A6 and D432's seam).",
+    screens: ["builder"],
+    spec: ["§7.1", "A6", "§14", "D432"],
+    owner: "M5.3-min",
+    module: "src/layout/Field.tsx",
+    test: "tests/unit/field.test.tsx",
   },
   // G. The operator's screens (M5.5; D423's shell is built and exempt below).
   {
@@ -1005,6 +1037,10 @@ export const HELPERS: readonly Helper[] = [
     reason:
       "The tab's one queue of public tool calls and the outcomes React reads (D431): it renders nothing and holds no text; its two timer calls are D429's `SITES`, held by `tests/unit/load.test.ts`' source cell.",
   },
+  {
+    module: "src/builder/model.ts",
+    reason: "The builder's form as data (D433): picks of `optionsOf`' options, typed values and the rows' keys, and the seam's `Draft` made from them. It renders nothing and holds no text; R41 and R74 hold what the form shows and sends.",
+  },
   { module: "src/operator/url.ts", reason: "Forgets the operator entry's address (its hash and query) without reading it: no data." },
   {
     module: "src/layout/form.ts",
@@ -1030,6 +1066,8 @@ export const RETIRED: readonly Retired[] = [
   { id: "R65", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
   { id: "R66", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
   { id: "R68", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
+  { id: "R40", reason: "Split into a and b by D433 (M5.3-min builds a; M5.3-rest owns b)." },
+  { id: "R49", reason: "Split into a and b by D433 (M5.3-min builds a; M5.4-min owns b)." },
 ];
 
 /** The server's alone: not display obligations, listed so that none is forgotten. */

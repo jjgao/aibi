@@ -1,5 +1,6 @@
 .meta,
-.legend {
+.legend,
+.note {
   color: #555;
 }
 .state {
@@ -7,4 +8,24 @@
 }
 .table {
   margin: 1em 0;
+}
+.builder {
+  border-top: 1px solid #ccc;
+  margin-top: 2em;
+}
+.builder .cohort,
+.builder .view,
+.builder .outcome {
+  margin: 1em 0;
+}
+.builder .leaf,
+.builder .column {
+  margin: 0.5em 0;
+}
+.builder .stale {
+  color: #8a4b00;
+  font-weight: bold;
+}
+.builder .readback {
+  margin: 0.25em 0;
 }

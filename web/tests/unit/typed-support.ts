@@ -27,6 +27,8 @@ export interface Written {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
+  /** The request a builder answer answers, as the page sends it (D433: the builder's seven alone). */
+  readonly request?: string;
 }
 
 export const ORCHARD: readonly Written[] = (JSON.parse(readFileSync(path.join(FIXTURES, "orchard-answers.json"), "utf8")) as { answers: Written[] }).answers;

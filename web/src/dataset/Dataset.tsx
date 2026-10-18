@@ -12,13 +12,16 @@
  * listed whenever not empty, whatever the status), how many columns it has and where the columns
  * not on this page start, the table graph (`Graph`) and the tables (`Tables`). **Not shown, said in
  * fixed words (`MEMBERS_NOT_SHOWN`):** the descriptors' other members (M5.2-rest), which the server's own
- * page shows when it runs without a web bundle, and `describe_dataset` gives whole.
+ * page shows when it runs without a web bundle, and `describe_dataset` gives whole. Under the
+ * description stands the builder (D433), given the options `optionsOf` mints from the same answer;
+ * the route keys this screen by its `DatasetId`, so another dataset's screen is a new builder.
  */
 import "./dataset.css";
 
 import { Fragment, type ReactElement, useState, useSyncExternalStore } from "react";
 
-import { type Answered, type DatasetId, describeDataset, kindOf, Num, type Outcome, SHAPE_MISMATCH, UNREACHABLE } from "../api";
+import { type Answered, type DatasetId, describeDataset, kindOf, Num, optionsOf, type Outcome, SHAPE_MISMATCH, UNREACHABLE } from "../api";
+import { Builder } from "../builder/Builder";
 import { DEADLINE, loader } from "../catalogue/load";
 import { Caveats } from "../layout/Caveat";
 import { Disclosure } from "../layout/Disclosure";
@@ -157,7 +160,12 @@ function State({ outcome }: { readonly outcome: Outcome<Described> }): ReactElem
   if (outcome.kind === "invalid") {
     return <p className="state">{outcome.cause === "shape" ? SHAPE_MISMATCH : UNREACHABLE}</p>;
   }
-  return <Description answer={outcome.value} />;
+  return (
+    <>
+      <Description answer={outcome.value} />
+      <Builder options={optionsOf(outcome.value)} />
+    </>
+  );
 }
 
 /** The dataset's screen: one `describe_dataset` a mount, for the id the address named. */
