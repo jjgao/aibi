@@ -15,7 +15,10 @@
  *   review, round 1: 361,280 B prod and 368,651 B e2e, so 415,472 and 423,949; the e2e build again
  *   at M5.1c-2b-1a, whose harness loads the visible form's stylesheet: 373,934 B in 8 files, so
  *   430,025 and 8; the build is 373,991 B since round 1's ZWJ line of the corpus, under it, and
- *   the policy asks for no re-measure);
+ *   the policy asks for no re-measure; both again at M5.2-min (D431), whose catalogue and lazy
+ *   dataset screen add a stylesheet each and the dataset's chunk with the shared `jsx-runtime`:
+ *   before, 363,667 B in 5 files (prod) and 374,520 B in 8 (e2e); after, 388,362 B in 9 and
+ *   393,303 B in 12, so 446,617 and 9, and 452,299 and 12);
  * - the build's own HTML holds no inline script or style (the server never serves it, but a build
  *   that writes one has code the policy would refuse);
  * - the harness's marker is absent from every script of a production build (`--mode prod`) and

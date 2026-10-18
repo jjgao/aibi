@@ -1,0 +1,10 @@
+.meta,
+.legend {
+  color: #555;
+}
+.state {
+  font-style: italic;
+}
+.table {
+  margin: 1em 0;
+}

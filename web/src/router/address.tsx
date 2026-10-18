@@ -11,18 +11,18 @@
  *   `/datasets/<one segment>` too (D410), which the hash router does not route; the raw, undecoded
  *   segment (no `decodeURIComponent`, so a malformed escape cannot throw) is checked against the
  *   grammar, and the address is replaced (no history entry) by `/#/datasets/<id>`, composed here from
- *   a literal and the `DatasetId`, or by `/` (the home page's fixed words) when the segment is not an
- *   id. A segment with any escape is no id (`%` is outside the grammar), so `orch%61rd` lands home.
+ *   a literal and the `DatasetId`, or by `/` (the catalogue) when the segment is not an id. A segment
+ *   with any escape is no id (`%` is outside the grammar), so `orch%61rd` lands on the catalogue.
  *   Whatever the address held besides (a query, a hash: `/datasets/<id>#/datasets/<other>`) is
  *   dropped. Any other path is left alone.
  * - **`DatasetAddress`**, the hash route `#/datasets/:id`: the router's parameter (which it decodes,
  *   `%252F` twice: safe, because the grammar is total, so `orch%61rd` is `orchard`, and a literal
  *   `a?b=c` or `a#b` reach it as `a`, the router splitting the address there before it decodes,
  *   while `a%23b` decodes to `a#b`, which is no id) through `idOfAddress`; an id renders the
- *   dataset's screen with it (until M5.2, the not-found screen), anything else the fixed words of
- *   `Refused`. So the same refusal answers twice: a path segment that is no id lands on the home
+ *   dataset's screen with it (`src/dataset/Dataset.tsx`, keyed by the id), anything else the fixed words of
+ *   `Refused`. So the same refusal answers twice: a path segment that is no id lands on the catalogue
  *   page, a hash that is none shows `Refused`; and a path segment with an escape is none while the
- *   hash route decodes it (`/datasets/orch%61rd` lands home, `#/datasets/orch%61rd` is `orchard`).
+ *   hash route decodes it (`/datasets/orch%61rd` lands on the catalogue, `#/datasets/orch%61rd` is `orchard`).
  *
  * What is checked outside this module, and no more. (1) The app names an allow-list of the router
  * package alone (`createHashRouter`, `RouteObject`, `RouterProvider`: the lint's
@@ -34,7 +34,8 @@
  * `hash` or `href` nor `document.URL`, `referrer`, `baseURI`, `documentURI` or `.location` is read
  * by name (lint rows, with a cell for each); this module alone reads `location.pathname`. (4) The
  * routes the app gives the router have the keys of an allow-list alone (`path`, `index`, `element`,
- * `Component`, `lazy` as a function, `children`, `errorElement`), walked at run time with each `lazy`
+ * `lazy` as a function, `children`, `errorElement`; no `Component`, D431), each `element` and
+ * `errorElement` an element of one of the app's route screens, walked at run time with each `lazy`
  * result: a `loader`, `action`, `middleware`, `shouldRevalidate` or `handle` is refused however it is
  * typed. **Closed by D429 at the positions it reads** (they were open until 2b-1L, D428): the readers that hand the
  * address back without those names (an element's `baseURI`, the navigation entry's `name`, a
