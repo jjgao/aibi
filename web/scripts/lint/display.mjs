@@ -107,13 +107,12 @@ export const ELEMENTS = ["a", "bdi", "button", "div", "form", "h1", "h2", "h3", 
 export const OPTION_MODULE = "src/layout/Option.tsx";
 
 /** The attributes an intrinsic element may have, beside `aria-*` and `data-*` (`display/elements`), measured
- * on `src/`, and `hidden`, which `tests/gates/corpus.test.ts`'s control writes (a boolean: D418's
- * `strict-boolean-expressions`, `hidden={n}`). */
+ * on `src/`. `hidden` is not one: it hides what the page says while the DOM still holds it (D435's
+ * round 3, h1–h4); `tests/gates/corpus.test.ts` writes it in a type case alone (`hidden={n}`). */
 export const ATTRIBUTES = [
   "autoComplete",
   "className",
   "disabled",
-  "hidden",
   "href",
   "key",
   "name",

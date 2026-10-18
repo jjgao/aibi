@@ -78,8 +78,8 @@ test.describe("the builder (#/datasets/orchard)", () => {
     await expect(count).toContainText("n_true 40; n_false 0; n_unknown 0");
     await builder.getByRole("button", { name: "Run", exact: true }).click();
     const run = builder.locator('section.outcome[aria-label="run"]');
-    await expect(run).toContainText(/Result drv:[0-9a-f]{64}/u);
-    await expect(run).toContainText("the result screen is not built yet (M5.4-min)");
+    // The run shows the result in place (D435; result.spec.ts reads it).
+    await expect(run.locator('section[aria-label="provenance"]')).toContainText(/Derivation drv:[0-9a-f]{64}/u);
     expect(calls.map((one) => one.tool)).toEqual(["describe_dataset", "validate_document", "count_cohort", "run_analysis"]);
     const expected = documentOf([["trees.variety", "apple"]], true, ["trees.height_m", "trees.variety"]);
     expect(calls.slice(1).map((one) => one.body)).toEqual([expected, expected, expected]);

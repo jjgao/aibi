@@ -299,6 +299,42 @@ describe("the names D434 gives exist (the class of MA-1 of #121 round 2, for the
   });
 });
 
+/** The helpers of the tests D435 names, each declared in a test file alone. */
+const D435_TEST_NAMES: Readonly<Record<string, string>> = {
+  wordsOfResult: "the runtime census's mirror of a result's words (tests/unit/placed.ts)",
+  wordsOfParameters: "the runtime census's mirror of the parameters' words (tests/unit/placed.ts)",
+};
+
+/** The names D435 gives that are no declaration of the web, each with why. */
+const D435_NOT_DECLARED: Readonly<Record<string, string>> = {
+  "unread/analysis": "a read's kind and its cause, ValuesRead's words",
+  "unread/shape": "a read's kind and its cause, ValuesRead's words",
+  Fragment: "react's own, by its alias-resolved symbol",
+  renderToString: "react-dom/server's, the runtime census's render",
+  innerText: "a DOM property the end-to-end cell reads",
+  textContent: "a DOM property the end-to-end cell reads",
+  "fixtures/hostile_values": "a directory of fixtures (its file is D434's)",
+  className: "a JSX attribute's name",
+  autoComplete: "a JSX attribute's name",
+  spellCheck: "a JSX attribute's name",
+  startTransition: "react's",
+};
+
+describe("the names D435 gives exist (the class of MA-1 of #121 round 2, for the result screen)", () => {
+  const spans = spansOf(readFileSync(path.join(ROOT, "SPEC.md"), "utf8"), "D435", "v0.8.81");
+
+  it("names a good many symbols and files", () => {
+    expect(spans.length).toBeGreaterThan(20);
+    for (const span of ["Result", "STATISTICS", "tests/unit/deferred.ts", "e2e/result.spec.ts"]) {
+      expect(spans).toContain(span);
+    }
+  });
+
+  it("finds every identifier, constant and file D435 names in the repository, and no stale entry of its lists of exceptions", () => {
+    expect(stale(spans, SOURCES, PYTHON, FILES, D435_TEST_NAMES, D435_NOT_DECLARED)).toEqual({ missing: [], unused: [] });
+  });
+});
+
 /** One row of D432's table of the server's rules (`web/tests/fixtures/seam-rules.json`). */
 interface Rule {
   readonly id: string;

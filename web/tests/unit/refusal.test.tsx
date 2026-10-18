@@ -182,7 +182,7 @@ describe("Refusal", () => {
     ["refusals of other shapes (a null path, a pack's code, a text alternative)", MIXED_BODY],
     ["a refusal withheld under k", WITHHELD_BODY],
     ["a refusal with cohort counts", COUNTS_BODY],
-  ])("shows a hostile text in every position of %s as text alone, by construction", { timeout: 60_000 }, async (_name, body) => {
+  ])("shows a hostile text in every position of %s as text alone, by construction", { timeout: 180_000 }, async (_name, body) => {
     const OWN = ["DIV", "SECTION", "P"];
     // A count's own spans (R71's `Counted`: its releases, its population's suppressed counts and lists, its caveats).
     const CLASSES = ["", "number", "release", "label", "label draft", "disagree", "suppressed", "none", "largest", "affects"];

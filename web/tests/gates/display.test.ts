@@ -214,6 +214,30 @@ const checkTableOf = (text: string): ReturnType<typeof readTable> => {
   }
 };
 
+/** Every R-id cited in a table's text (each row's must, the exemptions' and helpers' reasons and the
+ * server's list; the retired reasons excluded, which cite the ids they retire), by every match, and
+ * those that name no live row (D435's citation gate). */
+function retiredCitations(table: { readonly rows: readonly { readonly id: string; readonly must: string }[]; readonly exempt: readonly { readonly reason: string }[]; readonly helpers: readonly { readonly reason: string }[]; readonly notRows: readonly { readonly what: string }[] }): string[] {
+  const live = new Set(table.rows.map((row) => row.id));
+  const texts = [...table.rows.map((row) => row.must), ...table.exempt.map((one) => one.reason), ...table.helpers.map((one) => one.reason), ...table.notRows.map((one) => one.what)];
+  return [...new Set(texts.flatMap((text) => [...text.matchAll(/\bR\d+[a-z]?\b/gu)].map((match) => match[0])))].filter((id) => !live.has(id)).sort();
+}
+
+describe("the citation gate (D435)", () => {
+  it("every R-id the table cites is a live row", () => {
+    expect(retiredCitations(readTable())).toEqual([]);
+  });
+
+  it("controls: R71's must before D435 (a second citation of a retired id, missed by a first match), a must citing R31, and an exemption's reason citing a retired id each fail; R31b passes", () => {
+    const table = readTable();
+    const withMust = (id: string, must: string) => ({ ...table, rows: table.rows.map((row) => (row.id === id ? { ...row, must } : row)) });
+    expect(retiredCitations(withMust("R71", "A refusal's `counts` (cohort counts with their ids, such as an overlap's) are shown as cohort counts are (R18, R20, R25, R26)."))).toEqual(["R26"]);
+    expect(retiredCitations(withMust("R31b", "The client states how many charts it refused (R31)."))).toEqual(["R31"]);
+    expect(retiredCitations(withMust("R31b", "The client states how many charts it refused (R31b)."))).toEqual([]);
+    expect(retiredCitations({ ...table, exempt: [...table.exempt, { module: "src/x.tsx", reason: "held by R34" }] })).toEqual(["R34"]);
+  });
+});
+
 describe("the gate's own fixtures and mutants", () => {
   const scratch = mkdtempSync(path.join(os.tmpdir(), "aibi-d427-fixtures-"));
   const roots = new Map<string, string>();

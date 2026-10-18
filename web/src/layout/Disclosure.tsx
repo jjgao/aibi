@@ -3,7 +3,8 @@
  * and catalogue answer, as the answer says it (`Disclosure`/`DisclosureOut`'s `min_cell_count`, the
  * largest of the floor and the dataset's): a minimum cell count *k*, shown through `Num`, with what
  * it does, or none. The page states the setting and never applies it: what is suppressed the server
- * suppressed.
+ * suppressed. A count of 0 is not one the setting suppresses (D435, B10: the live answers under a
+ * floor hold zeros beside it, `disclosure.test.tsx`).
  */
 import type { ReactElement } from "react";
 
@@ -19,7 +20,7 @@ export function Disclosure({ value }: { readonly value: { readonly min_cell_coun
     <p className="disclosure">{NO_SETTING}</p>
   ) : (
     <p className="disclosure">
-      Disclosure: minimum cell count <Num value={k} />: counts below it, and counts that would reveal them, are suppressed (§8.4).
+      Disclosure: minimum cell count k = <Num value={k} />: counts of units from 1 to k − 1, and counts that would reveal them, are suppressed (§8.4).
     </p>
   );
 }

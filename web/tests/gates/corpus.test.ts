@@ -264,7 +264,7 @@ describe("every launder route is refused", () => {
 /** Ordinary code over every declaration of `HEAD`: no finding and no error, so that each one a
  * route meets is the route's. */
 const CONTROL = `${HEAD}export const f = () => [env.digest, hits.next_offset === undefined, n === m, Object.keys(env).length, out, input.value];
-export const g = () => <p hidden={maybe === null}>shown</p>;`;
+export const g = () => <button type="button" disabled={maybe === null}>shown</button>;`;
 
 describe("the corpus's own controls", () => {
   it("compiles ordinary code over the response types with no error, so a code is the route's", () => {

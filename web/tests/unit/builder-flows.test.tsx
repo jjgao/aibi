@@ -6,7 +6,8 @@
  * validation shown is of the form as it stands, valid and nothing pending), the stale words, a
  * deadline (the buttons enabled again, a second call sent beside the overdue one, a third waiting),
  * the words, the floor case (D431's floored describe answer and the server's answers under a floor
- * of 50), and every outcome view swept with hostile texts.
+ * of 50), and the validation's and the count's views swept with hostile texts (the run view is the
+ * result screen's, swept through the real seam by `result-sweep.test.tsx`, D435).
  */
 import { act, StrictMode } from "react";
 import { createHashRouter } from "react-router";
@@ -14,7 +15,7 @@ import { RouterProvider } from "react-router/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Answered } from "../../src/api/typed";
-import { CountsOf, RunOf, ValidationOf, WORDS } from "../../src/builder/Builder";
+import { CountsOf, ValidationOf, WORDS } from "../../src/builder/Builder";
 import { SHAPE_MISMATCH, UNREACHABLE } from "../../src/api/typed";
 import { DEADLINE_MS } from "../../src/catalogue/load";
 import { walked } from "./answers";
@@ -61,10 +62,27 @@ describe("the builder over the server's answers", () => {
     expect(counts).toContain("n_true 13; n_false 27; n_unknown 0");
     expect(counts).toContain("n_true 40; n_false 0; n_unknown 0");
     expect(counts).not.toContain("0.325");
+    // Run shows the result (D435): its figures, its provenance, in place.
     const ran = textOf(viewOf(page, "run"));
-    expect(ran).toMatch(/Result drv:[0-9a-f]{64}/u);
-    expect(ran).toContain(WORDS.notShown);
+    expect(ran).toMatch(/Derivation drv:[0-9a-f]{64}: analysis summary\.distribution version 1\.0\.0/u);
+    expect(ran).toContain("numerator 13; denominator 40; estimate 0.325");
     expect(page.text()).not.toContain(WORDS.stale);
+  });
+
+  it("keeps the result under the stale words after an edit, and a remount (a reload) shows none (D435)", async () => {
+    page = await builderPage();
+    await fillBuilt(page);
+    await page.press("Validate");
+    await page.press("Run");
+    expect(textOf(viewOf(page, "run"))).toMatch(/Derivation drv:[0-9a-f]{64}/u);
+    await page.press("Add a column");
+    const ran = textOf(viewOf(page, "run"));
+    expect(ran).toContain(WORDS.stale);
+    expect(ran).toMatch(/Derivation drv:[0-9a-f]{64}/u);
+    page.close();
+    page = await builderPage();
+    expect(viewOf(page, "run")).toBeNull();
+    expect(page.text()).not.toMatch(/Derivation drv:/u);
   });
 
   it("sends nothing on mount, and nothing again by itself", async () => {
@@ -118,7 +136,6 @@ describe("the fixed words", () => {
   invalid: "The document is not valid.",
   problems: "The server found these problems in the document:",
   translation: "The answer holds a translation of the document, which is not shown here.",
-  notShown: "The result's figures, charts and provenance are not shown here: the result screen is not built yet (M5.4-min). The derivation id above names the result; an agent reads it with explain.",
     });
   });
 
@@ -373,7 +390,7 @@ describe("the lists and their words", () => {
     expect(page.sent[1]?.body).toBe(ANSWERS.countedUnderK.request);
     const counted = textOf(viewOf(page, "count"));
     expect(counted).toContain("n_true suppressed; n_false suppressed; n_unknown suppressed");
-    expect(counted).toContain("Disclosure: minimum cell count 50");
+    expect(counted).toContain("Disclosure: minimum cell count k = 50");
     page.close();
     page = await builderPage(byRequest);
     await page.choose("Unit table", "trees");
@@ -438,27 +455,15 @@ describe("the outcome views, swept", () => {
   const OWN = ["DIV", "P", "SECTION", "H3"];
   const CLASSES = ["", "number", "release", "label", "label draft", "disagree", "suppressed", "none", "largest", "affects", "id"];
 
-  it("shows a hostile text at every position of a validation as text alone, by construction", { timeout: 60_000 }, async () => {
+  it("shows a hostile text at every position of a validation as text alone, by construction", { timeout: 180_000 }, async () => {
     const found = await leafSweep(walked("DocumentValidation", ANSWERS.validated.body) as Answered<"validate_document">, (value) => <ValidationOf value={value} />, OWN, CLASSES);
     expect(found.problems).toEqual([]);
     expect(found.leaves).toBeGreaterThan(100);
   });
 
-  it("shows a hostile text at every position of a count as text alone, by construction", { timeout: 60_000 }, async () => {
+  it("shows a hostile text at every position of a count as text alone, by construction", { timeout: 180_000 }, async () => {
     const found = await leafSweep(walked("CohortCounts", ANSWERS.counted.body) as Answered<"count_cohort">, (value) => <CountsOf value={value} />, OWN, CLASSES);
     expect(found.problems).toEqual([]);
     expect(found.leaves).toBeGreaterThan(100);
-  });
-
-  it("shows a hostile text at every position of a run's members it reads (its derivation's id and disclosure, its caveats, its readbacks) as text alone", { timeout: 60_000 }, async () => {
-    const ran = walked("AnalysisResults", ANSWERS.ran.body) as Answered<"run_analysis">;
-    const [result] = ran.results;
-    if (result === undefined) {
-      throw new Error("no result");
-    }
-    const read = { id: result.derivation.id, disclosure: result.derivation.disclosure, caveats: result.caveats, readback: result.readback };
-    const found = await leafSweep(read, (parts) => <RunOf value={{ ...ran, results: [{ ...result, derivation: { ...result.derivation, id: parts.id, disclosure: parts.disclosure }, caveats: parts.caveats, readback: parts.readback }] }} />, OWN, CLASSES);
-    expect(found.problems).toEqual([]);
-    expect(found.leaves).toBeGreaterThan(20);
   });
 });

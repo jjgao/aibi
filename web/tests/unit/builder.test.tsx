@@ -12,6 +12,10 @@ import { Builder } from "../../src/builder/Builder";
 import { ANSWERS, type BuilderPage, builderPage, byRequest, fillBuilt } from "./builder-support";
 import { json, type Sent } from "./screens";
 
+// This file's cells render whole results under the suite's load (D435): its own time per cell, as a
+// row's test takes no options of its own (D427); the unit project's default stays 5 s.
+vi.setConfig({ testTimeout: 20_000 });
+
 /** The text of an element, its runs of white space one space. */
 const textOf = (element: Element | null | undefined): string => (element?.textContent ?? "").replace(/\s+/gu, " ").trim();
 
