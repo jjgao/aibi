@@ -86,12 +86,35 @@ function valueExports(checked: Checked): string[] {
 /** The layout's value exports, pinned per module (m3 of round 3 of #117): neither layer sees a value
  * that holds the door or the context behind an alias a layout module declares (`export const door =
  * showText`, `export const tools = { showText }`, `export const Form2 = FORM`, `FORM.Provider`), which
- * is an owner's edit of `src/layout/`; any new export is a change of this list, so a reviewed one. */
+ * is an owner's edit of `src/layout/`; any new export is a change of this list, so a reviewed one
+ * (D430's: the shared components and their fixed words, none a door or the context). */
 const LAYOUT_EXPORTS = [
+  "src/layout/Caveat.tsx: Caveats",
+  "src/layout/Caveat.tsx: FOR_INSPECTION",
+  "src/layout/Caveat.tsx: Inspection",
+  "src/layout/Caveat.tsx: SEVERITY_WORDS",
+  "src/layout/Caveat.tsx: blocks",
+  "src/layout/Disclosure.tsx: Disclosure",
+  "src/layout/Disclosure.tsx: NO_SETTING",
   "src/layout/Field.tsx: Field",
   "src/layout/Field.tsx: UNTYPED",
+  "src/layout/Figure.tsx: Count",
+  "src/layout/Figure.tsx: Figure",
+  "src/layout/Figure.tsx: NOT_SHOWN",
+  "src/layout/Figure.tsx: REASON_WORDS",
+  "src/layout/Figure.tsx: SUPPRESSED",
   "src/layout/Link.tsx: Link",
+  "src/layout/List.tsx: List",
+  "src/layout/List.tsx: ServerList",
   "src/layout/Option.tsx: Option",
+  "src/layout/Refusal.tsx: CARRIES_COUNTS",
+  "src/layout/Refusal.tsx: DOCUMENT_LEVEL",
+  "src/layout/Refusal.tsx: REFUSED",
+  "src/layout/Refusal.tsx: Refusal",
+  "src/layout/Refusal.tsx: Refusals",
+  "src/layout/Refusal.tsx: WITHHELD",
+  "src/layout/ReleaseRef.tsx: DISAGREE",
+  "src/layout/ReleaseRef.tsx: ReleaseRef",
   "src/layout/Segments.tsx: Segments",
   "src/layout/Text.tsx: Ref",
   "src/layout/Text.tsx: Text",

@@ -5,8 +5,9 @@
  * version of the Python that wrote it), rendered as `src/api/visible-ranges.ts` within
  * `npm run generate` (`generate:check` fails while it is stale). The file is read strictly: a
  * member missing or of another form, a range out of order, overlapping or outside the code points,
- * a kept member that is no tab, line feed, ZWNJ or ZWJ, or a cut that is not 2,000 fails the
- * generation, so that the page never escapes by a list it misread.
+ * a kept member that is no tab, line feed, ZWNJ or ZWJ, a cut that is not 2,000, or a list cut
+ * that is not 64 fails the generation, so that the page never escapes by a list it misread (and
+ * `List` cuts D312's lists where the server's page does: `listed`, D430).
  */
 
 /** The code points the visible form keeps raw, whatever the classes say (D312). */
@@ -14,6 +15,9 @@ export const KEPT = [0x09, 0x0a, 0x200c, 0x200d];
 
 /** The cut, in code points (D312). */
 export const CUT = 2000;
+
+/** The members of a list from data shown before the rest are counted (D312, D430). */
+export const LISTED = 64;
 
 /** The members of `raw_by_d312` that are ranges. */
 const RAW_RANGES = ["default_ignorable_assigned", "default_ignorable_unassigned", "space_separators"];
@@ -74,6 +78,9 @@ export function renderVisible(text) {
   if (file["cut"] !== CUT) {
     throw new VisibleError(`the cut is not ${String(CUT)}`);
   }
+  if (file["listed"] !== LISTED) {
+    throw new VisibleError(`the list cut is not ${String(LISTED)}`);
+  }
   if (JSON.stringify(file["order"]) !== JSON.stringify(["cut", "fold", "escape"])) {
     throw new VisibleError("the order is not cut, fold, escape");
   }
@@ -111,6 +118,10 @@ export const UNIDATA_VERSION = "${version}";
 
 /** The code points of a text from data that are shown; the rest is cut and marked. */
 export const CUT = ${String(CUT)};
+
+/** The members of a list from data (domain tags, facet values) shown before the rest are counted
+ * (D312): the server's page cuts there too (D430). */
+export const LISTED = ${String(LISTED)};
 
 /** The code points that stay raw whatever the classes say: tab, line feed, ZWNJ and ZWJ. */
 export const KEPT: readonly number[] = Object.freeze([${KEPT.map((point) => `0x${point.toString(16)}`).join(", ")}]);

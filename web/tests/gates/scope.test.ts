@@ -21,11 +21,12 @@ import { WEB } from "./program";
 
 const eslint = new ESLint({ cwd: WEB });
 
-type Layer = "app" | "api" | "client" | "none";
+type Layer = "app" | "api" | "numbers" | "client" | "none";
 
 /** The layer ESLint's configuration gives a file, read from the rules that name it: the app's has
- * the number rules, `src/api/`'s the I/O names as globals, `client.ts` neither; none if the file
- * has no rule of the policy (tooling) or is not linted at all. */
+ * the number rules, `src/api/`'s the I/O names as globals, `client.ts` neither, and `numbers.ts` and
+ * `format.tsx` (D430) are the seam's (its refusal of a dynamic import) held to the number rules too;
+ * none if the file has no rule of the policy (tooling) or is not linted at all. */
 async function layerOf(relative: string): Promise<Layer> {
   const config = (await eslint.calculateConfigForFile(path.join(WEB, relative))) as { rules?: Record<string, unknown> } | undefined;
   const rule = config?.rules?.["no-restricted-syntax"];
@@ -38,7 +39,7 @@ async function layerOf(relative: string): Promise<Layer> {
     return "none";
   }
   if (has("No conversion of a value to a number")) {
-    return "app";
+    return has("No dynamic import in src/api/") ? "numbers" : "app";
   }
   const globals: unknown = config?.rules?.["no-restricted-globals"];
   const names = Array.isArray(globals) ? globals.slice(1).map((option) => (option as { name?: string }).name) : [];
@@ -250,11 +251,16 @@ describe("every file of the package", () => {
     expect(files.filter((name) => name.startsWith("src/")).length).toBeGreaterThan(20);
   });
 
+  /** The seam's two modules held to the number rules (D430): the one that reads a box's text for the
+   * page and the one that shows a number. */
+  const NUMBERS = ["src/api/numbers.ts", "src/api/format.tsx"];
+
   it("gets the app's, the client's or no layer, by its place: every non-tooling script file is linted by the policy", async () => {
+    expect(NUMBERS.every((name) => files.includes(name))).toBe(true);
     const scripts = files.filter((name) => !isTooling(name) && SCRIPT_EXTENSIONS.some((extension) => name.endsWith(extension)));
     expect(scripts.length).toBeGreaterThan(15);
     for (const name of scripts) {
-      const expected = name === "src/api/client.ts" ? "client" : name.startsWith("src/api/") ? "api" : "app";
+      const expected = name === "src/api/client.ts" ? "client" : NUMBERS.includes(name) ? "numbers" : name.startsWith("src/api/") ? "api" : "app";
       expect(await layerOf(name), name).toBe(expected);
     }
   });

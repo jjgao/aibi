@@ -3,7 +3,7 @@
  * `ServerNumber`, never as a JS number, a string of digits or a BigInt. A client that could do
  * arithmetic on the numbers it shows could rebuild a count the server withheld from the ones it
  * showed (complementary suppression, §8.4), so no value a component holds can be computed with:
- * a number is shown only through `format.ts` (M5.1c-2), whose output is a node, never a string.
+ * a number is shown only through `format.tsx`'s `Num` (D430), whose output is a node, never a string.
  *
  * The box is opaque by construction. Its source text (the number exactly as the server wrote it:
  * `1.10`, `-0`, `9007199254740993`) is held in an ES private field, `#text`, which no code outside
@@ -20,10 +20,11 @@
  * lint refuses it besides (`no-extend-native` and assignments to the builtins' members).
  *
  * `box` and `textOf` are this module's internals: the lint lets only `decode.ts` import `box`, and
- * only `decode.ts` and `provenance.ts` import `textOf` (`provenance.ts`'s `idAt` is the one function
- * that reads a box's text, from a node stamped for its feed in its era: D425, MA3 of round 3), and a
- * test over the TypeScript program holds that no other module of `src/` names them and that
- * `src/api/index.ts` exports neither.
+ * only `decode.ts`, `provenance.ts` and `numbers.ts` import `textOf` (`provenance.ts`'s `idAt` is the
+ * one function that reads a box's text for a request, from a node stamped for its feed in its era:
+ * D425, MA3 of round 3; `numbers.ts` reads it for the page alone, giving `format.tsx` its glyphs and
+ * the predicates a boolean or a key: D430), and a test over the TypeScript program holds that no
+ * other module of `src/` names them and that `src/api/index.ts` exports neither.
  *
  * **The text box (D426).** `ServerText` is the number box's twin for every string of a public
  * tool's answer: `typed.ts`'s walk makes one of each string (`boxText`, its alone) as it validates
@@ -107,7 +108,7 @@ export function box(text: string): ServerNumber {
 }
 
 /** The source text a box holds; a value that is no box throws (the brand check). `provenance.ts`'s
- * `idAt` (D425) and the tests alone call it. */
+ * `idAt` (D425), `numbers.ts` (D430) and the tests alone call it. */
 export function textOf(number: ServerNumber): string {
   return read(number);
 }
