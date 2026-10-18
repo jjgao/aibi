@@ -11,5 +11,7 @@ import type { DatasetId } from "../api";
 
 /** A link to the dataset `to`'s screen. */
 export function Link({ to, children }: { readonly to: DatasetId; readonly children: ReactNode }): ReactElement {
-  return <a href={`#/datasets/${to}`}>{children}</a>;
+  // A template of a literal and a `DatasetId`, by type (D429: an `href` is of a literal type).
+  const target: `#/datasets/${DatasetId}` = `#/datasets/${to}`;
+  return <a href={target}>{children}</a>;
 }

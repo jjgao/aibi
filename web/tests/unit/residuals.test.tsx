@@ -5,9 +5,11 @@
  * - narrowing the element's `props` by hand gives the box back, never its text (closed: the box
  *   throws on every conversion);
  * - a detached `createRoot`, a timer and the host's `textContent` read the visible form's text
- *   (open here: closed outside the entries by 2b-1L, which allows `react-dom/client` in the entries
- *   alone); what it reads is the visible form, escapes and all, never the raw text;
- * - `react-dom/server` reads the same (open here: closed by 2b-1L's specifier allow-list);
+ *   (open here, in a test: closed in the app outside the entries by D429, which allows
+ *   `react-dom/client` in the entries alone); what it reads is the visible form, escapes and all, never
+ *   the raw text;
+ * - `react-dom/server` reads the same (open here, in a test: closed in the app by D429's specifier
+ *   allow-list, `tests/gates/display-lint.test.ts`);
  * - calling the element's `type` inside a render (`Reflect.apply(type, undefined, [props])`) runs
  *   the door's own component and gives back the visible form's strings (open: deliberate code, which
  *   the app's lint refuses, `Reflect` being a sink name; round 1 of #117's probe 2).
@@ -35,7 +37,7 @@ describe("what deliberate code recovers from showText's element", () => {
     expect(() => JSON.stringify(props)).toThrow(TypeError);
   });
 
-  it("a detached root and a timer read the visible form's text, never the raw text (open until 2b-1L)", async () => {
+  it("a detached root and a timer read the visible form's text, never the raw text (closed in the app by D429)", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
     root.render(showText(boxText(RAW)));
@@ -44,7 +46,7 @@ describe("what deliberate code recovers from showText's element", () => {
     root.unmount();
   });
 
-  it("react-dom/server reads the visible form's text, never the raw text (open until 2b-1L)", () => {
+  it("react-dom/server reads the visible form's text, never the raw text (closed in the app by D429)", () => {
     expect(renderToStaticMarkup(showText(boxText(RAW)))).toBe('secret<span class="escape">\\u202e</span>label');
   });
 

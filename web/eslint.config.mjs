@@ -116,11 +116,26 @@
  * `img.src`, ...: D423 lists them). `tests/gates/operator.test.ts` holds each channel in each
  * position and a generated table of every type, reacher, position and channel;
  * `tests/gates/page-types.test.ts` holds the rule's lists against what the DOM library declares.
+ *
+ * **The display lint (D429; D427's R90–R93): the line at the sink, by type** (`scripts/lint/display.mjs`,
+ * the inline plugin `display`). Whatever a text's source (response data, the address, an operator's
+ * answer), no value whose type holds a non-literal string, number or bigint stands at a JSX position or
+ * as what a component returns (`display/raw-text`, every file of the app but the door,
+ * `src/api/text.tsx`; a render slot reached other than at a JSX position is R90's flow class, OPEN
+ * until 2b-1L2's R90f); the elements, the
+ * attributes and the bare specifiers are allow-lists (`display/elements`, `display/specifiers`: no
+ * `react/jsx-runtime`, `createElement`, `react-dom/server`; `react-dom/client` in the entries alone);
+ * outside `src/api/`, no write to the DOM and no function of the DOM library but a reviewed list
+ * (`display/dom`), and no operator answer's `body` or `codes` (`display/answers`); the address's members
+ * by type, beside the names above (`display/address`). `tests/unit/lint-display.test.ts` lints each
+ * row's corpus through this configuration; `tests/gates/display-lint.test.ts` holds the tables and the
+ * wiring for every file of `src/`.
  */
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
+import { display, ENTRIES, ENTRY_SPECIFIERS, ROUTER_SPECIFIERS, SPECIFIERS } from "./scripts/lint/display.mjs";
 import { pageObjects } from "./scripts/page-objects.mjs";
 import { SCRIPT_EXTENSIONS, SRC_EXTENSIONS, TOOLING_PATTERNS } from "./scripts/tooling.mjs";
 
@@ -733,7 +748,7 @@ export default defineConfig(
   {
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" },
   },
-  { plugins: { aibi } },
+  { plugins: { aibi, display } },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
@@ -875,6 +890,47 @@ export default defineConfig(
       "no-restricted-properties": properties(true),
       "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX, ...ADDRESS_SYNTAX],
       "aibi/page-objects": "error",
+    },
+  },
+  {
+    // The display lint (D429, `scripts/lint/display.mjs`; D427's R90–R93): every file of the app.
+    // What reaches a render position (R90), the elements and attributes, the address's members
+    // (R92) and the bare specifiers, per name.
+    files: [CODE],
+    ignores: [...TOOLING_PATTERNS],
+    rules: {
+      "display/raw-text": "error",
+      "display/elements": "error",
+      "display/address": "error",
+      "display/specifiers": ["error", { allowed: SPECIFIERS }],
+    },
+  },
+  {
+    // The DOM (R91) and the operator's answers (R93): the app outside the seam (D419: `src/api/`
+    // holds the one place of I/O and reads the answers it boxes).
+    files: [CODE],
+    ignores: [...TOOLING_PATTERNS, "src/api/**"],
+    rules: {
+      "display/dom": "error",
+      "display/answers": "error",
+    },
+  },
+  {
+    // The one door from a server text to the DOM (D428): it renders the visible form's own strings.
+    files: ["src/api/text.tsx"],
+    rules: { "display/raw-text": "off" },
+  },
+  {
+    // The entries alone make a root (`react-dom/client`: a detached root reads the visible form, D428).
+    files: ENTRIES,
+    rules: { "display/specifiers": ["error", { allowed: ENTRY_SPECIFIERS }] },
+  },
+  {
+    // The router module: `useParams` alone of the router package, and `location.pathname` (D428).
+    files: ["src/router/address.tsx"],
+    rules: {
+      "display/specifiers": ["error", { allowed: ROUTER_SPECIFIERS }],
+      "display/address": ["error", { allow: ["Location.pathname"] }],
     },
   },
   {

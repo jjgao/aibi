@@ -1,12 +1,13 @@
-import type { ComponentType } from "react";
+import type { ReactElement } from "react";
 import type { RouteObject } from "react-router";
 
 import { DatasetAddress } from "../router/address";
 import { Failure } from "./Failure";
 import { Home } from "./Home";
 
-/** The not-found screen's module, loaded on first use. */
-export type NotFoundModule = { NotFound: ComponentType };
+/** The not-found screen's module, loaded on first use: its component typed by what it returns (an
+ * element), so that the display lint reads its tag (D429, R90: a `ComponentType` returns a `ReactNode`). */
+export type NotFoundModule = { NotFound: () => ReactElement };
 
 export function loadNotFound(): Promise<NotFoundModule> {
   return import("./NotFound");

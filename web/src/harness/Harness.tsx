@@ -68,8 +68,11 @@ interface Fields {
   readonly descriptor: string;
 }
 
+/** The names of the operations the harness drives: its buttons' keys and labels, literals (D429). */
+const OPERATION_NAMES = ["datasets", "dataset", "queue", "open", "confirm", "remove_descriptor", "publish", "discard", "withdraw", "take_over", "reject", "accept", "queue_at", "take_over_copy"] as const;
+
 /** The operations the harness drives, by the name of their button. */
-const OPERATIONS: Readonly<Record<string, (fields: Fields) => Promise<Outcome>>> = {
+const OPERATIONS: Readonly<Record<(typeof OPERATION_NAMES)[number], (fields: Fields) => Promise<Outcome>>> = {
   datasets: () => operator.datasets(),
   dataset: ({ dataset }) => operator.dataset(dataset),
   queue: ({ dataset }) => operator.queue(dataset),
@@ -148,14 +151,14 @@ export default function Harness() {
       <input ref={dataset} aria-label="dataset" type="text" autoComplete="off" />
       <input ref={manifest} aria-label="manifest" type="text" autoComplete="off" />
       <input ref={descriptor} aria-label="descriptor" type="text" autoComplete="off" />
-      {Object.entries(OPERATIONS).map(([name, run]) => (
+      {OPERATION_NAMES.map((name) => (
         <button
           key={name}
           type="button"
           aria-label={name}
           onClick={() => {
             const fields = { dataset: dataset.current?.value ?? "", manifest: manifest.current?.value ?? "", descriptor: descriptor.current?.value ?? "" };
-            void run(fields).then((found) => {
+            void OPERATIONS[name](fields).then((found) => {
               runs.current += 1;
               setShown({ outcome: found, holds: operator.holds(fields.dataset), decoded: decodedCount(), runs: runs.current });
             });
