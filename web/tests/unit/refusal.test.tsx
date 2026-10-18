@@ -79,7 +79,7 @@ describe("Refusal", () => {
   it("R42a: shows a refusal's code, its message from its segments, its alternatives listed and never applied, and its path as data, or the document level for a null path", async () => {
     expect.hasAssertions();
     const orchard = ORCHARD.filter((answer) => answer.status >= 400);
-    expect(orchard.map((answer) => answer.status).sort()).toEqual([404, 422, 422]);
+    expect(orchard.map((answer) => answer.status).sort()).toEqual([404, 422, 422, 422]);
     for (const answer of orchard) {
       const { items, text } = await shownOf(refused(answer.status, refusalsOf(answer.body)));
       expect(text.startsWith(REFUSED)).toBe(true);
@@ -209,7 +209,7 @@ describe("Refusals contain their parts", () => {
   it("M1: the refusals of Refusals are Refusal's own, each as it shows alone, in order, over every corpus of the rows", async () => {
     expect.hasAssertions();
     const corpora = [...ORCHARD.filter((answer) => answer.status >= 400).map((answer) => refusalsOf(answer.body)), MIXED_BODY, LIMIT_BODY, WITHHELD_BODY, COUNTS_BODY].map((body) => (typeof body === "string" ? refusalsOf(body) : body));
-    expect(corpora.length).toBe(7);
+    expect(corpora.length).toBe(8);
     for (const refusals of corpora) {
       const whole = await refusalItems(<Refusals refused={refused(422, refusals)} />);
       const parts: (string | undefined)[] = [];

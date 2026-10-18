@@ -17,7 +17,8 @@ Every name-keyed map is written through ``export.put``, which refuses a key hold
 value; two routes of one method and path, as FastAPI's own inclusions give them (their prefix,
 ``include_in_schema`` and dependencies), are refused whatever they hold (the server runs the
 first), and a route an inclusion leaves out of FastAPI's document is left out of this one. The
-components are ``components_of``'s, from the routes' models alone. The rewrites are
+components are ``components_of``'s, from the routes' models and the value roots alone
+(``document_models``). The rewrites are
 ``api.openapi_normalise``'s named class of local equivalences.
 
 What the document says beside the builders is computed, never listed:
@@ -41,6 +42,10 @@ What the document says beside the builders is computed, never listed:
 - ``x-aibi-server-number`` marks every ``number`` or ``integer`` of a response's JSON body, but
   in a condition (``if``, ``then``, ``else``, ``not``) and in an ``x-aibi-json`` component, which
   is its own typed value: numbers the server computed, which a client may not compute with;
+- ``x-aibi-values``, at the top level, maps each analysis of ``WEB_VALUES`` to its current
+  version and the component of its ``values`` model (``value_roots``, from ``registry.CORE``;
+  D434), which the web reads a result's ``values`` by: each is a response's root, as an
+  operation's answer is (``document_models``, ``directions``);
 - ``info.version`` is ``aibi-http``, so that the document changes with the API, not the package.
 
 It refuses a document a check fails: a typeless union member R2 could not type, a numeric
@@ -61,6 +66,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 from pydantic import BaseModel, JsonValue
 
+from aibi.core.analyses.registry import CORE
 from aibi.core.api import errors, openapi_vocabulary
 from aibi.core.api.app import create_app
 from aibi.core.api.openapi_normalise import (
@@ -200,6 +206,31 @@ def route_models(app: FastAPI) -> Models:
     return tuple(found)
 
 
+WEB_VALUES: tuple[str, ...] = ("summary.distribution",)
+"""The core analyses whose ``values`` model the document publishes (D434), each at its current
+version: the one definition of the value roots, which ``document_models`` (so ``components_of``
+and ``builder_schemas``), ``directions`` and the document's ``x-aibi-values`` read."""
+
+VALUES_KEY = "x-aibi-values"
+"""The document's top-level key of the value roots (D434)."""
+
+
+def value_roots() -> dict[str, tuple[str, type[BaseModel]]]:
+    """The value roots (D434): each analysis of ``WEB_VALUES``, with the version and the values
+    model of its ``registry.CORE`` entry (a pack's analysis is in no ``CORE``, and a version bump
+    moves the key)."""
+    found: dict[str, tuple[str, type[BaseModel]]] = {}
+    for name in WEB_VALUES:
+        put(found, name, (CORE[name].entry.version, CORE[name].values), "{key} is listed twice")
+    return found
+
+
+def document_models(app: FastAPI) -> Models:
+    """The routes' models, then each value root as a response's (D416 as D434 amends it)."""
+    roots: Models = tuple(("response", model) for _, model in value_roots().values())
+    return route_models(app) + roots
+
+
 def _builders(models: Models) -> dict[str, MarkedSchema]:
     """The builders' schemas, markers kept, by the name of the component each root becomes;
     ``Refusals`` first. A name is one class's (``_named``)."""
@@ -220,7 +251,7 @@ def _builders(models: Models) -> dict[str, MarkedSchema]:
 def builder_schemas(app: FastAPI | None = None) -> dict[str, JsonObject]:
     """The builders' schemas the document's components come from, as the builders give them (no
     marker), by the name of the component each root becomes; ``Substituted*`` aside."""
-    built = _builders(route_models(app or _app()))
+    built = _builders(document_models(app or _app()))
     return {name: export.unmarked(schema) for name, schema in built.items()}
 
 
@@ -289,7 +320,8 @@ def reached(components: dict[str, JsonObject], roots: Iterable[JsonValue]) -> fr
 
 
 def directions(generated: JsonObject) -> tuple[frozenset[str], frozenset[str]]:
-    """The components requests reach (bodies and parameters) and those responses reach."""
+    """The components requests reach (bodies and parameters) and those responses reach (the
+    operations' answers and the value roots of ``x-aibi-values``, D434)."""
     components = cast(dict[str, JsonObject], cast(JsonObject, generated["components"])["schemas"])
     operations = [
         cast(JsonObject, operation)
@@ -304,7 +336,10 @@ def directions(generated: JsonObject) -> tuple[frozenset[str], frozenset[str]]:
             for part in (operation.get("requestBody", {}), operation.get("parameters", []))
         ],
     )
-    responses = reached(components, [operation["responses"] for operation in operations])
+    # D434: each value root is a response's, read from the document as an operation's answer is.
+    roots = cast(dict[str, dict[str, JsonValue]], generated.get(VALUES_KEY, {}))
+    values = [reference for versions in roots.values() for reference in versions.values()]
+    responses = reached(components, [operation["responses"] for operation in operations] + values)
     return requests, responses
 
 
@@ -549,7 +584,7 @@ def document() -> JsonObject:
     app = _app()
     generated = app.openapi()
     routes = _routes(app)
-    components = components_of(route_models(app))
+    components = components_of(document_models(app))
     paths: dict[str, JsonObject] = {}
     identifiers: dict[str, str] = {}
     for path, methods in cast(dict[str, dict[str, JsonObject]], generated["paths"]).items():
@@ -575,6 +610,10 @@ def document() -> JsonObject:
             },
         },
     }
+    values: JsonObject = {}
+    for name, (version, model) in value_roots().items():
+        put(values, name, {version: _reference(model.__name__)}, "{key} is published twice")
+    put(found, VALUES_KEY, values, "the document holds {key} twice")
     problems: list[str] = []
     for methods in paths.values():
         for operation in cast(dict[str, JsonObject], methods).values():

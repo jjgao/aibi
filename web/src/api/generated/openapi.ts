@@ -788,6 +788,64 @@ export interface components {
             readonly not_estimable?: unknown;
         });
         /**
+         * CategoryDistribution
+         * @description A categorical variable at one position (D328, D329). ``categories`` lists the declared
+         *     permissible values in their order, zeros included, then the other values in canonical order,
+         *     or under a disclosure setting one row of them that names none (``other_values``), the rows
+         *     the disclosure settings merged in one row each; ``null`` when suppressed.
+         */
+        readonly CategoryDistribution: {
+            /** Categories */
+            readonly categories: readonly components["schemas"]["CategoryShare"][] | null;
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "categories";
+            /** Not Estimable */
+            readonly not_estimable?: {
+                readonly [key: string]: components["schemas"]["NotEstimableReason"];
+            };
+        } & (unknown & unknown & {
+            readonly not_estimable?: unknown;
+        });
+        /**
+         * CategoryRows
+         * @description A categorical variable that counts rows (``count: "rows"``) at one position (D378): the
+         *     rows it pools in each category over the rows with a value (``counts: "rows"``), listed as
+         *     ``CategoryDistribution`` lists categories without a disclosure setting, and the pooled rows
+         *     whose value is not PRESENT by reason (``excluded_rows``, every reason, zeros included). It is
+         *     never under a disclosure setting (D379), so nothing is merged or suppressed.
+         */
+        readonly CategoryRows: {
+            /** Categories */
+            readonly categories: readonly components["schemas"]["CategoryShare"][];
+            /** Excluded Rows */
+            readonly excluded_rows: {
+                readonly [key: string]: ServerNumber;
+            };
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "category_rows";
+        };
+        /**
+         * CategoryShare
+         * @description One category at one position, or under a disclosure setting several merged into one row
+         *     (§8.4, D329): its units, over the units for which the value is known.
+         */
+        readonly CategoryShare: {
+            /**
+             * Other Values
+             * @constant
+             */
+            readonly other_values?: true;
+            readonly proportion: components["schemas"]["Proportion"];
+            /** Values */
+            readonly values: readonly components["schemas"]["Data"][];
+        };
+        /**
          * Caveat
          * @description ``affects`` holds JSON Pointers relative to the output's root, sorted and de-duplicated.
          */
@@ -1249,6 +1307,20 @@ export interface components {
             /** Min Cell Count */
             readonly min_cell_count: ServerNumber | null;
         };
+        /** DistributionPosition */
+        readonly DistributionPosition: {
+            /** Columns */
+            readonly columns: readonly (components["schemas"]["CategoryDistribution"] | components["schemas"]["NumberDistribution"] | components["schemas"]["CategoryRows"] | components["schemas"]["NumberRows"] | components["schemas"]["MembershipDistribution"])[];
+        };
+        /**
+         * DistributionValues
+         * @description ``summary.distribution``'s ``values`` (§8.1): ``positions`` in view order.
+         */
+        readonly DistributionValues: {
+            /** Positions */
+            readonly positions: readonly components["schemas"]["DistributionPosition"][];
+            readonly view: components["schemas"]["NoViewValues"];
+        };
         /** @description Any JSON value but null */
         readonly DocumentJson: JsonIn;
         /**
@@ -1410,6 +1482,33 @@ export interface components {
              * @constant
              */
             readonly status: "ok";
+        };
+        /** Histogram */
+        readonly Histogram: {
+            /** Bins */
+            readonly bins: readonly components["schemas"]["HistogramBin"][];
+            /**
+             * Edges From
+             * @enum {string}
+             */
+            readonly edges_from: "params" | "range" | "data";
+        };
+        /**
+         * HistogramBin
+         * @description A bin [low, high), or [low, high] for the last; ``low`` is ``null`` for the open bin
+         *     below the first edge and ``high`` for the one above the last.
+         */
+        readonly HistogramBin: {
+            /** Count */
+            readonly count: ServerNumber;
+            /** High */
+            readonly high: ServerNumber | null;
+            /** Includes High */
+            readonly includes_high: boolean;
+            /** Includes Low */
+            readonly includes_low: boolean;
+            /** Low */
+            readonly low: ServerNumber | null;
         };
         /** HistogramOut */
         readonly HistogramOut: {
@@ -1638,6 +1737,33 @@ export interface components {
             /** Values From */
             readonly values_from: string;
         };
+        /**
+         * MembershipDistribution
+         * @description A variable's memberships (``each: "category"``) at one position (D380, D382): for each
+         *     category listed over the cohort (the declared values in their order, zeros included, then
+         *     the others in UTF-16 order, or a filtered column's allowed values), the units for which some
+         *     row (or item) has it over the units for which that is known, its UNKNOWN units in the
+         *     proportion's ``excluded`` by reason and its ``denominator_definition`` naming the category's
+         *     leaf key (``counts: "known"``). A unit may count in several categories, so the proportions
+         *     need not sum to 1 (``multi_membership``); nothing is listed where no category is. Under a
+         *     disclosure setting (D383, D384) only the declared categories are listed, each row's counts
+         *     as the pass shows them (``null`` where suppressed), its ``excluded`` always ``null``, and no
+         *     row is merged.
+         */
+        readonly MembershipDistribution: {
+            /** Categories */
+            readonly categories: readonly components["schemas"]["CategoryShare"][];
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "memberships";
+            /**
+             * Multi Membership
+             * @constant
+             */
+            readonly multi_membership: true;
+        };
         /** NamedCount */
         readonly NamedCount: {
             readonly cohort: components["schemas"]["Data"];
@@ -1660,6 +1786,11 @@ export interface components {
              */
             readonly reason: "identifier" | "text" | "undeclared" | "categories" | "out_of_range" | "empty" | "no_declared_range" | "suppressed" | "unrepresentable";
         };
+        /**
+         * NoViewValues
+         * @description The values of a view as a whole, for an analysis that gives none: descriptive only.
+         */
+        readonly NoViewValues: Record<string, never>;
         /** NotClause */
         readonly NotClause: {
             readonly not: (components["schemas"]["ValueLeaf"] | components["schemas"]["ExistsLeaf"] | components["schemas"]["CoveredLeaf"] | components["schemas"]["IdsLeaf"] | components["schemas"]["CohortLeaf"] | components["schemas"]["PackLeaf"] | components["schemas"]["AllClause"] | components["schemas"]["AnyClause"] | components["schemas"]["NotClause"] | components["schemas"]["KnownClause"] | components["schemas"]["UnknownClause"]) | components["schemas"]["ParameterReference"];
@@ -1669,6 +1800,91 @@ export interface components {
          * @enum {string}
          */
         readonly NotEstimableReason: "no_units" | "no_events" | "zero_denominator" | "zero_variance" | "not_reached" | "beyond_follow_up" | "separation" | "not_converged" | "degenerate_table" | "overlapping_cohorts" | "confounded_with_dataset" | "suppressed";
+        /**
+         * NumberDistribution
+         * @description A numeric variable at one position (D328, D329). Under a disclosure setting the minimum
+         *     and maximum are suppressed, the quartiles are given as the (merged) bin that holds each
+         *     (``q1_bin``, ``median_bin``, ``q3_bin``), and no statistic of the values themselves (mean,
+         *     standard deviation, median, quartiles) is shown.
+         */
+        readonly NumberDistribution: {
+            readonly histogram: components["schemas"]["Histogram"] | null;
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "numbers";
+            /** Max */
+            readonly max: ServerNumber | null;
+            /** Mean */
+            readonly mean: ServerNumber | null;
+            /** Median */
+            readonly median: ServerNumber | null;
+            /** Median Bin */
+            readonly median_bin?: ServerNumber | null;
+            /** Min */
+            readonly min: ServerNumber | null;
+            /** N */
+            readonly n: ServerNumber | null;
+            /** Not Estimable */
+            readonly not_estimable?: {
+                readonly [key: string]: components["schemas"]["NotEstimableReason"];
+            };
+            /** Q1 */
+            readonly q1: ServerNumber | null;
+            /** Q1 Bin */
+            readonly q1_bin?: ServerNumber | null;
+            /** Q3 */
+            readonly q3: ServerNumber | null;
+            /** Q3 Bin */
+            readonly q3_bin?: ServerNumber | null;
+            /** Sd */
+            readonly sd: ServerNumber | null;
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & {
+            readonly not_estimable?: unknown;
+        });
+        /**
+         * NumberRows
+         * @description A numeric variable that counts rows (``count: "rows"``) at one position (D378): ``n``
+         *     the rows it pools with a value, their mean, standard deviation, median, quartiles, minimum,
+         *     maximum and histogram as ``NumberDistribution`` gives a unit's without a disclosure setting,
+         *     and the pooled rows whose value is not PRESENT by reason (``excluded_rows``). It is never
+         *     under a disclosure setting (D379).
+         */
+        readonly NumberRows: {
+            /** Excluded Rows */
+            readonly excluded_rows: {
+                readonly [key: string]: ServerNumber;
+            };
+            readonly histogram: components["schemas"]["Histogram"] | null;
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "number_rows";
+            /** Max */
+            readonly max: ServerNumber | null;
+            /** Mean */
+            readonly mean: ServerNumber | null;
+            /** Median */
+            readonly median: ServerNumber | null;
+            /** Min */
+            readonly min: ServerNumber | null;
+            /** N */
+            readonly n: ServerNumber;
+            /** Not Estimable */
+            readonly not_estimable?: {
+                readonly [key: string]: components["schemas"]["NotEstimableReason"];
+            };
+            /** Q1 */
+            readonly q1: ServerNumber | null;
+            /** Q3 */
+            readonly q3: ServerNumber | null;
+            /** Sd */
+            readonly sd: ServerNumber | null;
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & {
+            readonly not_estimable?: unknown;
+        });
         /** OntologyCode */
         readonly OntologyCode: {
             /** Code */

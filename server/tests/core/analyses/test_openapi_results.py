@@ -27,7 +27,10 @@ two synthetic ones, as their JSON goes over the wire:
   catalogue and dataset screens need (D431), from a world of their own (the orchard and a second
   dataset): a first page of the catalogue with its ``next_offset``, a dataset's first three
   columns with its ``columns_next``, and both tools under a disclosure floor of 50 (the trees'
-  40 rows suppressed), appended after the thirteen, which stay as they were. The state is made
+  40 rows suppressed), appended after the thirteen, which stay as they were; then the builder's
+  eight (D433), and the ten whose ``values`` the web's values seam reads (D434,
+  ``_VALUES_DOCUMENTS``: runs over the orchard and ``fixtures/hostile_values`` under no floor and
+  floors of 5 and 50, and one refusal), each from a world of its own. The state is made
   with a clock and issuance ids that are the same on every run; a change to what the server
   answers fails here until the file is written again (from ``server/``:
   ``AIBI_WRITE_WEB_FIXTURES=1 uv run pytest tests/core/analyses/test_openapi_results.py``).
@@ -48,6 +51,7 @@ import jsonschema
 import pytest
 from tests.core.catalog.world import World, orchard_files
 
+from aibi.core.api import openapi as openapi_module
 from aibi.core.api.errors import refused
 from aibi.core.catalog.service import Catalog
 from aibi.core.catalog.tools import BY_NAME
@@ -345,6 +349,99 @@ def _builder_answers(world: World) -> list[dict[str, Any]]:
     ]
 
 
+HOSTILE_VALUES = Path(__file__).resolve().parents[4] / "fixtures" / "hostile_values" / "items.csv"
+"""Category values that are hostile texts (D434): markup, a right-to-left override, a closing
+``bdi``, 5,000 characters, zero-width characters and a script URL, each four times, and one
+empty."""
+
+HOSTILE_TEXTS = (
+    "<img src=x onerror=alert(1)>",
+    "‮txt.exe",
+    "</bdi><b>bold</b><bdi>",
+    "x" * 5000,
+    "a​b⁠c",
+    "javascript:alert(1)",
+)
+
+
+def _distribution(
+    cohorts: dict[str, list[dict[str, Any]]],
+    columns: list[dict[str, Any]],
+    *,
+    dataset: str = "orchard",
+    unit: str = "trees",
+) -> dict[str, Any]:
+    """A document of one ``summary.distribution`` view of ``columns`` over ``cohorts``, in order."""
+    return {
+        "aibi": "1",
+        "dataset": dataset,
+        "unit": unit,
+        "cohorts": {name: {"all": leaves} for name, leaves in cohorts.items()},
+        "views": [
+            {
+                "analysis": "summary.distribution",
+                "cohorts": list(cohorts),
+                "params": {"columns": columns},
+            }
+        ],
+    }
+
+
+_ZZZ = [{"kind": "value", "column": "trees.variety", "values": ["zzz"]}]
+_PEAR_PLUM = [{"kind": "value", "column": "trees.variety", "values": ["pear", "plum"]}]
+_HEIGHT = {"column": "trees.height_m"}
+_BINNED = {"column": "trees.height_m", "bins": [2, 4, 6, 8, 10]}
+_VARIETY = {"column": "trees.variety"}
+_VALUES_DOCUMENTS = (
+    # (a), (b): the builder's two-cohort document, run and run again (a cache hit).
+    (None, _BUILT),
+    (None, _BUILT),
+    # (c): an empty cohort.
+    (None, _distribution({"first": _ZZZ}, [_HEIGHT, _VARIETY])),
+    # (d): floor 5, an empty cohort beside apple.
+    (5, _distribution({"first": _APPLE, "second": _ZZZ}, [_VARIETY])),
+    # (e): floor 50, every count suppressed.
+    (50, _BUILT_CATEGORY),
+    # (f): a view that counts rows of another table.
+    (None, _distribution({"first": []}, [{"column": "harvests.grade", "count": "rows"}])),
+    # (g): hostile category values.
+    (
+        None,
+        _distribution(
+            {"first": []}, [{"column": "items.kind"}], dataset="hostile_values", unit="items"
+        ),
+    ),
+    # (h), (h'): floor 5, a numeric column with bins (an agent's document), apple beside pear and
+    # plum, then beside all trees.
+    (5, _distribution({"first": _APPLE, "second": _PEAR_PLUM}, [_BINNED, _VARIETY])),
+    (5, _distribution({"first": _APPLE, "second": []}, [_BINNED, _VARIETY])),
+    # (i): floor 5, a numeric column without bins on a column with no declared range: refused.
+    (5, _distribution({"first": _APPLE}, [_HEIGHT])),
+    # (j): the columns written in an order that is not sorted, of distinct kinds.
+    (None, _distribution({"first": _APPLE, "second": []}, [_VARIETY, _HEIGHT])),
+)
+"""The values answers' documents (D434), each with its disclosure floor."""
+
+VALUES_FIRST = 25
+"""The index of the first values answer in the orchard's answers file."""
+
+
+def _values_answers(world: World) -> list[dict[str, Any]]:
+    """The answers whose ``values`` the web's values seam reads (D434), from a world of their own:
+    the orchard and ``fixtures/hostile_values`` published, and ``_VALUES_DOCUMENTS`` run in
+    order."""
+    world.publish("orchard", orchard_files(rows=40, harvests=60))
+    world.publish("hostile_values", {"items.csv": HOSTILE_VALUES.read_bytes()})
+    catalogs = {
+        floor: Catalog(world.store, workers=Workers(QueryLimits()), floor=floor)
+        for floor in (None, 5, 50)
+    }
+    return [
+        _answer(world, catalogs[floor], "run_analysis", {"document": document})
+        for floor, document in _VALUES_DOCUMENTS
+    ]
+
+
 def test_the_web_client_s_orchard_answers_are_the_server_s(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -396,6 +493,20 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         answers += _builder_answers(builder)
     finally:
         builder.store.close()
+    fourth = tmp_path / "values"
+    (fourth / "imports").mkdir(parents=True)
+    last = iter(range(10_000))
+    values = World(
+        fourth,
+        Store(
+            fourth / "data",
+            clock=lambda: datetime(2026, 4, 1, tzinfo=UTC) + timedelta(seconds=next(last)),
+        ),
+    )
+    try:
+        answers += _values_answers(values)
+    finally:
+        values.store.close()
     rendered = json.dumps({"answers": answers}, indent=2, ensure_ascii=False) + "\n"
     if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
         ORCHARD_ANSWERS.write_text(rendered, encoding="utf-8")
@@ -433,6 +544,9 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         ("validate_document", 200),
         ("count_cohort", 422),
         ("validate_document", 200),
+        *[("run_analysis", 200)] * 9,
+        ("run_analysis", 422),
+        ("run_analysis", 200),
     ]
     assert [json.loads(answers[n]["body"])["valid"] for n in (3, 4)] == [True, False]
     built, counted, category, floored, ran, numeric, refused_count, text = (
@@ -449,7 +563,9 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         _BUILT_NUMBER,
         _BUILT_STRING,
     ]
-    assert all("request" not in answers[n] for n in range(17))
+    assert all(
+        "request" not in answers[n] for n in [*range(17), *range(VALUES_FIRST, len(answers))]
+    )
     population = [found["count"]["population"] for found in counted["counts"]]
     assert built["valid"] is True
     assert category["valid"] is True
@@ -510,3 +626,200 @@ def test_the_validator_cache_is_by_a_schema_s_content_not_its_identity(openapi: 
     assert not first.is_valid(1)
     assert other.is_valid(1)
     assert not other.is_valid("a")
+
+
+def _values_of(answer: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    """An answer's one result's values: its positions' columns."""
+    [result] = json.loads(answer["body"])["results"]
+    return [position["columns"] for position in result["values"]["positions"]]
+
+
+_NUMBER_POINTERS = ("/mean", "/sd", "/median", "/q1", "/q3", "/min", "/max", "/histogram")
+
+
+def test_the_values_answers_hold_what_the_values_seam_needs() -> None:
+    """The values answers (D434, ``_VALUES_DOCUMENTS``): each ``values`` is valid against the
+    component the document publishes for its analysis and version (``x-aibi-values``, an independent
+    validator), and each holds exactly the facts the web's cells read of it."""
+    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
+    found = answers[VALUES_FIRST:]
+    assert len(found) == len(_VALUES_DOCUMENTS)
+    document: dict[str, Any] = json.loads(json.dumps(openapi_module.document()))
+    roots = document["x-aibi-values"]
+    ran, again, empty, five, fifty, rows, hostile, binned, merged, refused_, unsorted = found
+    ran_ = [answer for answer in found if answer is not refused_]
+    results = [json.loads(a["body"])["results"][0] for a in ran_]
+    validators = []
+    for result in results:
+        analysis = result["derivation"]["analysis"]
+        root = roots[analysis["id"]][analysis["version"]]
+        schema = {"components": document["components"], "$ref": root["$ref"]}
+        validators.append(jsonschema.Draft202012Validator(schema))
+        assert validators[-1].is_valid(result["values"])
+    # The validator's control: a number sent as a string, and a view that gives values, are refused.
+    changed = copy.deepcopy(results[0]["values"])
+    changed["positions"][0]["columns"][0]["n"] = "12"
+    assert not validators[0].is_valid(changed)
+    assert not validators[0].is_valid({**results[0]["values"], "view": {"n": 1}})
+    floors = [r["derivation"]["disclosure"]["min_cell_count"] for r in results]
+    assert floors == [None, None, None, 5, 50, None, None, 5, 5, None]
+    # (a), (b): the builder's document, computed and then served from the result cache.
+    first, second = results[0]["issuance"], results[1]["issuance"]
+    assert (first["cache_hit"], first["values_from"]) == (False, first["id"])
+    assert (second["cache_hit"], second["values_from"]) == (True, first["id"])
+    assert _values_of(again) == _values_of(ran)
+    labels = [
+        c["column"] for c in results[0]["derivation"]["document"]["view"]["params"]["columns"]
+    ]
+    assert labels == ["trees.height_m", "trees.variety"]
+    assert [[c["kind"] for c in p] for p in _values_of(ran)] == [["numbers", "categories"]] * 2
+    bins = _values_of(ran)[0][0]["histogram"]["bins"]
+    assert (bins[0]["low"], bins[-1]["high"]) == (None, None)
+    assert all(b["low"] is not None for b in bins[1:])
+    assert all(b["high"] is not None for b in bins[:-1])
+    # (c): an empty cohort.
+    [[numbers, categories]] = _values_of(empty)
+    assert numbers["n"] == 0
+    assert all(numbers[pointer[1:]] is None for pointer in _NUMBER_POINTERS)
+    assert numbers["not_estimable"] == dict.fromkeys(_NUMBER_POINTERS, "no_units")
+    assert categories == {"kind": "categories", "categories": []}
+    # (d): floor 5, one row that names no value per position, the empty cohort's estimate null.
+    [[apple], [nothing]] = _values_of(five)
+    assert [len(apple["categories"]), len(nothing["categories"])] == [1, 1]
+    [shown], [none] = apple["categories"], nothing["categories"]
+    assert (shown["values"], shown["other_values"]) == ([], True)
+    assert [shown["proportion"][m] for m in ("numerator", "denominator")] == [13, 13]
+    assert (none["values"], none["other_values"]) == ([], True)
+    proportion = none["proportion"]
+    assert (proportion["estimate"], proportion["numerator"], proportion["denominator"]) == (
+        None,
+        0,
+        0,
+    )
+    assert proportion["not_estimable"] == {"/estimate": "no_units"}
+    # (e): floor 50, the categories and the analysed counts suppressed.
+    [[suppressed]] = _values_of(fifty)
+    assert suppressed == {
+        "kind": "categories",
+        "categories": None,
+        "not_estimable": {"/categories": "suppressed"},
+    }
+    [analysed] = results[4]["analysed"]
+    assert (analysed["n"], analysed["excluded"], analysed["excluded_units"]) == (None, None, None)
+    # (f): rows of another table counted.
+    [[counted]] = _values_of(rows)
+    assert (counted["kind"], counted["categories"]) == ("category_rows", [])
+    assert set(counted["excluded_rows"].values()) == {0}
+    [analysed] = results[5]["analysed"]
+    assert {k: v for k, v in analysed["excluded"].items() if v} == {"NO_INFORMATION": 40}
+    # (g): hostile values come back exactly, from a file that holds them as code points.
+    raw = HOSTILE_VALUES.read_bytes().decode("utf-8")
+    assert all(point in raw for point in ("\u202e", "\u200b", "\u2060"))
+    [[listed]] = _values_of(hostile)
+    texts = [row["values"][0]["data"] for row in listed["categories"]]
+    assert sorted(texts) == sorted(HOSTILE_TEXTS)
+    [analysed] = results[6]["analysed"]
+    assert {k: v for k, v in analysed["excluded"].items() if v} == {"NO_INFORMATION": 1}
+    # (h): floor 5 with bins: every member of each number column null and suppressed.
+    every = (*_NUMBER_POINTERS, "/n", "/q1_bin", "/median_bin", "/q3_bin")
+    for [column, _] in _values_of(binned):
+        assert all(column[pointer[1:]] is None for pointer in every)
+        assert column["not_estimable"] == dict.fromkeys(every, "suppressed")
+    for analysed in results[7]["analysed"]:
+        assert analysed["variables"][0]["n"] is None
+        assert analysed["variables"][1]["n"] is not None
+    # (h'): beside all trees, position 1's numbers carry a count, bins and bin indices.
+    [[held, _], [numbers, _]] = _values_of(merged)
+    assert all(held[pointer[1:]] is None for pointer in every)
+    assert (numbers["n"], numbers["histogram"]["edges_from"], numbers["q1_bin"]) == (
+        35,
+        "params",
+        0,
+    )
+    last = numbers["histogram"]["bins"][-1]
+    assert (last["low"], last["high"], last["count"]) == (8, None, 11)
+    # (i): a number column with no bins and no declared range is refused.
+    assert refused_["status"] == 422
+    refusals = json.loads(refused_["body"])["refusals"]
+    assert [(r["code"], r["path"]) for r in refusals] == [
+        ("MISSING_MEMBER", "/views/0/params/columns/0/bins")
+    ]
+    # (j): the canonical document keeps the columns in the order written, and the values follow it.
+    labels = [
+        c["column"] for c in results[9]["derivation"]["document"]["view"]["params"]["columns"]
+    ]
+    assert labels == ["trees.variety", "trees.height_m"]
+    assert [[c["kind"] for c in p] for p in _values_of(unsorted)] == [["categories", "numbers"]] * 2
+
+
+ARMS_OF = {
+    "number": {"numbers", "number_rows"},
+    "integer": {"numbers", "number_rows"},
+    "category": {"categories", "category_rows", "memberships"},
+}
+"""The arms a values column may be of, by its column's datatype."""
+
+
+def test_every_live_label_names_a_column_of_its_arm_s_type() -> None:
+    """The labels and the values columns share one order (D434): in every live
+    ``summary.distribution`` answer over the orchard, the column the canonical document names at
+    ``view.params.columns[j]`` has a datatype (the server's own ``describe_dataset`` answer, the
+    orchard's answers' second) whose arms include the kind of the values' column ``j`` at every
+    position; and one answer writes its columns in an order that is not sorted, so that a document
+    whose columns were reordered apart from the values would fail here."""
+    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
+    described = json.loads(answers[1]["body"])
+    assert described["dataset"] == "orchard"
+    datatype = {c["id"]: c["datatype"] for t in described["tables"] for c in t["columns"]}
+    checked, orders = 0, set()
+    for answer in answers:
+        if answer["operation"] != "run_analysis" or answer["status"] != 200:
+            continue
+        for result in json.loads(answer["body"])["results"]:
+            derivation = result["derivation"]
+            if derivation["analysis"]["id"] != "summary.distribution":
+                continue
+            if [r["dataset"] for r in derivation["releases"]] != ["orchard"]:
+                continue
+            labels = [c["column"] for c in derivation["document"]["view"]["params"]["columns"]]
+            orders.add(labels == sorted(labels))
+            for position in result["values"]["positions"]:
+                kinds = [column["kind"] for column in position["columns"]]
+                assert len(kinds) == len(labels)
+                for label, kind in zip(labels, kinds, strict=True):
+                    assert kind in ARMS_OF[datatype[label]], (label, kind)
+                    checked += 1
+    assert orders == {True, False}
+    assert checked >= 30
+
+
+def test_every_live_variable_count_is_its_column_s() -> None:
+    """The analysed counts' ``variables`` and the values columns share one order (D434): in every
+    live answer with no floor and two columns or more, ``analysed[i].variables[j].n`` is the ``n``
+    of the ``numbers`` column at position ``i``, column ``j``, or each category row's
+    ``denominator`` there. (The labels' order against the values' is the cell above.)"""
+    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
+    checked = 0
+    for answer in answers:
+        if answer["operation"] != "run_analysis" or answer["status"] != 200:
+            continue
+        for result in json.loads(answer["body"])["results"]:
+            columns = result["derivation"]["document"]["view"]["params"].get("columns", [])
+            floor = result["derivation"]["disclosure"]["min_cell_count"]
+            analysis = result["derivation"]["analysis"]["id"]
+            if analysis != "summary.distribution" or floor is not None or len(columns) < 2:
+                continue
+            for i, position in enumerate(result["values"]["positions"]):
+                variables = result["analysed"][i]["variables"]
+                assert len(variables) == len(columns) == len(position["columns"])
+                for j, column in enumerate(position["columns"]):
+                    if column["kind"] == "numbers":
+                        assert variables[j]["n"] == column["n"]
+                        checked += 1
+                    elif column["categories"]:
+                        assert all(
+                            row["proportion"]["denominator"] == variables[j]["n"]
+                            for row in column["categories"]
+                        )
+                        checked += 1
+    assert checked >= 12

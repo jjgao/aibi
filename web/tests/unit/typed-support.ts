@@ -144,7 +144,13 @@ export function hintOf(shape: Shape, depth = 0): Hint {
  * default order, a `null` last) and, by its parity, the kind of segment (text, then data). */
 export interface Plan {
   readonly prefer: number;
+  /** An alternative whose arm is forced (by its index in the table's `o`): the arms past `PLANS`' reach (D434). */
+  readonly force?: { readonly or: Shape; readonly arm: number };
 }
+
+/** The order `synthetic` takes an alternative's arms in, which a plan's `prefer` indexes: the table's,
+ * a `null` last. */
+export const armOrder = (shape: Extract<Shape, { readonly o: readonly Shape[] }>): readonly Shape[] => [...shape.o].sort((a, b) => Number(a.t === "null") - Number(b.t === "null"));
 
 /** The plans the tests make a body of every component under: each arm of an `or`, each segment kind. */
 export const PLANS: readonly Plan[] = [{ prefer: 0 }, { prefer: 1 }, { prefer: 2 }];
@@ -195,8 +201,8 @@ function make(shape: Shape, depth: number, minimal: boolean, plan: Plan, hint: H
     case "seg":
       return plan.prefer % 2 === 0 ? { text: "s-raw-text" } : { data: "s-raw-data", truncated: true };
     case "or": {
-      const sorted = [...shape.o].sort((a, b) => Number(a.t === "null") - Number(b.t === "null"));
-      const first = plan.prefer > 0 ? sorted[plan.prefer] : undefined;
+      const sorted = armOrder(shape);
+      const first = plan.force?.or === shape ? shape.o[plan.force.arm] : plan.prefer > 0 ? sorted[plan.prefer] : undefined;
       const order = first === undefined ? sorted : [first, ...sorted.filter((arm) => arm !== first)];
       for (const arm of order) {
         const made = synthetic(arm, depth + 1, minimal, plan, hint);
@@ -608,9 +614,35 @@ export interface Body {
 
 let made: readonly Body[] | undefined;
 
+/** The alternatives a shape holds itself (through its records, lists, maps and checks; not through a reference). */
+export function ownAlternatives(shape: Shape, out: Extract<Shape, { readonly o: readonly Shape[] }>[] = []): Extract<Shape, { readonly o: readonly Shape[] }>[] {
+  switch (shape.t) {
+    case "or":
+    case "all":
+      if (shape.t === "or") {
+        out.push(shape);
+      }
+      shape.o.forEach((arm) => ownAlternatives(arm, out));
+      return out;
+    case "arr":
+      ownAlternatives(shape.i, out);
+      (shape.pi ?? []).forEach((arm) => ownAlternatives(arm, out));
+      return out;
+    case "rec":
+      Object.values(shape.p).forEach((member) => ownAlternatives(member, out));
+      return out;
+    case "map":
+      ownAlternatives(shape.v, out);
+      (shape.pp ?? []).forEach(([, member]) => ownAlternatives(member, out));
+      return out;
+    default:
+      return out;
+  }
+}
+
 /** Every valid body the tests start from, each once: for every component of the table, under every
- * plan, in full and minimal (`synthetic`: built to reach every position), the orchard's answers and
- * the golden envelopes. */
+ * plan, in full and minimal (`synthetic`: built to reach every position), then every arm of an
+ * alternative past the plans' reach, forced (D434), the orchard's answers and the golden envelopes. */
 export function bodies(): readonly Body[] {
   if (made !== undefined) {
     return made;
@@ -630,6 +662,20 @@ export function bodies(): readonly Body[] {
         const value = synthetic(REF(name), 0, minimal, plan);
         if (value !== UNMADE) {
           add(name, `synthetic ${String(plan.prefer)}${minimal ? " minimal" : ""}`, value);
+        }
+      }
+    }
+  }
+  // Every arm of an alternative that `PLANS` does not reach (past their `prefer`s, in the order
+  // `synthetic` takes the arms), forced, in the component whose own shape holds it (D434:
+  // `DistributionPosition.columns`' five arms).
+  for (const [name, shape] of Object.entries(SHAPES)) {
+    for (const or of ownAlternatives(shape)) {
+      for (const taken of armOrder(or).slice(PLANS.length)) {
+        const arm = or.o.indexOf(taken);
+        const value = synthetic(REF(name), 0, false, { prefer: 0, force: { or, arm } });
+        if (value !== UNMADE) {
+          add(name, `synthetic arm ${String(arm)}`, value);
         }
       }
     }

@@ -15,7 +15,12 @@
  * `const` (strings compared, numbers never read: the box, D419); `anyOf`, `oneOf` and a type list
  * as alternatives; `allOf` as a conjunction whose first member gives the shape and whose others are
  * checks; the segments (`TextSegment | DataSegment`) as one node with their exact key sets; and the
- * `x-aibi-json` components (`OutputJson`) as any JSON value. The enum and const vocabularies are
+ * `x-aibi-json` components (`OutputJson`) as any JSON value; an empty closed object (exactly `properties:
+ * {}` and `additionalProperties: false`: `NoViewValues`) as a map of no entries (the `empty` builder,
+ * D434), as the types' generator renders it (`Record<string, never>`). The values models the
+ * document publishes at its top level (`x-aibi-values`) are roots beside the operations' answers,
+ * listed by `<id>@<version>` (`VALUES`, D434: what `typed.ts`' `valuesOf` walks a result's `values`
+ * by); an entry that is not exactly one `$ref` to a component fails. The enum and const vocabularies are
  * listed by their place (`VOCABULARIES`, for `text.tsx`'s `kindOf`), a fail-closed one (`Severity`)
  * is not enumerated by the walk (an unknown severity is read as `block`, never refused), and the
  * grammars of four id positions (`GRAMMARS`, for `idOf` and `choiceFor`, D432) are read from their
@@ -115,6 +120,7 @@ export const CONSUMES = {
   list: ["type", "items", "prefixItems"],
   record: ["type", "properties", "required", "additionalProperties"],
   map: ["type", "required", "additionalProperties", "patternProperties", "propertyNames"],
+  empty: ["type", "properties", "additionalProperties"],
   any: [],
   failClosed: ["type", "enum"],
 };
@@ -164,6 +170,19 @@ export const ANNOTATIONS = ["title", "description", "default", "x-aibi-computed"
 const CONDITIONS = new Set(["if", "then", "else", "not", "contains", "minContains", "maxContains"]);
 
 export class ShapeError extends Error {}
+
+/** Whether a schema is an empty closed object (D434): `properties: {}`, `additionalProperties: false`,
+ * `type`, and nothing else but annotations (`ANNOTATIONS`). @param {JsonObject} schema */
+function isEmptyClosed(schema) {
+  const members = schema["properties"];
+  return (
+    isObject(members) &&
+    Object.keys(members).length === 0 &&
+    schema["additionalProperties"] === false &&
+    // `Reflect.ownKeys`, as the census's own, is no read of a keyword (the observer's).
+    Reflect.ownKeys(schema).every((key) => typeof key === "string" && ((CONSUMES["empty"] ?? []).includes(key) || ANNOTATIONS.includes(key)))
+  );
+}
 
 /** @typedef {Record<string, unknown>} JsonObject */
 /**
@@ -518,7 +537,17 @@ export function builderOf(document, observer) {
     }
     const objectish = ["properties", "additionalProperties", "patternProperties", "propertyNames"].some((keyword) => Object.hasOwn(schema, keyword));
     if (type === "object" || (type === undefined && objectish)) {
-      return isObject(schema["properties"]) ? record(schema, at, check) : map(schema, at, check);
+      // A closed object with no member (`NoViewValues`, D434) is a map of no entries: what the types'
+      // generator renders it (`Record<string, never>`, a `BoxedMap` once boxed), so the table and the
+      // type agree. Exactly `type`, `properties: {}` and `additionalProperties: false`, beside
+      // annotations: any other keyword (`required`, `patternProperties`, `propertyNames`) leaves the
+      // node a record, read and censused as today.
+      const members = schema["properties"];
+      if (isEmptyClosed(schema)) {
+        census(schema, at, "empty");
+        return { t: "map", v: { t: "never" } };
+      }
+      return isObject(members) ? record(schema, at, check) : map(schema, at, check);
     }
     if (type === undefined) {
       census(schema, at, "any");
@@ -617,6 +646,18 @@ export function shapesOf(document, observer) {
   }
   component(`#/components/schemas/${REFUSALS}`, REFUSALS);
 
+  /** The values models the document publishes (D434), each analysis's at each version. @type {Record<string, string>} */
+  const values = {};
+  for (const [analysis, versions] of Object.entries(object(document["x-aibi-values"] ?? {}, "#/x-aibi-values"))) {
+    for (const [version, reference] of Object.entries(object(versions, `#/x-aibi-values/${analysis}`))) {
+      const ref = object(reference, `#/x-aibi-values/${analysis}/${version}`)["$ref"];
+      if (typeof ref !== "string" || Object.keys(object(reference, analysis)).length !== 1) {
+        throw new ShapeError(`x-aibi-values ${analysis}@${version}: a values model is one component`);
+      }
+      values[`${analysis}@${version}`] = component(ref, `x-aibi-values ${analysis}@${version}`);
+    }
+  }
+
   /** @type {Record<string, { p: string, m: number, x: string[] }>} */
   const grammars = {};
   for (const [name, [owner, member]] of GRAMMAR_POSITIONS) {
@@ -629,6 +670,7 @@ export function shapesOf(document, observer) {
   return {
     components: Object.fromEntries([...table].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
     operations,
+    values,
     vocabularies: Object.fromEntries([...vocabularies].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
     fallbacks: Object.fromEntries(FAIL_CLOSED),
     grammars,
@@ -722,7 +764,7 @@ function frozen<T>(value: T): T {
  * @param {string} text the document's own text, whose digest the file records
  */
 export function renderShapes(document, text) {
-  const { components, operations, vocabularies, fallbacks, grammars } = shapesOf(document);
+  const { components, operations, values, vocabularies, fallbacks, grammars } = shapesOf(document);
   const json = (/** @type {unknown} */ value) => JSON.stringify(value);
   const lines = [
     HEADER,
@@ -735,6 +777,8 @@ export function renderShapes(document, text) {
       .join("")}});\n`,
     `\n/** The component of each typed operation's 200 answer. */\n`,
     `export const OPERATIONS = frozen(${json(operations)} as const);\n`,
+    `\n/** The values model of each published analysis and version (D434), by \`<id>@<version>\`. */\n`,
+    `export const VALUES = frozen(${json(values)} as const);\n`,
     `\n/** The component of every other answer. */\n`,
     `export const REFUSALS = ${json(REFUSALS)};\n`,
     `\n/** The enum and const vocabularies of the answers, by place (a component, or its member's path). */\n`,

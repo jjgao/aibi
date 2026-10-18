@@ -32,6 +32,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 
 import aibi
+from aibi.core.analyses.registry import CORE
 from aibi.core.api import errors, openapi, openapi_normalise, openapi_vocabulary
 from aibi.core.api.app import create_app
 from aibi.core.api.chrome import PAGE_HEADERS
@@ -44,6 +45,7 @@ from aibi.core.operator.auth import encode_operator, hash_token, new_token
 from aibi.core.operator.router import OPERATOR_BODIES, UPLOAD_OPERATION, OperatorBody
 from aibi.core.schema import export, visible, vocabulary
 from aibi.core.schema.catalog import TOOL_MODELS
+from aibi.core.schema.export import SchemaNameError
 from aibi.core.schema.limits import MAX_BODY_BYTES
 from aibi.core.schema.operator import Refusals
 from aibi.core.schema.pack_api import PackRegistry
@@ -165,6 +167,9 @@ def reach(document: dict[str, Any]) -> tuple[set[str], set[str]]:
     for _, _, operation in operations(document):
         requests += [operation.get("requestBody", {}), operation.get("parameters", [])]
         responses.append(operation["responses"])
+    # D434: each published analysis's values model is a response's root, read from the document.
+    for versions in document.get(openapi.VALUES_KEY, {}).values():
+        responses += [{"$ref": reference["$ref"]} for reference in versions.values()]
     return closure(document, requests), closure(document, responses)
 
 
@@ -1087,7 +1092,12 @@ def test_only_known_extension_keys(document: dict[str, Any]) -> None:
             for item in node:
                 yield from keys(item)
 
-    assert set(keys(document)) == allowed
+    assert (
+        set(keys({key: value for key, value in document.items() if key != openapi.VALUES_KEY}))
+        == allowed
+    )
+    top = [key for key in document if key.startswith("x-")]
+    assert top == [openapi.VALUES_KEY]
     for name, build in export.SCHEMAS.items():
         assert set(keys(build())) <= {"x-aibi-data", "x-aibi-computed"}, name
 
@@ -1434,6 +1444,7 @@ def test_a_definition_name_is_one_definition_over_every_builder_s_output() -> No
         roots.add(openapi._response_model(route).__name__)
         if (request := openapi._request_model(route)) is not None:
             roots.add(request.__name__)
+    roots |= {model.__name__ for _, model in openapi.value_roots().values()}  # D434
     assert set(schemas) == roots
     assert roots <= set(found)
 
@@ -1719,3 +1730,40 @@ def test_every_request_number_is_classified(document: dict[str, Any]) -> None:
     sets = [set(given["positions"]) for given in classes().values()]
     assert sum(len(found) for found in sets) == len(set().union(*sets)) == 30
     assert request_numbers(document) == set().union(*sets)
+
+
+def test_the_value_roots_are_one_definition_read_alike_by_every_reader(
+    document: dict[str, Any],
+) -> None:
+    """D434 (amending D416): the value roots are ``openapi.value_roots()`` alone; the document's
+    ``x-aibi-values`` is exactly them, each the version and values model of its ``registry.CORE``
+    entry; ``directions`` and this file's ``reach`` read the document alike; and every value root
+    is a response's."""
+    roots = openapi.value_roots()
+    assert set(roots) == set(openapi.WEB_VALUES) <= set(CORE)
+    assert document[openapi.VALUES_KEY] == {
+        name: {version: {"$ref": f"{COMPONENTS}{model.__name__}"}}
+        for name, (version, model) in roots.items()
+    }
+    for name, (version, model) in roots.items():
+        assert (version, model) == (CORE[name].entry.version, CORE[name].values), name
+    requests, responses = openapi.directions(document)
+    assert (set(requests), set(responses)) == reach(document)
+    assert {model.__name__ for _, model in roots.values()} <= responses
+    # Controls: the document without its value roots leaves their components unreached, and
+    # ``directions`` without them disagrees with a reach that has them.
+    bare = {key: value for key, value in document.items() if key != openapi.VALUES_KEY}
+    unreached = set(components(document)) - set().union(*reach(bare))
+    assert {model.__name__ for _, model in roots.values()} <= unreached
+    assert openapi.directions(bare)[1] != reach(document)[1]
+
+
+def test_the_keyword_census_covers_the_value_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D434: publishing another analysis's values model is a reviewed change of its own, because
+    the document's keyword census (``openapi_vocabulary``) reads the value components as it reads
+    every other: ``compare.columns``' model uses keywords it does not list, and the document is
+    refused. The control: the listed roots alone pass."""
+    assert openapi.document()[openapi.VALUES_KEY]
+    monkeypatch.setattr(openapi, "WEB_VALUES", (*openapi.WEB_VALUES, "compare.columns"))
+    with pytest.raises(SchemaNameError, match=r"the document is refused:\nopenapi.json: gt at "):
+        openapi.document()

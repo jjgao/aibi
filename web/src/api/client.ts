@@ -54,6 +54,7 @@ export const REFUSALS = Object.freeze({
   notARoute: "A request goes to a route the client made, on this origin.",
   notFinite: "A request holds a number that is not finite.",
   notAChoice: "A document holds the choices and values of its own draft (D432).",
+  notAResult: "The values of a result are read from the result the typed answers gave (D434).",
   notCredential: "A credential the operator's client sends is not in its form; it was not sent.",
   sealed: "A body is read by the client's decoder alone (D419).",
   unsupported:

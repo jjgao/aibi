@@ -210,6 +210,7 @@ const D432_TEST_NAMES: Readonly<Record<string, string>> = {
   NUMBER_PINS: "the index gate's pins of the sanctioned predicates",
   OUTPUT_PINS: "the index gate's pins of what an export gives",
   signatureText: "the index gate's identity pins",
+  valuesGate: "the seam's surface gate's second root (D434)",
   classOf: "the property test's classifier of the corpus, held to the server's class (document-support.tsx)",
 };
 
@@ -247,6 +248,54 @@ describe("the names D432 gives exist (the class of MA-1 of #121 round 2, for the
     const refusals = [...PYTHON].find(([file]) => file.endsWith("/aibi/core/schema/refusals.py"))?.[1] ?? "";
     expect(refusals).toContain('LIMIT_EXCEEDED = "LIMIT_EXCEEDED"');
     expect([...SOURCES].filter(([file, text]) => !file.startsWith("web/tests/") && /\bchoiceOf\b/u.test(text)).map(([file]) => file)).toEqual([]);
+  });
+});
+
+/** The helpers of the tests D434 names, each declared in a test file alone. */
+const D434_TEST_NAMES: Readonly<Record<string, string>> = {
+  PLANS: "the bodies' plans of the typed answers' tests (typed-support.ts)",
+  INPUT_COUNTS: "the oracle's pinned counts of its inputs",
+  NUMBER_PINS: "the index gate's pins of the sanctioned predicates",
+  TEXT_PINS: "the index gate's pins of the takers of a server text",
+  ANNOTATIONS: "the generator's annotations, read by the server's pin from its source",
+  EXPORTS: "the index gate's reviewed list of exports",
+  signatureText: "the index gate's identity pins",
+  valuesGate: "the seam's surface gate's second root",
+  armsOf: "the oracle's walk of the arms a body takes",
+  armTakes: "the oracle's judge of an arm (m4 of #128)",
+  IDENTITY_DOORS: "the index gate's doors pinned by identity (m1 of #128's round 2)",
+};
+
+/** The names D434 gives that are no declaration of the web, each with why. */
+const D434_NOT_DECLARED: Readonly<Record<string, string>> = {
+  WeakMap: "a builtin",
+  patternProperties: "a JSON Schema keyword",
+  propertyNames: "a JSON Schema keyword",
+  "unread/analysis": "a read's kind and its cause, ValuesRead's words",
+  "unread/shape": "a read's kind and its cause, ValuesRead's words",
+  WEB_VALUES: "the server's, held by name below",
+  CORE: "the server's, held by name below",
+};
+
+describe("the names D434 gives exist (the class of MA-1 of #121 round 2, for the values seam)", () => {
+  const spans = spansOf(readFileSync(path.join(ROOT, "SPEC.md"), "utf8"), "D434", "v0.8.80");
+
+  it("names a good many symbols and files", () => {
+    expect(spans.length).toBeGreaterThan(30);
+    for (const span of ["valuesOf", "ValuesRead", "VALUES", "valuesGate", "fixtures/hostile_values/items.csv"]) {
+      expect(spans).toContain(span);
+    }
+  });
+
+  it("finds every identifier, constant and file D434 names in the repository, and no stale entry of its lists of exceptions", () => {
+    expect(stale(spans, SOURCES, PYTHON, FILES, D434_TEST_NAMES, D434_NOT_DECLARED)).toEqual({ missing: [], unused: [] });
+  });
+
+  it("the server's names it gives are the server's", () => {
+    const source = (end: string): string => [...PYTHON].find(([file]) => file.endsWith(end))?.[1] ?? "";
+    expect(source("/aibi/core/api/openapi.py")).toMatch(/^WEB_VALUES: tuple\[str, \.\.\.\] = /mu);
+    expect(source("/aibi/core/analyses/registry.py")).toMatch(/^CORE\b/mu);
+    expect([...SOURCES].some(([file, text]) => file === "web/src/api/typed.ts" && text.includes('readonly kind: "unread"; readonly cause: "analysis" | "shape"'))).toBe(true);
   });
 });
 

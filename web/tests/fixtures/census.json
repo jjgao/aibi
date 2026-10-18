@@ -24,6 +24,11 @@
       "const",
       "type"
     ],
+    "empty": [
+      "additionalProperties",
+      "properties",
+      "type"
+    ],
     "enum": [
       "enum",
       "type"
