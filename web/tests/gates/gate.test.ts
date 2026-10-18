@@ -13,10 +13,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   ASSET_EXTENSIONS,
   assetProblems,
+  displayModules,
+  displayProblems,
   gateProblems,
   type GateChunk,
+  type GateGraph,
   noWorker,
   operatorClosure,
+  operatorGate,
   OPERATOR_QUERIES,
   operatorProblem,
   packagesOf,
@@ -24,6 +28,7 @@ import {
 } from "../../plugins/gate";
 import { ASSET_FILE_NAMES, CHUNK_FILE_NAMES, ENTRY_FILE_NAMES, sanitizeFileName } from "../../plugins/names";
 import { EXTENSIONS } from "../../scripts/check-bundle.mjs";
+import { readTable } from "../../scripts/display-table.mjs";
 import { checkBudget, readPolicy } from "../../scripts/policy-files.mjs";
 import { buildConfig } from "../../vite.config";
 import { cleanup, gated, project, refused, virtual } from "./synthetic";
@@ -468,6 +473,103 @@ describe("the gate on real builds of a synthetic project", () => {
   });
 });
 
+describe("(f) which modules ship: the display table's names, from the bundler's graph (D427)", () => {
+  const root = "/w";
+  type Edges = { readonly imports?: readonly string[]; readonly dynamicImports?: readonly string[] };
+  const graphOf = (modules: Record<string, Edges>): GateGraph =>
+    new Map(
+      Object.entries(modules).map(([file, edges]) => [
+        file.startsWith("\0") ? file : `${root}/${file}`,
+        { importers: [], dynamicImporters: [], imports: (edges.imports ?? []).map((id) => (id.startsWith("\0") ? id : `${root}/${id}`)), dynamicImports: (edges.dynamicImports ?? []).map((id) => `${root}/${id}`) },
+      ]),
+    );
+  const documents = ["index.html", "operator.html"];
+
+  it("lists the modules of src/ outside src/api/ that the table does not name, in one message", () => {
+    const graph = graphOf({
+      "index.html": { imports: ["src/index.ts"] },
+      "operator.html": { imports: ["src/operator.ts"] },
+      "src/index.ts": { imports: ["src/named.ts", "src/b.ts", "src/api/index.ts", "node_modules/react/index.js", "src/style.css", "\0vite/preload-helper.js"], dynamicImports: ["src/lazy.tsx"] },
+      "src/operator.ts": { imports: ["src/a.ts"] },
+      "src/named.ts": {},
+      "src/a.ts": {},
+      "src/b.ts": {},
+      "src/lazy.tsx": {},
+      "src/api/index.ts": {},
+      "node_modules/react/index.js": {},
+      "src/style.css": {},
+      "\0vite/preload-helper.js": {},
+      "src/unreached.ts": {},
+    });
+    const problems = displayProblems(root, graph, documents, new Set(["src/index.ts", "src/operator.ts", "src/named.ts"]));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/a.ts, src/b.ts, src/lazy.tsx");
+    expect(problems[0]).not.toContain("src/unreached.ts");
+    expect(problems[0]).not.toContain("src/api/index.ts");
+    expect(problems[0]).not.toContain("src/style.css");
+    expect(displayProblems(root, graph, documents, new Set(["src/index.ts", "src/operator.ts", "src/named.ts", "src/a.ts", "src/b.ts", "src/lazy.tsx"]))).toEqual([]);
+  });
+
+  it("walks each document's closure (the catalogue's and the operator's alone)", () => {
+    const graph = graphOf({ "index.html": { imports: ["src/x.ts"] }, "operator.html": { imports: ["src/y.ts"] }, "src/x.ts": {}, "src/y.ts": {} });
+    expect(displayProblems(root, graph, ["index.html"], new Set())[0]).toMatch(/src\/x\.ts$/);
+    expect(displayProblems(root, graph, ["operator.html"], new Set())[0]).toMatch(/src\/y\.ts$/);
+  });
+
+  const NAMED = ["src/index.ts", "src/operator.ts", "src/catalogue/NotFound.tsx"] as const;
+  const SECRET = "export const secret = 'secret ' + Math.random();";
+  const NOT_FOUND = "export const nf = 'nf ' + Math.random();";
+  const SPELLINGS: readonly [string, Record<string, string>][] = [
+    [
+      "Q01: a package.json imports condition whose default is not the one the node condition names",
+      { "package.json": '{"name":"x","type":"module","imports":{"#nf":{"node":"./src/catalogue/NotFound.tsx","default":"./src/dataset/Secret.tsx"}}}', "src/index.ts": "void import('#nf');" },
+    ],
+    [
+      "Q02: an exact imports key after a pattern",
+      {
+        "package.json": '{"name":"x","type":"module","imports":{"#c/*":"./src/catalogue/*.tsx","#c/NotFound":"./src/dataset/Secret.tsx"}}',
+        "src/index.ts": "void import('#c/NotFound');",
+      },
+    ],
+    ["Q10: a package subpath that climbs back into src/", { "src/index.ts": "void import('scheduler/../../src/dataset/Secret.tsx');" }],
+    ["a plain relative import", { "src/index.ts": "void import('./dataset/Secret.tsx');" }],
+  ];
+
+  it.each(SPELLINGS)("refuses an unnamed Secret.tsx reached by %s, on a real build", async (_name, files) => {
+    const project_ = project({ "src/catalogue/NotFound.tsx": NOT_FOUND, "src/dataset/Secret.tsx": SECRET, ...files });
+    const error = await refused(project_, false, [], [], new Set(NAMED));
+    expect(error).toContain("src/dataset/Secret.tsx");
+    expect(error).toContain("the display table");
+  });
+
+  it.each(SPELLINGS)("passes the same project, %s, once the table names Secret.tsx", async (_name, files) => {
+    const project_ = project({ "src/catalogue/NotFound.tsx": NOT_FOUND, "src/dataset/Secret.tsx": SECRET, ...files });
+    const found = await gated(project_, false, [], [], new Set([...NAMED, "src/dataset/Secret.tsx"]));
+    expect("chunks" in found ? found.chunks.length : found.error).toBeGreaterThan(2);
+  });
+
+  it("makes no display check where no table is given (the synthetic projects of the other rules)", async () => {
+    const found = await gated(project({ "src/index.ts": "void import('./dataset/Secret.tsx');", "src/dataset/Secret.tsx": SECRET }));
+    expect("chunks" in found).toBe(true);
+  });
+
+  it.each(["production", "e2e"] as const)("holds the real tree to the table in %s mode: the build fails where a module of the bundle is unnamed", async (mode) => {
+    const config = buildConfig(mode);
+    const table = displayModules(readTable());
+    const names = new Set([...table].filter((name) => name !== "src/catalogue/Home.tsx"));
+    const plugins = ((config.plugins ?? []).flat() as Plugin[]).map((plugin) => (plugin.name === "aibi:operator-gate" ? operatorGate({ harness: mode === "e2e", display: names }) : plugin));
+    const saved = process.env["NODE_ENV"];
+    delete process.env["NODE_ENV"];
+    try {
+      await expect(build({ ...config, root: WEB, mode, configFile: false, logLevel: "silent", plugins, build: { ...config.build, write: false } })).rejects.toThrow(/src\/catalogue\/Home\.tsx/u);
+    } finally {
+      if (saved !== undefined) {
+        process.env["NODE_ENV"] = saved;
+      }
+    }
+  });
+});
+
 /** The six ways to ask Vite for a worker, each from the module that starts it. */
 const WORKER_FORMS: [string, string][] = [
   ["?worker", "import W from './w.ts?worker'; new W();"],
@@ -482,12 +584,16 @@ describe("the gate refuses any worker, through the skeleton's own configuration"
   /** A build of a synthetic project under `vite.config.ts`'s configuration of a mode. */
   async function built(root: string, mode: "production" | "e2e"): Promise<string | null> {
     const config = buildConfig(mode);
+    // The skeleton's own gate but for the display table's names (f), which are the real tree's:
+    // this project is a synthetic one, and the test is about the worker gate.
+    const plugins = ((config.plugins ?? []).flat() as Plugin[]).map((plugin) => (plugin.name === "aibi:operator-gate" ? operatorGate({ harness: mode === "e2e" }) : plugin));
     try {
       await build({
         ...config,
         root,
         configFile: false,
         logLevel: "silent",
+        plugins,
         build: { ...config.build, write: false },
       });
       return null;
@@ -559,9 +665,9 @@ describe("the skeleton's configuration", () => {
     process.env["AIBI_E2E"] = "true";
     try {
       expect(buildConfig("production").define).toEqual({ __AIBI_E2E__: "false" });
-      expect(gateOf("production")).toEqual({ harness: false });
+      expect(gateOf("production")).toEqual({ harness: false, display: displayModules(readTable()) });
       expect(buildConfig("e2e").define).toEqual({ __AIBI_E2E__: "true" });
-      expect(gateOf("e2e")).toEqual({ harness: true });
+      expect(gateOf("e2e")).toEqual({ harness: true, display: displayModules(readTable()) });
       expect(buildConfig("production").build?.outDir).toBe("dist");
       expect(buildConfig("e2e").build?.outDir).toBe("dist-e2e");
     } finally {
