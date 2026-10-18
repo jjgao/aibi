@@ -11,8 +11,8 @@
  * `handle`; the CSRF answer is not given at all). **Locked, the client holds no secret:** a lock
  * (idle, a refused token, too many refused tokens, the page hidden or restored) and the forget
  * action drop the token, the CSRF token and every handle alike. A session that was open stays
- * open on the server: its handle is gone with the lock, and taking it over is the CLI's until the
- * browser's take-over lands (D423).
+ * open on the server: its handle is gone with the lock, and `takeOver` takes it over again from
+ * a fresh dataset state (D425), as the CLI can.
  *
  * **The epoch.** Each lock, forget and unlock starts an epoch: it aborts every request in flight
  * (one `AbortController` an epoch) and an answer that comes back in a later epoch than its
@@ -40,18 +40,34 @@
  * never its message. A request whose outcome is unknown (`client.ts`'s `Unknown`, or `stale`) is
  * never sent again by the client.
  *
- * **The requests.** Typed per operation, and none takes a number (D423): the four operations that
- * would send one back (`take-over`, the `accept` edit, a proposal's rejection and a named
- * release's queue) wait for the request half; `change` takes the three edits that carry no
- * number (`remove`, `confirm`, `remove_descriptor`), checked again at run time, member by member,
- * and rebuilt; `withdraw` takes a release's manifest, never its label. Upload and erase are not
- * wired.
+ * **The requests.** Typed per operation, and none takes a number from its caller (D423, D425):
+ * `change` takes the three edits that carry no number (`remove`, `confirm`, `remove_descriptor`),
+ * checked again at run time, member by member, and rebuilt; `withdraw` takes a release's manifest,
+ * never its label. Upload and erase are not wired.
+ *
+ * **The four that send an id back, by provenance (D425).** `takeOver`, `rejectProposal`,
+ * `acceptProposal` and `queueAt` each take one decoded node, the one the id lives in (a dataset
+ * state's `session`, a queue's `proposals[]` element, a dataset state's `labels[]` element), and
+ * nothing else: no dataset, no handle, no number. Each reads the node's `Origin` (`origin.ts`,
+ * stamped by `send` as the answer was decoded) and refuses, sending nothing, a node without one
+ * (`node`: a copy, a literal, a node `exchange` decoded), one of another operation or path
+ * (`origin`), or one of an earlier era (`stale`: decoded before a lock, a forget or an unlock, or
+ * by another client); then reads the id from the member its feed names (`member`: no box there),
+ * through the grammar (`id`: `ids.ts`'s `requestId`, the one maker of a `RequestId`): all of that
+ * is `provenance.ts`'s `idAt`, **the one function that reads a box's text**, which this module
+ * imports and calls alone, with the name of the flow's position (`"path:proposal"`), never a feed
+ * (it imports no `textOf`, `requestId` or `originOf`: the lint refuses it, so that no member of this closure, whatever is added, reads a box's digits). The route and the
+ * body are built here, under the dataset the node's origin names. The take-over's
+ * `expected` is the node's own `draft`; the accept's handle and `expected` are the closure's, as a
+ * change's; the take-over's handle goes to the closure through the same `commit` as an open's, and
+ * never to the caller. A take-over or an accept whose outcome is unknown is never sent again.
  */
 import { isServerNumber } from "./box";
 import { type BodyArgument, CSRF_FORM, type Credentials, send, TOKEN_FORM, type Unknown } from "./client";
 import type { components } from "./generated/openapi";
 import * as routes from "./generated/routes";
 import type { JsonOut } from "./json";
+import { idAt } from "./provenance";
 import type { OperationId, Route } from "./route";
 
 type Schemas = components["schemas"];
@@ -71,7 +87,7 @@ export const NAME_LIMIT = 200;
 export const EDIT_LIMIT = 256;
 
 /** The trusted input events that are activity. */
-export const ACTIVITY_EVENTS = ["keydown", "pointerdown", "wheel", "touchstart"] as const;
+export const ACTIVITY_EVENTS = Object.freeze(["keydown", "pointerdown", "wheel", "touchstart"] as const);
 
 /** A session handle's form (D267). */
 const HANDLE_FORM = /^ses_[A-Za-z0-9_-]{43}$/u;
@@ -83,8 +99,12 @@ const DIGEST_FORM = /^sha256:[0-9a-f]{64}$/u;
  * refused tokens from this address, the page hidden, or the page restored from the cache. */
 export type LockReason = "start" | "forgotten" | "idle" | "token" | "failures" | "page" | "restored";
 
-/** What the client refused before sending anything. */
-export type Invalid = "token" | "name" | "dataset" | "manifest" | "edits" | "session";
+/** What the client refused before sending anything. For the four flows that send an id back
+ * (D425): `node`, a value the client did not decode and stamp (a copy of a node, a literal, a
+ * node `exchange` decoded, a box); `origin`, a node of another operation or path than the flow's
+ * feed; `stale`, a node of an earlier era; `member`, a node without the box (or, for a
+ * take-over, the draft) the flow reads; `id`, a box whose text is no request id. */
+export type Invalid = "token" | "name" | "dataset" | "manifest" | "edits" | "session" | "node" | "origin" | "stale" | "member" | "id";
 
 /** An operation's outcome. `answer`: a 2xx and its decoded body (an `open`'s without its
  * handle); `refused`: any other status, with its refusals' codes (and its body, for the screens'
@@ -108,7 +128,8 @@ export type Unlocked =
 
 /** The edits a browser's change carries: those with no number in them (D423). `set` and `put`
  * carry a JSON value (`DescriptorJson`, which can hold a number taken back from a response) and
- * `accept` a proposal's id: they wait for the request half. */
+ * `accept` a proposal's id: `set` and `put` wait for M5.3, and an accept goes through
+ * `acceptProposal` alone, which takes the proposal's node (D425). */
 export type Edit = Schemas["RemoveField"] | Schemas["Confirm"] | Schemas["RemoveDescriptor"];
 
 /** What the shell shows: whether the client is locked, and why. */
@@ -440,30 +461,45 @@ interface Session {
   draft: string;
 }
 
+/** The operator's client. Every member is a read-only property, and the object is frozen
+ * (`createCurator`): a member a caller could write is a place the caller hands the client a value,
+ * which the surface gate holds to its allow-list as it holds a parameter (`tests/gates/surface.ts`,
+ * D425); the type checker does not hold `readonly` through an alias, the freeze does. */
 export interface Curator {
   /** Unlock with a token and a name: the token is checked for its form, the name encoded, and
    * the CSRF token fetched with them; neither is kept unless the server accepts the token.
    * `cancel` aborts the request (an unknown outcome, `aborted`) and leaves the client locked,
    * holding nothing. */
-  unlock(token: string, name: string, cancel?: AbortSignal): Promise<Unlocked>;
+  readonly unlock: (token: string, name: string, cancel?: AbortSignal) => Promise<Unlocked>;
   /** Forget the token, the CSRF token and every handle, and abort every request in flight. */
-  forget(): void;
+  readonly forget: () => void;
   /** What the shell shows. */
-  view(): View;
+  readonly view: () => View;
   /** Listen for a change of `view`; gives the function that stops listening. */
-  subscribe(listener: () => void): () => void;
+  readonly subscribe: (listener: () => void) => () => void;
   /** Whether the client holds a session handle for a dataset (never the handle). */
-  holds(dataset: string): boolean;
+  readonly holds: (dataset: string) => boolean;
   /** Listen on the page: the idle lock's events, `pagehide` and `pageshow`. */
-  install(targets: Targets): void;
-  datasets(): Promise<Outcome>;
-  dataset(dataset: string): Promise<Outcome>;
-  queue(dataset: string): Promise<Outcome>;
-  open(dataset: string): Promise<Outcome>;
-  change(dataset: string, edits: readonly Edit[]): Promise<Outcome>;
-  publish(dataset: string): Promise<Outcome>;
-  discard(dataset: string): Promise<Outcome>;
-  withdraw(dataset: string, manifest: string): Promise<Outcome>;
+  readonly install: (targets: Targets) => void;
+  readonly datasets: () => Promise<Outcome>;
+  readonly dataset: (dataset: string) => Promise<Outcome>;
+  readonly queue: (dataset: string) => Promise<Outcome>;
+  readonly open: (dataset: string) => Promise<Outcome>;
+  readonly change: (dataset: string, edits: readonly Edit[]) => Promise<Outcome>;
+  readonly publish: (dataset: string) => Promise<Outcome>;
+  readonly discard: (dataset: string) => Promise<Outcome>;
+  readonly withdraw: (dataset: string, manifest: string) => Promise<Outcome>;
+  /** Take over the open session of a dataset (D415, D425): `session` is the `session` node of a
+   * dataset state this client read (`dataset`), the freshest it has; the request names its id and
+   * the draft it shows. A 409 is the outcome, never sent again: read the state afresh. */
+  readonly takeOver: (session: JsonOut) => Promise<Outcome>;
+  /** Reject an open proposal: an element of a queue's `proposals` this client read. */
+  readonly rejectProposal: (proposal: JsonOut) => Promise<Outcome>;
+  /** Accept a proposal into this client's open session of its dataset: an element of a queue's
+   * `proposals` this client read; the handle and `expected` are the client's own. */
+  readonly acceptProposal: (proposal: JsonOut) => Promise<Outcome>;
+  /** Read the queue as of a release: an element of a dataset state's `labels` this client read. */
+  readonly queueAt: (label: JsonOut) => Promise<Outcome>;
 }
 
 /** The operator's client (module docstring). `clocks` and `timers` are the page's but in the
@@ -472,6 +508,9 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
   let held: Held | null = null;
   const sessions = new Map<string, Session>();
   let epoch = 0;
+  // The era: an object each epoch replaces, which `send` records a 2xx answer's feeding nodes
+  // under, so that a node of an earlier epoch (or of another client) is never this era's (D425).
+  let era: object = Object.freeze({});
   let controller = new AbortController();
   let current: View = Object.freeze({ locked: true, reason: "start" });
   const listeners = new Set<() => void>();
@@ -489,6 +528,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
   /** Start a new epoch: abort what is in flight, so that its answers are dropped. */
   function nextEpoch(): void {
     epoch += 1;
+    era = Object.freeze({});
     controller.abort();
     controller = new AbortController();
   }
@@ -562,7 +602,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
     signal: AbortSignal,
     commit: (csrf: string) => void,
   ): Promise<string | Outcome> {
-    const sent = await send(routes.csrf(), { token: found.token, operator: found.operator, csrf: null }, signal);
+    const sent = await send(routes.csrf(), { token: found.token, operator: found.operator, csrf: null }, signal, era);
     if (at !== epoch) {
       return { kind: "unknown", reason: sent.kind === "unknown" ? sent.reason : "stale" };
     }
@@ -596,8 +636,9 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       return { kind: "locked", reason: current.reason ?? "start" };
     }
     const at = epoch;
+    const tag = era;
     const { signal } = controller;
-    let sent = await send(route, credentialsOf(found, found.csrf), signal, ...given);
+    let sent = await send(route, credentialsOf(found, found.csrf), signal, tag, ...given);
     for (let attempt = 0; ; attempt += 1) {
       if (at !== epoch) {
         return { kind: "unknown", reason: sent.kind === "unknown" ? sent.reason : "stale" };
@@ -621,7 +662,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (checkIdle()) {
         return { kind: "locked", reason: current.reason ?? "start" };
       }
-      sent = await send(route, credentialsOf(found, fresh), signal, ...given);
+      sent = await send(route, credentialsOf(found, fresh), signal, tag, ...given);
     }
   }
 
@@ -675,7 +716,35 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
     return route === null ? { kind: "invalid", what: "dataset" } : perform(route, asIs);
   }
 
-  return {
+  /** The commit of an answer that opens a session (an open, a take-over): its handle and draft to
+   * the closure, and the answer to the caller without the handle. */
+  function opened(dataset: string, outcome: Outcome): Outcome {
+    if (outcome.kind !== "answer") {
+      return outcome;
+    }
+    const handle = text(outcome.body, "handle", HANDLE_FORM);
+    const draft = text(outcome.body, "draft", DIGEST_FORM);
+    if (handle === null || draft === null) {
+      return { kind: "unknown", reason: "undecodable" };
+    }
+    sessions.set(dataset, { handle, draft });
+    return { kind: "answer", status: outcome.status, body: withoutHandle(outcome.body) };
+  }
+
+  /** The commit of an answer to a change (an accept included): its draft becomes the session's. */
+  function changed(dataset: string, session: Session, outcome: Outcome): Outcome {
+    if (outcome.kind === "answer") {
+      const draft = text(outcome.body, "draft", DIGEST_FORM);
+      if (draft === null) {
+        drop(dataset, session);
+        return { kind: "unknown", reason: "undecodable" };
+      }
+      session.draft = draft;
+    }
+    return dropOnConflict(dataset, session, outcome);
+  }
+
+  const client: Curator = {
     async unlock(token, name, cancel) {
       lock("forgotten");
       if (!TOKEN_FORM.test(token)) {
@@ -738,22 +807,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (route === null) {
         return { kind: "invalid", what: "dataset" };
       }
-      return perform(
-        route,
-        (outcome) => {
-          if (outcome.kind !== "answer") {
-            return outcome;
-          }
-          const handle = text(outcome.body, "handle", HANDLE_FORM);
-          const draft = text(outcome.body, "draft", DIGEST_FORM);
-          if (handle === null || draft === null) {
-            return { kind: "unknown", reason: "undecodable" };
-          }
-          sessions.set(dataset, { handle, draft });
-          return { kind: "answer", status: outcome.status, body: withoutHandle(outcome.body) };
-        },
-        {},
-      );
+      return perform(route, (outcome) => opened(dataset, outcome), {});
     },
     async change(dataset, edits) {
       const route = routed(() => routes.change({ dataset }));
@@ -771,21 +825,7 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       if (session === undefined) {
         return { kind: "invalid", what: "session" };
       }
-      return perform(
-        route,
-        (outcome) => {
-          if (outcome.kind === "answer") {
-            const draft = text(outcome.body, "draft", DIGEST_FORM);
-            if (draft === null) {
-              drop(dataset, session);
-              return { kind: "unknown", reason: "undecodable" };
-            }
-            session.draft = draft;
-          }
-          return dropOnConflict(dataset, session, outcome);
-        },
-        { handle: session.handle, expected: session.draft, edits: valid },
-      );
+      return perform(route, (outcome) => changed(dataset, session, outcome), { handle: session.handle, expected: session.draft, edits: valid });
     },
     publish: (dataset) => end(dataset, "publish"),
     discard: (dataset) => end(dataset, "discard"),
@@ -799,5 +839,63 @@ export function createCurator(clocks: Clocks = PAGE_CLOCKS, timers: Timers = PAG
       }
       return perform(route, asIs, { release: manifest });
     },
+    async takeOver(session) {
+      const found = idAt(session, "TakeOver.session", era);
+      if (typeof found === "string") {
+        return { kind: "invalid", what: found };
+      }
+      const expected = text(found.node, "draft", DIGEST_FORM);
+      if (expected === null) {
+        return { kind: "invalid", what: "member" };
+      }
+      const { dataset, id } = found;
+      const route = routed(() => routes.take_over({ dataset }));
+      if (route === null) {
+        return { kind: "invalid", what: "dataset" };
+      }
+      return perform(route, (outcome) => opened(dataset, outcome), { session: id, expected });
+    },
+    async rejectProposal(proposal) {
+      const found = idAt(proposal, "path:proposal", era);
+      if (typeof found === "string") {
+        return { kind: "invalid", what: found };
+      }
+      const { dataset, id } = found;
+      const route = routed(() => routes.reject({ dataset, proposal: id }));
+      return route === null ? { kind: "invalid", what: "dataset" } : perform(route, asIs, {});
+    },
+    async acceptProposal(proposal) {
+      const found = idAt(proposal, "Accept.proposal", era);
+      if (typeof found === "string") {
+        return { kind: "invalid", what: found };
+      }
+      const { dataset, id } = found;
+      const route = routed(() => routes.change({ dataset }));
+      if (route === null) {
+        return { kind: "invalid", what: "dataset" };
+      }
+      const session = sessions.get(dataset);
+      if (session === undefined) {
+        return { kind: "invalid", what: "session" };
+      }
+      return perform(route, (outcome) => changed(dataset, session, outcome), {
+        handle: session.handle,
+        expected: session.draft,
+        edits: [{ op: "accept", proposal: id }],
+      });
+    },
+    async queueAt(label) {
+      const found = idAt(label, "query:release", era);
+      if (typeof found === "string") {
+        return { kind: "invalid", what: found };
+      }
+      const { dataset, id } = found;
+      const route = routed(() => routes.queue({ dataset }, { release: id }));
+      return route === null ? { kind: "invalid", what: "dataset" } : perform(route, asIs);
+    },
   };
+  // Frozen, so that a member (a read-only property, which the type checker lets a caller write
+  // through an alias) is never replaced (m10 of round 3): the one thing the client retains and
+  // hands out, its view, is frozen already.
+  return Object.freeze(client);
 }

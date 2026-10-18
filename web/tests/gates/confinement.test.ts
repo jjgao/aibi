@@ -440,7 +440,7 @@ describe("graphProblems on a graph (the rule's own cells)", () => {
   it("holds the importers of an internal to the table, statically and dynamically apart", () => {
     const graph = graphOf(root, { ...base, "src/a.ts": { imports: ["src/api/box.ts"] }, "src/b.ts": { dynamicImports: ["src/api/box.ts"] } });
     expect(graphProblems(root, graph)).toEqual([
-      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts, src/api/curator.ts)'),
+      expect.stringContaining('src/api/box.ts is imported: the importer "/w/src/a.ts" is not one of src/api/box.ts\'s (src/api/decode.ts, src/api/index.ts, src/api/curator.ts, src/api/provenance.ts)'),
       expect.stringContaining('src/api/box.ts is imported dynamically: the importer "/w/src/b.ts"'),
     ]);
   });
@@ -577,7 +577,8 @@ describe("the table API_MODULES is the real graph's", () => {
   });
 
   it("states, for each importer the table lists, a reason", () => {
-    expect(API_MODULES.size).toBe(9);
+    // The request half's three (D425): ids.ts, origin.ts, provenance.ts.
+    expect(API_MODULES.size).toBe(12);
   });
 });
 
@@ -626,6 +627,12 @@ describe("the real builds' chunks hold the oracle's counter where only the harne
       expect(held, mode).toEqual([]);
       const operator = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.endsWith("/operator.html") === true);
       expect(operator?.moduleIds.some((id) => id.endsWith("/src/api/operator.ts")), mode).toBe(true);
+      // The request half's four flows (D425) are the operator client's: in no chunk the catalogue
+      // loads, by their names as the minifier keeps them, and in the operator entry's (the control).
+      const flows = ["takeOver", "rejectProposal", "acceptProposal", "queueAt"];
+      const catalogue = [...loaded].map((name) => byName.get(name)?.code ?? "").join("\n");
+      expect(flows.filter((flow) => catalogue.includes(flow)), mode).toEqual([]);
+      expect(flows.filter((flow) => operator?.code.includes(flow) !== true), mode).toEqual([]);
     }
   });
 });

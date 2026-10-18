@@ -37,13 +37,15 @@
 import { decode, DecodeError, sourceTextSupported } from "./decode";
 import type { operations } from "./generated/openapi";
 import type { JsonOut } from "./json";
-import { isRoute, type OperationId, type Route } from "./route";
+import { recorder } from "./provenance";
+import { datasetOf, type OperationId, type Route, urlOf } from "./route";
 
 /** The client's bound on a response body: 8 MiB, a client policy (no server rule is behind it). */
 export const RESPONSE_CAP_BYTES = 8 * 1024 * 1024;
 
-/** The words of each refusal: fixed, and never any text of the request or the answer. */
-export const REFUSALS = {
+/** The words of each refusal: fixed, and never any text of the request or the answer. (Frozen, as
+ * is every data object this module exports: `readonly` is not held through an alias.) */
+export const REFUSALS = Object.freeze({
   tooLarge: "The server's answer is larger than this client reads (8 MiB).",
   notJson: "The server's answer is not JSON.",
   notUtf8: "The server's answer is not UTF-8 text.",
@@ -54,7 +56,7 @@ export const REFUSALS = {
   sealed: "A body is read by the client's decoder alone (D419).",
   unsupported:
     "This browser cannot read the server's numbers exactly (it lacks JSON source text access). Use a current Chromium, Edge or Chrome.",
-} as const;
+} as const);
 
 export type Refusal = keyof typeof REFUSALS;
 
@@ -71,7 +73,7 @@ export class ClientError extends Error {
 }
 
 /** The body readers `start` seals: every one of the Fetch API's but the stream. */
-export const SEALED_READERS = ["json", "text", "arrayBuffer", "blob", "bytes", "formData"] as const;
+export const SEALED_READERS = Object.freeze(["json", "text", "arrayBuffer", "blob", "bytes", "formData"] as const);
 
 function sealed(): never {
   throw new TypeError(REFUSALS.sealed);
@@ -216,16 +218,29 @@ function prepared(route: Route, headers: Headers, body: unknown): RequestInit {
   return init;
 }
 
+/** The hook that records the provenance of an answer's nodes (D425): for a 2xx answer that
+ * `send` read (`era` given) to a route that names a dataset, `provenance.ts`'s recorder of the
+ * route's operation; for anything else none, so that an answer `exchange` read, or one of any other
+ * status, carries no origin. */
+function recording(route: Route, status: number, era: object | null): ((root: JsonOut) => void) | undefined {
+  const dataset = datasetOf(route);
+  if (era === null || dataset === null || status < 200 || status > 299) {
+    return undefined;
+  }
+  return recorder(route.operation, { dataset, era }) ?? undefined;
+}
+
 /** The answer to a sent request: refused unread if it is not JSON (by its type), else read
- * through the cap and the decoder. */
-async function received<O extends OperationId>(route: Route<O>, response: Response): Promise<Answer<O>> {
+ * through the cap and the decoder (`era`: `send`'s, the operator client's era, under which a 2xx
+ * answer's feeding nodes are recorded; `null` for `exchange`'s). */
+async function received<O extends OperationId>(route: Route<O>, response: Response, era: object | null): Promise<Answer<O>> {
   const type = response.headers.get("Content-Type");
   if (type === null || !/^application\/json\s*(?:;|$)/iu.test(type)) {
     await response.body?.cancel();
     throw new ClientError("notJson");
   }
   const text = await readCapped(response);
-  return { operation: route.operation, status: response.status, body: decode(text) };
+  return { operation: route.operation, status: response.status, body: decode(text, recording(route, response.status, era)) };
 }
 
 /** Send a request to a route `routes.ts` made, with the operation's JSON body (its type the
@@ -235,12 +250,13 @@ async function received<O extends OperationId>(route: Route<O>, response: Respon
  * (`curator.ts`) calls and nothing else may (the lint, the import-graph test and the build's
  * gate). An answer that is not JSON (by its type) is refused unread. */
 export async function exchange<O extends OperationId>(route: Route<O>, ...given: BodyArgument<O>): Promise<Answer<O>> {
-  if (!isRoute(route) || !/^\/(?:api|operator)\/[^\\]*$/u.test(route.url) || route.url.includes("//")) {
+  const url = urlOf(route);
+  if (url === null || !/^\/(?:api|operator)\/[^\\]*$/u.test(url) || url.includes("//")) {
     throw new ClientError("notARoute");
   }
   const [body] = given;
   const init = prepared(route, new Headers(), body);
-  return received(route, await fetch(route.url, init));
+  return received(route, await fetch(url, init), null);
 }
 
 /** What the operator's client sends beside a request (D423): the curator token (as
@@ -254,14 +270,14 @@ export interface Credentials {
 }
 
 /** The curator token's form (D261): `aibi_` and 43 base64url characters. */
-export const TOKEN_FORM = /^aibi_[A-Za-z0-9_-]{43}$/u;
+export const TOKEN_FORM = Object.freeze(/^aibi_[A-Za-z0-9_-]{43}$/u);
 
 /** An `Aibi-Operator` value's form (D262), upper-case hexadecimal alone (the one encoding the
  * server accepts). */
-export const OPERATOR_FORM = /^(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+$/u;
+export const OPERATOR_FORM = Object.freeze(/^(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+$/u);
 
 /** A CSRF token's form (D263): base64url of an HMAC-SHA256, 43 characters. */
-export const CSRF_FORM = /^[A-Za-z0-9_-]{43}$/u;
+export const CSRF_FORM = Object.freeze(/^[A-Za-z0-9_-]{43}$/u);
 
 /** Why the outcome of a request that may have reached the server is unknown (D423): its `fetch`
  * failed (`network`: no answer came, which says nothing of whether the server acted), the client
@@ -297,7 +313,8 @@ function underOperator(url: string): boolean {
 
 /** Send an operator request (D423): to a route `routes.ts` made under this origin's `/operator/`
  * alone, with the credentials as headers (each refused unsent if it is not in its form, in fixed
- * words that hold none of it), aborted with `signal`. Never throws once the request may have
+ * words that hold none of it), aborted with `signal`. A 2xx answer's nodes that feed a request id
+ * are recorded under the route's dataset and `era`, the operator client's (D425). Never throws once the request may have
  * left: a failed `fetch`, an abort and an answer that cannot be read are an unknown outcome,
  * `{kind: "unknown"}`, which the caller never sends again by itself. A route elsewhere, a
  * credential not in its form and a body with a number that is not finite throw, sending
@@ -306,9 +323,11 @@ export async function send<O extends OperationId>(
   route: Route<O>,
   credentials: Credentials,
   signal: AbortSignal,
+  era: object,
   ...given: BodyArgument<O>
 ): Promise<Sent<O>> {
-  if (!isRoute(route) || !underOperator(route.url)) {
+  const url = urlOf(route);
+  if (url === null || !underOperator(url)) {
     throw new ClientError("notARoute");
   }
   const { token, operator, csrf } = credentials;
@@ -324,12 +343,12 @@ export async function send<O extends OperationId>(
   init.signal = signal;
   let response: Response;
   try {
-    response = await fetch(route.url, init);
+    response = await fetch(url, init);
   } catch {
     return { kind: "unknown", reason: signal.aborted ? "aborted" : "network" };
   }
   try {
-    return { kind: "answer", answer: await received(route, response) };
+    return { kind: "answer", answer: await received(route, response, era) };
   } catch (error) {
     if (signal.aborted) {
       return { kind: "unknown", reason: "aborted" };

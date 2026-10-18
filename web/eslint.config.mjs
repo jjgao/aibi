@@ -42,9 +42,13 @@
  * destructured keys and aliases (`const j = JSON`); so are unary `+`, every bitwise operator,
  * `.constructor`, `Object.assign`, `Object.defineProperty` and the like, a computed member named by
  * a template, a dynamic `import()` of a name not written out, and every type assertion
- * (`consistent-type-assertions: never`, which `src/api/decode.ts` and `src/api/box.ts` alone
- * escape). Outside `src/api/`, every import of the client is of `src/api/index.ts`; inside it,
- * `box` and `textOf` are `decode.ts`'s alone and `decode` and `revive` `client.ts`'s alone. The
+ * (`consistent-type-assertions: never`, which `src/api/decode.ts`, `src/api/box.ts` and
+ * `src/api/ids.ts` alone escape). Outside `src/api/`, every import of the client is of
+ * `src/api/index.ts`; inside it, each internal is its owner's alone (`API_INTERNALS`: `box`
+ * `decode.ts`'s, `decode` and `revive` `client.ts`'s, and the request half's, D425: `textOf`
+ * `decode.ts`'s and `provenance.ts`'s, so that one function, `idAt`, reads a box's text; `requestId`,
+ * `originOf` and `stamp` `provenance.ts`'s, `idAt` `curator.ts`'s, `recorder`, `urlOf` and
+ * `datasetOf` `client.ts`'s). The
  * box makes every conversion throw at run time besides; the lint is defence in depth. The `api/` import patterns match without regard to case (the rule's default for a `regex`, `caseSensitive: false`, which the corpus holds: `./API/Box`), as a case-insensitive file system resolves them.
  *
  * **What the lint sees, and what it does not (D419).** It reads names written out: an identifier
@@ -457,21 +461,41 @@ const NUMBER_SYNTAX = [
   { selector: "ImportExpression:not([source.type='Literal'])", message: IMPORT },
 ];
 
+/** No dynamic `import()` in `src/api/` (MA3 of round 3): an internal's owner is its static
+ * importer, and a dynamic import reaches a module's names past `no-restricted-imports`. No module of
+ * `src/api/` has one. @type {Restriction[]} */
+const API_IMPORT_SYNTAX = [{ selector: "ImportExpression", message: "No dynamic import in src/api/: each internal is its owner's alone, by a static import (D425)." }];
+
 /** The internals of `src/api/`: each module's names that its owner alone imports, within
  * `src/api/` (outside it, every import is of the index, or of the modules the operator entry and
  * the harness name). */
 const API_INTERNALS = [
-  { module: "box", names: ["box", "textOf"], owners: ["src/api/decode.ts"], message: "box and textOf are decode.ts's alone (D419)." },
+  { module: "box", names: ["box"], owners: ["src/api/decode.ts"], message: "box is decode.ts's alone (D419)." },
+  {
+    module: "box",
+    names: ["textOf"],
+    owners: ["src/api/decode.ts", "src/api/provenance.ts"],
+    message: "textOf, the reading of a box's text, is decode.ts's and provenance.ts's idAt alone: no member of the operator client reads a box's digits (D425).",
+  },
+  { module: "ids", names: ["requestId"], owners: ["src/api/provenance.ts"], message: "requestId, the one maker of a RequestId, is provenance.ts's idAt's alone (D425)." },
+  { module: "origin", names: ["stamp"], owners: ["src/api/provenance.ts"], message: "stamp is provenance.ts's alone: a node is stamped as it is decoded (D425)." },
+  { module: "origin", names: ["originOf"], owners: ["src/api/provenance.ts"], message: "originOf is provenance.ts's idAt's alone: a node's provenance is read where its id is (D425)." },
+  { module: "provenance", names: ["recorder"], owners: ["src/api/client.ts"], message: "recorder is client.ts's alone: send records a 2xx answer's feeding nodes (D425)." },
+  { module: "provenance", names: ["idAt"], owners: ["src/api/curator.ts"], message: "idAt, the one function that reads a box's text, is curator.ts's four flows' alone (D425)." },
+  { module: "route", names: ["urlOf", "datasetOf"], owners: ["src/api/client.ts"], message: "a route's URL and dataset are client.ts's alone: no component reads a URL (D425)." },
   { module: "decode", names: ["decode", "revive"], owners: ["src/api/client.ts"], message: "decode is client.ts's alone (D419)." },
   { module: "client", names: ["send"], owners: ["src/api/curator.ts"], message: "send, which sets the operator's credentials, is curator.ts's alone (D423)." },
   { module: "curator", names: ["createCurator"], owners: ["src/api/operator.ts"], message: "createCurator is operator.ts's alone: the page has one operator client (D423)." },
 ];
 
-/** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns.
+/** `no-restricted-imports`' options for a module of `src/api/`: every internal but those it owns. A
+ * module is named by every spelling the resolver maps to it: none, `.ts` and `.js` (`moduleResolution:
+ * bundler` reads `./box.js` as `./box.ts`, which a pattern of the first two alone let pass, m15 of
+ * round 4).
  * @param {string | null} owner */
 const internals = (owner) => ({
   patterns: API_INTERNALS.filter(({ owners }) => owner === null || !owners.includes(owner)).map(({ module, names, message }) => ({
-    regex: `(^|/)${module}(\\.ts)?$`,
+    regex: `(^|/)${module}(\\.(ts|js))?$`,
     importNames: names,
     message,
   })),
@@ -607,21 +631,29 @@ export default defineConfig(
       ...SOURCE_RULES,
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [IO_NAMES, IO], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(false),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...IO_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX],
       "aibi/page-objects": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-restricted-imports": ["error", internals(null)],
     },
   },
   {
-    // The decoder and the box: the one type assertion each.
-    files: ["src/api/decode.ts", "src/api/box.ts"],
+    // The decoder, the box and the request ids' grammar: the one type assertion each.
+    files: ["src/api/decode.ts", "src/api/box.ts", "src/api/ids.ts"],
     rules: {
       "@typescript-eslint/consistent-type-assertions": "off",
     },
   },
+  {
+    // The provenance brand's return override (D425): a base class whose constructor returns its
+    // argument, so that the subclass's private field lands on the decoded node.
+    files: ["src/api/origin.ts"],
+    rules: {
+      "@typescript-eslint/no-extraneous-class": ["error", { allowConstructorOnly: true }],
+    },
+  },
   // Each internal's owner imports it (`API_INTERNALS`).
-  ...API_INTERNALS.flatMap(({ owners }) => owners).map((owner) => ({
+  ...[...new Set(API_INTERNALS.flatMap(({ owners }) => owners))].map((owner) => ({
     files: [owner],
     rules: { "@typescript-eslint/no-restricted-imports": /** @type {["error", object]} */ (["error", internals(owner)]) },
   })),
@@ -631,7 +663,7 @@ export default defineConfig(
     rules: {
       "no-restricted-globals": globals([SINK_GLOBALS, SINK], [STORAGE_NAMES, STORE]),
       "no-restricted-properties": properties(true),
-      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX],
+      "no-restricted-syntax": ["error", ...SINK_SYNTAX, ...STORAGE_SYNTAX, ...JSON_READER_SYNTAX, ...GLOB_SYNTAX, ...AMBIENT_SYNTAX, ...REQUIRE_SYNTAX, ...PATCH_SYNTAX, ...API_IMPORT_SYNTAX],
       "aibi/page-objects": "error",
     },
   },

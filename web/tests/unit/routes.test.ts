@@ -1,12 +1,14 @@
 /**
- * Routes (D419): a parameter is percent-encoded whole and refused if empty, `.` or `..`; a number
- * is a safe whole number's digits; a query keeps its order and leaves out what has no value; the
- * generated functions build each operation's URL from its template.
+ * Routes (D419, D425): a parameter is percent-encoded whole and refused if empty, `.` or `..`; a
+ * number is a safe whole number's digits; a query keeps its order and leaves out what has no value;
+ * the generated functions build each operation's URL from its template, held with the dataset in
+ * private fields that `urlOf` and `datasetOf` alone read.
  */
 import { describe, expect, it } from "vitest";
 
 import * as routes from "../../src/api/generated/routes";
-import { isRoute, REFUSED_SEGMENT, route, search, segment } from "../../src/api/route";
+import { type RequestId, requestId } from "../../src/api/ids";
+import { datasetOf, REFUSED_SEGMENT, route, search, segment, urlOf } from "../../src/api/route";
 
 describe("segment", () => {
   it.each([
@@ -58,35 +60,64 @@ describe("search", () => {
 });
 
 describe("the generated routes", () => {
-  it("build each operation's URL and method", () => {
-    expect(routes.health()).toEqual({ operation: "health", method: "GET", url: "/api/health" });
-    expect(routes.search_catalog()).toEqual({ operation: "search_catalog", method: "POST", url: "/api/tools/search_catalog" });
-    expect(routes.descriptor({ dataset: "shop", descriptor: "orders/total" }, { release: "draft" }).url).toBe(
+  const id = (text: string): RequestId => {
+    const made = requestId(text);
+    if (made === null) {
+      throw new Error("no id");
+    }
+    return made;
+  };
+
+  it("build each operation's URL and method, and hold the dataset their path names", () => {
+    expect(routes.health()).toEqual({ operation: "health", method: "GET" });
+    expect(urlOf(routes.health())).toBe("/api/health");
+    expect(datasetOf(routes.health())).toBe(null);
+    expect(urlOf(routes.search_catalog())).toBe("/api/tools/search_catalog");
+    expect(urlOf(routes.descriptor({ dataset: "shop", descriptor: "orders/total" }, { release: "draft" }))).toBe(
       "/operator/datasets/shop/descriptors/orders%2Ftotal?release=draft",
     );
-    expect(routes.descriptor({ dataset: "shop", descriptor: "x" }).url).toBe("/operator/datasets/shop/descriptors/x");
-    expect(routes.queue({ dataset: "shop" }, { release: 12 }).url).toBe("/operator/datasets/shop/queue?release=12");
-    expect(routes.reject({ dataset: "shop", proposal: 3 })).toEqual({
-      operation: "reject",
-      method: "POST",
-      url: "/operator/datasets/shop/proposals/3/reject",
-    });
-    expect(routes.take_over({ dataset: "shop" }).url).toBe("/operator/datasets/shop/session/take-over");
-    expect(routes.upload({ dataset: "shop" }, { extension: ".csv" }).url).toBe("/operator/datasets/shop/uploads?extension=.csv");
+    expect(urlOf(routes.descriptor({ dataset: "shop", descriptor: "x" }))).toBe("/operator/datasets/shop/descriptors/x");
+    expect(urlOf(routes.queue({ dataset: "shop" }, { release: id("12") }))).toBe("/operator/datasets/shop/queue?release=12");
+    const reject = routes.reject({ dataset: "shop", proposal: id("3") });
+    expect(reject).toEqual({ operation: "reject", method: "POST" });
+    expect(urlOf(reject)).toBe("/operator/datasets/shop/proposals/3/reject");
+    expect(datasetOf(reject)).toBe("shop");
+    expect(urlOf(routes.take_over({ dataset: "shop" }))).toBe("/operator/datasets/shop/session/take-over");
+    expect(urlOf(routes.upload({ dataset: "shop" }, { extension: ".csv" }))).toBe("/operator/datasets/shop/uploads?extension=.csv");
+    expect(datasetOf(routes.dataset_state({ dataset: "a/b" }))).toBe("a/b");
   });
 
   it("refuse a parameter that would climb or vanish", () => {
     expect(() => routes.descriptor({ dataset: "shop", descriptor: ".." })).toThrow(REFUSED_SEGMENT);
     expect(() => routes.dataset_state({ dataset: "." })).toThrow(REFUSED_SEGMENT);
-    expect(() => routes.reject({ dataset: "shop", proposal: 0.5 })).toThrow(REFUSED_SEGMENT);
     expect(() => routes.dataset_state({ dataset: "\ud800" })).toThrow(new RangeError(REFUSED_SEGMENT));
   });
 
-  it("are recorded and frozen; a lookalike is not", () => {
-    const made = routes.health();
-    expect(isRoute(made)).toBe(true);
+  it("are frozen, and their URL and dataset are no property: a lookalike or a copy is no route (D425)", () => {
+    const made = routes.queue({ dataset: "shop" }, { release: id("12") });
     expect(Object.isFrozen(made)).toBe(true);
-    expect(isRoute({ ...made })).toBe(false);
-    expect(isRoute(route("health", "GET", "/api/health"))).toBe(true);
+    expect(Object.isFrozen(Object.getPrototypeOf(made))).toBe(true);
+    expect(Reflect.ownKeys(made)).toEqual(["operation", "method"]);
+    expect("url" in made).toBe(false);
+    expect("dataset" in made).toBe(false);
+    // @ts-expect-error -- a route has no readable URL (D425, m9)
+    expect(made.url).toBe(undefined);
+    expect(JSON.stringify(made)).toBe('{"operation":"queue","method":"GET"}');
+    for (const copy of [{ ...made }, structuredClone(made), Object.create(made) as object, new Proxy(made, {}), { operation: "queue", method: "GET", url: "/operator/datasets/shop/queue?release=12" }]) {
+      expect(urlOf(copy)).toBe(null);
+      expect(datasetOf(copy)).toBe(null);
+    }
+    for (const other of [null, undefined, 1, "x", Symbol("s"), () => undefined]) {
+      expect(urlOf(other)).toBe(null);
+      expect(datasetOf(other)).toBe(null);
+    }
+    expect(urlOf(route("health", "GET", "/api/health"))).toBe("/api/health");
+  });
+
+  it("take no plain number at a request id's position, at compile time (D425, m6)", () => {
+    // @ts-expect-error -- a plain number is no RequestId
+    expect(() => routes.reject({ dataset: "shop", proposal: 3 })).not.toThrow();
+    // @ts-expect-error -- a plain number is no RequestId
+    expect(urlOf(routes.queue({ dataset: "shop" }, { release: 2 }))).toBe("/operator/datasets/shop/queue?release=2");
   });
 });

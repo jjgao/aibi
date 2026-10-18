@@ -35,7 +35,7 @@ const FIXTURES = path.join(WEB, "..", "fixtures");
 
 /** The datasets each main server holds: the lending library (`fixtures/library`, without its
  * formats and README), and a small CSV dataset for each test that opens a session. */
-export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn"] as const;
+export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals"] as const;
 
 
 async function freePort(): Promise<number> {

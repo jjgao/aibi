@@ -1,8 +1,10 @@
 /**
  * The epoch against every timing (D423; n1 of the review of the request half's plan): a brute
  * force over where a lock falls relative to a late answer, for each operation that writes to the
- * client's closure (`unlock`, `open`, `change`, `publish`, `discard`) and one that does not
- * (`withdraw`). The answer is late and ignores the abort (a server that answers anyway); the lock
+ * client's closure (`unlock`, `open`, `change`, `publish`, `discard`, and the request half's
+ * `takeOver` and `acceptProposal`, D425) and those that do not (`withdraw`, `rejectProposal`,
+ * `queueAt`); the request half's take the node they send back from, read before the late
+ * request. The answer is late and ignores the abort (a server that answers anyway); the lock
  * is a forget, a `pagehide`, the idle timer past the limit, or a 401 to another request of the
  * same epoch (for `unlock`, a forget or a `pagehide`: the client is locked while it unlocks, so
  * neither the idle timer nor another request of its epoch exists); it falls before the answer arrives, or after it, at every microtask from 0 to 80,
@@ -17,6 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCurator, type Curator, IDLE_LIMIT_MS, type Outcome } from "../../src/api/curator";
+import type { JsonOut } from "../../src/api/json";
 
 const TOKEN = `aibi_${"T0k-_n".repeat(7)}Q`;
 const CSRF = `${"CsRf-_".repeat(7)}Z`;
@@ -24,6 +27,12 @@ const HANDLE = `ses_${"HaNdLe".repeat(7)}X`;
 const DRAFT = `sha256:${"a".repeat(64)}`;
 const DRAFT_2 = `sha256:${"b".repeat(64)}`;
 const MANIFEST = `sha256:${"c".repeat(64)}`;
+const STATE = `{"dataset":"d","latest":2,"labels":[{"label":2,"manifest":"${MANIFEST}","status":"published"}],"session":{"session":7,"base":"${MANIFEST}","draft":"${DRAFT}","opened_by":"operator:Ada"}}`;
+const QUEUE = `{"dataset":"d","release":"${MANIFEST}","label":2,"fields":[],"undeclared":[],"proposals":[{"id":4,"descriptor":"t","pointer":"/label","value":"T","remove":false,"proposer":"agent:x","at":"2026-01-01T00:00:00Z","release":"${MANIFEST}","stale":false,"accepted_in_draft":false}],"notes":[],"truncated":0}`;
+
+function text(status: number, body: string): Response {
+  return new Response(body, { status, headers: { "Content-Type": "application/json" } });
+}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -77,6 +86,15 @@ function server(request: Request): Response {
       return json(200, { dataset: "d", outcome: "discarded" });
     case "POST /operator/datasets/d/withdraw":
       return json(200, { dataset: "d", labels: [] });
+    case "GET /operator/datasets/d":
+      return text(200, STATE);
+    case "GET /operator/datasets/d/queue":
+    case "GET /operator/datasets/d/queue?release=2":
+      return text(200, QUEUE);
+    case "POST /operator/datasets/d/session/take-over":
+      return json(200, { dataset: "d", session: 7, base: MANIFEST, draft: DRAFT, handle: HANDLE });
+    case "POST /operator/datasets/d/proposals/4/reject":
+      return json(200, { dataset: "d", proposal: 4 });
     default:
       return json(200, { datasets: [] });
   }
@@ -135,16 +153,57 @@ function rig(): Rig {
   };
 }
 
-type Operation = "unlock" | "open" | "change" | "publish" | "discard" | "withdraw";
+type Operation = "unlock" | "open" | "change" | "publish" | "discard" | "withdraw" | "takeOver" | "rejectProposal" | "acceptProposal" | "queueAt";
 type Lock = "forget" | "pagehide" | "idle" | "401";
 
-const OPERATIONS: Readonly<Record<Operation, { readonly key: string; readonly session: boolean; readonly run: (client: Curator) => Promise<unknown> }>> = {
+/** A member of a decoded answer's body, by a path of keys. */
+function pick(outcome: Outcome, ...keys: (string | number)[]): JsonOut {
+  let current: unknown = outcome.kind === "answer" ? outcome.body : null;
+  for (const key of keys) {
+    current = typeof current === "object" && current !== null ? (Reflect.get(current, key) as unknown) : null;
+  }
+  return current as JsonOut;
+}
+
+interface Plan {
+  readonly key: string;
+  readonly session: boolean;
+  /** What the operation sends back from, read before it runs (the request half's). */
+  readonly prepare?: (client: Curator) => Promise<JsonOut>;
+  readonly run: (client: Curator, node: JsonOut) => Promise<unknown>;
+}
+
+const OPERATIONS: Readonly<Record<Operation, Plan>> = {
   unlock: { key: "GET /operator/csrf", session: false, run: (client) => client.unlock(TOKEN, "Ada") },
   open: { key: "POST /operator/datasets/d/session/open", session: false, run: (client) => client.open("d") },
   change: { key: "POST /operator/datasets/d/session/change", session: true, run: (client) => client.change("d", [{ op: "confirm", descriptor: "t" }]) },
   publish: { key: "POST /operator/datasets/d/session/publish", session: true, run: (client) => client.publish("d") },
   discard: { key: "POST /operator/datasets/d/session/discard", session: true, run: (client) => client.discard("d") },
   withdraw: { key: "POST /operator/datasets/d/withdraw", session: false, run: (client) => client.withdraw("d", MANIFEST) },
+  takeOver: {
+    key: "POST /operator/datasets/d/session/take-over",
+    session: false,
+    prepare: async (client) => pick(await client.dataset("d"), "session"),
+    run: (client, node) => client.takeOver(node),
+  },
+  rejectProposal: {
+    key: "POST /operator/datasets/d/proposals/4/reject",
+    session: false,
+    prepare: async (client) => pick(await client.queue("d"), "proposals", 0),
+    run: (client, node) => client.rejectProposal(node),
+  },
+  acceptProposal: {
+    key: "POST /operator/datasets/d/session/change",
+    session: true,
+    prepare: async (client) => pick(await client.queue("d"), "proposals", 0),
+    run: (client, node) => client.acceptProposal(node),
+  },
+  queueAt: {
+    key: "GET /operator/datasets/d/queue?release=2",
+    session: false,
+    prepare: async (client) => pick(await client.dataset("d"), "labels", 0),
+    run: (client, node) => client.queueAt(node),
+  },
 };
 
 const LOCKS: readonly Lock[] = ["forget", "pagehide", "idle", "401"];
@@ -169,13 +228,14 @@ async function trial(operation: Operation, lock: Lock, timing: number | "before"
   if (plan.session) {
     await client.open("d");
   }
+  const node = plan.prepare === undefined ? null : await plan.prepare(client);
   let other: Promise<unknown> = Promise.resolve();
   if (lock === "401") {
     holding.add("GET /operator/datasets");
     other = client.datasets();
   }
   holding.add(plan.key);
-  const running = plan.run(client);
+  const running = plan.run(client, node);
   await vi.waitFor(() => {
     expect(held.has(plan.key)).toBe(true);
   });
@@ -274,13 +334,16 @@ describe("what a caller is given (n8)", () => {
     answer = server;
     const { client, idle } = rig();
     await client.unlock(TOKEN, "Ada");
-    if (OPERATIONS[operation as Operation].session) {
+    const plan = OPERATIONS[operation as Operation];
+    if (plan.session) {
       await client.open("d");
     }
+    const node = plan.prepare === undefined ? null : await plan.prepare(client);
     idle();
     const before = requests.length;
-    const outcome = (await OPERATIONS[operation as Operation].run(client)) as Outcome;
-    expect(outcome.kind === "locked" || (outcome.kind === "invalid" && outcome.what === "session")).toBe(true);
+    const outcome = (await plan.run(client, node)) as Outcome;
+    // The timer's lock starts an era: a node read before it is stale (D425).
+    expect(outcome.kind === "locked" || (outcome.kind === "invalid" && (outcome.what === "session" || outcome.what === "stale"))).toBe(true);
     expect(requests.length).toBe(before);
     expect(client.view()).toEqual({ locked: true, reason: "idle" });
   });

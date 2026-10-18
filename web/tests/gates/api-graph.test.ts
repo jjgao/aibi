@@ -9,21 +9,31 @@
  * - Outside `src/api/`, every import, re-export or dynamic import that resolves into `src/api/`
  *   resolves to `src/api/index.ts` (the harness's also to `oracle.ts`), and no file uses
  *   `import.meta.glob`, which resolves modules no specifier names.
- * - The box's internals (`box`, `textOf`) are named, through any alias or namespace, in
- *   `src/api/box.ts` and `src/api/decode.ts` alone; the decoder's (`decode`, `revive`) in
+ * - The box's internals are named, through any alias or namespace, where they belong alone (`box`
+ *   in `src/api/box.ts` and `src/api/decode.ts`, `textOf` in `box.ts` and `provenance.ts`, where
+ *   `idAt` is the one function that reads a box's text and `curator.ts` alone names it, D425), as
+ *   are the request half's (`requestId`, `stamp`, `originOf`, `recorder`, `urlOf`, `datasetOf`);
+ *   the decoder's (`decode`, `revive`) in
  *   `src/api/decode.ts` and `src/api/client.ts` alone; the counter (`decodedCount`) in
  *   `src/api/decode.ts`, `src/api/oracle.ts` and the harness alone.
  * - `src/api/index.ts` exports exactly the reviewed list, none of them an internal, and no exported
- *   function (a namespace's included) takes a parameter that can hold a `ServerNumber`: nothing it
- *   exports turns a server number into anything (a number, digits, a request's material).
+ *   function (a namespace's included) takes a parameter that can hold a `ServerNumber` (by the
+ *   checker's assignability, `takers.ts`, never a name; the type guard `isServerNumber` alone is
+ *   pinned, and a generic is judged instantiated, `request-half.test.ts` (b)): nothing it exports
+ *   turns a server number into anything (a number, digits, a request's material).
+ * - `src/api/operator.ts` exports the reviewed list, and the operator client holds to its
+ *   allow-list (`surface.ts`).
  */
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { isTooling } from "../../scripts/tooling.mjs";
-import { appOptions, WEB } from "./program";
+import { appOptions, check, WEB } from "./program";
+import { surface } from "./surface";
+import { takes, type Takes } from "./takers";
 
 const SRC = path.join(WEB, "src");
 const API = path.join(SRC, "api");
@@ -35,6 +45,7 @@ const OPERATOR_ENTRY = path.join(SRC, "operator");
 
 let program: ts.Program;
 let checker: ts.TypeChecker;
+let taker: Takes;
 
 beforeAll(() => {
   const parsed = ts.getParsedCommandLineOfConfigFile(path.join(WEB, "tsconfig.app.json"), {}, {
@@ -46,6 +57,7 @@ beforeAll(() => {
   }
   program = ts.createProgram(parsed.fileNames, appOptions());
   checker = program.getTypeChecker();
+  taker = takes(program, checker);
 }, 120_000);
 
 /** The files of the app: every file of the program under the package but the tooling. */
@@ -188,17 +200,38 @@ describe("outside src/api/, the client is reached through its index alone", () =
 });
 
 describe("the internals are named where they belong alone", () => {
+  /** The files the lint's table lets name an internal, though none does today: `textOf`'s owners are
+   * `decode.ts` and `provenance.ts` in both the lint's row and here (m17 of round 4: the lint named
+   * `decode.ts` and this test did not); a file named here that does not name it is no failure, one
+   * that names it and is not listed (and not allowed) is. `request-half.test.ts` (d) holds the lint's
+   * row over every file of `src/api/`. */
+  const ALLOWED: Readonly<Record<string, readonly string[]>> = { textOf: ["src/api/decode.ts"] };
+
   it.each([
     ["box.ts", "box", ["src/api/box.ts", "src/api/decode.ts"]],
-    ["box.ts", "textOf", ["src/api/box.ts"]],
+    ["box.ts", "textOf", ["src/api/box.ts", "src/api/provenance.ts"]],
+    ["ids.ts", "requestId", ["src/api/ids.ts", "src/api/provenance.ts"]],
+    ["origin.ts", "stamp", ["src/api/origin.ts", "src/api/provenance.ts"]],
+    ["origin.ts", "originOf", ["src/api/origin.ts", "src/api/provenance.ts"]],
+    ["provenance.ts", "recorder", ["src/api/client.ts", "src/api/provenance.ts"]],
+    ["provenance.ts", "idAt", ["src/api/curator.ts", "src/api/provenance.ts"]],
+    ["route.ts", "urlOf", ["src/api/client.ts", "src/api/route.ts"]],
+    ["route.ts", "datasetOf", ["src/api/client.ts", "src/api/route.ts"]],
     ["decode.ts", "decode", ["src/api/client.ts", "src/api/decode.ts"]],
     ["decode.ts", "revive", ["src/api/decode.ts"]],
     ["decode.ts", "decodedCount", ["src/api/decode.ts", "src/api/oracle.ts", "src/harness/Harness.tsx"]],
     ["client.ts", "send", ["src/api/client.ts", "src/api/curator.ts"]],
     ["curator.ts", "createCurator", ["src/api/curator.ts", "src/api/operator.ts"]],
     ["operator.ts", "operator", ["src/api/operator.ts", "src/harness/Harness.tsx", "src/operator/Shell.tsx"]],
-  ])("%s's %s", (file, name, allowed) => {
-    expect(namers(declared(file, name))).toEqual(allowed);
+  ])("%s's %s", (file, name, expected) => {
+    const allowed = ALLOWED[name] ?? [];
+    expect(namers(declared(file, name)).filter((named) => !allowed.includes(named) || expected.includes(named))).toEqual(expected);
+  });
+
+  it("textOf's owners are decode.ts and provenance.ts: the files that name it are among them, and provenance.ts is its one caller (m17 of round 4)", () => {
+    const named = namers(declared("box.ts", "textOf"));
+    expect(named.filter((file) => file !== "src/api/box.ts" && !["src/api/decode.ts", "src/api/provenance.ts"].includes(file))).toEqual([]);
+    expect(named).toContain("src/api/provenance.ts");
   });
 });
 
@@ -238,7 +271,22 @@ describe("src/api/index.ts", () => {
   it("exports the reviewed list, and no internal", () => {
     const found = exports();
     expect(found.map((symbol) => symbol.name).sort()).toEqual(EXPORTS);
-    const internals = [declared("box.ts", "box"), declared("box.ts", "textOf"), declared("decode.ts", "decode"), declared("decode.ts", "revive"), declared("decode.ts", "decodedCount"), declared("client.ts", "readCapped")];
+    const internals = [
+      declared("box.ts", "box"),
+      declared("box.ts", "textOf"),
+      declared("decode.ts", "decode"),
+      declared("decode.ts", "revive"),
+      declared("decode.ts", "decodedCount"),
+      declared("client.ts", "readCapped"),
+      declared("client.ts", "send"),
+      declared("ids.ts", "requestId"),
+      declared("origin.ts", "stamp"),
+      declared("origin.ts", "originOf"),
+      declared("provenance.ts", "recorder"),
+      declared("provenance.ts", "idAt"),
+      declared("route.ts", "urlOf"),
+      declared("route.ts", "datasetOf"),
+    ];
     for (const symbol of found) {
       const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
       for (const declaration of target.declarations ?? []) {
@@ -247,41 +295,25 @@ describe("src/api/index.ts", () => {
     }
   });
 
-  /** Whether a type can hold a `ServerNumber`, at any depth (its members, elements, index). */
-  function holdsServerNumber(type: ts.Type, seen = new Set<ts.Type>()): boolean {
-    if (seen.has(type)) {
-      return false;
-    }
-    seen.add(type);
-    if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
-      return false;
-    }
-    if (type.getSymbol()?.name === "ServerNumber") {
-      return true;
-    }
-    if (type.isUnionOrIntersection()) {
-      return type.types.some((member) => holdsServerNumber(member, seen));
-    }
-    if ((type.flags & ts.TypeFlags.Object) === 0) {
-      return false;
-    }
-    if (checker.isArrayType(type) || checker.isTupleType(type)) {
-      return checker.getTypeArguments(type as ts.TypeReference).some((member) => holdsServerNumber(member, seen));
-    }
-    const index = type.getStringIndexType();
-    return (
-      (index !== undefined && holdsServerNumber(index, seen)) ||
-      checker.getPropertiesOfType(type).some((member) => holdsServerNumber(checker.getTypeOfSymbol(member), seen))
-    );
-  }
+  /** The one export that takes `unknown`, by design: a type guard, which answers a boolean and
+   * hands back nothing (`isServerNumber`), pinned by its exact signature (any other signature of
+   * the name is checked like the rest). */
+  const GUARDS: Readonly<Record<string, string>> = { isServerNumber: "(value: unknown): value is ServerNumber" };
 
-  it("exports no function that takes anything a ServerNumber can be", () => {
+  /** The takers among everything a module exports as a function (a namespace's included), with how
+   * many functions were looked at, how many were the pinned guards, and the generic ones, which are
+   * judged instantiated at every member of their constraint (`request-half.test.ts` (b)): a
+   * generic's parameters are its type parameter's, which `takes` does not see through. */
+  function exportTakers(prog: ts.Program, chk: ts.TypeChecker, root: ts.Symbol): { takers: string[]; functions: number; guards: number; generics: string[] } {
+    const takes_ = takes(prog, chk);
     const takers: string[] = [];
+    const generics: string[] = [];
     let functions = 0;
+    let guards = 0;
     const inspect = (symbol: ts.Symbol, name: string): void => {
-      const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
+      const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? chk.getAliasedSymbol(symbol) : symbol;
       if ((target.flags & ts.SymbolFlags.Module) !== 0) {
-        checker.getExportsOfModule(target).forEach((member) => {
+        chk.getExportsOfModule(target).forEach((member) => {
           inspect(member, `${name}.${member.name}`);
         });
         return;
@@ -289,45 +321,59 @@ describe("src/api/index.ts", () => {
       if ((target.flags & ts.SymbolFlags.Value) === 0) {
         return;
       }
-      const type = checker.getTypeOfSymbol(target);
+      const type = chk.getTypeOfSymbol(target);
       const signatures = [...type.getCallSignatures(), ...type.getConstructSignatures()];
       for (const signature of signatures) {
         functions += 1;
+        if (GUARDS[name] === chk.signatureToString(signature, undefined, ts.TypeFormatFlags.NoTruncation, ts.SignatureKind.Call)) {
+          guards += 1;
+          continue;
+        }
+        if ((signature.typeParameters?.length ?? 0) > 0) {
+          generics.push(name);
+          continue;
+        }
         for (const parameter of signature.getParameters()) {
-          if (holdsServerNumber(checker.getTypeOfSymbol(parameter))) {
+          if (takes_(chk.getTypeOfSymbol(parameter))) {
             takers.push(`${name}(${parameter.name})`);
           }
         }
       }
     };
-    exports().forEach((symbol) => {
+    chk.getExportsOfModule(root).forEach((symbol) => {
       inspect(symbol, symbol.name);
     });
+    return { takers, functions, guards, generics };
+  }
+
+  it("exports no function that takes anything a ServerNumber can be", () => {
+    const source = program.getSourceFile(INDEX);
+    const root = source === undefined ? undefined : checker.getSymbolAtLocation(source);
+    if (root === undefined) {
+      throw new Error("no index");
+    }
+    const { takers, functions, guards, generics } = exportTakers(program, checker, root);
     expect(takers).toEqual([]);
+    expect(generics).toEqual(["exchange"]);
+    expect(guards).toBe(Object.keys(GUARDS).length);
     expect(functions).toBeGreaterThan(30);
   });
 
-  /** The ServerNumber-takers among the call signatures of a value's type and of its members' types
-   * (a client object's methods), with how many signatures were looked at. */
-  function memberTakers(type: ts.Type, name: string): { takers: string[]; signatures: number } {
-    const takers: string[] = [];
-    let signatures = 0;
-    const look = (found: ts.Type, label: string): void => {
-      for (const signature of [...found.getCallSignatures(), ...found.getConstructSignatures()]) {
-        signatures += 1;
-        for (const parameter of signature.getParameters()) {
-          if (holdsServerNumber(checker.getTypeOfSymbol(parameter))) {
-            takers.push(`${label}(${parameter.name})`);
-          }
-        }
-      }
-    };
-    look(type, name);
-    for (const property of checker.getPropertiesOfType(type)) {
-      look(checker.getTypeOfSymbol(property), `${name}.${property.name}`);
+  it.each([
+    ["a guard whose signature is another (it answers a string)", "export function isServerNumber(value: unknown): string {", ["isServerNumber(value)"]],
+    ["a guard that takes more than the pinned signature", "export function isServerNumber(value: unknown, more?: object): value is ServerNumber {", ["isServerNumber(value)", "isServerNumber(more)"]],
+    ["the pinned guard itself", "export function isServerNumber(value: unknown): value is ServerNumber {", []],
+  ])("pins the one unknown-taker by its exact signature, not by its name: %s", (_case, declaration, expected) => {
+    const original = readFileSync(path.join(API, "box.ts"), "utf8");
+    const from = "export function isServerNumber(value: unknown): value is ServerNumber {";
+    expect(original).toContain(from);
+    const checked = check({ "src/api/box.ts": original.replace(from, declaration), "src/probe-guard.ts": "export * from './api';\n" });
+    const root = checked.checker.getSymbolAtLocation(checked.source("src/probe-guard.ts"));
+    if (root === undefined) {
+      throw new Error("no probe module");
     }
-    return { takers, signatures };
-  }
+    expect(exportTakers(checked.program, checked.checker, root).takers).toEqual(expected);
+  });
 
   it("re-exports nothing of the operator client: no specifier of index.ts resolves to operator.ts or curator.ts (D423)", () => {
     const source = program.getSourceFile(INDEX);
@@ -338,30 +384,21 @@ describe("src/api/index.ts", () => {
     expect(targets).toContain(path.join(API, "client.ts"));
   });
 
-  it("src/api/operator.ts exports the reviewed list, and nothing it exports, the client's methods included, takes anything a ServerNumber can be (D423)", () => {
+  it("src/api/operator.ts exports the reviewed list, and the operator client holds to its allow-list: nothing it is handed but a primitive or a pinned type at its pinned place (D423, D425: surface.ts, request-half.test.ts (a))", () => {
     const source = program.getSourceFile(OPERATOR);
     const symbol = source === undefined ? undefined : checker.getSymbolAtLocation(source);
     if (symbol === undefined) {
       throw new Error("no operator.ts");
     }
-    const found = checker.getExportsOfModule(symbol);
-    expect(found.map((one) => one.name).sort()).toEqual(["Edit", "IDLE_LIMIT_MS", "LockReason", "NAME_LIMIT", "Outcome", "Unlocked", "View", "operator"]);
-    const client = found.find((one) => one.name === "operator");
-    if (client === undefined) {
-      throw new Error("no operator");
-    }
-    const { takers, signatures } = memberTakers(checker.getTypeOfSymbol(client), "operator");
-    expect(takers).toEqual([]);
-    expect(signatures).toBeGreaterThanOrEqual(14);
-  });
-
-  it("would see a function that takes one (the member walk's own control; its members are counted above)", () => {
-    expect(memberTakers(checker.getTypeOfSymbol(exported("box.ts", "textOf")), "textOf").takers).toEqual(["textOf(number)"]);
+    expect(checker.getExportsOfModule(symbol).map((one) => one.name).sort()).toEqual(["Edit", "IDLE_LIMIT_MS", "LockReason", "NAME_LIMIT", "Outcome", "Unlocked", "View", "operator"]);
+    const walked = surface(program, checker);
+    expect(walked.problems).toEqual([]);
+    expect(walked.members).toBe(18);
   });
 
   it("would see a function that takes one (the check's own control)", () => {
     const [signature] = checker.getTypeOfSymbol(exported("box.ts", "textOf")).getCallSignatures();
     const [parameter] = signature?.getParameters() ?? [];
-    expect(parameter !== undefined && holdsServerNumber(checker.getTypeOfSymbol(parameter))).toBe(true);
+    expect(parameter !== undefined && taker(checker.getTypeOfSymbol(parameter))).toBe(true);
   });
 });
