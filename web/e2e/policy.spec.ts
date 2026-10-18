@@ -30,10 +30,31 @@ test.describe("the catalogue entry under the policy", () => {
     watcher.clean();
   });
 
-  test("serves the same entry at /datasets/<id>", async ({ page, origin, watcher }) => {
-    await page.goto(`${origin}/datasets/x`);
+  test("serves the same entry at /datasets/<id>, which replaces its address by /#/datasets/<id> (D428)", async ({ page, origin, watcher }) => {
+    await page.goto(`${origin}/datasets/x?q=1`);
+    // Until M5.2 builds the dataset's screen, an id lands on the not-found screen.
+    await expect(page.getByText("Nothing is here.")).toBeVisible();
+    expect(await words(page)).toBe(WORDS.notFound);
+    // The address is the redirect's (the router's own `history.state`, `{idx: 0}`, is not): and the
+    // redirect added no entry, and ran before the router (a router that started at `/datasets/x`
+    // would have shown the home screen, `/` having no hash, and a missing redirect leaves the path).
+    expect(await page.evaluate(() => [location.pathname, location.search, location.hash] as const)).toEqual(["/", "", "#/datasets/x"]);
+    const direct = await page.context().newPage();
+    await direct.goto(`${origin}/#/datasets/x`);
+    await expect(direct.getByText("Nothing is here.")).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(await direct.evaluate(() => history.length));
+    watcher.clean();
+  });
+
+  test("lands an address that names no dataset on the home page, echoing nothing of it (D428)", async ({ page, origin, watcher }) => {
+    await page.goto(`${origin}/datasets/%E2%80%AEtxt.exe`);
     await expect(page.getByRole("link", { name: "Curate" })).toBeVisible();
     expect(await words(page)).toBe(WORDS.home);
+    expect(await page.evaluate(() => `${location.pathname}${location.search}${location.hash}`)).toBe("/");
+    const fresh = await page.context().newPage();
+    await fresh.goto(`${origin}/#/datasets/%E2%80%AEtxt.exe`);
+    await expect(fresh.getByText("No dataset has that address.")).toBeVisible();
+    expect(await words(fresh)).toBe(WORDS.refused);
     watcher.clean();
   });
 
@@ -61,6 +82,30 @@ test.describe("the catalogue entry under the policy", () => {
     await page.goto(`${origin}/#/nope`);
     await expect(page.getByText("This screen failed to load.")).toBeVisible();
     expect(await words(page)).toBe(WORDS.failure);
+    watcher.clean();
+  });
+});
+
+test.describe("the visible form under the policy (D428)", () => {
+  test("renders the injection corpus through every component that opens a box, with no violation", async ({ page, origin, watcher, bundle }) => {
+    test.skip(bundle !== "e2e", "the harness, which renders the corpus, is in the end-to-end build alone");
+    await page.goto(`${origin}/curate`);
+    await expect(page.getByText(WORDS.harness)).toBeVisible();
+    await page.getByRole("button", { name: "corpus", exact: true }).click();
+    const corpus = page.locator("[data-corpus]");
+    await expect(corpus.locator("bdi.data").first()).toBeVisible();
+    // The escapes' styling is the emitted stylesheet's, loaded under style-src 'self' (D411).
+    const escape = corpus.locator(".escape").first();
+    expect(await escape.evaluate((element) => [getComputedStyle(element).unicodeBidi, getComputedStyle(element).direction])).toEqual(["isolate", "ltr"]);
+    expect(await corpus.locator("bdi.data").first().evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("pre-wrap");
+    // Nothing the data spelled became an element; no raw override, isolate or lone surrogate is in the text.
+    expect(await corpus.locator("img, script, b").count()).toBe(0);
+    const tags = await corpus.evaluate((root) => [...new Set([...root.querySelectorAll("*")].map((element) => element.tagName.toLowerCase()))].sort());
+    expect(tags).toEqual(["bdi", "option", "p", "select", "span"]);
+    // (The zero-width non-joiner and joiner, which D312 keeps, are raw: the corpus holds a ZWJ sequence.)
+    expect(await corpus.evaluate((root) => /(?![\t\n\u200c\u200d])[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(root.textContent))).toBe(false);
+    expect(await corpus.evaluate((root) => root.textContent.includes("\u{1f468}\u200d\u{1f469}\u200d\u{1f467}") && root.textContent.includes("a\u200cb"))).toBe(true);
+    expect(await corpus.locator(".cut").count()).toBeGreaterThan(0);
     watcher.clean();
   });
 });

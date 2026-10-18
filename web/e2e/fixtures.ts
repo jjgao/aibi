@@ -171,6 +171,7 @@ export function other(): { readonly site: string; readonly port: string } {
 export const WORDS = {
   home: "aibi The catalogue opens here. Curate",
   notFound: "aibi Nothing is here. The catalogue",
+  refused: "aibi No dataset has that address. The catalogue",
   failure: "aibi This screen failed to load. Reload the page to try again.",
   operator: "aibi operator Enter your name and the curator token to begin. Your name Curator token Unlock The operator screens are not built yet. The catalogue",
   harness: "aibi-e2e-harness-1b6f0c",

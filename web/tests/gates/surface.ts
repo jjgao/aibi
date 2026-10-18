@@ -12,8 +12,9 @@
  *
  * - an output that is an object is looked at member by member, its index signatures, its call
  *   signatures and its construct signatures (every overload); a list (`Array`, `ReadonlyArray`), a
- *   tuple and a `Promise` of the default library by their elements; the box (`ServerNumber`, frozen,
- *   its methods take nothing) and a primitive are leaves; any other output (`unknown`, `any`,
+ *   tuple and a `Promise` of the default library by their elements; the boxes (`ServerNumber`, and
+ *   `ServerText`, which the harness's oracle gives in its corpus, D428: each frozen, its methods
+ *   take nothing and throw) and a primitive are leaves; any other output (`unknown`, `any`,
  *   `object`, a type parameter, a conditional or an indexed type), and an object type that a
  *   function is assignable to (`{}`, `{ readonly length: number }`, `{ readonly name: string }`,
  *   `{ readonly toString: () => string }`, `Record<never, string>`: a caller narrows it to a function
@@ -293,11 +294,11 @@ function exportsOf(program: ts.Program, checker: ts.TypeChecker, file: string): 
   return checker.getExportsOfModule(module).map((symbol) => ((symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol));
 }
 
-/** The box's type, `box.ts`'s `ServerNumber`. */
-function boxOf(program: ts.Program, checker: ts.TypeChecker): ts.Type {
-  const box = exportsOf(program, checker, "src/api/box.ts").find((symbol) => symbol.getName() === "ServerNumber");
+/** A box's type, `box.ts`'s `ServerNumber` or `ServerText`. */
+function boxOf(program: ts.Program, checker: ts.TypeChecker, name: "ServerNumber" | "ServerText" = "ServerNumber"): ts.Type {
+  const box = exportsOf(program, checker, "src/api/box.ts").find((symbol) => symbol.getName() === name);
   if (box === undefined) {
-    throw new Error("box.ts exports no ServerNumber");
+    throw new Error(`box.ts exports no ${name}`);
   }
   return checker.getDeclaredTypeOfSymbol(box);
 }
@@ -308,6 +309,7 @@ export function surface(program: ts.Program, checker: ts.TypeChecker, pins: Read
   const inputs: string[] = [];
   const met = new Set<string>();
   const boxType = boxOf(program, checker);
+  const textType = boxOf(program, checker, "ServerText");
   const problem = (at: string, why: string): void => {
     problems.push({ at, why });
   };
@@ -374,7 +376,7 @@ export function surface(program: ts.Program, checker: ts.TypeChecker, pins: Read
     // A type met again on its own path is walked already, up the path; a type met on another path
     // is walked again there, so that a member typed as another's (`Curator["takeOver"]`) is a
     // place of its own.
-    if (ancestors.includes(type) || (type.flags & ~LEAF) === 0 || type === boxType) {
+    if (ancestors.includes(type) || (type.flags & ~LEAF) === 0 || type === boxType || type === textType) {
       return;
     }
     const seen = [...ancestors, type];

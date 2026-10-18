@@ -29,9 +29,31 @@
  *   one): the order of the texts' UTF-16 code units, as `Array.prototype.sort`'s default,
  *   locale-free. Both take two server texts: a component cannot box a string of its own, so neither
  *   compares a box with a text the page chose.
+ * - **`showText(text)`** (D428): **the one door from a server text to the DOM**, a React element
+ *   that renders the text's visible form (`visible.ts`: cut at 2,000 code points, a carriage return
+ *   before a line feed dropped, each run of unsafe code points escaped in a `<span class="escape">`,
+ *   the cut marked). The element holds the box, not its text (its type is this module's `Shown`,
+ *   its props `{text}`, typed `unknown` to the caller), and its text is read as it renders. The
+ *   position it renders in chooses the form through the layout's `FORM` context (`src/layout/form.ts`:
+ *   `cut`, the default; `whole`, not cut, for pointers, references, data tokens and the server's
+ *   words; `flat`, an `<option>`'s text, the escapes as literal text with no span); the layout's
+ *   `Text`, `Ref`, `Segments` and `Option` add the `<bdi>`, the data mark and the server's cut mark.
+ *   Every form escapes the same code points. Residuals (D419's boundary, deliberate code): narrowing
+ *   the element's `props` gives the box back, never its text; a detached `createRoot` and its
+ *   `textContent`, or `react-dom/server`, read the visible form's text (closed by 2b-1L's
+ *   specifier allow-list, `react-dom/client` in the entries alone).
+ * - **`idOfAddress(raw)`** (D428): the one door for a dataset id from the address (a hash route's
+ *   parameter, as the router decoded it, or the raw path segment of `/datasets/<id>`, never
+ *   decoded): the grammar of `idOf`, so a text that is not of it gives `null`, which the router
+ *   module shows in fixed words, never echoed.
  */
+import { Fragment, type ReactElement, type ReactNode, useContext } from "react";
+
+import { FORM } from "../layout/form";
 import { type BoxedMap, entriesOf, readText, type ServerText } from "./box";
 import { FALLBACKS, GRAMMARS, VOCABULARIES } from "./generated/shapes";
+import { ENGINE, visibleForm } from "./visible";
+import { CUT, UNSAFE } from "./visible-ranges";
 
 /** The name of a generated vocabulary. */
 export type VocabularyName = keyof typeof VOCABULARIES;
@@ -99,6 +121,12 @@ export function idOf(text: ServerText): DatasetId | null {
   return isDatasetId(raw) ? raw : null;
 }
 
+/** The dataset id an address names, or `null` if the text is not of the grammar (the router
+ * module's door: a hash route's decoded parameter, or a path segment as written). */
+export function idOfAddress(raw: string): DatasetId | null {
+  return isDatasetId(raw) ? raw : null;
+}
+
 /** The words of a refused construction of a choice: fixed. */
 export const FORGED_CHOICE = "A choice is made by choiceOf alone (D426).";
 
@@ -163,4 +191,36 @@ export function compareText(a: ServerText, b: ServerText): number {
   const first = readText(a);
   const second = readText(b);
   return first < second ? -1 : first > second ? 1 : 0;
+}
+
+/** The visible form of the box's text, rendered in the form its position asks for. */
+function Shown({ text }: { readonly text: ServerText }): ReactNode {
+  const form = useContext(FORM);
+  const { runs, truncated } = visibleForm(readText(text), UNSAFE, ENGINE, form === "whole" ? null : CUT);
+  if (form === "flat") {
+    return `${runs.map((run) => run.text).join("")}${truncated ? "\u2026" : ""}`;
+  }
+  return (
+    <>
+      {runs.map((run, index) =>
+        run.escaped ? (
+          <span key={index} className="escape">
+            {run.text}
+          </span>
+        ) : (
+          <Fragment key={index}>{run.text}</Fragment>
+        ),
+      )}
+      {truncated ? (
+        <span className="cut" title="cut">
+          {"\u2026"}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The element that shows a server text: its visible form (the module's docstring). */
+export function showText(text: ServerText): ReactElement {
+  return <Shown text={text} />;
 }

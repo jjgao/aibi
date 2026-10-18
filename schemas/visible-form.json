@@ -1,0 +1,232 @@
+{
+  "classes": [
+    "C0 controls but tab and line feed",
+    "DEL and the C1 controls",
+    "Unicode's Cf but the zero-width non-joiner and joiner",
+    "Unicode's Cs (lone surrogates)",
+    "U+2028 and U+2029"
+  ],
+  "cut": 2000,
+  "description": "The visible form of a text from data (SPEC D312, D428), written by aibi.core.schema.export from aibi.core.schema.visible: the server's page and the web bundle escape the same code points. Do not edit; regenerate under the pinned Python.",
+  "kept": [
+    9,
+    10,
+    8204,
+    8205
+  ],
+  "order": [
+    "cut",
+    "fold",
+    "escape"
+  ],
+  "raw_by_d312": {
+    "braille_blank": 10240,
+    "default_ignorable_assigned": [
+      [
+        847,
+        847
+      ],
+      [
+        4447,
+        4448
+      ],
+      [
+        6068,
+        6069
+      ],
+      [
+        6155,
+        6157
+      ],
+      [
+        6159,
+        6159
+      ],
+      [
+        12644,
+        12644
+      ],
+      [
+        65024,
+        65039
+      ],
+      [
+        65440,
+        65440
+      ],
+      [
+        917760,
+        917999
+      ]
+    ],
+    "default_ignorable_assigned_count": 267,
+    "default_ignorable_unassigned": [
+      [
+        8293,
+        8293
+      ],
+      [
+        65520,
+        65528
+      ],
+      [
+        917504,
+        917504
+      ],
+      [
+        917506,
+        917535
+      ],
+      [
+        917632,
+        917759
+      ],
+      [
+        918000,
+        921599
+      ]
+    ],
+    "default_ignorable_unassigned_count": 3769,
+    "note": "Code points D312 leaves raw although a renderer may draw them as nothing or alike (D428, O-2: recorded for the owner, not changed): the default-ignorable code points that are neither Cf nor a control (variation selectors, the combining grapheme joiner, the Hangul fillers) and the unassigned ones, the space separators but U+0020, and U+2800. The tag characters U+E0001 and U+E0020..U+E007F are Cf, so a subdivision flag's tag sequence is escaped.",
+    "space_separators": [
+      [
+        160,
+        160
+      ],
+      [
+        5760,
+        5760
+      ],
+      [
+        8192,
+        8202
+      ],
+      [
+        8239,
+        8239
+      ],
+      [
+        8287,
+        8287
+      ],
+      [
+        12288,
+        12288
+      ]
+    ],
+    "space_separators_count": 16
+  },
+  "rules": {
+    "cut": "a text from data is cut at `cut` code points (never splitting a surrogate pair), before it is folded or escaped, and the cut is marked; pointers, statistic references and data tokens are not cut",
+    "escape": "each unsafe code point is written \\xNN below U+0100, \\uNNNN below U+10000, \\UNNNNNNNN above, in lower-case hex, one per code point (a lone surrogate is one)",
+    "fold": "a carriage return immediately before a line feed is dropped (after the cut)",
+    "runs": "each maximal run of unsafe code points is one escaped run (one span)"
+  },
+  "unidata_version": "15.0.0",
+  "unsafe": [
+    [
+      0,
+      8
+    ],
+    [
+      11,
+      31
+    ],
+    [
+      127,
+      159
+    ],
+    [
+      173,
+      173
+    ],
+    [
+      1536,
+      1541
+    ],
+    [
+      1564,
+      1564
+    ],
+    [
+      1757,
+      1757
+    ],
+    [
+      1807,
+      1807
+    ],
+    [
+      2192,
+      2193
+    ],
+    [
+      2274,
+      2274
+    ],
+    [
+      6158,
+      6158
+    ],
+    [
+      8203,
+      8203
+    ],
+    [
+      8206,
+      8207
+    ],
+    [
+      8232,
+      8238
+    ],
+    [
+      8288,
+      8292
+    ],
+    [
+      8294,
+      8303
+    ],
+    [
+      55296,
+      57343
+    ],
+    [
+      65279,
+      65279
+    ],
+    [
+      65529,
+      65531
+    ],
+    [
+      69821,
+      69821
+    ],
+    [
+      69837,
+      69837
+    ],
+    [
+      78896,
+      78911
+    ],
+    [
+      113824,
+      113827
+    ],
+    [
+      119155,
+      119162
+    ],
+    [
+      917505,
+      917505
+    ],
+    [
+      917536,
+      917631
+    ]
+  ]
+}

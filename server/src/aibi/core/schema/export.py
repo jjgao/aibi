@@ -24,7 +24,9 @@ definitions by identity, never by name; every public function strips it (``unmar
 generator reads it through the ``*_marked`` builders.
 
 ``vocabulary.json`` is not a schema: it is the form renderer's partition of the 2020-12 keywords
-(``schema.vocabulary``, D422), written beside them.
+(``schema.vocabulary``, D422), written beside them; nor is ``visible-form.json``, the visible
+form's code-point classes under the writer's Unicode version (``schema.visible``, D428), which
+the web generates its ranges from.
 """
 
 import json
@@ -41,7 +43,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import core_schema
 
-from aibi.core.schema import vocabulary
+from aibi.core.schema import visible, vocabulary
 from aibi.core.schema.catalog import TOOL_MODELS
 from aibi.core.schema.cohorts import DOCUMENT_MARK
 from aibi.core.schema.curation import ChangeRequest, CurationQueue, ProposalInput
@@ -769,6 +771,7 @@ def write(directory: Path) -> None:
     (directory / vocabulary.VOCABULARY_FILE).write_text(
         render(vocabulary.document()), encoding="utf-8"
     )
+    (directory / visible.VISIBLE_FILE).write_text(render(visible.document()), encoding="utf-8")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -2,7 +2,8 @@
 /**
  * The client's types from the OpenAPI document (D416, D419): `schemas/openapi.json` is the input,
  * `src/api/generated/openapi.ts` (openapi-typescript 7.13.0) and `src/api/generated/routes.ts`
- * the output, both checked in. `npm run generate` writes them; `npm run generate -- --check`
+ * the output, both checked in (and, from `schemas/visible-form.json`, `src/api/visible-ranges.ts`:
+ * `generate-visible.mjs`, D428). `npm run generate` writes them; `npm run generate -- --check`
  * (CI's `web` job) fails, writing nothing, while either differs from what the document gives.
  *
  * **The transform.** The document marks what a code generator cannot say by itself:
@@ -50,14 +51,18 @@ import openapiTS, { astToString } from "openapi-typescript";
 import ts from "typescript";
 
 import { renderShapes, ShapeError } from "./generate-shapes.mjs";
+import { renderVisible, VisibleError } from "./generate-visible.mjs";
 
 const WEB = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DOCUMENT = path.join(WEB, "..", "schemas", "openapi.json");
 export const CLASSES = path.join(WEB, "src", "api", "classes.json");
+/** The visible form's classes, which the server's export writes (D428). */
+export const VISIBLE = path.join(WEB, "..", "schemas", "visible-form.json");
 export const OUTPUTS = {
   openapi: path.join(WEB, "src", "api", "generated", "openapi.ts"),
   routes: path.join(WEB, "src", "api", "generated", "routes.ts"),
   shapes: path.join(WEB, "src", "api", "generated", "shapes.ts"),
+  visible: path.join(WEB, "src", "api", "visible-ranges.ts"),
 };
 
 export const SERVER_NUMBER = "x-aibi-server-number";
@@ -413,31 +418,39 @@ export function ${name}(${signature.join(", ")}): Route<"${name}"> {
 }
 
 /**
- * Generate the three files from `document` (`text`: the document's own text, whose digest the
- * typed answers' table records; the committed document's by default).
+ * Generate the four files from `document` (`text`: the document's own text, whose digest the
+ * typed answers' table records; the committed document's by default) and the visible form's
+ * classes (`visible`: the committed `schemas/visible-form.json`'s text by default, D428).
  * @param {JsonObject} document
  * @param {string} [text]
- * @returns {Promise<{ openapi: string, routes: string, shapes: string }>}
+ * @param {string} [visible]
+ * @returns {Promise<{ openapi: string, routes: string, shapes: string, visible: string }>}
  */
-export async function generate(document, text = readFileSync(DOCUMENT, "utf8")) {
+export async function generate(document, text = readFileSync(DOCUMENT, "utf8"), visible = readFileSync(VISIBLE, "utf8")) {
   let shapes;
+  let ranges;
   try {
     shapes = renderShapes(document, text);
   } catch (error) {
     throw error instanceof ShapeError ? new GenerationError(`the typed answers' table: ${error.message}`) : error;
   }
-  return { openapi: await renderTypes(document, { ids: idPositions(committedClasses()) }), routes: renderRoutes(document), shapes };
+  try {
+    ranges = renderVisible(visible);
+  } catch (error) {
+    throw error instanceof VisibleError || error instanceof SyntaxError ? new GenerationError(`the visible form's classes: ${error.message}`) : error;
+  }
+  return { openapi: await renderTypes(document, { ids: idPositions(committedClasses()) }), routes: renderRoutes(document), shapes, visible: ranges };
 }
 
 /**
  * @param {string[]} argv
  * @param {(line: string) => void} say
- * @param {{ document: string, outputs: { openapi: string, routes: string, shapes?: string } }} [files] where the
+ * @param {{ document: string, visible?: string, outputs: { openapi: string, routes: string, shapes?: string, visible?: string } }} [files] where the
  *   document is read and the outputs written (the committed ones but in a test; an output not
  *   given is neither checked nor written)
  * @returns {Promise<number>}
  */
-export async function main(argv, say, files = { document: DOCUMENT, outputs: OUTPUTS }) {
+export async function main(argv, say, files = { document: DOCUMENT, visible: VISIBLE, outputs: OUTPUTS }) {
   const check = argv.length === 1 && argv[0] === "--check";
   if (argv.length > 1 || (argv.length === 1 && !check)) {
     say("usage: generate-types.mjs [--check]");
@@ -452,7 +465,7 @@ export async function main(argv, say, files = { document: DOCUMENT, outputs: OUT
   }
   let made;
   try {
-    made = await generate(document, text);
+    made = await generate(document, text, readFileSync(files.visible ?? VISIBLE, "utf8"));
   } catch (error) {
     if (error instanceof GenerationError) {
       say(`generate-types: ${error.message}`);
@@ -461,7 +474,7 @@ export async function main(argv, say, files = { document: DOCUMENT, outputs: OUT
     throw error;
   }
   const outputs = files.outputs;
-  const stale = /** @type {const} */ (["openapi", "routes", "shapes"]).filter((key) => {
+  const stale = /** @type {const} */ (["openapi", "routes", "shapes", "visible"]).filter((key) => {
     const target = outputs[key];
     if (target === undefined) {
       return false;

@@ -278,7 +278,7 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
         ["src/api/curator.ts", "the operator's client reads answers and asks isServerNumber whether a value is a box, which gives nothing of a number"],
         ["src/api/provenance.ts", "the recorder asks isServerNumber whether a node is a box, and idAt, the one function that reads a box's text (textOf), reads a request id's (D425)"],
         ["src/api/typed.ts", "the walk of an answer boxes each string (boxText) and each map of data keys (boxMap), and asks isServerNumber whether a value is a number's box (D426)"],
-        ["src/api/text.ts", "the takers of a server text read it (readText) and a map's entries (entriesOf), giving a member, an id, a choice, a boolean or an order (D426)"],
+        ["src/api/text.tsx", "the takers of a server text read it (readText) and a map's entries (entriesOf), giving a member, an id, a choice, a boolean or an order (D426)"],
       ]),
     },
   ],
@@ -371,15 +371,32 @@ export const API_MODULES: ReadonlyMap<string, ApiModule> = new Map([
     },
   ],
   [
-    "src/api/text.ts",
-    { importers: new Map([["src/api/index.ts", "re-exports the takers of a server text, each pinned by its signature (D426)"]]) },
+    "src/api/text.tsx",
+    {
+      importers: new Map([
+        ["src/api/index.ts", "re-exports the takers of a server text, each pinned by its signature (D426), showText, the one door from a server text to the DOM, and idOfAddress, the address's (D428)"],
+      ]),
+    },
+  ],
+  [
+    "src/api/visible.ts",
+    { importers: new Map([["src/api/text.tsx", "showText renders the visible form of the text it reads (D428)"]]) },
+  ],
+  [
+    "src/api/visible-ranges.ts",
+    {
+      importers: new Map([
+        ["src/api/visible.ts", "the visible form escapes the server's list of unsafe code points (D428)"],
+        ["src/api/text.tsx", "showText cuts a text from data at the visible form's cut (D428)"],
+      ]),
+    },
   ],
   [
     "src/api/generated/shapes.ts",
     {
       importers: new Map([
         ["src/api/typed.ts", "the walk reads the table generated from the document (D426)"],
-        ["src/api/text.ts", "the takers read the generated vocabularies and grammars (D426)"],
+        ["src/api/text.tsx", "the takers read the generated vocabularies and grammars (D426)"],
       ]),
     },
   ],

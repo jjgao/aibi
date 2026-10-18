@@ -28,15 +28,17 @@
  * **The text box (D426).** `ServerText` is the number box's twin for every string of a public
  * tool's answer: `typed.ts`'s walk makes one of each string (`boxText`, its alone) as it validates
  * the answer against the generated table, so that no component holds a response's text as a
- * `string`: a box is shown through `Text` (M5.1c-2b), and every conversion throws (React refuses it
+ * `string`: a box is shown through `showText` (D428: the visible form, which the layout's `Text`,
+ * `Ref`, `Segments` and `Option` place), and every conversion throws (React refuses it
  * as a child, a `title`, an `href`, a `key` or a `style`, the DOM as text, a template, `String`,
- * `JSON.stringify`, a comparison, a sort). Its text is read by `text.ts` alone (`readText`), whose
- * takers give a vocabulary member, a `DatasetId`, a `Choice`, a boolean or an order, never the text.
+ * `JSON.stringify`, a comparison, a sort). Its text is read by `text.tsx` alone (`readText`), whose
+ * takers give a vocabulary member, a `DatasetId`, a `Choice`, a boolean, an order or `showText`'s
+ * element (which renders the visible form), never the text.
  * A map whose keys are data (`additionalProperties`, `patternProperties`, every object of an
  * `x-aibi-json` value) is a `BoxedMap` (`boxMap`, the walk's alone): its entries, keys boxed, are in
  * an ES private field and read through `entriesOf`, so no raw key exists after the walk
  * (`Object.keys`, `for...in`, a spread, `URLSearchParams` and `Headers` over it give nothing).
- * Neither box is equal to another of the same text (`===` compares identity): `text.ts`'s
+ * Neither box is equal to another of the same text (`===` compares identity): `text.tsx`'s
  * `sameText` and `compareText` are the sanctioned equality and order.
  */
 
@@ -179,7 +181,7 @@ export function boxText(text: string): ServerText {
   return makeText(text);
 }
 
-/** The text a text box holds; a value that is no box throws (the brand check). `text.ts`'s takers
+/** The text a text box holds; a value that is no box throws (the brand check). `text.tsx`'s takers
  * and the tests alone call it. */
 export function readText(text: ServerText): string {
   return readOfText(text);

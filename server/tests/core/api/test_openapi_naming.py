@@ -1252,6 +1252,10 @@ ALLOWED: dict[str, dict[tuple[str, str, str], tuple[int, str]]] = {
             1,
             "the form vocabulary's lists, written to its own file (D422): text, no map",
         ),
+        ("write", "call", "visible.document"): (
+            1,
+            "the visible form's classes, written to their own file (D428): text, no map",
+        ),
         ("render", "call", "json.dumps"): (1, "text, no map"),
         ("canonical", "call", "json.dumps"): (1, "text, no map"),
         ("_vet", "call", "math.isfinite"): (1, "a test of a number"),

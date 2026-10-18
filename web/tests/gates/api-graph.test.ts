@@ -31,6 +31,7 @@ import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { isTooling } from "../../scripts/tooling.mjs";
+import { ServerNumber, ServerText } from "../../src/api/box";
 import { appOptions, check, WEB } from "./program";
 import { surface } from "./surface";
 import { gives, takes, takesText, type Takes } from "./takers";
@@ -224,8 +225,10 @@ describe("the internals are named where they belong alone", () => {
     ["client.ts", "exchange", ["src/api/client.ts", "src/api/oracle.ts", "src/api/typed.ts"]],
     ["box.ts", "boxText", ["src/api/box.ts", "src/api/typed.ts"]],
     ["box.ts", "boxMap", ["src/api/box.ts", "src/api/typed.ts"]],
-    ["box.ts", "readText", ["src/api/box.ts", "src/api/text.ts"]],
-    ["typed.ts", "walkComponent", ["src/api/typed.ts"]],
+    ["box.ts", "readText", ["src/api/box.ts", "src/api/text.tsx"]],
+    ["typed.ts", "walkComponent", ["src/api/oracle.ts", "src/api/typed.ts"]],
+    ["visible.ts", "visibleForm", ["src/api/text.tsx", "src/api/visible.ts"]],
+    ["visible.ts", "ENGINE", ["src/api/text.tsx", "src/api/visible.ts"]],
     ["curator.ts", "createCurator", ["src/api/curator.ts", "src/api/operator.ts"]],
     ["operator.ts", "operator", ["src/api/operator.ts", "src/harness/Harness.tsx", "src/operator/Shell.tsx"]],
   ])("%s's %s", (file, name, expected) => {
@@ -278,6 +281,7 @@ const EXPORTS = [
   "entriesOf",
   "explain",
   "idOf",
+  "idOfAddress",
   "isServerNumber",
   "kindOf",
   "listAnalyses",
@@ -288,9 +292,68 @@ const EXPORTS = [
   "runAnalysis",
   "sameText",
   "searchCatalog",
+  "showText",
   "start",
   "validateDocument",
 ];
+
+describe("the surface walk's leaves: the two boxes' methods take no parameter (round 1 of #117)", () => {
+  /** The members of a class's instances (its private fields apart) that are not a function of no
+   * parameter, by the checker: the surface walk treats a box as a leaf (`surface.ts`), so an input a
+   * callback is held in (`map(f)`, `then(f)`) would be one the walk never sees. */
+  function takesSomething(on: ts.TypeChecker, owner: ts.Type): string[] {
+    return on.getPropertiesOfType(owner).flatMap((member) => {
+      const declaration = member.valueDeclaration ?? member.declarations?.[0];
+      if (member.getName().startsWith("#") || declaration === undefined || ts.isPrivateIdentifier(ts.getNameOfDeclaration(declaration) ?? declaration)) {
+        return [];
+      }
+      const signatures = on.getSignaturesOfType(on.getTypeOfSymbolAtLocation(member, declaration), ts.SignatureKind.Call);
+      return signatures.length === 0 || signatures.some((signature) => signature.getParameters().length > 0) ? [member.getName()] : [];
+    });
+  }
+
+  it.each(["ServerNumber", "ServerText"] as const)("%s: every member is a method of no parameter, by the type", (name) => {
+    expect(takesSomething(checker, checker.getDeclaredTypeOfSymbol(exported("box.ts", name)))).toEqual([]);
+  });
+
+  it("holds at run time too: each method of each box's prototype declares no parameter", () => {
+    for (const box of [ServerNumber, ServerText]) {
+      const found = Reflect.ownKeys(box.prototype).filter((key) => key !== "constructor");
+      expect(found.length).toBeGreaterThanOrEqual(5);
+      for (const key of found) {
+        const method: unknown = Reflect.get(box.prototype, key);
+        expect(typeof method, String(key)).toBe("function");
+        expect(typeof method === "function" ? method.length : -1, `${box.name}.${String(key)}`).toBe(0);
+      }
+    }
+  });
+
+  it("sees a box method that takes a callback, or a property that is no method (the check's own controls)", () => {
+    const checked = check({
+      "src/probe-box.ts": [
+        "export class Boxy {",
+        "  each(take: (value: string) => void): void {",
+        "    take('x');",
+        "  }",
+        "  readonly held: string = 'x';",
+        "  fine(): never {",
+        "    throw new TypeError('x');",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    const source = checked.source("src/probe-box.ts");
+    const declaration = source.statements.find(ts.isClassDeclaration);
+    const symbol = declaration?.name === undefined ? undefined : checked.checker.getSymbolAtLocation(declaration.name);
+    const owner = symbol === undefined ? undefined : checked.checker.getDeclaredTypeOfSymbol(symbol);
+    expect(owner).toBeDefined();
+    if (owner !== undefined) {
+      const found = takesSomething(checked.checker, owner);
+      expect(found.sort()).toEqual(["each", "held"]);
+    }
+  });
+});
 
 describe("src/api/index.ts", () => {
   const exports = (): ts.Symbol[] => {
@@ -325,6 +388,8 @@ describe("src/api/index.ts", () => {
       declared("box.ts", "boxMap"),
       declared("box.ts", "readText"),
       declared("typed.ts", "walkComponent"),
+      declared("visible.ts", "visibleForm"),
+      declared("visible.ts", "ENGINE"),
     ];
     for (const symbol of found) {
       const target = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
@@ -493,6 +558,10 @@ const TEXT_PINS: Readonly<Record<string, readonly [string, string]>> = {
   compareText: ["(a: ServerText, b: ServerText): number", "the sanctioned order: a number (an ordering oracle for deliberate code, D426's residual)"],
   entriesOf: ["<V>(map: BoxedMap<V>): readonly (readonly [ServerText, V])[]", "a map's entries, keys boxed"],
   memberOf: ["<V>(map: BoxedMap<V>, name: string): Member<V>", "a member's value by the page's own word, or found: false"],
+  showText: [
+    "(text: ServerText): ReactElement<unknown, string | JSXElementConstructor<any>>",
+    "the one door from a server text to the DOM (D428): an element whose props hold the box, never its text, rendering the visible form (D312) as the position's form asks",
+  ],
 };
 
 /**
@@ -503,6 +572,9 @@ const OUTPUT_PINS: Readonly<Record<string, string>> = {
   "index.ts:ClientError(): Error": "the client's own refusal: its message is REFUSALS' fixed words, its name a constant",
   "index.ts:DecodeError(): Error": "the decoder's refusal: its message is UNDECODABLE's fixed words",
   "index.ts:idOf(): DatasetId": "a dataset id, a string whose generated grammar bounds its characters (the brand proves form, not provenance)",
+  "index.ts:idOfAddress(): DatasetId": "the address's dataset id (D428): the router module's door, idOf's generated grammar over a text of the address, so its characters are bounded and nothing else of the address is given back",
+  "index.ts:showText(): ReactElement (an unlisted library type)":
+    "the one door from a server text to the DOM (D428): its props (unknown to the caller) hold the box, never its text, and it renders the visible form; a detached root's textContent reads that form's text by deliberate code (D419's boundary; react-dom/client entry-only in 2b-1L)",
   ...Object.fromEntries(
     ["acceptProposal", "change", "dataset", "datasets", "discard", "open", "publish", "queue", "queueAt", "rejectProposal", "takeOver", "withdraw"].flatMap((member) => [
       [`operator.ts:operator.${member}()<0>.body: string`, "the operator side stays raw (D426): no operator screen renders a body until the curation screens' plan reads it through the seam"],

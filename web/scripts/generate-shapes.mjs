@@ -16,7 +16,7 @@
  * as alternatives; `allOf` as a conjunction whose first member gives the shape and whose others are
  * checks; the segments (`TextSegment | DataSegment`) as one node with their exact key sets; and the
  * `x-aibi-json` components (`OutputJson`) as any JSON value. The enum and const vocabularies are
- * listed by their place (`VOCABULARIES`, for `text.ts`'s `kindOf`), a fail-closed one (`Severity`)
+ * listed by their place (`VOCABULARIES`, for `text.tsx`'s `kindOf`), a fail-closed one (`Severity`)
  * is not enumerated by the walk (an unknown severity is read as `block`, never refused), and the
  * grammars of four id positions (`GRAMMARS`, for `idOf` and `choiceOf`) are read from their
  * `pattern`, `maxLength` and `not`.
