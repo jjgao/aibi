@@ -233,7 +233,7 @@ CORE: Mapping[str, CoreAnalysis] = {
         "event time, as a curve's values are, which no rule yet protects (D351)",
     ),
 }
-"""The core's analyses, by id: ``compare.existence`` is disclosed by D320,
+"""The core's analyses, by id: ``compare.existence`` is disclosed by D320 and D424,
 ``summary.distribution`` by D329 and ``compare.columns`` by D337."""
 
 PACK_BECAUSE = (

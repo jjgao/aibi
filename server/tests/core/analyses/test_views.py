@@ -56,7 +56,7 @@ def test_a_view_that_checks_has_its_canonical_form_and_ids(check: Check, shop: S
     gold, silver = found.canonical.cohorts["gold"], found.canonical.cohorts["silver"]
     form = view.identity.view()
     assert form == {
-        "analysis": {"id": "compare.existence", "version": "1.0.0"},
+        "analysis": {"id": "compare.existence", "version": "1.1.0"},
         "cohorts": [gold.id, silver.id],
         "params": {"level": 0.95, "predicates": [view.predicates[0].form[gold.release.manifest]]},
         "reference": 0,

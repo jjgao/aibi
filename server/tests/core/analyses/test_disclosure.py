@@ -1,5 +1,7 @@
-"""The disclosure pass over a predicate's split of a cohort's units (SPEC §8.4; D320), and what a
-result shows of it pinning no suppressed count."""
+"""The disclosure pass over a predicate's split of a cohort's units (SPEC §8.4; D320, D424), and
+what a result shows of it pinning no suppressed count: a predicate alone by D320's rule, and two
+predicates or more at a position as one gated scope (D424), shown whole or not at all. Scopes of
+dependent predicates and of several positions are ``test_scope_disclosure``'s."""
 
 import itertools
 import json
@@ -10,8 +12,15 @@ from fractions import Fraction
 
 import pytest
 
-from aibi.core.analyses.disclosure import Hidden, Split, hidden
-from aibi.core.analyses.existence import Outcome
+from aibi.core.analyses.disclosure import Cohort, Hidden, Pass, Split, hidden
+from aibi.core.analyses.existence import (
+    ANALYSED_MAP,
+    ANALYSED_N,
+    ANALYSED_UNITS,
+    Outcome,
+    disclosed_members,
+    member,
+)
 from aibi.core.analyses.views import CheckedView
 from aibi.core.engine.sql import Crossed, CrossedSplit, Crossing
 from aibi.core.engine.suppression import suppressed
@@ -40,6 +49,13 @@ FAMILIES: dict[str, list[tuple[Form, Form, Form]]] = {
 }
 """Predicates a view can ask beside ``P``, each as the forms of its split's TRUE, FALSE and
 UNKNOWN units over ``P``'s."""
+
+
+def at_position(size_shown: bool, splits: Sequence[Split], k: int) -> Hidden:
+    """What the pass hides at a position of a view that refuses overlap, a scope of its own."""
+    cohort = Cohort(size_shown, True, tuple(splits), tuple(() for _ in splits))
+    [found] = hidden([cohort], allow=False, k=k)
+    return found
 
 
 def value(form: Form, base: Split) -> int:
@@ -73,7 +89,7 @@ def _rank(rows: list[list[Fraction]]) -> int:
 def _analysed(members: Sequence[tuple[Form, Form, Form]]) -> Form:
     """The form of the units for which no predicate is known: ``P``'s unknown ones, or none
     beside ``known P`` or ``unknown P``."""
-    return U if all(member[2] == U for member in members) else NONE
+    return U if all(part[2] == U for part in members) else NONE
 
 
 def _pinned(name: str, size: int, k: int) -> list[tuple[Split, str]]:
@@ -87,20 +103,21 @@ def _pinned(name: str, size: int, k: int) -> list[tuple[Split, str]]:
         base = Split(true, false, size - true - false)
         splits = [Split(*(value(form, base) for form in member)) for member in members]
         excluded = value(none_known, base)
-        hides = hidden(True, splits, k)
+        hides = at_position(True, splits, k)
         shown: list[Form] = []
         projection: list[int | None] = []
         for index, (true_form, false_form, unknown_form) in enumerate(members):
             known_form = plus(true_form, false_form)
             for form, gone in (
-                (true_form, hides.true[index]),
-                (known_form, hides.unknown[index]),
-                (unknown_form, hides.unknown[index]),
+                (true_form, hides.true[index] is not None),
+                (known_form, hides.unknown[index] is not None),
+                (unknown_form, hides.unknown[index] is not None),
             ):
                 projection.append(None if gone else value(form, base))
                 shown.extend([] if gone else [form])
-        projection.append(None if hides.analysed else excluded)
-        shown.extend([] if hides.analysed else [none_known])
+        joint = len(members) > 1 or hides.unknown[0] is not None
+        projection.append(None if joint else excluded)
+        shown.extend([] if joint else [none_known])
         key = tuple(projection)
         seen[key].append(base)
         shown_of[key] = shown
@@ -116,53 +133,69 @@ def _pinned(name: str, size: int, k: int) -> list[tuple[Split, str]]:
 
 def test_a_split_is_disclosed_as_a_cohort_count_over_the_cohort_s_units() -> None:
     for true, false, unknown in ((9, 0, 1), (9, 1, 0), (8, 2, 0), (8, 0, 2), (5, 5, 0)):
-        found = hidden(True, [Split(true, false, unknown)], 3)
+        found = at_position(True, [Split(true, false, unknown)], 3)
         expected = suppressed(true, false, unknown, 3)
-        assert (found.true[0], found.unknown[0]) == ("n_true" in expected, "n_unknown" in expected)
+        assert (found.true[0] is not None, found.unknown[0] is not None) == (
+            "n_true" in expected,
+            "n_unknown" in expected,
+        )
 
 
 def test_a_numerator_of_nine_beside_one_unknown_unit_is_suppressed() -> None:
-    found = hidden(True, [Split(9, 0, 1)], 3)
-    assert found == Hidden((True,), (True,), True)
+    found = at_position(True, [Split(9, 0, 1)], 3)
+    assert found == Hidden((Pass.SPLIT,), (Pass.SPLIT,), (Pass.SPLIT,))
 
 
 def test_two_counts_of_1_take_the_third_with_them_on_a_later_pass() -> None:
     """The pass repeats until nothing changes (D297): the TRUE and FALSE units, each 1, are
     suppressed first, and their sum splits only one way, so the UNKNOWN units go too."""
-    found = hidden(True, [Split(1, 1, 10)], 3)
-    assert found == Hidden((True,), (True,), True)
-    assert hidden(True, [Split(1, 2, 10)], 3).unknown == (False,)
+    found = at_position(True, [Split(1, 1, 10)], 3)
+    assert found == Hidden((Pass.SPLIT,), (Pass.SPLIT,), (Pass.SPLIT,))
+    assert at_position(True, [Split(1, 2, 10)], 3).unknown == (None,)
 
 
 def test_a_position_whose_cohort_size_is_suppressed_shows_none_of_its_splits() -> None:
-    found = hidden(False, [Split(10, 10, 10), Split(20, 10, 0)], 3)
-    assert found == Hidden((True, True), (True, True), True)
+    assert at_position(False, [Split(10, 10, 10)], 3) == Hidden(
+        (Pass.COHORT,), (Pass.COHORT,), (Pass.COHORT,)
+    )
+    found = at_position(False, [Split(10, 10, 10), Split(20, 10, 0)], 3)
+    every = (Pass.SCOPE, Pass.SCOPE)
+    assert found == Hidden(every, every, (Pass.NEVER, Pass.NEVER))
 
 
-def test_a_predicate_and_its_not_are_disclosed_alike() -> None:
+def test_a_predicate_and_its_not_are_shown_or_withheld_together() -> None:
+    """Two predicates at a position are one gated scope (D424): both are shown whole where
+    neither split is suppressed, else neither shows anything."""
     for true, false, unknown in itertools.product(range(8), repeat=3):
         split = Split(true, false, unknown)
-        found = hidden(True, [split, Split(false, true, unknown)], 3)
-        assert found.unknown[0] == found.unknown[1]
-        assert found.true[1] == ("n_false" in suppressed(true, false, unknown, 3))
+        found = at_position(True, [split, Split(false, true, unknown)], 3)
+        gone = Pass.SCOPE if suppressed(true, false, unknown, 3) else None
+        assert found == Hidden((gone, gone), (gone, gone), (Pass.NEVER, Pass.NEVER))
+
+
+def _analysed_members(splits: Sequence[Split], k: int) -> list[Pass | None]:
+    cohort = Cohort(True, True, tuple(splits), tuple(() for _ in splits))
+    _, members = disclosed_members([cohort], len(splits), allow=False, k=k)
+    return [members[member(path, 0)] for path in (ANALYSED_N, ANALYSED_UNITS, ANALYSED_MAP)]
 
 
 def test_the_units_analysed_of_one_predicate_go_with_its_unknown_units() -> None:
-    assert not hidden(True, [Split(10, 10, 5)], 3).analysed
-    assert hidden(True, [Split(10, 10, 2)], 3).analysed
+    assert _analysed_members([Split(10, 10, 5)], 3) == [None, None, None]
+    assert _analysed_members([Split(10, 10, 2)], 3) == [Pass.SPLIT] * 3
 
 
 def test_no_figure_combining_several_predicates_is_shown_under_k() -> None:
     """The units for which some predicate is known are bounded by each predicate's split from
-    both sides, so with two predicates or more they are never shown (D320)."""
+    both sides, so with two predicates or more they are never shown (D320, D424)."""
     for splits in ([Split(10, 10, 5), Split(12, 10, 3)], [Split(10, 10, 0), Split(10, 10, 0)]):
-        assert hidden(True, splits, 3).analysed
+        assert _analysed_members(splits, 3) == [Pass.NEVER] * 3
 
 
 def test_what_a_result_shows_of_a_predicate_and_its_family_pins_no_suppressed_count() -> None:
     """For every split of a cohort of up to 14 units, *k* from 3 to 5, and ``P`` alone or beside
     its ``not``, ``known`` and ``unknown``, the splits a result shows the same way leave every
-    count it does not show two values or more (D320; the cohort's size is shown)."""
+    count it does not show two values or more (D320 alone, D424 beside others; the cohort's
+    size is shown)."""
     pinned = [
         (name, size, k, found)
         for name in FAMILIES
@@ -217,7 +250,8 @@ def test_a_result_shows_nothing_of_a_predicate_or_its_not_that_pins_a_suppressed
     """Every split of cohorts of 8 to 14 units, under *k* from 3 to 5, run through
     ``compare.existence`` with ``P`` alone or beside ``not P``: the results that read the same
     (population, analysed, values and caveats, messages included) leave every count they do not
-    show, even by difference, two values or more; ``TTTTTTTTTI`` among them (D320)."""
+    show, even by difference, two values or more; ``TTTTTTTTTI`` among them (D320 alone, D424
+    beside its ``not``)."""
     pinned: list[tuple[str, int, int, Split, str]] = []
     for name in ("P", "P, not P"):
         members = FAMILIES[name]
@@ -428,7 +462,7 @@ def test_a_result_of_independent_predicates_pins_no_suppressed_count(
     one order, and a result is read with its predicates' columns sorted: a predicate's counts
     are those of every predicate, in every result that reads the same, whose column reads as
     its own. Fixing the other position only splits what reads the same more finely, so a count
-    left two values here is left them by every result (D320)."""
+    left two values here is left them by every result (D424: the predicates are one scope)."""
     size, rest = 6, 12
     view = viewed(2, predicates, k=3)
     secrets = _secrets(answers)
@@ -489,7 +523,7 @@ def test_a_result_of_two_predicates_reads_the_same_whatever_their_suppressed_joi
     """The review's cases, 20 units under *k* = 3: two predicates each with 11 UNKNOWN units,
     of which 2 or 3 are UNKNOWN for both; and one predicate with 1 or 2 units not assessed beside
     one with 10. Each pair reads the same, so neither the units for which no predicate is known
-    nor the suppressed reason count is pinned (D320)."""
+    nor the suppressed reason count is pinned (D320, D424: never shown)."""
     view = viewed(1, 2, k=3)
     first = compared(view, ["T" * 20], given, k=3)
     second = compared(view, ["T" * 20], other, k=3)

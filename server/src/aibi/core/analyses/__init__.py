@@ -1,7 +1,8 @@
 """The analysis registry and the core's analyses (SPEC §8, §9; M3).
 
 - ``stats``: the statistical methods, deterministic as §9.3 requires, held to R (D321).
-- ``disclosure``: the disclosure of the counts a result adds, each predicate's split (§8.4, D320).
+- ``disclosure``: the disclosure of the counts a result adds, its predicates by scope (§8.4,
+  D320, D424).
 - ``existence``: ``compare.existence``, its entry, values, readback and disclosure (D319).
 - ``distribution``: ``summary.distribution`` (D328, D329), and ``common`` what the core's
   descriptive analyses share.
