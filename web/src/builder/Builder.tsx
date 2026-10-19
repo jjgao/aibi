@@ -22,10 +22,11 @@
  *   (under the banner when one blocks: R49a's codes are shown wherever the answers carry them),
  *   readbacks (`Readback`, R41) and cohort counts (`Counted`); refusals through `Refusal`. **Not
  *   shown** (each with its reason in D433): a cohort's and a view's `form`, `computation_id`,
- *   `leaves`, `unit`, `packs` and `position`; the answers' `params` and `translation` (fixed words
- *   when present); the count's `views` (the validation shows them) and its `size`, `digest` and
- *   `issuance`; every member of a result but its derivation's id, its disclosure, its caveats and
- *   its readbacks (the result screen is M5.4-min's).
+ *   `leaves`, `unit`, `packs` and `position`; the validation's and the count's `params` and the
+ *   `translation` (fixed words when present); the count's `views` (the validation shows them) and
+ *   its `size`, `digest` and `issuance`. A run's answer is the result screen's (D435): its
+ *   parameters once (`Parameters`) and each result in place (`Result`), kept under the stale words
+ *   after an edit until the next run.
  */
 import { type ReactElement, useState, useSyncExternalStore } from "react";
 
@@ -41,6 +42,8 @@ import { Readback } from "../layout/Readback";
 import { Refusal, Refusals } from "../layout/Refusal";
 import { ReleaseRef } from "../layout/ReleaseRef";
 import { Ref } from "../layout/Text";
+import { Result } from "../result/Figures";
+import { Parameters } from "../result/Provenance";
 import { IdStatus } from "./Ids";
 import {
   addCohort,
@@ -84,8 +87,6 @@ export const WORDS = {
   invalid: "The document is not valid.",
   problems: "The server found these problems in the document:",
   translation: "The answer holds a translation of the document, which is not shown here.",
-  notShown:
-    "The result's figures, charts and provenance are not shown here: the result screen is not built yet (M5.4-min). The derivation id above names the result; an agent reads it with explain.",
 } as const;
 
 /** A call asked: its store, the form it was asked about and the draft it sent (`null`: not asked). */
@@ -190,25 +191,16 @@ export function CountsOf({ value }: { readonly value: Counts }): ReactElement {
   );
 }
 
-/** A run's answer: what names each result, never its figures. */
+/** A run's answer: its parameters, once, then each result as the result screen shows it (D435). */
 export function RunOf({ value }: { readonly value: Ran }): ReactElement {
   return (
     <>
+      <Parameters params={value.params} />
       {value.results.map((result, index) => (
         <section key={keyOf(index)} className="checked" aria-label="result">
-          <p>
-            Result <Ref value={result.derivation.id} />
-          </p>
-          <Disclosure value={result.derivation.disclosure} />
-          <Inspection caveats={result.caveats}>
-            {result.readback.cohorts.map((readback, at) => (
-              <Readback key={keyOf(at)} value={readback} />
-            ))}
-            <Readback value={result.readback.view} />
-          </Inspection>
+          <Result result={result} />
         </section>
       ))}
-      <p className="note">{WORDS.notShown}</p>
     </>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * What each of the builder's outcome views shows of a whole answer (D433's not-shown list, B6.2;
+ * What the builder's validation and count views show of a whole answer (D433's not-shown list, B6.2;
  * T10), by the coverage sweep (`coverage.tsx`): every text and number leaf of each walked answer is
  * replaced in turn by a sentinel, and the set of paths whose sentinel the view shows is held to all
  * the answer's paths minus the view's exception list, exactly. Each exception carries its reason;
@@ -7,13 +7,14 @@
  * starts or stops showing. The answers are the server's own (the builder's eight), a validation
  * with a `translation` written from one of them, and the schema's synthetic answers of each view's
  * component (every `PLANS` arm, whole and minimal: the members, `null`s and optional members the
- * server's answers do not hold). The harness has controls of its own.
+ * server's answers do not hold). The harness has controls of its own. The run view is the result
+ * screen (D435), whose sweep goes through the real seam on raw bodies (`result-sweep.test.tsx`).
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { Answered } from "../../src/api/typed";
-import { CountsOf, RunOf, ValidationOf, WORDS } from "../../src/builder/Builder";
+import { CountsOf, ValidationOf, WORDS } from "../../src/builder/Builder";
 import { walked } from "./answers";
 import { ANSWERS } from "./builder-support";
 import { coverage, coverageProblems, type Exception, type Swept, under } from "./coverage";
@@ -21,11 +22,9 @@ import { PLANS, REF, synthetic, UNMADE } from "./typed-support";
 
 type Validated = Answered<"validate_document">;
 type Counts = Answered<"count_cohort">;
-type Ran = Answered<"run_analysis">;
 
 const validationOf = (body: string): Validated => walked("DocumentValidation", body) as Validated;
 const countsOf = (body: string): Counts => walked("CohortCounts", body) as Counts;
-const runOf = (body: string): Ran => walked("AnalysisResults", body) as Ran;
 
 /** The schema's synthetic bodies of a component, every plan, whole and minimal. */
 function synthetics(component: string): string[] {
@@ -116,28 +115,6 @@ const COUNT_NOT_SHOWN: readonly Exception<Counts>[] = [
   { path: "counts/[]/count/population/lift_differs", when: (answer) => allUnderK(answer.counts.map((one) => one.count)) },
 ];
 
-/** The members of a result that are its figures (T10: the result screen's, M5.4-min). */
-const FIGURES = ["results/[]/values", "results/[]/population", "results/[]/analysed", "results/[]/charts"];
-
-/** Not shown by the run view, each with its reason (D433): every member of a result but its
- * derivation's id and disclosure, its caveats and its readbacks. */
-const RUN_NOT_SHOWN: readonly Exception<Ran>[] = [
-  ...FIGURES,
-  "params",
-  "results/[]/cohorts",
-  "results/[]/labels",
-  "results/[]/digest",
-  "results/[]/issuance",
-  "results/[]/source",
-  "results/[]/derivation/analysis",
-  "results/[]/derivation/document",
-  "results/[]/derivation/engine",
-  "results/[]/derivation/packs",
-  "results/[]/derivation/releases",
-  "results/[]/derivation/semantics_version",
-  "results/[]/caveats/[]/severity",
-];
-
 /** A body, and the same body with every list doubled (a copy of its last item appended) when that
  * still walks: so that each member is swept for a second instance (a view that shows a list's first
  * item, or the first cohort's member, alone is found). */
@@ -180,13 +157,6 @@ const COUNTS = once(() =>
     return { answer, found: coverage(answer, (value) => <CountsOf value={value} />) };
   }),
 );
-const RUNS = once(() =>
-  [ANSWERS.ran.body, ...synthetics("AnalysisResults")].flatMap((one) => doubled("AnalysisResults", one)).map((body) => {
-    const answer = runOf(body);
-    return { answer, found: coverage(answer, (value) => <RunOf value={value} />) };
-  }),
-);
-
 describe("what the outcome views show of a whole answer (B6.2)", () => {
   it("the validation view shows every member but its exception list, exactly (the server's answers, a translation, a refusal's counts, every synthetic arm)", { timeout: 300_000 }, () => {
     const swept = VALIDATIONS();
@@ -207,22 +177,6 @@ describe("what the outcome views show of a whole answer (B6.2)", () => {
     const swept = COUNTS();
     expect(swept.length).toBeGreaterThanOrEqual(14);
     expect(coverageProblems(swept, COUNT_NOT_SHOWN)).toEqual([]);
-  });
-
-  it("the run view shows every member but its exception list, exactly (its derivation's disclosure among them)", { timeout: 300_000 }, () => {
-    const swept = RUNS();
-    expect(swept[0]?.found.leaves).toBeGreaterThan(1000);
-    expect(swept.length).toBeGreaterThanOrEqual(12);
-    expect(coverageProblems(swept, RUN_NOT_SHOWN)).toEqual([]);
-    expect(swept.some(({ found }) => found.shown.has("results/[]/derivation/disclosure/min_cell_count@number"))).toBe(true);
-  });
-
-  it("T10: no figure of a result (its values, populations, analysed counts or charts) is shown by the run view", { timeout: 300_000 }, () => {
-    for (const { found } of RUNS()) {
-      const figures = [...found.all].filter((path) => under(path, FIGURES));
-      expect(figures.length).toBeGreaterThan(5);
-      expect(figures.filter((path) => found.shown.has(path))).toEqual([]);
-    }
   });
 });
 

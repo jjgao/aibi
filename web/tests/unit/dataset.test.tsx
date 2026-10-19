@@ -83,7 +83,7 @@ describe("Description (the view of an answer)", () => {
     const paged = await textOf(describedOf(orchardText("describe_dataset", 1)));
     expect(paged).toContain("Columns: 9; the columns from position 3 on are not on this page.");
     const floored = await textOf(describedOf(orchardText("describe_dataset", 2)));
-    expect(floored).toContain("Disclosure: minimum cell count 50: counts below it, and counts that would reveal them, are suppressed (§8.4).");
+    expect(floored).toContain("Disclosure: minimum cell count k = 50: counts of units from 1 to k − 1, and counts that would reveal them, are suppressed (§8.4).");
     expect(floored).toMatch(/Table: rows suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
   });
 

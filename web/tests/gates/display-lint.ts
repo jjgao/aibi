@@ -485,6 +485,7 @@ export const ELEMENT_CASES: readonly Case[] = [
   { id: "a className of a template of an id (a brand is a hole of href alone)", code: 'import type { DatasetId } from "../api";\nexport const e23 = (v: `x-${DatasetId}`) => <p className={v}>x</p>;', refused: ["elements"] },
   { id: "a className of a template with a free hole", code: "export const e21 = (v: `x${string}`) => <p className={v}>x</p>;", refused: ["elements"] },
   { id: "an attribute off the list", code: 'export const e10 = <a href="/" target="_blank">x</a>;', refused: ["elements"] },
+  { id: "hidden, off the list (it hides what the page says)", code: "export const e10b = <p hidden={true}>x</p>;", refused: ["elements"] },
   { id: "style", code: "export const e11 = <p style={{ color: 'red' }}>x</p>;", refused: ["elements"] },
   { id: "a ref outside the reviewed modules", code: "export const e12 = <p ref={r} />;", refused: ["elements"] },
   { id: "a className of type string", code: "export const e13 = <p className={words}>x</p>;", refused: ["elements"] },
@@ -878,7 +879,7 @@ export function elementCases(elements: readonly string[], refusedElements: reado
     ...refusedElements.map((name, index): Case => ({ id: `<${name}> (not listed)`, code: `export const n${String(index)} = <${name} />;`, refused: ["elements"] })),
     ...attributes
       .filter((name) => name !== "ref" && name !== "key")
-      .map((name, index): Case => ({ id: `${name}= (listed)`, code: `export const a${String(index)} = <p ${name}=${/^on[A-Z]/u.test(name) ? "{() => undefined}" : name === "disabled" || name === "hidden" || name === "spellCheck" ? "{true}" : '"x"'} />;`, refused: [] })),
+      .map((name, index): Case => ({ id: `${name}= (listed)`, code: `export const a${String(index)} = <p ${name}=${/^on[A-Z]/u.test(name) ? "{() => undefined}" : name === "disabled" || name === "spellCheck" ? "{true}" : '"x"'} />;`, refused: [] })),
     ...literal.flatMap((name, index): Case[] => [
       { id: `${name}: a string`, code: `export const s${String(index)} = <p ${name}={words} />;`, refused: ["elements"] },
       { id: `${name}: a brand`, code: `export const b${String(index)} = <p ${name}={typed} />;`, refused: ["elements"] },

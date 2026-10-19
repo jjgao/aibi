@@ -101,7 +101,7 @@ describe("Hits (the view of an answer)", () => {
     const shown = await view(answerOf({}));
     const text = shown.container.textContent;
     expect(text).toContain(`Dataset lending, release @3 · manifest ${MANIFEST}, status published`);
-    expect(text).toContain("Disclosure: minimum cell count 5: counts below it, and counts that would reveal them, are suppressed (§8.4).");
+    expect(text).toContain("Disclosure: minimum cell count k = 5: counts of units from 1 to k − 1, and counts that would reveal them, are suppressed (§8.4).");
     shown.unmount();
     const orchardHits = await view(hitsOf(orchardText("search_catalog")));
     expect(orchardHits.container.textContent).toContain("Disclosure: none (no minimum cell count applies).");

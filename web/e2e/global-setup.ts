@@ -37,11 +37,12 @@ const FIXTURES = path.join(WEB, "..", "fixtures");
 /** The datasets each main server holds: the lending library (`fixtures/library`, without its
  * formats and README), a small CSV dataset for each test that opens a session, and, for the
  * catalogue and dataset screens (D431), the orchard (`fixtures/orchard`) and the hostile headers
- * (`fixtures/hostile`), each without its README. */
-export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals", "orchard", "hostile"] as const;
+ * (`fixtures/hostile`), and, for the result screen (D435), the hostile values
+ * (`fixtures/hostile_values`), each without its README. */
+export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals", "orchard", "hostile", "hostile_values"] as const;
 
 /** The datasets copied from a directory of `fixtures/` of the same name. */
-const COPIED: ReadonlySet<string> = new Set(["library", "orchard", "hostile"]);
+const COPIED: ReadonlySet<string> = new Set(["library", "orchard", "hostile", "hostile_values"]);
 
 
 async function freePort(): Promise<number> {

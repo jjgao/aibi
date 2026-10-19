@@ -112,6 +112,8 @@ const LAYOUT_EXPORTS = [
   "src/layout/Population.tsx: Counted",
   "src/layout/Population.tsx: Population",
   "src/layout/Population.tsx: SIZE_NOT_SHOWN",
+  "src/layout/Proportion.tsx: PROPORTION_WORDS",
+  "src/layout/Proportion.tsx: Proportion",
   "src/layout/Readback.tsx: Readback",
   "src/layout/Refusal.tsx: CARRIES_COUNTS",
   "src/layout/Refusal.tsx: DOCUMENT_LEVEL",

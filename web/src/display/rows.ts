@@ -24,8 +24,9 @@
  * while any owner before it has a row not built, so 2b-1L's lint lands before M5.2 renders data,
  * and 2b-1L2's (R90's flow, R90f) after M5.4 and before M5.5; M5.2-rest's (the descriptors' members
  * and the paging controls, D431) after M5.5; M5.3-rest's (live counts, the parameter forms, the
- * analysis menu and the rest of the builder, D433) after M5.2-rest and before M5.6. M5.3-min
- * (D433) builds the builder-lite screens.
+ * analysis menu and the rest of the builder, D433) after M5.2-rest; M5.C's (the charts, D435) and
+ * M5.4-rest's (the rest of the result screen, D435) after M5.3-rest and before M5.6. M5.3-min
+ * (D433) builds the builder-lite screens, M5.4-min (D435) the result screen.
  * 2b-0, which writes this table and its gate, builds no screen and owns no row. `server` rows are
  * the server's (or a gate's that has landed): they name no module and never fall due here.
  *
@@ -46,7 +47,7 @@
  */
 
 /** The owners, in the order they land; `server` last, outside the order. */
-export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "M5.3-rest", "M5.6", "server"] as const;
+export const OWNERS = ["2b-1a", "2b-1L", "2b-1b", "M5.2-min", "M5.3-min", "M5.4-min", "2b-1L2", "M5.5", "M5.2-rest", "M5.3-rest", "M5.C", "M5.4-rest", "M5.6", "server"] as const;
 
 /** The screens a row may bind. */
 export const SCREENS = ["all", "catalogue", "dataset", "column", "builder", "result", "refusal", "operator"] as const;
@@ -197,7 +198,7 @@ export const ROWS: readonly Row[] = [
   {
     id: "R12",
     basis: "derived",
-    must: "Every proportion is shown as its numerator, its denominator and what the denominator counts (`denominator_text`), never as a bare estimate (derived: §8.2 and P1 give the server's proportion those three members and say none is a bare number, and the page shows what the envelope says).",
+    must: "Every proportion is shown as its numerator, its denominator and its `denominator_definition` (its three members under their own names, as sent), and its `denominator_text` where the server gives one; never as a bare estimate (derived: §8.2 and P1 give the server's proportion those members and say none is a bare number, and the page shows what the envelope says).",
     screens: ["result", "builder"],
     spec: ["P1", "A1", "§8.2"],
     owner: "M5.4-min",
@@ -230,7 +231,7 @@ export const ROWS: readonly Row[] = [
     must: "An effect size names its measure, its position and its reference position, and reads as the server defines it: a difference is the position minus the reference, a ratio the position over the reference.",
     screens: ["result"],
     spec: ["§8.2", "D355"],
-    owner: "M5.4-min",
+    owner: "M5.4-rest",
     module: "src/result/Effects.tsx",
     test: "tests/unit/effects.test.tsx",
   },
@@ -240,7 +241,7 @@ export const ROWS: readonly Row[] = [
     must: "An interval shows its level and its method with its bounds (Q7; derived: §8.2 gives every interval both, and a bare pair of bounds says neither).",
     screens: ["result"],
     spec: ["§8.2"],
-    owner: "M5.4-min",
+    owner: "M5.4-rest",
     module: "src/layout/Interval.tsx",
     test: "tests/unit/interval.test.tsx",
   },
@@ -250,7 +251,7 @@ export const ROWS: readonly Row[] = [
     must: "A test shows the positions it used, and a multiple-testing family how many tests it holds and how many were not computed or suppressed (derived: §9.5 says tests that cannot be computed leave the family and are counted, and §8.4 suppresses some; showing those counts is the page's part).",
     screens: ["result"],
     spec: ["§9.5", "§8.4"],
-    owner: "M5.4-min",
+    owner: "M5.4-rest",
     module: "src/result/Tests.tsx",
     test: "tests/unit/result-tests.test.tsx",
   },
@@ -335,14 +336,24 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/disclosure.test.tsx",
   },
   {
-    id: "R26",
+    id: "R26a",
     basis: "derived",
-    must: "The provenance panel shows the derivation with every result and count: the derivation id, the analysis and its version, the releases (dataset, label, manifest, status), pack versions, the semantics version, the engine, the digest, the cohort ids and the document as written (Q9), every id whole and citable (derived: P1 and §8.1 say every result carries these, and the page shows what the envelope says).",
-    screens: ["result", "builder"],
+    must: "The provenance panel shows the derivation with every result: the derivation id, the analysis and its version, the releases (dataset, label, manifest, status), pack versions, the semantics version, the engine, the digest, the issuance, the source's leaves and each position's cohort id, every id whole and citable (derived: P1 and §8.1 say every result carries these, and the page shows what the envelope says).",
+    screens: ["result"],
     spec: ["P1", "§1", "§8.1", "§15"],
     owner: "M5.4-min",
     module: "src/result/Provenance.tsx",
     test: "tests/unit/provenance-panel.test.tsx",
+  },
+  {
+    id: "R26b",
+    basis: "derived",
+    must: "The provenance panel shows the document as written (Q9) and the canonical document of the derivation (derived: P1 and §8.1 say every result carries them).",
+    screens: ["result"],
+    spec: ["P1", "§8.1"],
+    owner: "M5.4-rest",
+    module: "src/result/Written.tsx",
+    test: "tests/unit/written.test.tsx",
   },
   {
     id: "R27",
@@ -355,9 +366,9 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/release-ref.test.tsx",
   },
   {
-    id: "R28",
+    id: "R28a",
     basis: "derived",
-    must: "A cache hit says so and names the issuance whose values it serves; the parameters used are echoed and the unused ones reported (derived: §8.1's issuance carries `cache_hit` and `values_from`, and the page shows what the envelope says).",
+    must: "A cache hit says so and names the issuance whose values it serves, and a result computed for the request says that; the answer's unused parameters are reported, once per answer (derived: §8.1's issuance carries `cache_hit` and `values_from`, and the page shows what the envelope says).",
     screens: ["result"],
     spec: ["§8.1", "§7.1"],
     owner: "M5.4-min",
@@ -365,14 +376,24 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/provenance-panel.test.tsx",
   },
   {
+    id: "R28b",
+    basis: "derived",
+    must: "The parameters used are echoed: the answer's `params.used` and each result's `source.params` (derived: §8.1 and §7.1 return the parameters the server resolved).",
+    screens: ["result"],
+    spec: ["§8.1", "§7.1"],
+    owner: "M5.4-rest",
+    module: "src/result/Used.tsx",
+    test: "tests/unit/used.test.tsx",
+  },
+  {
     id: "R29",
     basis: "spec statement",
     must: "A variable that counts rows is labelled as counting rows, and memberships carry a fixed-word note that a unit counts in each category it holds wherever the data says `multi_membership: true` (Q8).",
     screens: ["result"],
     spec: ["§9.2", "D382"],
-    owner: "M5.4-min",
-    module: "src/result/Values.tsx",
-    test: "tests/unit/values.test.tsx",
+    owner: "M5.4-rest",
+    module: "src/result/Memberships.tsx",
+    test: "tests/unit/memberships.test.tsx",
   },
   {
     id: "R30",
@@ -380,14 +401,14 @@ export const ROWS: readonly Row[] = [
     must: "A chart draws only its inline `data.values`, with a CSP-safe interpreter and no loader or request; a chart with a URL, a `$schema` or a transform is not drawn.",
     screens: ["result"],
     spec: ["§8.5", "D322", "§14"],
-    owner: "M5.4-min",
-    module: "src/result/Charts.tsx",
-    test: "tests/unit/charts.test.tsx",
+    owner: "M5.C",
+    module: "src/chart/Chart.tsx",
+    test: "tests/unit/chart.test.tsx",
   },
   {
-    id: "R31",
+    id: "R31a",
     basis: "derived",
-    must: "A chart the client refuses to draw (R30) is never dropped in silence: the result states how many of its charts the client refused to draw, and a result with no chart says it has none (derived: §8.5's charts are the server's, drawn by a CSP-safe interpreter that refuses what it cannot draw, and A3 has a refusal named, never silent).",
+    must: "Until charts are drawn, a result that carries charts says they are not drawn on this page, and one with none says it has none: a chart not drawn never reads as no data (derived: §8.5, A3).",
     screens: ["result"],
     spec: ["§8.5", "A3"],
     owner: "M5.4-min",
@@ -395,12 +416,22 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/charts.test.tsx",
   },
   {
+    id: "R31b",
+    basis: "derived",
+    must: "A chart the client refuses to draw (R30) is never dropped in silence: the result states how many of its charts the client refused to draw, and a result with no chart says it has none (derived: §8.5's charts are the server's, drawn by a CSP-safe interpreter that refuses what it cannot draw, and A3 has a refusal named, never silent).",
+    screens: ["result"],
+    spec: ["§8.5", "A3"],
+    owner: "M5.C",
+    module: "src/chart/Chart.tsx",
+    test: "tests/unit/chart.test.tsx",
+  },
+  {
     id: "R32",
     basis: "derived",
     must: "Survival: a separated term shows its direction, and the hazard-ratio chart's labels are D369's (derived: D364 and D369 fix the term's direction and the chart's labels, which the page shows as the server wrote them).",
     screens: ["result"],
     spec: ["D364", "D369"],
-    owner: "M5.4-min",
+    owner: "M5.4-rest",
     module: "src/result/Survival.tsx",
     test: "tests/unit/survival.test.tsx",
   },
@@ -415,14 +446,24 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/result-figures.test.tsx",
   },
   {
-    id: "R34",
+    id: "R34a",
     basis: "spec statement",
-    must: "`values` is read by name through fail-closed readers, as the entry's `returns` declares it (Q1): a member the page cannot read is shown as not shown (the page and the server disagree), never guessed.",
+    must: "`values` is read by name through fail-closed readers, as the entry's `returns` declares it (Q1): a member the page cannot read is shown as not shown (the page and the server disagree), never guessed; a number column under the disclosure setting is shown as not shown yet (R34b).",
     screens: ["result"],
     spec: ["§8.1", "§9.1", "D419", "D426"],
     owner: "M5.4-min",
     module: "src/result/Values.tsx",
-    test: "tests/unit/values.test.tsx",
+    test: "tests/unit/result-values.test.tsx",
+  },
+  {
+    id: "R34b",
+    basis: "derived",
+    must: "A number column under the disclosure setting is read: its suppressed members, its histogram's bins as the server merged them and the bin indices `q1_bin`, `median_bin` and `q3_bin`, each sentence held by a live answer (derived: D329, §8.4; r2's M1).",
+    screens: ["result"],
+    spec: ["D329", "§8.4"],
+    owner: "M5.4-rest",
+    module: "src/result/UnderK.tsx",
+    test: "tests/unit/under-k.test.tsx",
   },
   {
     id: "R35",
@@ -430,9 +471,9 @@ export const ROWS: readonly Row[] = [
     must: "An integer beyond ±(2^53 − 1) inside `values` is a decimal string: it is shown as the server's text where a number is expected (the by-name readers accept it), never parsed or computed with.",
     screens: ["result"],
     spec: ["§8.2", "§5.1"],
-    owner: "M5.4-min",
-    module: "src/result/Values.tsx",
-    test: "tests/unit/values.test.tsx",
+    owner: "M5.4-rest",
+    module: "src/result/Decimal.tsx",
+    test: "tests/unit/decimal.test.tsx",
   },
   {
     id: "R36",
@@ -445,9 +486,9 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/caveat.test.tsx",
   },
   {
-    id: "R37",
+    id: "R37a",
     basis: "derived",
-    must: "A caveat's `affects` pointers attach it to the figures they name (Q6), and a pointer that names no figure shown is shown as data (derived: §8.3's pointers say which parts of the output a caveat concerns).",
+    must: "Every caveat of a result is shown with the result, at its head, each with its `affects` pointers shown as data (derived: §8.3's pointers say which parts of the output a caveat concerns, and the page shows what the envelope says).",
     screens: ["result"],
     spec: ["§8.3", "§8.1"],
     owner: "M5.4-min",
@@ -455,14 +496,24 @@ export const ROWS: readonly Row[] = [
     test: "tests/unit/result-figures.test.tsx",
   },
   {
+    id: "R37b",
+    basis: "derived",
+    must: "A caveat's `affects` pointers attach it to the figures they name (Q6), and a pointer that names no figure shown is shown as data (derived: §8.3's pointers say which parts of the output a caveat concerns).",
+    screens: ["result"],
+    spec: ["§8.3", "§8.1"],
+    owner: "M5.4-rest",
+    module: "src/result/Affects.tsx",
+    test: "tests/unit/affects.test.tsx",
+  },
+  {
     id: "R38",
     basis: "spec statement",
     must: "Pooled values carry a fixed-word note that they are pooled across datasets wherever the server's data says so (Q8).",
     screens: ["result"],
     spec: ["§7.5", "§8.3"],
-    owner: "M5.4-min",
-    module: "src/result/Values.tsx",
-    test: "tests/unit/values.test.tsx",
+    owner: "M5.4-rest",
+    module: "src/result/Pooled.tsx",
+    test: "tests/unit/pooled.test.tsx",
   },
   // C. The builder (the document, live counts, forms).
   {
@@ -598,12 +649,22 @@ export const ROWS: readonly Row[] = [
   {
     id: "R49b",
     basis: "spec statement",
-    must: "Descriptive-only results and pooled values are marked on the result screen.",
+    must: "On the result screen, the overlap and cross-dataset caveats (`COHORTS_OVERLAP`, `CONFOUNDED_WITH_DATASET`, `UNMAPPED_COMPARISON`, `POOLED_ACROSS_DATASETS`) are shown with the result, and a result whose values give none for the view says so; the descriptive-only mark is R49c's, and the per-value pooled note R38's.",
     screens: ["result"],
     spec: ["§7.4", "§7.5"],
     owner: "M5.4-min",
     module: "src/result/Figures.tsx",
     test: "tests/unit/result-figures.test.tsx",
+  },
+  {
+    id: "R49c",
+    basis: "spec statement",
+    must: "A descriptive-only analysis is marked so on the result screen, from its registry entry's `assumptions` (`list_analyses`).",
+    screens: ["result"],
+    spec: ["§7.4"],
+    owner: "M5.4-rest",
+    module: "src/result/Descriptive.tsx",
+    test: "tests/unit/descriptive.test.tsx",
   },
   // D. The catalogue (`search_catalog`).
   {
@@ -811,7 +872,7 @@ export const ROWS: readonly Row[] = [
   {
     id: "R71",
     basis: "spec statement",
-    must: "A refusal's `counts` (cohort counts with their ids, such as an overlap's) are shown as cohort counts are (R18, R20, R25, R26).",
+    must: "A refusal's `counts` (cohort counts with their ids, such as an overlap's) are shown as cohort counts are (R18, R20, R25, R26b).",
     screens: ["refusal", "builder"],
     spec: ["§8.6", "§7.4"],
     owner: "M5.3-min",
@@ -1068,6 +1129,11 @@ export const RETIRED: readonly Retired[] = [
   { id: "R68", reason: "Split into a and b by D431 (M5.2-min builds a; M5.2-rest owns b)." },
   { id: "R40", reason: "Split into a and b by D433 (M5.3-min builds a; M5.3-rest owns b)." },
   { id: "R49", reason: "Split into a and b by D433 (M5.3-min builds a; M5.4-min owns b)." },
+  { id: "R26", reason: "Split into a and b by D435 (M5.4-min builds a; M5.4-rest owns b)." },
+  { id: "R28", reason: "Split into a and b by D435 (M5.4-min builds a; M5.4-rest owns b)." },
+  { id: "R31", reason: "Split into a and b by D435 (M5.4-min builds a; M5.C owns b)." },
+  { id: "R34", reason: "Split into a and b by D435 (M5.4-min builds a; M5.4-rest owns b)." },
+  { id: "R37", reason: "Split into a and b by D435 (M5.4-min builds a; M5.4-rest owns b)." },
 ];
 
 /** The server's alone: not display obligations, listed so that none is forgotten. */

@@ -353,6 +353,11 @@ describe("the builder, driven through its controls (B6.4)", () => {
             fail(step, `(iv) the ${key} view's stale words ${String(stale)}, an edit since it was asked ${String(edited[key])}`);
           }
         }
+        // (iv) the result stays shown under the stale words (D435): an answered run shows its result.
+        const runText = view("run")?.textContent ?? null;
+        if (runText !== null && ![WORDS.pending, WORDS.failed, WORDS.deadline].some((words) => runText.includes(words)) && !/Derivation drv:[0-9a-f]{64}/u.test(runText)) {
+          fail(step, "(iv) the run view's answer does not show its result");
+        }
         const validationText = view("validation")?.textContent ?? "";
         const ready = validationText.includes(WORDS.valid) && !validationText.includes(WORDS.stale) && !pending;
         for (const name of ["Count", "Run"]) {

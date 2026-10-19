@@ -232,7 +232,7 @@ describe("the orchard's answers, through the real seam and the routes", () => {
     found = await at("#/");
     await found.until((words) => words.includes("Datasets: 2"));
     const floored = found.container.textContent;
-    expect(floored).toContain("Disclosure: minimum cell count 50");
+    expect(floored).toContain("Disclosure: minimum cell count k = 50");
     expect(floored).toMatch(/trees trees, grain One row per tree_id, role entity, rows suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
     expect(floored).toContain("SUPPRESSED (note): Counts from 1 to min_cell_count - 1");
     found.unmount();
