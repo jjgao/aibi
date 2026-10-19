@@ -58,6 +58,25 @@ uv run aibi session publish library
 uv run aibi status
 ```
 
+## A test site
+
+`scripts/testsite.sh` builds the web app, configures a server on loopback, starts it, and imports
+the sample datasets (`fixtures/orchard` and `fixtures/hostile_values`), so the catalogue, the
+cohort builder (Validate, Count, Run) and the result page can be tried in a browser. It needs
+`uv` and the Node version in `web/.nvmrc`.
+
+```bash
+scripts/testsite.sh start     # builds, serves and imports; prints the address (default http://127.0.0.1:8000/)
+scripts/testsite.sh status
+scripts/testsite.sh stop
+scripts/testsite.sh reset     # stops, and deletes the site's data (the token is kept)
+```
+
+Everything lives in `~/aibi-testsite` (`AIBI_TESTSITE_DIR`; the port is `AIBI_TESTSITE_PORT`). The
+curator token is written there once, to `curator-token` (mode 0600), and is never printed. The
+server binds 127.0.0.1 only, which needs no TLS: to open it from another machine, tunnel with
+`ssh -L 8000:127.0.0.1:8000 <host>`. Do not rebind it without TLS and a proxy (SPEC §14).
+
 The server's read-only catalogue page, at `http://127.0.0.1:8000/`, lists the published datasets
 and shows each one's descriptors and table graph; it takes no token and shows what the public
 tools show.
