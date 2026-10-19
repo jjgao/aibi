@@ -49,9 +49,12 @@ export {
   type BoxedJson,
   type BoxedRefusals,
   type BoxedSegment,
+  type ColumnRead,
   type InvalidCause,
   type Outcome,
   type TypedOperation,
+  valuesOf,
+  type ValuesRead,
 } from "./typed";
 export { type Facet, type Listed, type Lists, type ListShown, listOf, NOT_READ, Num, type Refused, RetryAfter } from "./format";
 export { isPositive, isZero, largestOf, LISTED } from "./numbers";

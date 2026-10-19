@@ -30,7 +30,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ANNOTATIONS, builderOf, censusOf, CONSUMES, DELEGATING, FAIL_CLOSED, INTERPRETED, RESIDUAL, RESIDUALS, renderShapes, ShapeError, shapesOf, TYPED_OPERATIONS } from "../../scripts/generate-shapes.mjs";
-import { OPERATIONS, SHAPES, VOCABULARIES } from "../../src/api/generated/shapes";
+import { OPERATIONS, SHAPES, VALUES, VOCABULARIES } from "../../src/api/generated/shapes";
 import { WEB } from "./program";
 
 type Json = Record<string, unknown>;
@@ -117,7 +117,7 @@ describe("the census by position (MA1): a keyword is consumed where it stands, o
   });
 
   it("the builders are the reviewed set, and every interpreted keyword is some builder's", () => {
-    expect(Object.keys(CONSUMES).sort()).toEqual(["allOf", "alternatives", "any", "boolean", "const", "enum", "failClosed", "json", "list", "map", "null", "number", "record", "ref", "segments", "string", "typeList"]);
+    expect(Object.keys(CONSUMES).sort()).toEqual(["allOf", "alternatives", "any", "boolean", "const", "empty", "enum", "failClosed", "json", "list", "map", "null", "number", "record", "ref", "segments", "string", "typeList"]);
     expect([...INTERPRETED].sort()).toEqual(["$ref", "additionalProperties", "allOf", "anyOf", "const", "enum", "items", "oneOf", "patternProperties", "prefixItems", "properties", "propertyNames", "required", "type", "x-aibi-json"]);
   });
 
@@ -267,7 +267,7 @@ function watching(): { readonly observer: { visit: (schema: Json) => Json; built
   return { observer, visits };
 }
 
-/** A synthetic node of each of the 16 builders (`failClosed` has none: `Severity` only the real document gives) that carries every
+/** A synthetic node of each of the 17 builders (`failClosed` has none: `Severity` only the real document gives) that carries every
  * keyword the builder declares (the ones a builder reads when it has them), each with the keyword that no one node can have beside another. */
 const JSON_ARMS: readonly Json[] = [
   { type: ["string", "boolean", "null"] },
@@ -292,6 +292,7 @@ const SYNTHETIC: Readonly<Record<string, readonly Json[]>> = {
   null: [{ type: "null" }],
   list: [{ type: "array", items: { type: "string" }, prefixItems: [{ type: "string" }] }],
   record: [{ type: "object", properties: { a: { type: "string" } }, required: ["a"], additionalProperties: false }],
+  empty: [{ type: "object", properties: {}, additionalProperties: false }],
   map: [{ type: "object", required: ["a"], additionalProperties: { type: "string" }, patternProperties: { "^a$": { type: "string" } }, propertyNames: { type: "string" } }],
   any: [{}],
 };
@@ -316,7 +317,7 @@ describe("CONSUMES is true by construction: the keys a builder reads at a node a
 
   const readOf = (visit: Visit): string[] => visit.present.filter((key) => visit.reads.has(key)).sort();
 
-  it("the synthetic nodes are those of the 16 builders (failClosed has none), and carry every keyword the builder declares", () => {
+  it("the synthetic nodes are those of the 17 builders (failClosed has none), and carry every keyword the builder declares", () => {
     expect(Object.keys(SYNTHETIC).sort()).toEqual(Object.keys(CONSUMES).filter((builder) => builder !== "failClosed").sort());
     for (const [builder, schemas] of Object.entries(SYNTHETIC)) {
       const declared = CONSUMES[builder];
@@ -571,5 +572,63 @@ describe("the generation refuses what the walk would not read", () => {
     change(document);
     expect(() => shapesOf(document)).toThrow(ShapeError);
     expect(() => shapesOf(document)).toThrow(words);
+  });
+});
+
+describe("the values models (D434): x-aibi-values, and an empty closed object as a map of no entries", () => {
+  const roots = (document: Json): Json => at(document, "x-aibi-values");
+
+  it("VALUES is the document's x-aibi-values, by <id>@<version>, and the generated table's", () => {
+    const document = real();
+    const expected: Record<string, string> = {};
+    for (const [id, versions] of Object.entries(roots(document))) {
+      for (const [version, reference] of Object.entries(versions as Json)) {
+        expected[`${id}@${version}`] = String((reference as Json)["$ref"]).replace("#/components/schemas/", "");
+      }
+    }
+    expect(Object.keys(expected).length).toBeGreaterThan(0);
+    expect(shapesOf(document).values).toEqual(expected);
+    expect({ ...VALUES }).toEqual(expected);
+    for (const component of Object.values(expected)) {
+      expect(Object.hasOwn(SHAPES, component), component).toBe(true);
+    }
+  });
+
+  it.each([
+    ["a reference to no component", (d: Json) => { Object.assign(at(roots(d), "summary.distribution"), { "1.0.0": { $ref: "#/components/schemas/NoSuchValues" } }); }, /x-aibi-values summary\.distribution@1\.0\.0: #\/components\/schemas\/NoSuchValues is no component/u],
+    ["a reference with a sibling", (d: Json) => { Object.assign(at(roots(d), "summary.distribution", "1.0.0"), { title: "T" }); }, /a values model is one component/u],
+    ["a schema, not a reference", (d: Json) => { Object.assign(at(roots(d), "summary.distribution"), { "1.0.0": { type: "object" } }); }, /a values model is one component/u],
+    ["a string, not a reference", (d: Json) => { Object.assign(at(roots(d), "summary.distribution"), { "1.0.0": "DistributionValues" }); }, /x-aibi-values\/summary\.distribution\/1\.0\.0/u],
+    ["versions that are no object", (d: Json) => { Object.assign(roots(d), { "summary.distribution": ["1.0.0"] }); }, /x-aibi-values\/summary\.distribution/u],
+  ])("an x-aibi-values entry that is not exactly one $ref to a component fails: %s", (_case, change, words) => {
+    const document = real();
+    change(document);
+    expect(() => shapesOf(document)).toThrow(ShapeError);
+    expect(() => shapesOf(document)).toThrow(words);
+  });
+
+  it("an empty closed object is a map of no entries (NoViewValues), with annotations beside it or none", () => {
+    expect(SHAPES["NoViewValues"]).toEqual({ t: "map", v: { t: "never" } });
+    const bare = real();
+    schemas(bare)["NoViewValues"] = { type: "object", properties: {}, additionalProperties: false };
+    expect(shapesOf(bare).components["NoViewValues"]).toEqual({ t: "map", v: { t: "never" } });
+    const untyped = real();
+    schemas(untyped)["NoViewValues"] = { properties: {}, additionalProperties: false, title: "T", description: "D" };
+    expect(shapesOf(untyped).components["NoViewValues"]).toEqual({ t: "map", v: { t: "never" } });
+  });
+
+  it("its neighbours stay as they are read today: with required it is a record, open it is refused as an open record, with patternProperties or propertyNames the census refuses it", () => {
+    const required = real();
+    Object.assign(schemas(required)["NoViewValues"] as Json, { required: [] });
+    expect(shapesOf(required).components["NoViewValues"]).toEqual({ t: "rec", p: {}, r: [] });
+    const open = real();
+    delete (schemas(open)["NoViewValues"] as Json)["additionalProperties"];
+    expect(() => shapesOf(open)).toThrow(/NoViewValues: .*states additionalProperties: false/u);
+    const patterned = real();
+    Object.assign(schemas(patterned)["NoViewValues"] as Json, { patternProperties: { "^x$": { type: "string" } } });
+    expect(() => shapesOf(patterned)).toThrow(/NoViewValues: the keyword patternProperties is neither consumed by the record node/u);
+    const named = real();
+    Object.assign(schemas(named)["NoViewValues"] as Json, { propertyNames: { type: "string" } });
+    expect(() => shapesOf(named)).toThrow(/NoViewValues: the keyword propertyNames is neither consumed by the record node/u);
   });
 });

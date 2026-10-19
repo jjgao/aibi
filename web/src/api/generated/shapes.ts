@@ -37,7 +37,7 @@ function frozen<T>(value: T): T {
 }
 
 /** The SHA-256 of the `schemas/openapi.json` this table was generated from (the types' too: `openapi.ts`). */
-export const DOCUMENT_DIGEST = "1bdbd31c7caf77678abbebd3feae692f8f940f23d935198af7f788a39ee297b7";
+export const DOCUMENT_DIGEST = "4c86d3b3a351e3a22a22885ef8bfb73a7e5dd6ca6dbbde288a5f77488376572b";
 
 /** Every component an answer reaches, by name. */
 export const SHAPES: { readonly [component: string]: Shape } = frozen({
@@ -50,6 +50,9 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "ApplicableAnalysis": {"t":"rec","p":{"analysis":{"t":"str"},"missing":{"t":"arr","i":{"t":"str"}},"status":{"t":"enum","v":["available","unavailable","available_with_caveats"]},"unconfirmed":{"t":"arr","i":{"t":"str"}},"version":{"t":"str"}},"r":["analysis","version","status","missing","unconfirmed"]},
   "CatalogHit": {"t":"rec","p":{"concepts":{"t":"arr","i":{"t":"str"}},"data_use":{"t":"arr","i":{"t":"ref","n":"OntologyTerm"}},"dataset":{"t":"str"},"description":{"t":"ref","n":"Data"},"disclosure":{"t":"ref","n":"DisclosureOut"},"domain_tags":{"t":"arr","i":{"t":"ref","n":"Data"}},"facets":{"t":"map","v":{"t":"never"},"pp":[["^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",{"t":"arr","i":{"t":"ref","n":"Data"}}]],"k":{"t":"str"}},"label":{"t":"ref","n":"Data"},"name":{"t":"ref","n":"Data"},"packs":{"t":"arr","i":{"t":"str"}},"release":{"t":"ref","n":"ReleaseOut"},"tables":{"t":"arr","i":{"t":"ref","n":"TableSummary"}},"tables_left_out":{"t":"num"}},"r":["dataset","release","disclosure","label","domain_tags","data_use","packs","concepts","facets","tables","tables_left_out"]},
   "CatalogHits": {"t":"rec","p":{"caveats":{"t":"arr","i":{"t":"ref","n":"Caveat"}},"hits":{"t":"arr","i":{"t":"ref","n":"CatalogHit"}},"next_offset":{"t":"num"},"total":{"t":"num"}},"r":["hits","total","caveats"]},
+  "CategoryDistribution": {"t":"all","o":[{"t":"rec","p":{"categories":{"t":"or","o":[{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},{"t":"null"}]},"kind":{"t":"const","v":"categories"},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}}},"r":["kind","categories"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/categories"]}}},"r":[],"open":true}]},
+  "CategoryRows": {"t":"rec","p":{"categories":{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},"excluded_rows":{"t":"map","v":{"t":"num"},"r":["NOT_ASSESSED","NOT_COVERED","NO_INFORMATION","NO_PARENT","OUT_OF_SCOPE","NO_ROWS","NOT_APPLICABLE","INVALID_VALUE"],"k":{"t":"ref","n":"ExclusionReason"}},"kind":{"t":"const","v":"category_rows"}},"r":["kind","categories","excluded_rows"]},
+  "CategoryShare": {"t":"rec","p":{"other_values":{"t":"const","v":true},"proportion":{"t":"ref","n":"Proportion"},"values":{"t":"arr","i":{"t":"ref","n":"Data"}}},"r":["values","proportion"]},
   "Caveat": {"t":"rec","p":{"affects":{"t":"arr","i":{"t":"str"}},"code":{"t":"all","o":[{"t":"or","o":[{"t":"str"},{"t":"enum","v":["UNKNOWN_EXCLUDED","INVALID_EXCLUDED","SCOPE_PARTIAL","COVERAGE_PROPOSED","UNCONFIRMED_SEMANTICS","UNMAPPED_COMPARISON","TIME_ORIGIN_MISMATCH","CONFOUNDED_WITH_DATASET","COHORTS_OVERLAP","SMALL_N","PH_VIOLATED","DRAFT_RELEASE","SUPPRESSED","NOT_ESTIMABLE","LIFT_DIFFERS","POOLED_ACROSS_DATASETS"]}]},{"t":"str"}]},"message":{"t":"arr","i":{"t":"seg"}},"severity":{"t":"ref","n":"Severity"}},"r":["code","severity","message","affects"]},
   "CohortCheck": {"t":"rec","p":{"caveats":{"t":"arr","i":{"t":"ref","n":"Caveat"}},"cohort":{"t":"ref","n":"Data"},"computation_id":{"t":"str"},"disclosure":{"t":"ref","n":"Disclosure"},"form":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"id":{"t":"str"},"leaves":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)*$",{"t":"arr","i":{"t":"str"}}]],"k":{"t":"str"}},"packs":{"t":"map","v":{"t":"never"},"pp":[["^[a-z][a-z0-9_]{0,63}$",{"t":"ref","n":"PackVersion"}]],"k":{"t":"str"}},"readback":{"t":"arr","i":{"t":"seg"}},"release":{"t":"ref","n":"ReleaseRef"},"status":{"t":"enum","v":["issued","not_issued","withdrawn","discarded","unknown_release","erased"]},"unit":{"t":"str"}},"r":["cohort","id","computation_id","status","form","unit","release","disclosure","packs","leaves","readback","caveats"]},
   "CohortCount": {"t":"rec","p":{"caveats":{"t":"all","o":[{"t":"arr","i":{"t":"ref","n":"Caveat"}},{"t":"arr","i":{"t":"rec","p":{"affects":{"t":"const","v":["/population"]}},"r":[],"open":true}}]},"digest":{"t":"str"},"disclosure":{"t":"ref","n":"Disclosure"},"id":{"t":"str"},"issuance":{"t":"ref","n":"Issuance"},"population":{"t":"ref","n":"Population"},"readback":{"t":"arr","i":{"t":"seg"}},"releases":{"t":"arr","i":{"t":"ref","n":"ReleaseRef"}},"size":{"t":"all","o":[{"t":"ref","n":"Proportion"},{"t":"rec","p":{"denominator_definition":{"t":"const","v":{"counts":"unit_table","position":null,"predicate":null}}},"r":[],"open":true}]}},"r":["id","digest","population","size","disclosure","readback","caveats","releases","issuance"]},
@@ -64,18 +67,26 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "DerivationRecord": {"t":"rec","p":{"id":{"t":"str"},"kind":{"t":"enum","v":["cohort","result"]},"object":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"releases":{"t":"arr","i":{"t":"ref","n":"ReleaseRef"}}},"r":["id","kind","releases"]},
   "Disclosure": {"t":"rec","p":{"min_cell_count":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["min_cell_count"]},
   "DisclosureOut": {"t":"rec","p":{"min_cell_count":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["min_cell_count"]},
+  "DistributionPosition": {"t":"rec","p":{"columns":{"t":"arr","i":{"t":"or","o":[{"t":"ref","n":"CategoryDistribution"},{"t":"ref","n":"NumberDistribution"},{"t":"ref","n":"CategoryRows"},{"t":"ref","n":"NumberRows"},{"t":"ref","n":"MembershipDistribution"}]}}},"r":["columns"]},
+  "DistributionValues": {"t":"rec","p":{"positions":{"t":"arr","i":{"t":"ref","n":"DistributionPosition"}},"view":{"t":"ref","n":"NoViewValues"}},"r":["positions","view"]},
   "DocumentValidation": {"t":"rec","p":{"cohorts":{"t":"arr","i":{"t":"ref","n":"CohortCheck"}},"params":{"t":"ref","n":"Parameters"},"refusals":{"t":"arr","i":{"t":"ref","n":"Refusal"}},"translation":{"t":"ref","n":"Translation"},"valid":{"t":"bool"},"views":{"t":"arr","i":{"t":"ref","n":"ViewCheck"}}},"r":["valid","refusals","cohorts","views"]},
   "ExclusionReason": {"t":"enum","v":["NOT_ASSESSED","NOT_COVERED","NO_INFORMATION","NO_PARENT","OUT_OF_SCOPE","NO_ROWS","NOT_APPLICABLE","INVALID_VALUE"]},
   "Explanation": {"t":"rec","p":{"derivation":{"t":"ref","n":"DerivationRecord"},"id":{"t":"str"},"issuance":{"t":"ref","n":"IssuanceRecord"},"status":{"t":"enum","v":["issued","not_issued","unknown","withdrawn","discarded","unknown_release","erased"]}},"r":["id","status"]},
   "FieldsOut": {"t":"rec","p":{"assumes_independent_groups":{"t":"bool"},"assumptions":{"t":"arr","i":{"t":"str"}},"caveats":{"t":"arr","i":{"t":"str"}},"cross_dataset":{"t":"or","o":[{"t":"ref","n":"CrossDatasetOut"},{"t":"null"}]},"library":{"t":"ref","n":"LibraryOut"},"methods":{"t":"map","v":{"t":"str"}},"min_events":{"t":"num"},"min_group_n":{"t":"num"},"params":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"randomness":{"t":"ref","n":"RandomnessOut"},"requires":{"t":"arr","i":{"t":"ref","n":"RequirementOut"}},"returns":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"uses_reference":{"t":"bool"}},"r":["requires","params","returns","methods","assumptions","uses_reference","assumes_independent_groups","cross_dataset","caveats"]},
   "GraphEdge": {"t":"rec","p":{"cardinality":{"t":"enum","v":["many-to-one","one-to-one"]},"child":{"t":"str"},"parent":{"t":"str"},"relationship":{"t":"str"}},"r":["relationship","child","parent","cardinality"]},
+  "Histogram": {"t":"rec","p":{"bins":{"t":"arr","i":{"t":"ref","n":"HistogramBin"}},"edges_from":{"t":"enum","v":["params","range","data"]}},"r":["edges_from","bins"]},
+  "HistogramBin": {"t":"rec","p":{"count":{"t":"num"},"high":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"includes_high":{"t":"bool"},"includes_low":{"t":"bool"},"low":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["low","high","includes_low","includes_high","count"]},
   "Interval": {"t":"rec","p":{"high":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"level":{"t":"num"},"low":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"method":{"t":"str"}},"r":["method","level","low","high"]},
   "Issuance": {"t":"rec","p":{"cache_hit":{"t":"bool"},"id":{"t":"str"},"values_from":{"t":"str"}},"r":["id","cache_hit","values_from"]},
   "IssuanceRecord": {"t":"rec","p":{"at":{"t":"str"},"derivation":{"t":"str"},"engine":{"t":"str"},"id":{"t":"str"},"packs":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"sql":{"t":"ref","n":"OutputJson"},"tool":{"t":"enum","v":["count_cohort","run_analysis"]},"values_from":{"t":"str"}},"r":["id","derivation","tool","values_from","engine","packs","at"]},
   "LibraryOut": {"t":"rec","p":{"name":{"t":"str"},"version":{"t":"str"}},"r":["name","version"]},
   "Limit": {"t":"rec","p":{"max":{"t":"num"},"name":{"t":"str"}},"r":["name","max"]},
+  "MembershipDistribution": {"t":"rec","p":{"categories":{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},"kind":{"t":"const","v":"memberships"},"multi_membership":{"t":"const","v":true}},"r":["kind","multi_membership","categories"]},
   "NamedCount": {"t":"rec","p":{"cohort":{"t":"ref","n":"Data"},"count":{"t":"ref","n":"CohortCount"},"leaves":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)*$",{"t":"arr","i":{"t":"str"}}]],"k":{"t":"str"}}},"r":["cohort","count","leaves"]},
+  "NoViewValues": {"t":"map","v":{"t":"never"}},
   "NotEstimableReason": {"t":"enum","v":["no_units","no_events","zero_denominator","zero_variance","not_reached","beyond_follow_up","separation","not_converged","degenerate_table","overlapping_cohorts","confounded_with_dataset","suppressed"]},
+  "NumberDistribution": {"t":"all","o":[{"t":"rec","p":{"histogram":{"t":"or","o":[{"t":"ref","n":"Histogram"},{"t":"null"}]},"kind":{"t":"const","v":"numbers"},"max":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"mean":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"median":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"median_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"min":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"n":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"q1":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q1_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q3":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q3_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"sd":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["kind","n","mean","sd","median","q1","q3","min","max","histogram"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/n","/mean","/sd","/median","/q1","/q3","/min","/max","/histogram","/q1_bin","/median_bin","/q3_bin"]}}},"r":[],"open":true}]},
+  "NumberRows": {"t":"all","o":[{"t":"rec","p":{"excluded_rows":{"t":"map","v":{"t":"num"},"r":["NOT_ASSESSED","NOT_COVERED","NO_INFORMATION","NO_PARENT","OUT_OF_SCOPE","NO_ROWS","NOT_APPLICABLE","INVALID_VALUE"],"k":{"t":"ref","n":"ExclusionReason"}},"histogram":{"t":"or","o":[{"t":"ref","n":"Histogram"},{"t":"null"}]},"kind":{"t":"const","v":"number_rows"},"max":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"mean":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"median":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"min":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"n":{"t":"num"},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"q1":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q3":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"sd":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["kind","n","excluded_rows","mean","sd","median","q1","q3","min","max","histogram"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/mean","/sd","/median","/q1","/q3","/min","/max","/histogram"]}}},"r":[],"open":true}]},
   "OntologyTerm": {"t":"rec","p":{"code":{"t":"ref","n":"Data"},"label":{"t":"ref","n":"Data"},"system":{"t":"ref","n":"Data"}},"r":["system","code","label"]},
   "OutputJson": {"t":"json"},
   "PackVersion": {"t":"rec","p":{"results_version":{"t":"num"},"version":{"t":"str"}},"r":["version","results_version"]},
@@ -107,6 +118,9 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
 /** The component of each typed operation's 200 answer. */
 export const OPERATIONS = frozen({"search_catalog":"CatalogHits","describe_dataset":"DatasetDescription","list_analyses":"AnalysisListing","validate_document":"DocumentValidation","count_cohort":"CohortCounts","run_analysis":"AnalysisResults","explain":"Explanation"} as const);
 
+/** The values model of each published analysis and version (D434), by `<id>@<version>`. */
+export const VALUES = frozen({"summary.distribution@1.0.0":"DistributionValues"} as const);
+
 /** The component of every other answer. */
 export const REFUSALS = "Refusals";
 
@@ -118,6 +132,9 @@ export const VOCABULARIES = frozen({
   "AnalysedVariable.not_estimable{key}": ["/n","/excluded","/excluded_units"],
   "AnalysisEntry.kind": ["analysis"],
   "ApplicableAnalysis.status": ["available","unavailable","available_with_caveats"],
+  "CategoryDistribution.kind": ["categories"],
+  "CategoryDistribution.not_estimable{key}": ["/categories"],
+  "CategoryRows.kind": ["category_rows"],
   "Caveat.code": ["UNKNOWN_EXCLUDED","INVALID_EXCLUDED","SCOPE_PARTIAL","COVERAGE_PROPOSED","UNCONFIRMED_SEMANTICS","UNMAPPED_COMPARISON","TIME_ORIGIN_MISMATCH","CONFOUNDED_WITH_DATASET","COHORTS_OVERLAP","SMALL_N","PH_VIOLATED","DRAFT_RELEASE","SUPPRESSED","NOT_ESTIMABLE","LIFT_DIFFERS","POOLED_ACROSS_DATASETS"],
   "CohortCheck.status": ["issued","not_issued","withdrawn","discarded","unknown_release","erased"],
   "ColumnBrief.datatype": ["number","integer","string","boolean","category","list<category>","date","datetime","time_offset"],
@@ -126,8 +143,14 @@ export const VOCABULARIES = frozen({
   "ExclusionReason": ["NOT_ASSESSED","NOT_COVERED","NO_INFORMATION","NO_PARENT","OUT_OF_SCOPE","NO_ROWS","NOT_APPLICABLE","INVALID_VALUE"],
   "Explanation.status": ["issued","not_issued","unknown","withdrawn","discarded","unknown_release","erased"],
   "GraphEdge.cardinality": ["many-to-one","one-to-one"],
+  "Histogram.edges_from": ["params","range","data"],
   "IssuanceRecord.tool": ["count_cohort","run_analysis"],
+  "MembershipDistribution.kind": ["memberships"],
   "NotEstimableReason": ["no_units","no_events","zero_denominator","zero_variance","not_reached","beyond_follow_up","separation","not_converged","degenerate_table","overlapping_cohorts","confounded_with_dataset","suppressed"],
+  "NumberDistribution.kind": ["numbers"],
+  "NumberDistribution.not_estimable{key}": ["/n","/mean","/sd","/median","/q1","/q3","/min","/max","/histogram","/q1_bin","/median_bin","/q3_bin"],
+  "NumberRows.kind": ["number_rows"],
+  "NumberRows.not_estimable{key}": ["/mean","/sd","/median","/q1","/q3","/min","/max","/histogram"],
   "Population.suppressed[]": ["/n_true","/n_false","/n_unknown","/unknown_by_reason","/unknown_by_leaf","/lift_differs"],
   "Proportion.not_estimable./denominator": ["suppressed"],
   "Proportion.not_estimable./excluded": ["suppressed"],

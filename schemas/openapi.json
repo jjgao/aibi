@@ -1387,6 +1387,192 @@
         "title": "CategoryCount",
         "type": "object"
       },
+      "CategoryDistribution": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "categories": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "categories"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/categories"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/categories"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "categories": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "categories"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "not_estimable": {
+                "propertyNames": {
+                  "enum": [
+                    "/categories"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "description": "A categorical variable at one position (D328, D329). ``categories`` lists the declared\npermissible values in their order, zeros included, then the other values in canonical order,\nor under a disclosure setting one row of them that names none (``other_values``), the rows\nthe disclosure settings merged in one row each; ``null`` when suppressed.",
+        "properties": {
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CategoryShare"
+                },
+                "maxItems": 150,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categories",
+            "x-aibi-computed": true
+          },
+          "kind": {
+            "const": "categories",
+            "title": "Kind",
+            "type": "string"
+          },
+          "not_estimable": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "patternProperties": {
+              "^(?:/(?:[^~/]|~[01])*)+$": {
+                "$ref": "#/components/schemas/NotEstimableReason"
+              }
+            },
+            "propertyNames": {
+              "maxLength": 16384,
+              "x-aibi-data": true
+            },
+            "title": "Not Estimable",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "categories"
+        ],
+        "title": "CategoryDistribution",
+        "type": "object"
+      },
+      "CategoryRows": {
+        "additionalProperties": false,
+        "description": "A categorical variable that counts rows (``count: \"rows\"``) at one position (D378): the\nrows it pools in each category over the rows with a value (``counts: \"rows\"``), listed as\n``CategoryDistribution`` lists categories without a disclosure setting, and the pooled rows\nwhose value is not PRESENT by reason (``excluded_rows``, every reason, zeros included). It is\nnever under a disclosure setting (D379), so nothing is merged or suppressed.",
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryShare"
+            },
+            "maxItems": 150,
+            "title": "Categories",
+            "type": "array"
+          },
+          "excluded_rows": {
+            "additionalProperties": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+              "x-aibi-server-number": true
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ExclusionReason"
+            },
+            "required": [
+              "NOT_ASSESSED",
+              "NOT_COVERED",
+              "NO_INFORMATION",
+              "NO_PARENT",
+              "OUT_OF_SCOPE",
+              "NO_ROWS",
+              "NOT_APPLICABLE",
+              "INVALID_VALUE"
+            ],
+            "title": "Excluded Rows",
+            "type": "object"
+          },
+          "kind": {
+            "const": "category_rows",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "categories",
+          "excluded_rows"
+        ],
+        "title": "CategoryRows",
+        "type": "object"
+      },
+      "CategoryShare": {
+        "additionalProperties": false,
+        "description": "One category at one position, or under a disclosure setting several merged into one row\n(§8.4, D329): its units, over the units for which the value is known.",
+        "properties": {
+          "other_values": {
+            "const": true,
+            "title": "Other Values",
+            "type": "boolean"
+          },
+          "proportion": {
+            "$ref": "#/components/schemas/Proportion"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/Data"
+            },
+            "maxItems": 150,
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "values",
+          "proportion"
+        ],
+        "title": "CategoryShare",
+        "type": "object"
+      },
       "Caveat": {
         "additionalProperties": false,
         "allOf": [
@@ -3900,6 +4086,65 @@
         "title": "DisclosureOut",
         "type": "object"
       },
+      "DistributionPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CategoryDistribution"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberDistribution"
+                },
+                {
+                  "$ref": "#/components/schemas/CategoryRows"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberRows"
+                },
+                {
+                  "$ref": "#/components/schemas/MembershipDistribution"
+                }
+              ]
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Columns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "columns"
+        ],
+        "title": "DistributionPosition",
+        "type": "object"
+      },
+      "DistributionValues": {
+        "additionalProperties": false,
+        "description": "``summary.distribution``'s ``values`` (§8.1): ``positions`` in view order.",
+        "properties": {
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionPosition"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Positions",
+            "type": "array"
+          },
+          "view": {
+            "$ref": "#/components/schemas/NoViewValues"
+          }
+        },
+        "required": [
+          "positions",
+          "view"
+        ],
+        "title": "DistributionValues",
+        "type": "object"
+      },
       "DocumentJson": {
         "anyOf": [
           {
@@ -4740,6 +4985,93 @@
         "title": "Health",
         "type": "object"
       },
+      "Histogram": {
+        "additionalProperties": false,
+        "properties": {
+          "bins": {
+            "items": {
+              "$ref": "#/components/schemas/HistogramBin"
+            },
+            "maxItems": 66,
+            "minItems": 1,
+            "title": "Bins",
+            "type": "array"
+          },
+          "edges_from": {
+            "enum": [
+              "params",
+              "range",
+              "data"
+            ],
+            "title": "Edges From",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edges_from",
+          "bins"
+        ],
+        "title": "Histogram",
+        "type": "object"
+      },
+      "HistogramBin": {
+        "additionalProperties": false,
+        "description": "A bin [low, high), or [low, high] for the last; ``low`` is ``null`` for the open bin\nbelow the first edge and ``high`` for the one above the last.",
+        "properties": {
+          "count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Count",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "high": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "includes_high": {
+            "title": "Includes High",
+            "type": "boolean"
+          },
+          "includes_low": {
+            "title": "Includes Low",
+            "type": "boolean"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          }
+        },
+        "required": [
+          "low",
+          "high",
+          "includes_low",
+          "includes_high",
+          "count"
+        ],
+        "title": "HistogramBin",
+        "type": "object"
+      },
       "HistogramOut": {
         "additionalProperties": false,
         "properties": {
@@ -5488,6 +5820,37 @@
         "title": "LoggedIssuance",
         "type": "object"
       },
+      "MembershipDistribution": {
+        "additionalProperties": false,
+        "description": "A variable's memberships (``each: \"category\"``) at one position (D380, D382): for each\ncategory listed over the cohort (the declared values in their order, zeros included, then\nthe others in UTF-16 order, or a filtered column's allowed values), the units for which some\nrow (or item) has it over the units for which that is known, its UNKNOWN units in the\nproportion's ``excluded`` by reason and its ``denominator_definition`` naming the category's\nleaf key (``counts: \"known\"``). A unit may count in several categories, so the proportions\nneed not sum to 1 (``multi_membership``); nothing is listed where no category is. Under a\ndisclosure setting (D383, D384) only the declared categories are listed, each row's counts\nas the pass shows them (``null`` where suppressed), its ``excluded`` always ``null``, and no\nrow is merged.",
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryShare"
+            },
+            "maxItems": 150,
+            "title": "Categories",
+            "type": "array"
+          },
+          "kind": {
+            "const": "memberships",
+            "title": "Kind",
+            "type": "string"
+          },
+          "multi_membership": {
+            "const": true,
+            "title": "Multi Membership",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "multi_membership",
+          "categories"
+        ],
+        "title": "MembershipDistribution",
+        "type": "object"
+      },
       "NamedCount": {
         "additionalProperties": false,
         "properties": {
@@ -5553,6 +5916,13 @@
           "reason"
         ],
         "title": "NoDistribution",
+        "type": "object"
+      },
+      "NoViewValues": {
+        "additionalProperties": false,
+        "description": "The values of a view as a whole, for an analysis that gives none: descriptive only.",
+        "properties": {},
+        "title": "NoViewValues",
         "type": "object"
       },
       "NotClause": {
@@ -5634,6 +6004,1413 @@
         ],
         "title": "NotEstimableReason",
         "type": "string"
+      },
+      "NumberDistribution": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "n": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "n"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/n"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/n"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "n": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "n"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mean": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "mean"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/mean"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/mean"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "mean": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "mean"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "sd": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "sd"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/sd"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/sd"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "sd": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "sd"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "median": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "median": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q1": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q1": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q3": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q3": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "min": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "min"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/min"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/min"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "min": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "min"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "max": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/max"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/max"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "max": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "histogram": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "histogram"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/histogram"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/histogram"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "histogram": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "histogram"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q1_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1_bin"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q1_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1_bin"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "median_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median_bin"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "median_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median_bin"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q3_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3_bin"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3_bin"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q3_bin": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3_bin"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "not_estimable": {
+                "propertyNames": {
+                  "enum": [
+                    "/n",
+                    "/mean",
+                    "/sd",
+                    "/median",
+                    "/q1",
+                    "/q3",
+                    "/min",
+                    "/max",
+                    "/histogram",
+                    "/q1_bin",
+                    "/median_bin",
+                    "/q3_bin"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "description": "A numeric variable at one position (D328, D329). Under a disclosure setting the minimum\nand maximum are suppressed, the quartiles are given as the (merged) bin that holds each\n(``q1_bin``, ``median_bin``, ``q3_bin``), and no statistic of the values themselves (mean,\nstandard deviation, median, quartiles) is shown.",
+        "properties": {
+          "histogram": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Histogram"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-aibi-computed": true
+          },
+          "kind": {
+            "const": "numbers",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max",
+            "x-aibi-computed": true
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean",
+            "x-aibi-computed": true
+          },
+          "median": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median",
+            "x-aibi-computed": true
+          },
+          "median_bin": {
+            "anyOf": [
+              {
+                "maximum": 65,
+                "minimum": 0,
+                "type": "integer",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Bin",
+            "x-aibi-computed": true
+          },
+          "min": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min",
+            "x-aibi-computed": true
+          },
+          "n": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N",
+            "x-aibi-computed": true
+          },
+          "not_estimable": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "patternProperties": {
+              "^(?:/(?:[^~/]|~[01])*)+$": {
+                "$ref": "#/components/schemas/NotEstimableReason"
+              }
+            },
+            "propertyNames": {
+              "maxLength": 16384,
+              "x-aibi-data": true
+            },
+            "title": "Not Estimable",
+            "type": "object"
+          },
+          "q1": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q1",
+            "x-aibi-computed": true
+          },
+          "q1_bin": {
+            "anyOf": [
+              {
+                "maximum": 65,
+                "minimum": 0,
+                "type": "integer",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q1 Bin",
+            "x-aibi-computed": true
+          },
+          "q3": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q3",
+            "x-aibi-computed": true
+          },
+          "q3_bin": {
+            "anyOf": [
+              {
+                "maximum": 65,
+                "minimum": 0,
+                "type": "integer",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q3 Bin",
+            "x-aibi-computed": true
+          },
+          "sd": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sd",
+            "x-aibi-computed": true
+          }
+        },
+        "required": [
+          "kind",
+          "n",
+          "mean",
+          "sd",
+          "median",
+          "q1",
+          "q3",
+          "min",
+          "max",
+          "histogram"
+        ],
+        "title": "NumberDistribution",
+        "type": "object"
+      },
+      "NumberRows": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mean": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "mean"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/mean"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/mean"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "mean": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "mean"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "sd": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "sd"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/sd"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/sd"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "sd": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "sd"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "median": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/median"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "median": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "median"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q1": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q1"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q1": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q1"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "q3": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/q3"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "q3": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "q3"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "min": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "min"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/min"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/min"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "min": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "min"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "max": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/max"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/max"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "max": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "max"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "histogram": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "histogram"
+              ]
+            },
+            "then": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/histogram"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "not_estimable": {
+                  "required": [
+                    "/histogram"
+                  ]
+                }
+              },
+              "required": [
+                "not_estimable"
+              ]
+            },
+            "then": {
+              "properties": {
+                "histogram": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "histogram"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "not_estimable": {
+                "propertyNames": {
+                  "enum": [
+                    "/mean",
+                    "/sd",
+                    "/median",
+                    "/q1",
+                    "/q3",
+                    "/min",
+                    "/max",
+                    "/histogram"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "description": "A numeric variable that counts rows (``count: \"rows\"``) at one position (D378): ``n``\nthe rows it pools with a value, their mean, standard deviation, median, quartiles, minimum,\nmaximum and histogram as ``NumberDistribution`` gives a unit's without a disclosure setting,\nand the pooled rows whose value is not PRESENT by reason (``excluded_rows``). It is never\nunder a disclosure setting (D379).",
+        "properties": {
+          "excluded_rows": {
+            "additionalProperties": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+              "x-aibi-server-number": true
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ExclusionReason"
+            },
+            "required": [
+              "NOT_ASSESSED",
+              "NOT_COVERED",
+              "NO_INFORMATION",
+              "NO_PARENT",
+              "OUT_OF_SCOPE",
+              "NO_ROWS",
+              "NOT_APPLICABLE",
+              "INVALID_VALUE"
+            ],
+            "title": "Excluded Rows",
+            "type": "object"
+          },
+          "histogram": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Histogram"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-aibi-computed": true
+          },
+          "kind": {
+            "const": "number_rows",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max",
+            "x-aibi-computed": true
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean",
+            "x-aibi-computed": true
+          },
+          "median": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median",
+            "x-aibi-computed": true
+          },
+          "min": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min",
+            "x-aibi-computed": true
+          },
+          "n": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "N",
+            "type": "integer",
+            "x-aibi-server-number": true
+          },
+          "not_estimable": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "patternProperties": {
+              "^(?:/(?:[^~/]|~[01])*)+$": {
+                "$ref": "#/components/schemas/NotEstimableReason"
+              }
+            },
+            "propertyNames": {
+              "maxLength": 16384,
+              "x-aibi-data": true
+            },
+            "title": "Not Estimable",
+            "type": "object"
+          },
+          "q1": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q1",
+            "x-aibi-computed": true
+          },
+          "q3": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q3",
+            "x-aibi-computed": true
+          },
+          "sd": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "number",
+                "x-aibi-server-number": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sd",
+            "x-aibi-computed": true
+          }
+        },
+        "required": [
+          "kind",
+          "n",
+          "excluded_rows",
+          "mean",
+          "sd",
+          "median",
+          "q1",
+          "q3",
+          "min",
+          "max",
+          "histogram"
+        ],
+        "title": "NumberRows",
+        "type": "object"
       },
       "OntologyCode": {
         "additionalProperties": false,
@@ -19564,6 +21341,13 @@
           }
         ],
         "summary": "Prune"
+      }
+    }
+  },
+  "x-aibi-values": {
+    "summary.distribution": {
+      "1.0.0": {
+        "$ref": "#/components/schemas/DistributionValues"
       }
     }
   }

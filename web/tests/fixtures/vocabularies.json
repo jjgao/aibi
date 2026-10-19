@@ -24,6 +24,15 @@
       "unavailable",
       "available_with_caveats"
     ],
+    "CategoryDistribution.kind": [
+      "categories"
+    ],
+    "CategoryDistribution.not_estimable{key}": [
+      "/categories"
+    ],
+    "CategoryRows.kind": [
+      "category_rows"
+    ],
     "Caveat.code": [
       "UNKNOWN_EXCLUDED",
       "INVALID_EXCLUDED",
@@ -93,9 +102,17 @@
       "many-to-one",
       "one-to-one"
     ],
+    "Histogram.edges_from": [
+      "params",
+      "range",
+      "data"
+    ],
     "IssuanceRecord.tool": [
       "count_cohort",
       "run_analysis"
+    ],
+    "MembershipDistribution.kind": [
+      "memberships"
     ],
     "NotEstimableReason": [
       "no_units",
@@ -110,6 +127,36 @@
       "overlapping_cohorts",
       "confounded_with_dataset",
       "suppressed"
+    ],
+    "NumberDistribution.kind": [
+      "numbers"
+    ],
+    "NumberDistribution.not_estimable{key}": [
+      "/n",
+      "/mean",
+      "/sd",
+      "/median",
+      "/q1",
+      "/q3",
+      "/min",
+      "/max",
+      "/histogram",
+      "/q1_bin",
+      "/median_bin",
+      "/q3_bin"
+    ],
+    "NumberRows.kind": [
+      "number_rows"
+    ],
+    "NumberRows.not_estimable{key}": [
+      "/mean",
+      "/sd",
+      "/median",
+      "/q1",
+      "/q3",
+      "/min",
+      "/max",
+      "/histogram"
     ],
     "Population.suppressed[]": [
       "/n_true",

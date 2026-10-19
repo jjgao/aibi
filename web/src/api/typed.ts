@@ -42,12 +42,28 @@
  * `then` / `else` (a `null` estimate and its `not_estimable` reason, a caveat's code and its
  * severity), `not`, `contains`, `pattern` as a validator, the bounds (lengths, counts, numbers), a
  * numeric `const`'s value (the walk never reads a number), `oneOf`'s exclusivity and the inside of
- * an `x-aibi-json` value (a document, a descriptor, `values`), which the page shows only as a
- * generic tree, never by member name. A stale tab that meets a server whose answers keep their
+ * an `x-aibi-json` value (a document, a descriptor), which the page shows only as a generic tree,
+ * never by member name. A result's `values` is the exception (D434): `valuesOf`, below, reads the
+ * values of an analysis and version the document publishes a model for, and nothing else. A stale tab that meets a server whose answers keep their
  * names and change their meaning is not detected (the digest handshake is a follow-up).
  *
+ * **The values seam (D434).** When a `run_analysis` answer walks, each result's raw
+ * `derivation.analysis` picks a `VALUES` entry (`<id>@<version>`, generated from the document's
+ * `x-aibi-values`); the raw `values` is walked by **the same walk** with that component, and the
+ * outcome is kept in a module `WeakMap` keyed by the walked result. `valuesOf(result)` gives it, or
+ * throws `ClientError("notAResult")` for a result the walk did not make (a copy, a composed object).
+ * What it gives (`ValuesRead`): the labels, the canonical document's
+ * `view.params.columns[j].column` read by name, whose count every position's columns must have;
+ * `variables`, `"labelled"` when every analysed count's `variables` is absent with one column or
+ * has the labels' count, `"unlabelled"` otherwise; `view: "none"` when the model's `view` is a
+ * reference to a map of no entries in the generated table (never from the analysis id); and each
+ * column by its own `kind`: `numbers` and `categories` walked again by their own component, any
+ * other by its `kind` alone. Another analysis or version is `unread/analysis`; values or labels of
+ * another shape `unread/shape`. It reveals the answer's own boxes regrouped and two page words: no
+ * text and no number.
+ *
  * **The one unchecked step.** The walked value becomes the operation's `Boxed` type by a type
- * predicate (`isAnswered`, `isRefusals`), which the compiler takes on trust: the table and the types are generated
+ * predicate (`isAnswered`, `isRefusals`; for a result's values `isValues` and `isComponent`), which the compiler takes on trust: the table and the types are generated
  * from one `schemas/openapi.json` (`DOCUMENT_DIGEST`, which a test holds to the document), a gate
  * holds the table and the types to each other node by node (a map of the table is a `BoxedMap`, a
  * string a `ServerText`, a record has the table's members, each optional exactly when the table does
@@ -59,7 +75,7 @@ import { boxMap, boxText, type BoxedMap, isServerNumber, type ServerNumber, type
 import { type Answer, ClientError, exchange, noAnswer, type RequestBody } from "./client";
 import type { components, operations } from "./generated/openapi";
 import * as generated from "./generated/routes";
-import { type Const, OPERATIONS, REFUSALS, type Shape, SHAPES } from "./generated/shapes";
+import { type Const, OPERATIONS, REFUSALS, type Shape, SHAPES, VALUES } from "./generated/shapes";
 import type { JsonOut } from "./json";
 
 type Schemas = components["schemas"];
@@ -366,6 +382,205 @@ export function walkedAs(value: object): TypedOperation | undefined {
   return WALKED.get(value);
 }
 
+/** A column of one position's values (D434), by the server's own `kind`: a `numbers` arm and a
+ * `categories` arm as walked, and any other arm (`category_rows`, `number_rows`, `memberships`) by
+ * its `kind` alone, which the page names and never drops. */
+export type ColumnRead =
+  | { readonly kind: "numbers"; readonly value: Boxed<Schemas["NumberDistribution"]> }
+  | { readonly kind: "categories"; readonly value: Boxed<Schemas["CategoryDistribution"]> }
+  | { readonly kind: "other"; readonly name: ServerText };
+
+/** A result's `values`, read (D434): the analysis and version the read is of, the view's column
+ * labels (the canonical document's `view.params.columns[j].column`, in order), whether the analysed
+ * counts' `variables` line up with those labels, the view's values as a whole (`"none"`: the model's
+ * `view` is a map of no entries in the generated table) and, per position, its columns; or `unread`,
+ * with its cause (`analysis`: this page reads no values of this analysis and version; `shape`: the
+ * values, or their labels, are not of the shape the page reads). */
+export type ValuesRead =
+  | {
+      readonly kind: "summary.distribution";
+      readonly columns: readonly ServerText[];
+      readonly variables: "labelled" | "unlabelled";
+      readonly view: "none";
+      readonly positions: readonly { readonly columns: readonly ColumnRead[] }[];
+    }
+  | { readonly kind: "unread"; readonly cause: "analysis" | "shape" };
+
+/** An analysis's values model, by `<id>@<version>` (`VALUES`, generated from the document's
+ * `x-aibi-values`), and the component that models them. */
+type ValuesKey = keyof typeof VALUES;
+
+/** The page's reader of each published values model, by `<id>@<version>`: a key the document
+ * publishes that has no reader fails to compile, and a result of any other analysis or version is
+ * `unread/analysis`. */
+const READERS: { readonly [K in ValuesKey]: (values: Boxed<Schemas[(typeof VALUES)[K]]>, raw: Raw, labels: readonly ServerText[], key: K) => ValuesRead } = {
+  "summary.distribution@1.0.0": readDistribution,
+};
+
+const UNREAD_ANALYSIS: ValuesRead = Object.freeze({ kind: "unread", cause: "analysis" });
+
+const UNREAD_SHAPE: ValuesRead = Object.freeze({ kind: "unread", cause: "shape" });
+
+/** A value of the decoded body the walk read (every number a `ServerNumber`, every string raw). */
+type Raw = unknown;
+
+/** A decoded object's own member, or `undefined` (no member, or no object). */
+function member(value: Raw, name: string): Raw {
+  return isPlain(value) && Object.hasOwn(value, name) ? value[name] : undefined;
+}
+
+/** A decoded list's items, or `undefined`. */
+function items(value: Raw): readonly Raw[] | undefined {
+  return isItems(value) ? value : undefined;
+}
+
+function isItems(value: Raw): value is readonly Raw[] {
+  return Array.isArray(value);
+}
+
+/** Whether a key is one the document publishes a values model for and the page has a reader of. */
+function isValuesKey(key: string): key is ValuesKey {
+  return Object.hasOwn(READERS, key) && Object.hasOwn(VALUES, key);
+}
+
+/** The second unchecked step (D434), as `isAnswered`: a values model walked by the component
+ * `VALUES` names for its key, as that component's `Boxed` type. */
+function isValues<K extends ValuesKey>(_key: K, value: unknown): value is Boxed<Schemas[(typeof VALUES)[K]]> {
+  return value !== INVALID;
+}
+
+/** The same step for one arm of a position's columns, walked again by its own component (the arm
+ * the column's `kind` names; the walk of the whole values took the first arm that matched). */
+function isComponent<C extends "NumberDistribution" | "CategoryDistribution">(_component: C, value: unknown): value is Boxed<Schemas[C]> {
+  return value !== INVALID;
+}
+
+/** The two arms the page reads, by their `kind` consts (the generated types': a renamed const fails
+ * to compile here). */
+const NUMBERS: Schemas["NumberDistribution"]["kind"] = "numbers";
+const CATEGORIES: Schemas["CategoryDistribution"]["kind"] = "categories";
+
+/** Whether a shape is a reference to a component that is a map of no entries (the generator's
+ * reading of an empty closed object, `NoViewValues`). */
+function isEmptyMap(shape: Shape | undefined): boolean {
+  const found = shape?.t === "ref" && Object.hasOwn(SHAPES, shape.n) ? SHAPES[shape.n] : undefined;
+  return found?.t === "map" && found.v.t === "never" && found.k === undefined && (found.pp ?? []).length === 0 && (found.r ?? []).length === 0;
+}
+
+/** `summary.distribution`'s values, read: the view's values as a whole must be a map of no entries
+ * by the generated table, read from the model of the result's own key (never by the analysis id;
+ * while `VALUES` holds one key, reading another key's model is caught by `noUnusedParameters` alone), every position must hold as many columns as
+ * the labels, and each column's arm is its own `kind`. */
+function readDistribution(values: Boxed<Schemas["DistributionValues"]>, raw: Raw, labels: readonly ServerText[], key: ValuesKey): ValuesRead {
+  const model = SHAPES[VALUES[key]];
+  if (model?.t !== "rec" || !isEmptyMap(model.p["view"])) {
+    return UNREAD_ANALYSIS;
+  }
+  const rawPositions = items(member(member(raw, "values"), "positions")) ?? [];
+  if (rawPositions.length !== values.positions.length) {
+    return UNREAD_SHAPE;
+  }
+  const positions: { readonly columns: readonly ColumnRead[] }[] = [];
+  for (const [index, position] of values.positions.entries()) {
+    const rawColumns = items(member(rawPositions[index], "columns")) ?? [];
+    if (position.columns.length !== labels.length || rawColumns.length !== labels.length) {
+      return UNREAD_SHAPE;
+    }
+    const columns: ColumnRead[] = [];
+    for (const [at, column] of position.columns.entries()) {
+      const rawColumn = rawColumns[at];
+      const kind = member(rawColumn, "kind");
+      if (kind === NUMBERS) {
+        const walked = walk({ t: "ref", n: "NumberDistribution" }, rawColumn);
+        if (!isComponent("NumberDistribution", walked)) {
+          return UNREAD_SHAPE;
+        }
+        columns.push(Object.freeze({ kind: "numbers", value: walked }));
+      } else if (kind === CATEGORIES) {
+        const walked = walk({ t: "ref", n: "CategoryDistribution" }, rawColumn);
+        if (!isComponent("CategoryDistribution", walked)) {
+          return UNREAD_SHAPE;
+        }
+        columns.push(Object.freeze({ kind: "categories", value: walked }));
+      } else if (typeof kind === "string") {
+        columns.push(Object.freeze({ kind: "other", name: column.kind }));
+      } else {
+        return UNREAD_SHAPE;
+      }
+    }
+    positions.push(Object.freeze({ columns: Object.freeze(columns) }));
+  }
+  const analysed = items(member(raw, "analysed")) ?? [];
+  const labelled = analysed.every((entry) => {
+    const variables = member(entry, "variables");
+    return variables === undefined ? labels.length === 1 : items(variables)?.length === labels.length;
+  });
+  return Object.freeze({ kind: "summary.distribution", columns: labels, variables: labelled ? "labelled" : "unlabelled", view: "none", positions: Object.freeze(positions) });
+}
+
+/** One result's values, read from its raw envelope (the decoded body the walk read): its analysis
+ * and version pick a reader, the raw `values` is walked by **the same `walk`** with the component
+ * `VALUES` names, and the labels are read by name from the canonical document. */
+function readValues(raw: Raw): ValuesRead {
+  const analysis = member(member(raw, "derivation"), "analysis");
+  const id = member(analysis, "id");
+  const version = member(analysis, "version");
+  if (typeof id !== "string" || typeof version !== "string") {
+    return UNREAD_SHAPE;
+  }
+  const known = `${id}@${version}`;
+  if (!isValuesKey(known)) {
+    return UNREAD_ANALYSIS;
+  }
+  const columns = items(member(member(member(member(member(raw, "derivation"), "document"), "view"), "params"), "columns"));
+  const labels: ServerText[] = [];
+  for (const column of columns ?? []) {
+    const name = member(column, "column");
+    if (typeof name !== "string") {
+      return UNREAD_SHAPE;
+    }
+    labels.push(boxText(name));
+  }
+  if (columns === undefined || labels.length === 0) {
+    return UNREAD_SHAPE;
+  }
+  try {
+    const walked = walk({ t: "ref", n: VALUES[known] }, member(raw, "values"));
+    return isValues(known, walked) ? READERS[known](walked, raw, Object.freeze(labels), known) : UNREAD_SHAPE;
+  } catch {
+    // Defensive, as `walkComponent` is: a walk that throws reads nothing.
+    return UNREAD_SHAPE;
+  }
+}
+
+/** Each result a `run_analysis` walk made, with its values read (D434): a module `WeakMap`, as
+ * `WALKED`, so a composed or copied result reads nothing. */
+const VALUES_READ = new WeakMap<object, ValuesRead>();
+
+/** Reads the values of every result of a walked `run_analysis` answer, keyed by the walked result. */
+function readAll(raw: Raw, walked: unknown): void {
+  const rawResults = items(member(raw, "results")) ?? [];
+  const results = items(member(walked, "results")) ?? [];
+  for (const [index, result] of results.entries()) {
+    if (typeof result === "object" && result !== null) {
+      VALUES_READ.set(result, index < rawResults.length ? readValues(rawResults[index]) : UNREAD_SHAPE);
+    }
+  }
+}
+
+/** A result's values, read (D434): `result` must be one of the results the typed answers gave (a
+ * `run_analysis` answer this seam walked), or this throws `ClientError("notAResult")`. Its values
+ * are walked by the published model of its analysis and version (`VALUES`) with the walk that read
+ * the answer; another analysis or version is `unread/analysis`, and values or labels of another
+ * shape `unread/shape`. */
+export function valuesOf(result: Answered<"run_analysis">["results"][number]): ValuesRead {
+  const found = VALUES_READ.get(result);
+  if (found === undefined) {
+    throw new ClientError("notAResult");
+  }
+  return found;
+}
+
 /** The refusals of the client's own that are the caller's fault, thrown: the rest of what a request
  * meets (no answer, an unreadable one) is an `invalid` outcome. */
 const THROWN = new Set(["notARoute", "notFinite"]);
@@ -389,6 +604,9 @@ async function asked<O extends TypedOperation>(operation: O, send: () => Promise
       // Every component an operation answers is an object (the walk froze it).
       if (typeof walked.value === "object" && walked.value !== null) {
         WALKED.set(walked.value, operation);
+        if (operation === "run_analysis") {
+          readAll(answer.body, walked.value);
+        }
       }
       return Object.freeze({ kind: "ok", value: walked.value });
     }

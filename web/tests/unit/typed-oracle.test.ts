@@ -62,7 +62,7 @@ import { ANNOTATIONS, FAIL_CLOSED, JSON_TYPES as GENERATOR_JSON_TYPES, RESIDUAL 
 import { decode } from "../../src/api/decode";
 import { FALLBACKS, type Shape, SHAPES, VOCABULARIES as TABLE_VOCABULARIES } from "../../src/api/generated/shapes";
 import { walkComponent } from "../../src/api/typed";
-import { type Body, bodies, entryShape, jsonTypeOf, JSON_TYPES, REF, SAMPLE, typesOf, variants, walkOf } from "./typed-support";
+import { type Body, bodies, entryShape, jsonTypeOf, JSON_TYPES, ownAlternatives, REF, SAMPLE, typesOf, variants } from "./typed-support";
 
 type Json = Record<string, unknown>;
 
@@ -209,7 +209,101 @@ function changedAt(value: unknown, at: readonly Step[], change: (node: Record<st
 
 /** A place in a body, one of a kind: the component, the path with a list's index read as one place,
  * the operation and what it puts there. */
-const placeOf = (component: string, at: readonly Step[], operation: string): string => `${component} ${at.map((step) => (typeof step === "number" ? "[]" : step)).join("/")} ${operation}`;
+const placeOf = (component: string, at: readonly Step[], operation: string, arms: ReadonlyMap<string, number> = NO_ARMS): string =>
+  `${component} ${at.map((step, index) => `${typeof step === "number" ? "[]" : step}${armLabel(arms, at.slice(0, index + 1))}`).join("/")} ${operation}`;
+
+/** No arms: a body with no alternative of two object arms. */
+const NO_ARMS: ReadonlyMap<string, number> = new Map();
+
+/** The walked arm at a path, as the place's key reads it (`|i`), or nothing. */
+const armLabel = (arms: ReadonlyMap<string, number>, at: readonly Step[]): string => {
+  const arm = arms.get(JSON.stringify(at));
+  return arm === undefined ? "" : `|${String(arm)}`;
+};
+
+/** Whether an alternative has two object arms or more (the places under it are told apart by the arm walked). */
+const objectArms = (shape: Extract<Shape, { readonly o: readonly Shape[] }>): boolean => shape.o.filter((arm) => typesOf(arm).has("object")).length > 1;
+
+/** Whether an arm of an alternative takes a value, by the oracle's own judges, never the walk under
+ * test (m4 of #128's round 1): a reference arm by the oracle's Ajv validator of its component, an enum
+ * or a const arm by its own values, any other arm by its JSON types (an alternative's other arms are of
+ * disjoint JSON types: a cell below holds it, so the type decides). */
+function armTakes(arm: Shape, value: unknown, oracle: Judges["oracle"] = JUDGES.oracle): boolean {
+  switch (arm.t) {
+    case "ref":
+      return oracle(arm.n, value);
+    case "enum":
+      return typeof value === "string" && arm.v.includes(value);
+    case "const":
+      return JSON.stringify(arm.v) === JSON.stringify(value);
+    default:
+      return typesOf(arm).has(jsonTypeOf(value));
+  }
+}
+
+/** Whether a traversal of the oracle follows a member of an alternative or a conjunction into a
+ * value: the one arm decision of every traversal here (`positionsOf`, `classesOf`, `armsOf` and
+ * `untakenArms`), never the walk under test. An alternative's arm is followed when `armTakes` says it
+ * takes the value; a conjunction's every member is (a body is valid, so it is valid by each member). */
+function follows(shape: Extract<Shape, { readonly o: readonly Shape[] }>, member: Shape, value: unknown): boolean {
+  return shape.t === "all" || armTakes(member, value);
+}
+
+/** A body as JSON decoded from its text, as the oracle judges every input (a body made by the tests is
+ * an object they built). */
+const asJson = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
+
+/** The arm taken at each node of a body that an alternative of two object arms or more takes (D434: a
+ * values model's columns), found by walking the body down the table and deciding each arm with
+ * `armTakes`: the place's key holds it, so that the dedupe by place does not merge the arms (m3). A
+ * check of an `allOf` is followed whole (a body is valid, so it is valid by each member). */
+function armsOf(shape: Shape, value: unknown, at: readonly Step[] = [], out = new Map<string, number>(), depth = 0): Map<string, number> {
+  if (depth > 40) {
+    return out;
+  }
+  switch (shape.t) {
+    case "ref": {
+      const found = SHAPES[shape.n];
+      return found === undefined ? out : armsOf(found, value, at, out, depth + 1);
+    }
+    case "or":
+    case "all":
+      shape.o.forEach((member, index) => {
+        if (follows(shape, member, value)) {
+          if (shape.t === "or" && objectArms(shape) && typesOf(member).has("object")) {
+            out.set(JSON.stringify(at), index);
+          }
+          armsOf(member, value, at, out, depth + 1);
+        }
+      });
+      return out;
+    case "arr":
+      if (Array.isArray(value)) {
+        (value as unknown[]).forEach((item, index) => {
+          armsOf(shape.pi?.[index] ?? shape.i, item, [...at, index], out, depth + 1);
+        });
+      }
+      return out;
+    case "rec":
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        for (const [name, member] of Object.entries(shape.p)) {
+          if (Object.hasOwn(value, name)) {
+            armsOf(member, (value as Json)[name], [...at, name], out, depth + 1);
+          }
+        }
+      }
+      return out;
+    case "map":
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        for (const [key, member] of Object.entries(value as Json)) {
+          armsOf(entryShape(shape, key), member, [...at, key], out, depth + 1);
+        }
+      }
+      return out;
+    default:
+      return out;
+  }
+}
 
 /** The size of a body (its JSON text, in characters) past which the arms that change its nodes leave it out. */
 const BODY_CAP = 20_000;
@@ -276,7 +370,7 @@ function positionsOf(shape: Shape, value: unknown, at: readonly Step[], out: Pos
     case "or":
     case "all":
       for (const member of shape.o) {
-        if (walkOf(member, value)) {
+        if (follows(shape, member, value)) {
           positionsOf(member, value, at, out, depth + 1);
         }
       }
@@ -338,7 +432,7 @@ function classesOf(shape: Shape, value: unknown, at: readonly string[], places: 
     case "or":
     case "all":
       for (const member of shape.o) {
-        if (walkOf(member, value)) {
+        if (follows(shape, member, value)) {
           classesOf(member, value, at, places, opaque, depth + 1);
         }
       }
@@ -413,6 +507,7 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
     }
   }
   for (const { component, value } of small) {
+    const arms = armsOf(REF(component), asJson(value));
     for (const at of nodesOf(value)) {
       const node = get(value, at);
       if (Array.isArray(node) || typeof node !== "object" || node === null) {
@@ -420,15 +515,15 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
       }
       const keys = Object.keys(node);
       for (const key of keys) {
-        if (once("drops", placeOf(component, at, `drop ${key}`))) {
-          add("drops", component, placeOf(component, at, `drop ${key}`), () =>
+        if (once("drops", placeOf(component, at, `drop ${key}`, arms))) {
+          add("drops", component, placeOf(component, at, `drop ${key}`, arms), () =>
             changedAt(value, at, (target) => {
               Reflect.deleteProperty(target, key);
             }),
           );
         }
-        if (once("renames", placeOf(component, at, `rename ${key}`))) {
-          add("renames", component, placeOf(component, at, `rename ${key}`), () =>
+        if (once("renames", placeOf(component, at, `rename ${key}`, arms))) {
+          add("renames", component, placeOf(component, at, `rename ${key}`, arms), () =>
             changedAt(value, at, (target) => {
               target[`${key}~`] = target[key];
               Reflect.deleteProperty(target, key);
@@ -437,8 +532,8 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
         }
       }
       for (const added of ["~probe", "/outside"]) {
-        if (once("additions", placeOf(component, at, `add ${added}`))) {
-          add("additions", component, placeOf(component, at, `add ${added}`), () =>
+        if (once("additions", placeOf(component, at, `add ${added}`, arms))) {
+          add("additions", component, placeOf(component, at, `add ${added}`, arms), () =>
             changedAt(value, at, (target) => {
               target[added] = keys[0] === undefined ? 1 : target[keys[0]];
             }),
@@ -448,6 +543,7 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
     }
   }
   for (const { component, value } of small) {
+    const arms = armsOf(REF(component), asJson(value));
     for (const at of nodesOf(value)) {
       const node = get(value, at) as Record<string, unknown>;
       for (const [key, leaf] of Object.entries(node)) {
@@ -456,8 +552,8 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
         }
         const where = [...at, key];
         const put = (operation: string, arm: string, replacement: unknown): void => {
-          if (once(arm, placeOf(component, where, operation))) {
-            add(arm, component, placeOf(component, where, operation), () =>
+          if (once(arm, placeOf(component, where, operation, arms))) {
+            add(arm, component, placeOf(component, where, operation, arms), () =>
               changedAt(value, at, (target) => {
                 target[key] = replacement;
               }),
@@ -485,22 +581,23 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
   // there (a word the document does not have is a word a generator added: the oracle refuses it, so
   // the walk must too), and at every map whose keys a vocabulary names, every word it accepts as a key.
   for (const { component, value } of small) {
+    const arms = armsOf(REF(component), asJson(value));
     const found: Position[] = [];
-    positionsOf(REF(component), value, [], found);
+    positionsOf(REF(component), asJson(value), [], found);
     for (const { kind, at, words, samples } of found) {
       for (const word of words) {
         if (kind === "value") {
           const parent = at.slice(0, -1);
           const key = at.at(-1);
-          if (key !== undefined && once("words", placeOf(component, at, `table word ${word}`))) {
-            add("words", component, placeOf(component, at, `table word ${word}`), () =>
+          if (key !== undefined && once("words", placeOf(component, at, `table word ${word}`, arms))) {
+            add("words", component, placeOf(component, at, `table word ${word}`, arms), () =>
               changedAt(value, parent, (target) => {
                 target[key] = word;
               }),
             );
           }
-        } else if (once("keys", placeOf(component, at, `table key ${word}`))) {
-          add("keys", component, placeOf(component, at, `table key ${word}`), () =>
+        } else if (once("keys", placeOf(component, at, `table key ${word}`, arms))) {
+          add("keys", component, placeOf(component, at, `table key ${word}`, arms), () =>
             changedAt(value, at, (target) => {
               target[word] = samples.get(word);
             }),
@@ -512,15 +609,86 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
   return { out, merged, all, small };
 }
 
+/** The arms of the table's alternatives that no body of `made` takes, each decided by `armTakes`
+ * (the coverage cell's, and its negative control's). */
+function untakenArms(made: readonly Body[]): string[] {
+  const taken = new Map<Shape, Set<number>>();
+  const visit = (shape: Shape, value: unknown, depth = 0): void => {
+    if (depth > 40) {
+      return;
+    }
+    switch (shape.t) {
+      case "ref": {
+        const found = SHAPES[shape.n];
+        if (found !== undefined) {
+          visit(found, value, depth + 1);
+        }
+        return;
+      }
+      case "or":
+      case "all":
+        shape.o.forEach((member, index) => {
+          if (shape.t === "all" || armTakes(member, value)) {
+            if (shape.t === "or") {
+              taken.set(shape, (taken.get(shape) ?? new Set()).add(index));
+            }
+            visit(member, value, depth + 1);
+          }
+        });
+        return;
+      case "arr":
+        if (Array.isArray(value)) {
+          (value as unknown[]).forEach((item, index) => {
+            visit(shape.pi?.[index] ?? shape.i, item, depth + 1);
+          });
+        }
+        return;
+      case "rec":
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+          for (const [name, member] of Object.entries(shape.p)) {
+            if (Object.hasOwn(value, name)) {
+              visit(member, (value as Json)[name], depth + 1);
+            }
+          }
+        }
+        return;
+      case "map":
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+          for (const [key, member] of Object.entries(value as Json)) {
+            visit(entryShape(shape, key), member, depth + 1);
+          }
+        }
+        return;
+      default:
+    }
+  };
+  for (const { component, value } of made) {
+    visit(REF(component), asJson(value));
+  }
+  const untaken: string[] = [];
+  for (const [name, shape] of Object.entries(SHAPES)) {
+    for (const or of ownAlternatives(shape)) {
+      or.o.forEach((arm, index) => {
+        if (!(taken.get(or)?.has(index) ?? false)) {
+          untaken.push(`${name} arm ${String(index)} (${arm.t === "ref" ? arm.n : arm.t})`);
+        }
+      });
+    }
+  }
+  return untaken;
+}
+
 /** The set's shape, pinned as `census.json` pins the keyword lists (a change of the document or of an arm is a
  * reviewed change to this table, not a silent one): the inputs of each arm, the candidates the dedupe by
  * place merged, and the bodies. Without it an arm thinned (to the root, to the last step of a path) still
  * passes while it tests less. Last moved by D431's four orchard answers (175 bodies to 179, and the
- * places they add); then by D433's eight builder answers (179 bodies to 187). */
+ * places they add); then by D433's eight builder answers (179 bodies to 187); then by D434's values
+ * models (their components reached as roots, the arms of `DistributionPosition.columns` forced and
+ * told apart in the place's key) and its eleven values answers (187 bodies to 240). */
 const INPUT_COUNTS = {
-  inputs: { additions: 1740, bodies: 187, drops: 2683, keys: 235, misses: 2048, renames: 2683, swaps: 3828, values: 12525, words: 1289 },
-  merged: { additions: 13456, drops: 16455, keys: 1178, misses: 37566, renames: 16455, swaps: 12193, values: 72985, words: 12157 },
-  bodies: { all: 187, small: 185, over: 2 },
+  inputs: { additions: 2066, bodies: 240, drops: 3357, keys: 456, misses: 2423, renames: 3357, swaps: 5744, values: 15595, words: 2655 },
+  merged: { additions: 16740, drops: 20793, keys: 1635, misses: 45939, renames: 20793, swaps: 15423, values: 92330, words: 16491 },
+  bodies: { all: 240, small: 238, over: 2 },
 };
 
 describe("the walk agrees with an independent validator of the document, over a bounded set of inputs (MA3)", () => {
@@ -553,7 +721,7 @@ describe("the walk agrees with an independent validator of the document, over a 
     const classes = (body: Body): { places: string[]; opaque: (readonly string[])[] } => {
       const places: (readonly string[])[] = [];
       const opaque: (readonly string[])[] = [];
-      classesOf(REF(body.component), body.value, [], places, opaque);
+      classesOf(REF(body.component), asJson(body.value), [], places, opaque);
       return { places: places.map((at) => `${body.component} ${JSON.stringify(at)}`), opaque };
     };
     const kept = new Set(small.flatMap((body) => classes(body).places));
@@ -573,7 +741,7 @@ describe("the walk agrees with an independent validator of the document, over a 
     }
   });
 
-  it("no alternatives of the table has two object arms (the dedupe by place would merge them: m3)", () => {
+  it("the alternatives of the table with two object arms are the pinned list (the dedupe by place tells their arms apart by the place's key: m3)", () => {
     const seenShapes = new Set<Shape>();
     const crowded: string[] = [];
     const visit = (shape: Shape, at: string): void => {
@@ -621,7 +789,72 @@ describe("the walk agrees with an independent validator of the document, over a 
       visit(shape, name);
     }
     expect(seenShapes.size).toBeGreaterThan(300);
-    expect(crowded, "an `or` with two object arms: the dedupe by (component, path) would merge their nodes: put the walked arm in the place's key").toEqual([]);
+    // D434: `ColumnDistribution` (a values model's column) is the one alternative of object arms; the
+    // place's key holds the arm walked there (`armsOf`), so the dedupe does not merge its arms.
+    expect(crowded, "an alternative of two object arms: its places are told apart by the walked arm (armsOf); a new one is a reviewed change").toEqual(["DistributionPosition.columns[]"]);
+  });
+
+  it("the place's key tells the arms of an alternative of object arms apart, and every arm of every alternative is taken by a body (D434)", () => {
+    const untaken = untakenArms(all);
+    expect(untaken).toEqual([]);
+    // Its negative control: without the bodies whose arm is forced, the arms past the plans' reach
+    // are reported untaken (m2 of #128's round 2).
+    const unforced = untakenArms(all.filter(({ source }) => !source.startsWith("synthetic arm")));
+    expect(unforced.filter((arm) => arm.startsWith("DistributionPosition arm "))).toEqual(["DistributionPosition arm 3 (NumberRows)", "DistributionPosition arm 4 (MembershipDistribution)"]);
+    const columns = small.filter(({ component }) => component === "DistributionValues" || component === "DistributionPosition");
+    const places = new Set(columns.flatMap(({ component, value }) => [...armsOf(REF(component), asJson(value)).values()]));
+    expect([...places].sort()).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("armTakes decides an arm by the oracle alone: an alternative's arms that are no reference, enum or const are of disjoint JSON types, and every arm of two object arms or more is a reference (m4 of #128)", () => {
+    const overlapping: string[] = [];
+    for (const [name, shape] of Object.entries(SHAPES)) {
+      for (const or of ownAlternatives(shape)) {
+        if (or.t !== "or") {
+          continue;
+        }
+        const own = or.o.filter((arm) => arm.t !== "ref" && arm.t !== "enum" && arm.t !== "const");
+        const seen = new Set<string>();
+        for (const arm of own) {
+          for (const type of typesOf(arm)) {
+            if (seen.has(type)) {
+              overlapping.push(`${name}: ${type}`);
+            }
+            seen.add(type);
+          }
+        }
+        if (objectArms(or) && or.o.some((arm) => arm.t !== "ref" && typesOf(arm).has("object"))) {
+          overlapping.push(`${name}: an object arm that is no reference`);
+        }
+      }
+    }
+    expect(overlapping).toEqual([]);
+    // Its controls, one per branch: a reference arm is judged by the oracle, not by its JSON type; an
+    // enum arm refuses a string outside its values; a const arm refuses another value; a null arm
+    // refuses 0, "" and {}; a type arm refuses another JSON type (m2 of #128's round 2).
+    expect(armTakes(REF("NumberDistribution"), { kind: "categories", categories: [] })).toBe(false);
+    expect(armTakes(REF("CategoryDistribution"), { kind: "categories", categories: [] })).toBe(true);
+    // The reference branch follows the oracle it is given, never the walk: a deliberately wrong
+    // oracle's verdict is the judge's, both ways.
+    expect(armTakes(REF("CategoryDistribution"), { kind: "categories", categories: [] }, () => false)).toBe(false);
+    expect(armTakes(REF("NumberDistribution"), { kind: "categories", categories: [] }, () => true)).toBe(true);
+    // A conjunction's member is followed whatever its own verdict (a body is valid by each member);
+    // an alternative's arm only when the judge takes the value.
+    const enumArm: Shape = { t: "enum", v: ["a"] };
+    expect(follows({ t: "all", o: [enumArm] }, enumArm, "b")).toBe(true);
+    expect(follows({ t: "or", o: [enumArm] }, enumArm, "b")).toBe(false);
+    expect(armTakes({ t: "enum", v: ["a", "b"] }, "b")).toBe(true);
+    expect(armTakes({ t: "enum", v: ["a", "b"] }, "c")).toBe(false);
+    expect(armTakes({ t: "const", v: "x" }, "x")).toBe(true);
+    expect(armTakes({ t: "const", v: "x" }, "y")).toBe(false);
+    expect(armTakes({ t: "const", v: { a: [1] } }, { a: [1] })).toBe(true);
+    expect(armTakes({ t: "const", v: { a: [1] } }, { a: [2] })).toBe(false);
+    expect(armTakes({ t: "null" }, null)).toBe(true);
+    expect([0, "", {}, [], false].map((value) => armTakes({ t: "null" }, value))).toEqual([false, false, false, false, false]);
+    expect(armTakes({ t: "str" }, "s")).toBe(true);
+    expect([1, null, {}, [], true].map((value) => armTakes({ t: "str" }, value))).toEqual([false, false, false, false, false]);
+    expect(armTakes({ t: "num" }, 1)).toBe(true);
+    expect(armTakes({ t: "num" }, "1")).toBe(false);
   });
 
   it("every body of the table is valid by the oracle too, and every input is judged alike by both", () => {

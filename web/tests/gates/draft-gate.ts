@@ -30,6 +30,9 @@
  *   - anything else (a primitive, `unknown`, `any`, `never`, an intersection that is no brand, a
  *     mapped or conditional type, a class instance, a library type) is a problem at its path.
  *
+ * - **`valuesOf`** (`typed.ts`, D434), the second root (`valuesGate`): its one parameter is pinned
+ *   by identity to the element of `runAnalysis`' ok value's `results`, and its return to `ValuesRead`.
+ *
  * **What holds what.** The exact comparison with `DRAFT_TABLE` is the check; the problems are
  * diagnostics that name the cause at the path. A change that no rule above flags would still change
  * the table, so the comparison catches it: a mutant that weakens a rule (allowing an optional tuple
@@ -303,6 +306,67 @@ export function draftGate(program: ts.Program, checker: ts.TypeChecker, file = "
     });
   }
   return { problems: [...problems].sort(), table: [...table].sort(), roots: roots.sort() };
+}
+
+/** The values seam's root (D434), the gate's second: the index's `valuesOf` (rooted at the index's
+ * export, the door the app reaches; that it is `typed.ts`' own declaration is api-graph's identity
+ * cell, `IDENTITY_DOORS`), whose one parameter
+ * is pinned by type-object identity to the element of `runAnalysis`' ok value's `results` (the walked
+ * result, by the checker's own instantiation) and whose return to `typed.ts`' `ValuesRead`. */
+export const VALUES_ROOT = "valuesOf";
+
+/** The values seam's root, walked as a document root is: one call signature, one parameter (no
+ * type parameter, `this`, optional, rest or default), no construct signature and no member; its
+ * parameter and its return each the very type pinned. A `(path -> kind)` table and the problems. */
+export function valuesGate(program: ts.Program, checker: ts.TypeChecker, file = "src/api/index.ts"): Omit<DraftWalk, "roots"> {
+  const problems: string[] = [];
+  const table: string[] = [];
+  const text = (type: ts.Type): string => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation).slice(0, 120);
+  const [run] = checker.getTypeOfSymbol(exportOf(program, checker, "src/api/typed.ts", "runAnalysis")).getCallSignatures();
+  const answer = run === undefined ? undefined : okValue(checker, run.getReturnType());
+  const results = answer === undefined ? undefined : checker.getPropertyOfType(answer, "results");
+  const result = results === undefined ? undefined : checker.getIndexTypeOfType(checker.getTypeOfSymbol(results), ts.IndexKind.Number);
+  const read = checker.getDeclaredTypeOfSymbol(exportOf(program, checker, "src/api/typed.ts", "ValuesRead"));
+  const type = checker.getTypeOfSymbol(exportOf(program, checker, file, VALUES_ROOT));
+  const signatures = type.getCallSignatures();
+  const constructs = type.getConstructSignatures().length;
+  const members = checker.getPropertiesOfType(type).length;
+  if (signatures.length !== 1 || constructs > 0 || members > 0) {
+    problems.push(`${VALUES_ROOT}: ${String(signatures.length)} call signatures, ${String(constructs)} construct signatures, ${String(members)} members (a root is a function of one call signature)`);
+  }
+  signatures.forEach((signature, index) => {
+    const at = signatures.length === 1 ? VALUES_ROOT : `${VALUES_ROOT}[${String(index)}]`;
+    if ((signature.typeParameters?.length ?? 0) > 0) {
+      problems.push(`${at}: a generic signature`);
+    }
+    if (signature.thisParameter !== undefined) {
+      problems.push(`${at}: a this parameter`);
+    }
+    const parameters = signature.getParameters();
+    table.push(`${at} -> ${String(parameters.length)} parameters`);
+    if (parameters.length !== 1) {
+      problems.push(`${at}: ${String(parameters.length)} parameters (a root takes one)`);
+    }
+    parameters.forEach((parameter, position) => {
+      const place = `${at}(#${String(position)})`;
+      const declaration = parameter.valueDeclaration;
+      if (declaration !== undefined && ts.isParameter(declaration) && (declaration.questionToken !== undefined || declaration.initializer !== undefined || declaration.dotDotDotToken !== undefined)) {
+        problems.push(`${place}: an optional or rest parameter`);
+      }
+      const taken = checker.getTypeOfSymbol(parameter);
+      const same = result !== undefined && taken === result;
+      table.push(`${place} -> ${same ? "runAnalysis' result" : `NOT runAnalysis' result: ${text(taken)}`}`);
+      if (!same) {
+        problems.push(`${place}: not the very type of runAnalysis' result`);
+      }
+    });
+    const given = signature.getReturnType();
+    table.push(`${at}() -> ${given === read ? "ValuesRead" : `NOT ValuesRead: ${text(given)}`}`);
+    if (given !== read) {
+      problems.push(`${at}(): not the very type of ValuesRead`);
+    }
+  });
+  return { problems: [...problems].sort(), table: [...table].sort() };
 }
 
 /** The declaration of a brand, as the gate resolves it (for the gate's own cells). */

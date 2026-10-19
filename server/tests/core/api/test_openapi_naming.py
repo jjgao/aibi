@@ -70,11 +70,11 @@ def swapped(
 
 
 def test_the_document_s_components_are_components_of_the_routes_models() -> None:
-    models = openapi.route_models(openapi._app())
+    models = openapi.document_models(openapi._app())
     found: Any = openapi.document()
     assert found["components"]["schemas"] == openapi.components_of(models)
     sides = Counter(side for side, _ in models)
-    assert sides["response"] == 32
+    assert sides["response"] == 32 + len(openapi.WEB_VALUES)
     assert sides["request"] > 20
 
 

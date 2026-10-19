@@ -31,7 +31,7 @@ import path from "node:path";
 import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { type DraftWalk, brandDeclarations, draftGate } from "./draft-gate";
+import { type DraftWalk, brandDeclarations, draftGate, valuesGate } from "./draft-gate";
 import { expectedTable, ROOTS } from "./draft-table";
 import { appOptions, check, WEB } from "./program";
 import { PINS, shapeOf } from "./surface";
@@ -394,6 +394,38 @@ describe("the document seam's surface gate, by identity (D432)", () => {
       expect(problems("an exported class").some((one) => one.startsWith("Thing: 0 call signatures, 1 construct signatures"))).toBe(true);
       expect(problems("a generic")).toContain("validateDraft: a generic signature");
       expect(problems("a this")).toContain("validateDraft: a this parameter");
+    });
+  });
+
+  describe("its second root, the values seam's valuesOf (D434): pinned by identity, with its controls", () => {
+    const TYPED = "src/api/typed.ts";
+    const SOURCE = readFileSync(path.join(WEB, TYPED), "utf8");
+    const DECLARED = 'export function valuesOf(result: Answered<"run_analysis">["results"][number]): ValuesRead {';
+    const RESULT = 'Answered<"run_analysis">["results"][number]';
+    const VALUES_TABLE = ["valuesOf -> 1 parameters", "valuesOf(#0) -> runAnalysis' result", "valuesOf() -> ValuesRead"].sort();
+
+    it("holds on the real program: the table is the pinned one, with no problem", () => {
+      expect(valuesGate(program, checker)).toEqual({ problems: [], table: VALUES_TABLE });
+    });
+
+    it.each([
+      ["a BoxedJson parameter", DECLARED.replace(RESULT, "BoxedJson"), "valuesOf(#0)"],
+      ["a structural copy of the result type, declared apart", `type Copied = { readonly [K in keyof ${RESULT}]: ${RESULT}[K] };\n${DECLARED.replace(RESULT, "Copied")}`, "valuesOf(#0)"],
+      ["a result or null", DECLARED.replace(RESULT, `${RESULT} | null`), "valuesOf(#0)"],
+      ["a second parameter", DECLARED.replace(`result: ${RESULT})`, `result: ${RESULT}, notes?: string)`), "valuesOf"],
+      ["a generic", DECLARED.replace(`valuesOf(result: ${RESULT})`, `valuesOf<R extends ${RESULT}>(result: R)`), "valuesOf"],
+      ["another return", DECLARED.replace("): ValuesRead {", "): ValuesRead | null {"), "valuesOf()"],
+      ["CONTROL through a local alias", `type Result = ${RESULT};\n${DECLARED.replace(RESULT, "Result")}`, null],
+    ])("%s", (_case, to, at) => {
+      expect(SOURCE).toContain(DECLARED);
+      const checked = check({ [TYPED]: SOURCE.replace(DECLARED, to), "src/probe-values-root.ts": "export * from './api';\n" });
+      const walked = valuesGate(checked.program, checked.checker);
+      if (at === null) {
+        expect(walked).toEqual({ problems: [], table: VALUES_TABLE });
+      } else {
+        expect(walked.problems.length, JSON.stringify(walked)).toBeGreaterThan(0);
+        expect(walked.problems.every((problem) => problem.startsWith(`${at}:`) || problem.startsWith(`${at}(`)), JSON.stringify(walked.problems)).toBe(true);
+      }
     });
   });
 
