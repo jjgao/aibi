@@ -516,11 +516,11 @@ function inputs(): { readonly out: Input[]; readonly merged: ReadonlyMap<string,
  * reviewed change to this table, not a silent one): the inputs of each arm, the candidates the dedupe by
  * place merged, and the bodies. Without it an arm thinned (to the root, to the last step of a path) still
  * passes while it tests less. Last moved by D431's four orchard answers (175 bodies to 179, and the
- * places they add). */
+ * places they add); then by D433's eight builder answers (179 bodies to 187). */
 const INPUT_COUNTS = {
-  inputs: { additions: 1706, bodies: 179, drops: 2640, keys: 235, misses: 2048, renames: 2640, swaps: 3720, values: 12350, words: 1283 },
-  merged: { additions: 12258, drops: 15142, keys: 1100, misses: 34761, renames: 15142, swaps: 11278, values: 66884, words: 10115 },
-  bodies: { all: 179, small: 177, over: 2 },
+  inputs: { additions: 1740, bodies: 187, drops: 2683, keys: 235, misses: 2048, renames: 2683, swaps: 3828, values: 12525, words: 1289 },
+  merged: { additions: 13456, drops: 16455, keys: 1178, misses: 37566, renames: 16455, swaps: 12193, values: 72985, words: 12157 },
+  bodies: { all: 187, small: 185, over: 2 },
 };
 
 describe("the walk agrees with an independent validator of the document, over a bounded set of inputs (MA3)", () => {
