@@ -1,0 +1,20 @@
+{
+ "leaf": [
+  "category",
+  "string"
+ ],
+ "view": [
+  "boolean",
+  "category",
+  "integer",
+  "number",
+  "time_offset"
+ ],
+ "view_under_k": [
+  "boolean",
+  "category"
+ ],
+ "left_out": {
+  "list<category>": "left out of the leaves by this seam: offering it, with a quantifier, is M5.3-rest's choice"
+ }
+}

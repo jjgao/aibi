@@ -34,6 +34,11 @@
  * D429); `countGlyphs` (a whole count the page made: the D312 remainder and `Retry-After`'s seconds,
  * never a server number); `remainingOf` (how many members of a list of a given length the page
  * does not show, past `LISTED`).
+ *
+ * **`document.ts`'s alone** (`API_INTERNALS`): `isCountOf` (whether a server number is the whole count
+ * the page made: `optionsOf` asks it once, of `columns_total` and the number of columns the answer
+ * lists, and gives only the boolean `partial`, D432). It would be a bisection oracle were it exported;
+ * it is no export of the index.
  */
 import { type BoxedMap, entriesOf, type ServerNumber, type ServerText, textOf } from "./box";
 import { VOCABULARIES } from "./generated/shapes";
@@ -133,6 +138,14 @@ export function remainingOf(length: number): number {
 /** Whether a server number is zero (`0`, `-0`, `0.0`, `0e5`): its value, read from its text. */
 export function isZero(number: ServerNumber): boolean {
   return ZERO.test(readable(number));
+}
+
+/** Whether a server number is exactly the whole count the page made (`document.ts`'s alone, D432):
+ * its text is the count's decimal text, with no sign, fraction or exponent; any other text (`3.0`,
+ * `3e0`) is no match, fail closed. A boolean of one server number and one count the page made,
+ * never of two server numbers. */
+export function isCountOf(number: ServerNumber, count: number): boolean {
+  return isCount(count) && sourceOf(number) === count.toString(10);
 }
 
 /** Whether a server number is above zero: no minus sign, and not zero. */

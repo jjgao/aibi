@@ -579,8 +579,9 @@ describe("the table API_MODULES is the real graph's", () => {
   it("states, for each importer the table lists, a reason", () => {
     // The request half's three (D425): ids.ts, origin.ts, provenance.ts; the typed answers' three (D426):
     // typed.ts, text.tsx, generated/shapes.ts; the visible form's two (D428): visible.ts, visible-ranges.ts;
-    // the numbers' two (D430): numbers.ts, format.tsx.
-    expect(API_MODULES.size).toBe(19);
+    // the numbers' two (D430): numbers.ts, format.tsx; the document seam's two (D432): document.ts,
+    // datatypes.ts.
+    expect(API_MODULES.size).toBe(21);
   });
 });
 

@@ -8,9 +8,14 @@
  * them `showText`, the one door from a server text to the DOM (D428): the index's pinned export that
  * `src/layout/` alone imports (a lint row, and a scan of the symbols the program resolves,
  * `tests/gates/layout-form.test.ts`); and no export that gives a raw
- * `string` or a door but the pinned ones (`idOf`'s and `idOfAddress`'s `DatasetId`, `showText`'s
- * element, the client's errors' fixed words). A public tool's answer is read through `typed.ts`'s functions alone, every string of
- * it a `ServerText` and every data-keyed map a `BoxedMap` (D426); the raw `exchange` and the raw
+ * `string` or a door but the pinned ones (`idOf`'s, `idOfAddress`'s and `optionsOf`'s `DatasetId`,
+ * `showText`'s element, the client's errors' fixed words). A public tool's answer is read through `typed.ts`'s functions alone, every string of
+ * it a `ServerText` and every data-keyed map a `BoxedMap` (D426). **No export takes a document**
+ * (D432): a screen hands the document seam (`document.ts`) a `Draft` of choices `optionsOf` minted
+ * from a walked `describe_dataset` answer and of values a person typed, and `validateDraft`,
+ * `countDraft` and `runDraft` write the document from it; `validateDocument`, `countCohort`,
+ * `runAnalysis` and the makers and readers of a `Choice` are not here (each its own owner's, a lint
+ * row). The raw `exchange` and the raw
  * `JsonOut` are not here (the end-to-end harness reaches the oracle's requests through `oracle.ts`,
  * and the operator entry's raw answers through `operator.ts`). The generated types, the request's
  * JSON-value types and the boxes' types are types alone. `decodedCount`, the oracle's counter, is
@@ -33,15 +38,12 @@ export type { OperationId, Route } from "./route";
 export { ClientError, REFUSALS, RESPONSE_CAP_BYTES, start, type RequestBody } from "./client";
 export { DecodeError } from "./decode";
 export {
-  countCohort,
   describeDataset,
   explain,
   listAnalyses,
-  runAnalysis,
   searchCatalog,
   SHAPE_MISMATCH,
   UNREACHABLE,
-  validateDocument,
   type Answered,
   type Boxed,
   type BoxedJson,
@@ -53,4 +55,5 @@ export {
 } from "./typed";
 export { type Facet, type Listed, type Lists, type ListShown, listOf, NOT_READ, Num, type Refused, RetryAfter } from "./format";
 export { isPositive, isZero, largestOf, LISTED } from "./numbers";
-export { choiceOf, compareText, idOf, idOfAddress, kindOf, memberOf, sameText, showText, type Choice, type DatasetId, type GrammarName, type Kind, type Member, type VocabularyName } from "./text";
+export { compareText, idOf, idOfAddress, kindOf, memberOf, sameText, showText, type Choice, type DatasetId, type GrammarName, type Kind, type Member, type Role, type VocabularyName } from "./text";
+export { countDraft, optionsOf, runDraft, validateDraft, type CohortDraft, type Draft, type LeafDraft, type Option, type Options, type UnitOption } from "./document";
