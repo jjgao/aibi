@@ -13,6 +13,7 @@ Everything here reads untrusted text, and is total: it returns, or raises ``Refu
 
 import posixpath
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -381,7 +382,8 @@ def study_fields(found: Mapping[str, str], name: str) -> StudyFields:
 # --- The clinical role's file names (D409, P0) ---------------------------------------------------
 
 NAME_BYTES_MOST = 255
-"""The most UTF-8 bytes a clinical meta's ``data_filename`` may have (Linux's ``NAME_MAX``)."""
+"""The most UTF-8 bytes a path value may have (Linux's ``NAME_MAX``): a clinical meta's
+``data_filename`` (``file_name``) or another path value (``one_name``)."""
 
 
 def file_name(value: str) -> str | None:
@@ -401,6 +403,31 @@ def file_name(value: str) -> str | None:
     return normal
 
 
+# --- The other path values' names (D409, phases 9 and 10) -----------------------------------------
+
+
+def one_name(value: str) -> bool:
+    """P0 for a path value outside the clinical role (a non-clinical meta's ``data_filename``, a
+    CNA_DISCRETE meta's ``pd_annotations_filename``, the study meta's ``tags_file``): whether the
+    value, as written and before anything normalises it, is one name of the study's directory. It
+    is not when it is empty, over ``NAME_BYTES_MOST`` bytes in UTF-8, holds a NUL, is ``.`` or
+    ``..``, or holds a ``/`` (absolute, ``./x``, ``x/../y``, a subdirectory, a trailing
+    separator). Stricter than the clinical role's P0, which takes ``./x`` (D409)."""
+    if len(value.encode("utf-8", "surrogatepass")) > NAME_BYTES_MOST:
+        return False
+    if value in ("", ".", ".."):
+        return False
+    return "\0" not in value and "/" not in value
+
+
+def fold(name: str) -> str:
+    """The canonical caseless form of a name, ``NFD(casefold(NFD(name)))``: two names match under
+    case and normalisation folding when their forms are equal (The Unicode Standard §3.13,
+    definition D145, under the running Python's Unicode version: 15.0.0 for 3.12). It is total:
+    a name that is not Unicode text (a lone surrogate) is folded as its code points."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
+
+
 __all__ = [
     "CLINICAL",
     "MANDATORY",
@@ -415,7 +442,9 @@ __all__ = [
     "classify",
     "excluded",
     "file_name",
+    "fold",
     "meta_named",
+    "one_name",
     "parse",
     "stable_id",
     "study_fields",
