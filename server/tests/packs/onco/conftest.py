@@ -210,6 +210,18 @@ def grid() -> ModuleType:
     return module
 
 
+@pytest.fixture(scope="session")
+def oracle() -> ModuleType:
+    """``paths_oracle.py``, loaded by its path: what ``test_paths.py`` and the closure guard of
+    ``test_reachability.py`` state alike about the path values (D436)."""
+    spec = importlib.util.spec_from_file_location("paths_oracle", HERE / "paths_oracle.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.fixture
 def base(grid: ModuleType) -> dict[str, bytes]:
     """The small study that imports, by entry name: a copy each test may change."""
