@@ -17,8 +17,11 @@ is read. The rule, as this module's oracle restates it (``expected``):
 
 ``fold`` is canonical caseless matching, ``NFD(casefold(NFD(s)))`` (The Unicode Standard §3.13,
 definition D145). It is written here again, and so is every part of the oracle: from the pack,
-this module calls only ``discover`` (through the ``discovery`` fixture or ``_discover``), and
-``PATH_SITES`` only to pin it.
+this module calls only ``discover`` (through the ``discovery`` fixture or
+``paths_oracle.discover_listing``), and ``PATH_SITES`` only to pin it. What it shares with the
+closure guard of ``test_reachability.py`` (the hand rows, the non-clinical types and their pairs,
+the reader over a listing given as data) is ``paths_oracle.py``, loaded by the ``oracle``
+fixture.
 
 - **The corpus.** Every cell of the paths plan's live differential (the pinned validator run on
   synthetic studies, outside the repository) is a named case here, built from
@@ -26,6 +29,9 @@ this module calls only ``discover`` (through the ``discovery`` fixture or ``_dis
   accepted with the notes it carries). Each cell also carries the reference's outcome as it was
   recorded, per error: data, not asserted (``REFERENCE``). Two rows are modelled, not run: APFS
   opens a name's fold-equal entry, so there the reference reads what Linux cannot open.
+- **The items and the exits.** A refused cell names its D409 item; an accepted cell records the
+  exit 3 item of each of its errors (``exits``), held by the hand-written map ``EXITS``: total,
+  single-valued and witnessed, every other exit on any accepted cell caught.
 - **The brute force**: spellings by entry kind by role by membership of Reads(S), against the
   oracle; and a Hypothesis property over any value and any listing.
 - **Ignored sites**, every type in the ``data_filename`` row, reads (nothing but Meta(S) is read
@@ -49,7 +55,6 @@ from hypothesis import strategies as st
 
 from aibi.core.schema.limits import ImportLimits
 from aibi.core.schema.output import DataSegment, TextSegment
-from aibi.core.schema.pack_api import ConfinedPath, DirectoryEntry, Refused
 
 STUDY_MODULE = "aibi.packs.onco.study"
 DATA_NOTE = "a data file of a meta file M4.2a does not import"
@@ -979,10 +984,13 @@ MODELLED = ("23-apfs", "50-apfs")
 # The reference's outcome, per cell, as the live runs recorded it (cbioportal-core 47890bb, Linux,
 # an audit hook on ``open``): its exit status, each error the cell causes, by its identity (no
 # message of the reference is quoted), the members of Reads(S) it opens through the value (``via``)
-# and the cell's D409 item. The outcome is data; what is asserted is the cell's item against it
+# and, for a refused cell, its D409 item, for an accepted one, the exit of each error (``exits``).
+# The outcome is data; what is asserted is the cell's item against it
 # (``test_every_cell_names_its_d409_item``) and its branch against aibi's own refusal
-# (``test_a_refused_cell_names_the_item_of_its_branch``). The kind of a refused cell is D409's one
-# definition (``reports_no_error``): ``stricter`` when no error is left but the cascade's.
+# (``test_a_refused_cell_names_the_item_of_its_branch``), and each accepted cell's exits against
+# the errors and ``EXITS`` (``test_an_accepted_cell_s_exits_are_its_errors_by_the_map``). The kind
+# of a refused cell is D409's one definition (``reports_no_error``): ``stricter`` when no error is
+# left but the cascade's.
 #   open-fail    the value's open fails, opening nothing of Reads(S)
 #   tags-open    its open of the tags value fails (the run crashes)
 #   tags-content the tags file is opened, and its content is an error or a crash
@@ -1001,17 +1009,19 @@ CASCADE = "cna"
 
 
 class Recorded(NamedTuple):
-    """One cell's record: the reference's exit status, its errors by identity, the ``item`` of
-    D409 the cell is an instance of, and ``via``: a refused cell's item is the number of a
-    ``stricter:`` item (the reference reports no error for the value) or a ``same outcome:`` item
-    (it reports an error, crashes or hangs); an accepted cell's is the number of the exit its
-    errors fall under, or ``same`` when it has none (D409's list of what is the same as
-    cBioPortal)."""
+    """One cell's record: the reference's exit status, its errors by identity, a refused cell's
+    ``item``, ``via``, and an accepted cell's ``exits``. A refused cell's item is the number of the
+    D409 item it is an instance of: a ``stricter:`` item (the reference reports no error for the
+    value) or a ``same outcome:`` item (it reports an error, crashes or hangs). An accepted cell has
+    no item: its ``exits`` are one ``(identity, exit)`` pair for each of its errors, in their order,
+    the number of the D409 exit 3 item the error falls under (the cascade's is (24)); with no
+    error it has none, and is what D409 lists as the same as cBioPortal."""
 
     rc: str
     errors: tuple[str, ...]
-    item: str
+    item: str = ""
     via: tuple[str, ...] = ()
+    exits: tuple[tuple[str, str], ...] = ()
 
 
 def reports_no_error(record: Recorded) -> bool:
@@ -1037,16 +1047,18 @@ REFERENCE: dict[str, Recorded] = {
     "15": Recorded("3", (), "28"),
     "16": Recorded("3", (), "32", via=("meta_clinical_sample.txt",)),
     "17": Recorded("1", ("tags-content",), "33", via=("data_clinical_sample.txt",)),
-    "18": Recorded("3", (), "same"),
-    "19": Recorded("1", ("case-list",), "19", via=("data_clinical_sample.txt",)),
+    "18": Recorded("3", ()),
+    "19": Recorded(
+        "1", ("case-list",), via=("data_clinical_sample.txt",), exits=(("case-list", "19"),)
+    ),
     "20": Recorded("1", ("cna", "content"), "29", via=("data_clinical_sample.txt",)),
     "21": Recorded("1", ("cna", "content"), "33", via=("data_clinical_sample.txt",)),
-    "22": Recorded("1", ("cna",), "24"),
+    "22": Recorded("1", ("cna",), exits=(("cna", "24"),)),
     "23": Recorded("1", ("open-fail",), "33"),
     "24": Recorded("3", (), "30"),
-    "25": Recorded("1", ("type-meta",), "25"),
+    "25": Recorded("1", ("type-meta",), exits=(("type-meta", "25"),)),
     "26": Recorded("3", (), "32", via=("meta_mut.txt",)),
-    "27": Recorded("3", (), "same"),
+    "27": Recorded("3", ()),
     "30m": Recorded("1", ("cna",), "32", via=("meta_study.txt",)),
     "30s": Recorded("1", ("cna",), "32", via=("meta_clinical_sample.txt",)),
     "30p": Recorded("1", ("cna", "content"), "33", via=("data_clinical_patient.txt",)),
@@ -1067,52 +1079,52 @@ REFERENCE: dict[str, Recorded] = {
     "54": Recorded("1, crash", ("tags-open",), "27"),
     "55": Recorded("3", (), "32"),
     "56": Recorded("3", (), "28"),
-    "57": Recorded("3", (), "same"),
-    "58": Recorded("1", ("open-fail",), "20"),
-    "59": Recorded("1", ("cna", "open-fail"), "20"),
+    "57": Recorded("3", ()),
+    "58": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
+    "59": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
     "60": Recorded("1", ("cna", "open-fail"), "27"),
     "61": Recorded("1", ("open-fail",), "27"),
-    "62": Recorded("1", ("open-fail",), "20"),
-    "63": Recorded("1", ("open-fail",), "20"),
-    "64": Recorded("1", ("tags-content",), "21"),
+    "62": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
+    "63": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
+    "64": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
     "65": Recorded("3", (), "32"),
-    "66": Recorded("1", ("cna", "content"), "20"),
-    "67": Recorded("3", (), "same"),
-    "68": Recorded("3", (), "same"),
+    "66": Recorded("1", ("cna", "content"), exits=(("cna", "24"), ("content", "20"))),
+    "67": Recorded("3", ()),
+    "68": Recorded("3", ()),
     "69": Recorded("1, crash", ("tags-open",), "35"),
     "70": Recorded("3", (), "30"),
-    "71": Recorded("3", (), "same"),
+    "71": Recorded("3", ()),
     "72": Recorded("3", (), "30"),
-    "73": Recorded("1, crash", ("tags-content",), "21"),
-    "74": Recorded("1", ("tags-content",), "21"),
-    "75": Recorded("1", ("tags-content",), "21"),
-    "76": Recorded("3", (), "same"),
-    "77": Recorded("3", (), "same"),
-    "78": Recorded("1", ("tags-content",), "21"),
-    "79": Recorded("3", (), "same"),
-    "80": Recorded("1", ("cna",), "24"),
-    "81": Recorded("1", ("cna", "open-fail"), "20"),
+    "73": Recorded("1, crash", ("tags-content",), exits=(("tags-content", "21"),)),
+    "74": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
+    "75": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
+    "76": Recorded("3", ()),
+    "77": Recorded("3", ()),
+    "78": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
+    "79": Recorded("3", ()),
+    "80": Recorded("1", ("cna",), exits=(("cna", "24"),)),
+    "81": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
     "82": Recorded("1", ("cna",), "30"),
     "83": Recorded("3", (), "30"),
     "84": Recorded("3", (), "28"),
     "85": Recorded("1", ("open-fail",), "29"),
-    "86": Recorded("3", (), "same"),
+    "86": Recorded("3", ()),
     "87": Recorded("1", ("content",), "33", via=("data_mut.txt",)),
     "88": Recorded("3", (), "32"),
-    "89": Recorded("3", (), "same"),
+    "89": Recorded("3", ()),
     "90": Recorded("3", (), "32"),
     "91": Recorded("1, crash", ("tags-open",), "33"),
-    "92": Recorded("3", (), "same"),
-    "93": Recorded("1", ("cna", "open-fail"), "20"),
-    "94": Recorded("timeout", ("blocked",), "20"),
+    "92": Recorded("3", ()),
+    "93": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
+    "94": Recorded("timeout", ("blocked",), exits=(("blocked", "20"),)),
     "95": Recorded("1, crash", ("tags-open",), "35"),
-    "96": Recorded("3", (), "same"),
-    "97": Recorded("1, crash", ("tags-content",), "21"),
+    "96": Recorded("3", ()),
+    "97": Recorded("1, crash", ("tags-content",), exits=(("tags-content", "21"),)),
     "N01": Recorded("3", (), "32", via=("data_clinical_patient.txt",)),
     "N05": Recorded("timeout", ("blocked",), "35"),
     "N22": Recorded("1, crash", ("tags-open",), "31"),
     "N25": Recorded("3", (), "32", via=("meta_cna.txt",)),
-    "N13": Recorded("3", (), "same"),
+    "N13": Recorded("3", ()),
     "C01": Recorded("1, crash", ("open-fail",), "27"),
     "C02": Recorded("1", ("open-fail",), "27"),
     "C03": Recorded("1", ("open-fail",), "27"),
@@ -1134,8 +1146,8 @@ REFERENCE: dict[str, Recorded] = {
     "C22": Recorded("3", (), "28"),
     "C23": Recorded("3", (), "28"),
     "C24": Recorded("1", ("open-fail",), "29"),
-    "C30": Recorded("1, crash", ("tags-open",), "21"),
-    "C31": Recorded("1", ("open-fail",), "20"),
+    "C30": Recorded("1, crash", ("tags-open",), exits=(("tags-open", "21"),)),
+    "C31": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
     "C40": Recorded("1", ("content",), "31", via=("data_clinical_sample.txt",)),
     "C41": Recorded("1", ("open-fail",), "31"),
     "D01": Recorded("1", ("content",), "31"),
@@ -1214,13 +1226,19 @@ def d409() -> Items:
 
 
 def test_every_item_a_cell_names_exists_in_d409() -> None:
+    """A refused cell's item is a ``stricter:`` or ``same outcome:`` item of D409; an accepted
+    cell's exits are exit 3 items of D409, and with no error it is what D409 lists as the same as
+    cBioPortal."""
     items = d409()
     assert items.kinds
-    for cell_id, record in REFERENCE.items():
-        if record.item == "same":
+    for cell_id, (_, expected) in CELLS.items():
+        record = REFERENCE[cell_id]
+        if isinstance(expected, Refuse):
+            assert record.item in items.kinds, (cell_id, record.item)
+        elif record.errors == ():
             assert items.same, cell_id
-        else:
-            assert record.item in items.kinds or record.item in items.exits, (cell_id, record.item)
+        for _, exit_ in record.exits:
+            assert exit_ in items.exits, (cell_id, exit_)
 
 
 def test_every_stricter_or_same_outcome_item_is_named_by_a_cell() -> None:
@@ -1231,9 +1249,9 @@ def test_every_stricter_or_same_outcome_item_is_named_by_a_cell() -> None:
 def test_every_cell_names_its_d409_item() -> None:
     """A refused cell's item has the kind of D409's one definition (``reports_no_error``):
     ``stricter:`` where the reference reports no error for the value (the cascade's, the missing
-    ``_cna`` case list, is not the value's), ``same outcome:`` where it errs, crashes or hangs.
-    An accepted cell names the exit its reference errors fall under, or ``same`` if it has none.
-    The exit an accepted cell's errors map to, error by error, is PR B's."""
+    ``_cna`` case list, is not the value's), ``same outcome:`` where it errs, crashes or hangs, and
+    it has no exits. An accepted cell has no item: the exit of each of its errors is its
+    ``exits`` (``test_an_accepted_cell_s_exits_are_its_errors_by_the_map``)."""
     items = d409()
     for cell_id, (_, expected) in CELLS.items():
         record = REFERENCE[cell_id]
@@ -1243,14 +1261,13 @@ def test_every_cell_names_its_d409_item() -> None:
             assert record.item in items.kinds, cell_id
             kind = "stricter" if reports_no_error(record) else "same outcome"
             assert items.kinds[record.item] == kind, cell_id
+            assert record.exits == (), cell_id
         else:
-            assert (
-                (record.item == "same") if record.errors == () else (record.item in items.exits)
-            ), cell_id
+            assert record.item == "", cell_id
             # D436's closure: no value an accepted cell holds makes the reference open a member
             # of Reads(S) more often than its own reading does, but through a case list's symlink
             # (19).
-            assert record.via == () or record.item == "19", cell_id
+            assert record.via == () or ("case-list", "19") in record.exits, cell_id
 
 
 def test_the_cells_an_item_lists_are_the_cells_that_name_it() -> None:
@@ -1263,6 +1280,117 @@ def test_the_cells_an_item_lists_are_the_cells_that_name_it() -> None:
         assert len(set(listed)) == len(listed), item
         naming = {cell_id for cell_id, record in REFERENCE.items() if record.item == item}
         assert set(listed) == naming, (item, sorted(set(listed) ^ naming))
+
+
+# --- The exit of each error of an accepted cell (PR B) -------------------------------------------
+
+EXITS: Mapping[str, str] = {
+    "case-list": "19",
+    "open-fail": "20",
+    "content": "20",
+    "blocked": "20",
+    "tags-content": "21",
+    "tags-open": "21",
+    CASCADE: "24",
+    "type-meta": "25",
+}
+"""The D409 exit 3 item each error identity of an accepted cell falls under, written by hand from
+D409's text: (19) a case list's content; (20) a data file of a kind never imported, its open
+failing without opening a member of Reads(S), its content or a FIFO the reference blocks on; (21)
+the tags file's content, or its open failing for its permissions alone; (24) the missing ``_cna``
+case list, the cascade; (25) a type-specific meta check. Total over today's accepted cells'
+identities and single-valued: when an identity needs a second exit, the identity is split
+(``open-fail`` and ``open-fail-dir``, say), and the map never maps one to two. Every entry is
+witnessed: some accepted cell records that identity under that exit."""
+
+
+def exit_failures(
+    reference: Mapping[str, Recorded], exits: Mapping[str, Any], numbers: frozenset[str]
+) -> list[str]:
+    """Every way the records and the map break the exit rule (none when it holds): a map entry
+    that is not one exit of D409 (``numbers``) or that no accepted cell witnesses; a refused cell
+    with exits; an accepted cell whose exits' identities are not its errors, in order, or whose
+    exit for an identity is not the map's."""
+    failures: list[str] = []
+    for identity, exit_ in exits.items():
+        if not isinstance(exit_, str) or exit_ not in numbers:
+            failures.append(f"{identity}: {exit_!r} is not one exit 3 item of D409")
+    carried: set[tuple[str, str]] = set()
+    for cell_id, (_, expected) in CELLS.items():
+        record = reference[cell_id]
+        if isinstance(expected, Refuse):
+            if record.exits:
+                failures.append(f"{cell_id}: a refused cell carries exits")
+            continue
+        if tuple(identity for identity, _ in record.exits) != record.errors:
+            failures.append(f"{cell_id}: its exits are not its errors, in order")
+        for identity, exit_ in record.exits:
+            carried.add((identity, exit_))
+            if exits.get(identity) != exit_:
+                failures.append(f"{cell_id}: {identity} under ({exit_}), not the map's")
+    for identity, exit_ in exits.items():
+        for one in {exit_} if isinstance(exit_, str) else exit_:
+            if (identity, one) not in carried:
+                failures.append(f"{identity}: ({one}) is witnessed by no accepted cell")
+    return failures
+
+
+def test_an_accepted_cell_s_exits_are_its_errors_by_the_map() -> None:
+    """Each accepted cell's exits are its errors, in order, each under the exit ``EXITS`` gives
+    it; a refused cell has none; every entry of the map is an exit 3 item of D409 (they run to
+    (26)) and is witnessed."""
+    numbers = d409().exits
+    assert numbers == frozenset(str(n) for n in range(19, 27))
+    assert set(EXITS.values()) <= numbers
+    assert exit_failures(REFERENCE, EXITS, numbers) == []
+    accepted = [c for c, (_, e) in CELLS.items() if isinstance(e, Accept)]
+    assert (len(accepted), sum(len(REFERENCE[c].exits) for c in accepted)) == (34, 24)
+
+
+def test_every_other_exit_on_an_accepted_cell_is_caught() -> None:
+    """The label-flip mutants: each exit of each accepted cell, changed to every other exit 3 item
+    or to ``same``, is caught; so is a cascade pair dropped (cell 59), the pairs reordered, an exit
+    given to a refused cell, and the map widened, extended or narrowed."""
+    numbers = d409().exits
+    flips = 0
+    for cell_id, record in REFERENCE.items():
+        for index, (identity, exit_) in enumerate(record.exits):
+            for other in sorted((numbers | {"same"}) - {exit_}):
+                changed = (*record.exits[:index], (identity, other), *record.exits[index + 1 :])
+                mutant = {**REFERENCE, cell_id: record._replace(exits=changed)}
+                assert exit_failures(mutant, EXITS, numbers), (cell_id, identity, other)
+                flips += 1
+    assert flips == 24 * len(numbers)
+    cell_59 = REFERENCE["59"]
+    for exits in (cell_59.exits[1:], cell_59.exits[::-1], ()):
+        mutant = {**REFERENCE, "59": cell_59._replace(exits=exits)}
+        assert exit_failures(mutant, EXITS, numbers), exits
+    given = {**REFERENCE, "30m": REFERENCE["30m"]._replace(exits=((CASCADE, "24"),))}
+    assert exit_failures(given, EXITS, numbers)
+    for identity, exit_ in EXITS.items():
+        for other in sorted(numbers - {exit_}):
+            assert exit_failures(REFERENCE, {**EXITS, identity: other}, numbers)
+            assert exit_failures(REFERENCE, {**EXITS, identity: {exit_, other}}, numbers)
+        narrowed = {key: value for key, value in EXITS.items() if key != identity}
+        assert exit_failures(REFERENCE, narrowed, numbers), identity
+    assert exit_failures(REFERENCE, {**EXITS, "unrecorded": "22"}, numbers)
+
+
+def test_an_accepted_tags_open_is_a_permission_failure(base: Any, tmp_path: Path) -> None:
+    """(21) takes a failed open of the tags value only when it failed by permission: every
+    accepted cell with a ``tags-open`` error names, as its tags file, an entry its build makes
+    unreadable (mode 000). From the build, so it holds where the cell itself is skipped (as
+    root)."""
+    seen = []
+    for cell_id, (build, expected) in CELLS.items():
+        if isinstance(expected, Accept) and "tags-open" in REFERENCE[cell_id].errors:
+            tree = build(base, tmp_path)
+            node = tree[value_of(tree["meta_study.txt"], "tags_file")]
+            assert isinstance(node, tuple), cell_id
+            assert node[0] == MODE, cell_id
+            assert node[2] & 0o444 == 0, cell_id
+            seen.append(cell_id)
+    assert seen == ["C30"]
 
 
 BRANCH = {P0: "P0", SYMLINK: "Kind", READS: "Reads", NONE: "Tags"}
@@ -1390,45 +1518,6 @@ def test_a_corpus_cell(
 
 
 # --- The brute force -----------------------------------------------------------------------------
-
-ROOT = Path("/brute")
-
-
-class ListedReader:
-    """A reader over a listing given as data (name to kind and content), in the order given:
-    ``discover`` sorts it. It records each read."""
-
-    def __init__(self, entries: Mapping[str, tuple[str, bytes]]) -> None:
-        self.entries = dict(entries)
-        self.reads: list[str] = []
-
-    def files(self, directory: ConfinedPath) -> list[DirectoryEntry]:
-        assert directory == ROOT
-        listed = []
-        for name, (kind, _) in reversed(self.entries.items()):
-            path = ConfinedPath(ROOT / name) if kind == "file" else None
-            listed.append(DirectoryEntry(name, kind, path))  # pyright: ignore[reportArgumentType]
-        return listed
-
-    def read(self, path: ConfinedPath, limit: int) -> bytes:
-        self.reads.append(path.name)
-        content = self.entries[path.name][1]
-        assert len(content) <= limit
-        return content
-
-    def location(self, path: ConfinedPath) -> str:
-        return path.name
-
-
-def _discover(study: ModuleType, entries: Mapping[str, tuple[str, bytes]]) -> tuple[Any, Any]:
-    """``discover`` over a listing: ``(study, None)`` or ``(None, the one refusal)``."""
-    reader = ListedReader(entries)
-    try:
-        found = study.discover(reader, ConfinedPath(ROOT), ImportLimits())
-    except Refused as error:
-        (refusal,) = error.refusals
-        return None, refusal
-    return found, None
 
 
 @dataclass(frozen=True)
@@ -1678,8 +1767,8 @@ def expected(case: Case) -> tuple[str, ...]:
     return ("ok", *notes)
 
 
-def actual(study: ModuleType, case: Case) -> tuple[str, ...]:
-    found, refusal = _discover(study, case.entries)
+def actual(oracle: ModuleType, study: ModuleType, case: Case) -> tuple[str, ...]:
+    found, refusal = oracle.discover_listing(study, case.entries)
     if refusal is not None:
         return ("refused", str(refusal.code), said(refusal.message))
     notes = []
@@ -1814,7 +1903,7 @@ def brute_cases(base: Mapping[str, bytes]) -> Iterator[tuple[str, Case]]:
         yield from spaced_cases(base, role)
 
 
-def test_the_brute_force(base: Any) -> None:
+def test_the_brute_force(base: Any, oracle: ModuleType) -> None:
     """Every spelling of every target, of every kind, beside every fold-equal neighbour, in every
     role (the ignored sites among them), is what the oracle says: the refusal's code and reason,
     or the notes, each entry's. A case that disagrees is listed."""
@@ -1823,7 +1912,7 @@ def test_the_brute_force(base: Any) -> None:
     count = 0
     for label, case in brute_cases(base):
         count += 1
-        want, got = expected(case), actual(study, case)
+        want, got = expected(case), actual(oracle, study, case)
         if want != got:
             wrong.append((label, want, got))
     assert count > 0
@@ -1848,62 +1937,23 @@ def test_the_brute_force_is_the_size_it_is_said_to_be(base: Any) -> None:
 
 # --- The table and the sites it names ------------------------------------------------------------
 
-SEED_KEYS = (
-    "data_filename",
-    "pd_annotations_filename",
-    "tags_file",
-    "listing:meta",
-    "listing:case_lists",
-    "isdir:case_lists",
-)
-"""The keys of ``test_reachability.SEED_KEYS``, spelled again (test modules cannot import one
-another)."""
-DATA_TYPES = frozenset(
-    {
-        "CANCER_TYPE",
-        "CNA_DISCRETE",
-        "CNA_DISCRETE_LONG",
-        "CNA_LOG2",
-        "CNA_CONTINUOUS",
-        "SEG",
-        "MUTATION",
-        "MUTATION_UNCALLED",
-        "EXPRESSION",
-        "METHYLATION",
-        "PROTEIN",
-        "GISTIC_GENES",
-        "TIMELINE",
-        "MUTATION_SIGNIFICANCE",
-        "GENE_PANEL_MATRIX",
-        "GSVA_PVALUES",
-        "GSVA_SCORES",
-        "GENERIC_ASSAY_CONTINUOUS",
-        "GENERIC_ASSAY_BINARY",
-        "GENERIC_ASSAY_CATEGORICAL",
-        "STRUCTURAL_VARIANT",
-        "SAMPLE_RESOURCES",
-        "PATIENT_RESOURCES",
-        "STUDY_RESOURCES",
-        "RESOURCES_DEFINITION",
-    }
-)
-"""Every type whose meta file names a data file M4.2a never imports (all but the study meta and
-the two clinical types), written by hand."""
 
-
-def test_path_sites_is_the_survey() -> None:
-    """``PATH_SITES``: one row per seed key, in the order of phase 9 then 10 then the listings,
-    each row's meta types and role, and its cites by line with a paraphrase."""
+def test_path_sites_is_the_survey(oracle: ModuleType) -> None:
+    """``PATH_SITES``: one row per hand row of ``paths_oracle.ROWS``, in the order of phase 9 then
+    10 then the listings, each row's meta types and role, and its cites by line with a
+    paraphrase."""
     study = importlib.import_module(STUDY_MODULE)
     rows = study.PATH_SITES
-    assert tuple(row.key for row in rows) == SEED_KEYS
-    assert [(row.role, row.meta_types) for row in rows] == [
-        ("data", DATA_TYPES),
-        ("data", frozenset({"CNA_DISCRETE"})),
-        ("tags", frozenset({"STUDY"})),
-        ("listing", frozenset({*DATA_TYPES, "STUDY", "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES"})),
-        ("case lists", frozenset()),
-        ("case lists", frozenset()),
+    assert [(row.key, row.role, row.meta_types) for row in rows] == [
+        (row.key, row.role, row.types) for row in oracle.ROWS
+    ]
+    assert [row.key for row in oracle.ROWS] == [
+        "data_filename",
+        "pd_annotations_filename",
+        "tags_file",
+        "listing:meta",
+        "listing:case_lists",
+        "isdir:case_lists",
     ]
     for row in rows:
         assert row.cites, row.key
@@ -1917,47 +1967,10 @@ def test_path_sites_is_the_survey() -> None:
             ), cite
 
 
-PAIRS = (
-    ("CANCER_TYPE", "CANCER_TYPE", "CANCER_TYPE"),
-    ("CLINICAL", "TIMELINE", "TIMELINE"),
-    ("PROTEIN_LEVEL", "LOG2-VALUE", "PROTEIN"),
-    ("PROTEIN_LEVEL", "Z-SCORE", "PROTEIN"),
-    ("PROTEIN_LEVEL", "CONTINUOUS", "PROTEIN"),
-    ("COPY_NUMBER_ALTERATION", "DISCRETE", "CNA_DISCRETE"),
-    ("COPY_NUMBER_ALTERATION", "DISCRETE_LONG", "CNA_DISCRETE_LONG"),
-    ("COPY_NUMBER_ALTERATION", "CONTINUOUS", "CNA_CONTINUOUS"),
-    ("COPY_NUMBER_ALTERATION", "LOG2-VALUE", "CNA_LOG2"),
-    ("COPY_NUMBER_ALTERATION", "SEG", "SEG"),
-    ("MRNA_EXPRESSION", "CONTINUOUS", "EXPRESSION"),
-    ("MRNA_EXPRESSION", "Z-SCORE", "EXPRESSION"),
-    ("MRNA_EXPRESSION", "DISCRETE", "EXPRESSION"),
-    ("MUTATION_EXTENDED", "MAF", "MUTATION"),
-    ("MUTATION_UNCALLED", "MAF", "MUTATION_UNCALLED"),
-    ("METHYLATION", "CONTINUOUS", "METHYLATION"),
-    ("GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX"),
-    ("STRUCTURAL_VARIANT", "SV", "STRUCTURAL_VARIANT"),
-    ("GISTIC_GENES_AMP", "Q-VALUE", "GISTIC_GENES"),
-    ("GISTIC_GENES_DEL", "Q-VALUE", "GISTIC_GENES"),
-    ("MUTSIG", "Q-VALUE", "MUTATION_SIGNIFICANCE"),
-    ("GENESET_SCORE", "GSVA-SCORE", "GSVA_SCORES"),
-    ("GENESET_SCORE", "P-VALUE", "GSVA_PVALUES"),
-    ("GENERIC_ASSAY", "LIMIT-VALUE", "GENERIC_ASSAY_CONTINUOUS"),
-    ("GENERIC_ASSAY", "BINARY", "GENERIC_ASSAY_BINARY"),
-    ("GENERIC_ASSAY", "CATEGORICAL", "GENERIC_ASSAY_CATEGORICAL"),
-)
-"""Every pair of a non-clinical type (C:651-689), written by hand, with the type it is."""
-RESOURCES = {
-    "PATIENT": "PATIENT_RESOURCES",
-    "SAMPLE": "SAMPLE_RESOURCES",
-    "STUDY": "STUDY_RESOURCES",
-    "DEFINITION": "RESOURCES_DEFINITION",
-}
-
-
-def every_type_meta(value: str) -> Iterator[tuple[str, bytes]]:
+def every_type_meta(oracle: ModuleType, value: str) -> Iterator[tuple[str, bytes]]:
     """A meta file of each pair and each resource type, naming ``value``: each holds every key
     any type needs, so that each passes its mandatory keys."""
-    for alteration, datatype, kind in PAIRS:
+    for alteration, datatype, kind in oracle.PAIRS:
         yield (
             kind,
             (
@@ -1968,7 +1981,7 @@ def every_type_meta(value: str) -> Iterator[tuple[str, bytes]]:
                 f"generic_assay_type: g\ndata_filename: {value}\n"
             ).encode(),
         )
-    for resource, kind in RESOURCES.items():
+    for resource, kind in oracle.RESOURCES.items():
         yield (
             kind,
             (
@@ -1980,13 +1993,13 @@ def every_type_meta(value: str) -> Iterator[tuple[str, bytes]]:
 
 @pytest.mark.parametrize("target", ["meta_study.txt", "meta_x.txt", "data_clinical_sample.txt"])
 def test_every_non_clinical_type_naming_reads_is_refused(
-    make_study: Any, discovery: Any, base: Any, target: str
+    make_study: Any, discovery: Any, base: Any, oracle: ModuleType, target: str
 ) -> None:
     """A meta file of every type in the ``data_filename`` row, naming the study meta, itself or a
     clinical data file, is refused (cells 09-13, 26, 30-33 and 40 for a few types; stricter, for
     a meta file, than the reference, which is clean)."""
     seen = set()
-    for kind, content in every_type_meta(target):
+    for kind, content in every_type_meta(oracle, target):
         seen.add(kind)
         directory = make_study({**base, "meta_x.txt": content})
         assert discovery.outcome(directory) == (
@@ -1994,13 +2007,13 @@ def test_every_non_clinical_type_naming_reads_is_refused(
             "meta_x.txt",
             f"«meta_x.txt» has a data_filename that {READS}",
         ), kind
-    assert seen == DATA_TYPES
+    assert seen == oracle.DATA_TYPES
 
 
 def test_every_non_clinical_type_naming_a_plain_file_is_noted(
-    make_study: Any, discovery: Any, base: Any
+    make_study: Any, discovery: Any, base: Any, oracle: ModuleType
 ) -> None:
-    for kind, content in every_type_meta("data.txt"):
+    for kind, content in every_type_meta(oracle, "data.txt"):
         found = discovery.run(make_study({**base, "meta_x.txt": content, "data.txt": b"x"}))
         by_entry, _ = notes_by_entry(found)
         assert by_entry["data.txt"] == DATA_NOTE, kind
@@ -2206,6 +2219,7 @@ VALUE_TEXT = st.text(
 )
 def test_any_value_against_any_listing(
     grid: Any,
+    oracle: ModuleType,
     listing: dict[str, str],
     role_index: int,
     pick: int,
@@ -2239,5 +2253,5 @@ def test_any_value_against_any_listing(
     used = frozenset({"meta_study.txt", "meta_clinical_sample.txt", "meta_clinical_patient.txt"})
     case = Case(role, value, entries, meta_files | data_files, meta_files, used | data_files)
     study = importlib.import_module(STUDY_MODULE)
-    found, refusal = _discover(study, entries)
+    found, refusal = oracle.discover_listing(study, entries)
     assert status(found, refusal) == expected_status(case)
