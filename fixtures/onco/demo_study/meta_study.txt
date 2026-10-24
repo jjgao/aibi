@@ -1,0 +1,8 @@
+type_of_cancer: mixed
+cancer_study_identifier: demo_onco_2026
+name: Demo oncology study (synthetic)
+description: A small synthetic study in cBioPortal's format, for aibi's tests and test site. No row describes a real person.
+citation: aibi fixtures, 2026
+pmid: 12345
+reference_genome: hg19
+add_global_case_list: true

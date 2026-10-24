@@ -1,0 +1,2 @@
+Hugo_Symbol	Entrez_Gene_Id	Tumor_Sample_Barcode	Variant_Classification	HGVSp_Short
+TP53	7157	S01	Missense_Mutation	p.R175H

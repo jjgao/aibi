@@ -17,6 +17,9 @@ declares from the source's own metadata, never a value computed from the rows (Â
 The pack's next importer widens these with a pack version bump.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from aibi.core.schema.pack_api import JsonSchema
 
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -82,33 +85,41 @@ clinical, timeline, segment, GISTIC, MutSig and gene-panel-matrix files, which a
 GENOMES: tuple[str, ...] = ("hg19", "hg38", "mm10")
 """The reference genomes a cBioPortal study declares."""
 
-DATASET: JsonSchema = {
-    "$schema": DIALECT,
-    "type": "object",
-    "properties": {
-        "cancer_study_identifier": {"type": "string", "minLength": 1, "maxLength": 200},
-        "type_of_cancer": {"type": "string", "minLength": 1, "maxLength": 64},
-        "reference_genome": {"enum": list(GENOMES)},
-    },
-    "additionalProperties": False,
-}
-TABLE: JsonSchema = {
-    "$schema": DIALECT,
-    "type": "object",
-    "properties": {
-        "meta": {"enum": list(PAIRS)},
-        "stable_id": {"type": "string", "minLength": 1, "maxLength": 200},
-        "case_list_category": {"type": "string", "minLength": 1, "maxLength": 64},
-    },
-    "additionalProperties": False,
-}
-COLUMN: JsonSchema = {
-    "$schema": DIALECT,
-    "type": "object",
-    "properties": {
-        "attribute_priority": {"type": "integer", "minimum": -1, "maximum": 2**53 - 1},
-    },
-    "additionalProperties": False,
-}
-SCHEMAS: dict[str, JsonSchema] = {"dataset": DATASET, "table": TABLE, "column": COLUMN}
+DATASET: JsonSchema = MappingProxyType(
+    {
+        "$schema": DIALECT,
+        "type": "object",
+        "properties": {
+            "cancer_study_identifier": {"type": "string", "minLength": 1, "maxLength": 200},
+            "type_of_cancer": {"type": "string", "minLength": 1, "maxLength": 64},
+            "reference_genome": {"enum": list(GENOMES)},
+        },
+        "additionalProperties": False,
+    }
+)
+TABLE: JsonSchema = MappingProxyType(
+    {
+        "$schema": DIALECT,
+        "type": "object",
+        "properties": {
+            "meta": {"enum": list(PAIRS)},
+            "stable_id": {"type": "string", "minLength": 1, "maxLength": 200},
+            "case_list_category": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+        "additionalProperties": False,
+    }
+)
+COLUMN: JsonSchema = MappingProxyType(
+    {
+        "$schema": DIALECT,
+        "type": "object",
+        "properties": {
+            "attribute_priority": {"type": "integer", "minimum": -1, "maximum": 2**53 - 1},
+        },
+        "additionalProperties": False,
+    }
+)
+SCHEMAS: Mapping[str, JsonSchema] = MappingProxyType(
+    {"dataset": DATASET, "table": TABLE, "column": COLUMN}
+)
 """The pack's extension schemas, by descriptor kind."""

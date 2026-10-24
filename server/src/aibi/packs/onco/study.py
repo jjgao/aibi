@@ -51,6 +51,7 @@ note, at most ``NOTES_MOST`` of them and then one that counts the rest.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from aibi.core.importers.errors import ImportRefused
 from aibi.core.schema.limits import ImportLimits
@@ -89,12 +90,14 @@ META_FILES_MOST = 256
 NOTES_MOST = 200
 """The most skip notes that name an entry; one more counts the rest."""
 
-_KIND_REASONS: Mapping[str, str] = {
-    "symlink": "is a symlink",
-    "directory": "is a directory",
-    "other": "is not a regular file",
-    "unconfined": "cannot be confined",
-}
+_KIND_REASONS: Mapping[str, str] = MappingProxyType(
+    {
+        "symlink": "is a symlink",
+        "directory": "is a directory",
+        "other": "is not a regular file",
+        "unconfined": "cannot be confined",
+    }
+)
 """Why a meta-named entry that is not a regular file is ``META_FILE``."""
 
 

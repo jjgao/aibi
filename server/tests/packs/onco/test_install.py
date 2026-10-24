@@ -94,9 +94,9 @@ def test_the_server_installs_the_pack_by_its_module_s_name(tmp_path: Path) -> No
     found: dict[str, Any] = json.loads(ran.stdout)
     code, out, err = found["check"]
     assert (code, err) == (0, "")
-    assert "pack: onco 0.1.0 (results 1)" in out.splitlines()
+    assert "pack: onco 0.2.0 (results 1)" in out.splitlines()
     assert found["loader_err"] == ""
-    assert found["listing"] == ["onco 0.1.0 (results 1)"]
+    assert found["listing"] == ["onco 0.2.0 (results 1)"]
     assert found["duckdb"] == []
     assert "aibi.packs.onco" in found["packs"]
     assert len(found["listed"]) == 15

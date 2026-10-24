@@ -6,6 +6,15 @@
 #   scripts/testsite.sh status
 #   scripts/testsite.sh stop
 #   scripts/testsite.sh reset    # stop, and delete the site's data (the token is kept)
+#   scripts/testsite.sh import-study <name> <dir>   # a cBioPortal study, by the oncology pack
+#
+# The server installs the oncology pack (`[packs] modules`), so a cBioPortal study directory can be
+# imported with it: `import-study` copies the directory whole into the site's `imports/<name>` and
+# imports it as the dataset <name> (`aibi import <name> <dir> --pack onco`, or `reimport` when the
+# dataset exists), restarting the server first if it is running, so that it serves this script's
+# configuration. <name> is a dataset id (`[a-z][a-z0-9_]{0,63}`, no `__`); the target must be the
+# site's own `imports/<name>`, with no symlink on the way. The name, the source and the target are
+# checked before anything is stopped, built, created or removed, and again before the target is.
 #
 # Everything the site holds lives in one directory, AIBI_TESTSITE_DIR (default ~/aibi-testsite, mode
 # 0700). The curator token (the operator's key, SPEC §11.2) is written there once, to `curator-token`
@@ -14,7 +23,7 @@
 # change `bind` without TLS and a proxy.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SITE="${AIBI_TESTSITE_DIR:-$HOME/aibi-testsite}"
 PORT="${AIBI_TESTSITE_PORT:-8000}"
 DATASETS=(orchard hostile_values)   # fixtures/<name>/*.csv, imported under that name
@@ -46,9 +55,9 @@ stop_server() {
 build() {
   command -v uv >/dev/null || die "uv is required (https://docs.astral.sh/uv/)"
   command -v node >/dev/null || die "node is required (version in web/.nvmrc)"
-  (cd "$SERVER_DIR" && uv sync --quiet)
+  (CDPATH= cd -P -- "$SERVER_DIR" && uv sync --quiet)
   # The bundle is checked at start: group and others must not be able to write it (umask 022).
-  (umask 022 && cd "$WEB_DIR" && npm ci --ignore-scripts --silent && npm run build --silent)
+  (umask 022 && CDPATH= cd -P -- "$WEB_DIR" && npm ci --ignore-scripts --silent && npm run build --silent)
 }
 
 make_token() {
@@ -76,6 +85,9 @@ token_hash = "$hash"
 [storage]
 data = "$SITE/data"
 imports = ["$SITE/imports"]
+
+[packs]
+modules = ["aibi.packs.onco"]
 EOF
   )
 }
@@ -92,7 +104,7 @@ wait_ready() {
 import_datasets() {
   local name
   for name in "${DATASETS[@]}"; do
-    local target="$SITE/imports/$name"
+    local target; target="$(study_target "$name")"
     if [[ -d "$SITE/data" ]] && AIBI_TOKEN="$(cat "$SITE/curator-token")" AIBI_OPERATOR="testsite" AIBI_SERVER="$ORIGIN" \
         "$SERVER_DIR/.venv/bin/aibi" status 2>/dev/null | grep -q "^$name\b"; then
       echo "$name is already imported"
@@ -105,6 +117,60 @@ import_datasets() {
   done
 }
 
+aibi_cli() {
+  AIBI_TOKEN="$(cat "$SITE/curator-token")" AIBI_OPERATOR="testsite" AIBI_SERVER="$ORIGIN" \
+    "$SERVER_DIR/.venv/bin/aibi" "$@"
+}
+
+valid_name() {
+  local name="$1"
+  LC_ALL=C
+  [[ "$name" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || return 1
+  [[ "$name" != *__* ]] || return 1
+}
+
+# The site's own imports/<name>, refused unless the name is a dataset id and the target is exactly
+# that path under the site's real path, with no symlink among its components below the site. With
+# a second argument (`early`), a site that has no imports directory yet passes: nothing is there to
+# follow, and the check is made again once the site is up. Nothing is removed, created or built.
+study_target() {
+  local name="$1" early="${2:-}" site_real imports target
+  ( valid_name "$name" ) || die "a dataset name is [a-z][a-z0-9_]{0,63} with no '__'"
+  site_real="$(realpath -m -- "$SITE")" || die "the site's directory cannot be resolved"
+  imports="$SITE/imports"
+  [[ -L "$imports" ]] && die "the site's imports directory is a symlink; refusing"
+  if [[ -e "$imports" ]]; then
+    [[ -d "$imports" ]] || die "the site's imports is not a directory"
+    [[ "$(realpath -e -- "$imports")" == "$site_real/imports" ]] || die "the site's imports directory is not its own"
+  elif [[ -z "$early" ]]; then
+    die "the site has no imports directory"
+  fi
+  target="$imports/$name"
+  [[ -L "$target" ]] && die "the import target is a symlink; refusing"
+  [[ "$(realpath -m -- "$target")" == "$site_real/imports/$name" ]] || die "the import target is not the site's own imports/$name"
+  printf '%s\n' "$target"
+}
+
+cmd_import_study() {
+  local name="${1:-}" source="${2:-}" target
+  [[ -n "$name" && -n "$source" ]] || die "usage: scripts/testsite.sh import-study <name> <dir>"
+  [[ -d "$source" ]] || die "not a directory: $source"
+  source="$(realpath -e -- "$source")" || die "the source cannot be resolved: $source"
+  study_target "$name" early >/dev/null
+  if running; then stop_server; fi
+  cmd_start
+  target="$(study_target "$name")"
+  rm -rf -- "$target"
+  mkdir -p -- "$target"
+  cp -R -- "$source/." "$target/"
+  if aibi_cli status 2>/dev/null | grep -q "^$name\b"; then
+    aibi_cli reimport "$name" "$target" --pack onco
+  else
+    aibi_cli import "$name" "$target" --pack onco
+  fi
+  echo "imported $name from $source (the oncology pack): $ORIGIN/"
+}
+
 cmd_start() {
   mkdir -p "$SITE" && chmod 700 "$SITE"
   if running; then echo "already running: $ORIGIN"; return 0; fi
@@ -112,7 +178,7 @@ cmd_start() {
   make_token
   write_config
   "$SERVER_DIR/.venv/bin/aibi-server" check --config "$SITE/aibi.toml" >/dev/null
-  (cd "$SITE" && nohup "$SERVER_DIR/.venv/bin/aibi-server" serve --config "$SITE/aibi.toml" >>"$LOGFILE" 2>&1 & echo $! > "$PIDFILE")
+  (CDPATH= cd -P -- "$SITE" && nohup "$SERVER_DIR/.venv/bin/aibi-server" serve --config "$SITE/aibi.toml" >>"$LOGFILE" 2>&1 & echo $! > "$PIDFILE")
   wait_ready
   import_datasets
   cat <<EOF
@@ -135,10 +201,13 @@ cmd_reset() {
   echo "deleted the site's data; the token is kept at $SITE/curator-token"
 }
 
+# Sourced (by the tests), the script defines its functions and runs nothing.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 case "${1:-}" in
   start) cmd_start ;;
   stop) stop_server ;;
   status) cmd_status ;;
   reset) cmd_reset ;;
-  *) echo "usage: scripts/testsite.sh start|stop|status|reset" >&2; exit 2 ;;
+  import-study) shift; cmd_import_study "$@" ;;
+  *) echo "usage: scripts/testsite.sh start|stop|status|reset|import-study <name> <dir>" >&2; exit 2 ;;
 esac

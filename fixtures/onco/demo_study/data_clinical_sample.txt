@@ -1,0 +1,15 @@
+#Patient Identifier	Sample Identifier	Sample Type	Cancer Type	Oncotree Code	TMB (nonsynonymous)
+#Identifier to uniquely specify a patient.	A unique sample identifier.	The type of sample.	Cancer type.	The OncoTree code of the tumour.	Mutations per megabase.
+#STRING	STRING	STRING	STRING	STRING	NUMBER
+#1	1	1	1	1	1
+PATIENT_ID	SAMPLE_ID	SAMPLE_TYPE	CANCER_TYPE	ONCOTREE_CODE	TMB_NONSYNONYMOUS
+P01	S01	Primary	Breast Cancer	IDC	4.2
+P02	S02	Metastasis	Non-Small Cell Lung Cancer	LUAD	12.7
+P02	S03	Primary	Non-Small Cell Lung Cancer	LUAD	9.8
+P03	S04	Primary	Breast Cancer	ILC	1.1
+P04	S05	Primary	Colorectal Cancer	COAD	>9
+P05	S06	Primary	Breast Cancer	IDC	[Not Applicable]
+P06	S07	Metastasis	Colorectal Cancer	READ	6.6
+P07	S08	Primary	Breast Cancer	IDC	2.0
+P08	S09	Primary	Non-Small Cell Lung Cancer	LUSC	NA
+P08	S10	Metastasis	Non-Small Cell Lung Cancer	LUSC	3.3

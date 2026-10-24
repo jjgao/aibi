@@ -1,0 +1,5 @@
+cancer_study_identifier: demo_onco_2026
+stable_id: demo_onco_2026_sequenced
+case_list_name: Sequenced samples
+case_list_description: Synthetic samples.
+case_list_ids: S01	S02

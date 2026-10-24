@@ -16,6 +16,7 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from aibi.core.schema.pack_api import Refused
 from aibi.packs.onco.ontology import oncotree
@@ -84,45 +85,49 @@ def parse(raw: bytes, name: str) -> dict[str, str]:
 
 # --- Types (C:644-729) ---------------------------------------------------------------------------
 
-PAIR_TYPES: Mapping[str, str] = {
-    "CANCER_TYPE:CANCER_TYPE": "CANCER_TYPE",
-    "CLINICAL:PATIENT_ATTRIBUTES": "PATIENT_ATTRIBUTES",
-    "CLINICAL:SAMPLE_ATTRIBUTES": "SAMPLE_ATTRIBUTES",
-    "CLINICAL:TIMELINE": "TIMELINE",
-    "PROTEIN_LEVEL:LOG2-VALUE": "PROTEIN",
-    "PROTEIN_LEVEL:Z-SCORE": "PROTEIN",
-    "PROTEIN_LEVEL:CONTINUOUS": "PROTEIN",
-    "COPY_NUMBER_ALTERATION:DISCRETE": "CNA_DISCRETE",
-    "COPY_NUMBER_ALTERATION:DISCRETE_LONG": "CNA_DISCRETE_LONG",
-    "COPY_NUMBER_ALTERATION:CONTINUOUS": "CNA_CONTINUOUS",
-    "COPY_NUMBER_ALTERATION:LOG2-VALUE": "CNA_LOG2",
-    "COPY_NUMBER_ALTERATION:SEG": "SEG",
-    "MRNA_EXPRESSION:CONTINUOUS": "EXPRESSION",
-    "MRNA_EXPRESSION:Z-SCORE": "EXPRESSION",
-    "MRNA_EXPRESSION:DISCRETE": "EXPRESSION",
-    "MUTATION_EXTENDED:MAF": "MUTATION",
-    "MUTATION_UNCALLED:MAF": "MUTATION_UNCALLED",
-    "METHYLATION:CONTINUOUS": "METHYLATION",
-    "GENE_PANEL_MATRIX:GENE_PANEL_MATRIX": "GENE_PANEL_MATRIX",
-    "STRUCTURAL_VARIANT:SV": "STRUCTURAL_VARIANT",
-    "GISTIC_GENES_AMP:Q-VALUE": "GISTIC_GENES",
-    "GISTIC_GENES_DEL:Q-VALUE": "GISTIC_GENES",
-    "MUTSIG:Q-VALUE": "MUTATION_SIGNIFICANCE",
-    "GENESET_SCORE:GSVA-SCORE": "GSVA_SCORES",
-    "GENESET_SCORE:P-VALUE": "GSVA_PVALUES",
-    "GENERIC_ASSAY:LIMIT-VALUE": "GENERIC_ASSAY_CONTINUOUS",
-    "GENERIC_ASSAY:BINARY": "GENERIC_ASSAY_BINARY",
-    "GENERIC_ASSAY:CATEGORICAL": "GENERIC_ASSAY_CATEGORICAL",
-}
+PAIR_TYPES: Mapping[str, str] = MappingProxyType(
+    {
+        "CANCER_TYPE:CANCER_TYPE": "CANCER_TYPE",
+        "CLINICAL:PATIENT_ATTRIBUTES": "PATIENT_ATTRIBUTES",
+        "CLINICAL:SAMPLE_ATTRIBUTES": "SAMPLE_ATTRIBUTES",
+        "CLINICAL:TIMELINE": "TIMELINE",
+        "PROTEIN_LEVEL:LOG2-VALUE": "PROTEIN",
+        "PROTEIN_LEVEL:Z-SCORE": "PROTEIN",
+        "PROTEIN_LEVEL:CONTINUOUS": "PROTEIN",
+        "COPY_NUMBER_ALTERATION:DISCRETE": "CNA_DISCRETE",
+        "COPY_NUMBER_ALTERATION:DISCRETE_LONG": "CNA_DISCRETE_LONG",
+        "COPY_NUMBER_ALTERATION:CONTINUOUS": "CNA_CONTINUOUS",
+        "COPY_NUMBER_ALTERATION:LOG2-VALUE": "CNA_LOG2",
+        "COPY_NUMBER_ALTERATION:SEG": "SEG",
+        "MRNA_EXPRESSION:CONTINUOUS": "EXPRESSION",
+        "MRNA_EXPRESSION:Z-SCORE": "EXPRESSION",
+        "MRNA_EXPRESSION:DISCRETE": "EXPRESSION",
+        "MUTATION_EXTENDED:MAF": "MUTATION",
+        "MUTATION_UNCALLED:MAF": "MUTATION_UNCALLED",
+        "METHYLATION:CONTINUOUS": "METHYLATION",
+        "GENE_PANEL_MATRIX:GENE_PANEL_MATRIX": "GENE_PANEL_MATRIX",
+        "STRUCTURAL_VARIANT:SV": "STRUCTURAL_VARIANT",
+        "GISTIC_GENES_AMP:Q-VALUE": "GISTIC_GENES",
+        "GISTIC_GENES_DEL:Q-VALUE": "GISTIC_GENES",
+        "MUTSIG:Q-VALUE": "MUTATION_SIGNIFICANCE",
+        "GENESET_SCORE:GSVA-SCORE": "GSVA_SCORES",
+        "GENESET_SCORE:P-VALUE": "GSVA_PVALUES",
+        "GENERIC_ASSAY:LIMIT-VALUE": "GENERIC_ASSAY_CONTINUOUS",
+        "GENERIC_ASSAY:BINARY": "GENERIC_ASSAY_BINARY",
+        "GENERIC_ASSAY:CATEGORICAL": "GENERIC_ASSAY_CATEGORICAL",
+    }
+)
 """The type of a meta file by its ``<genetic_alteration_type>:<datatype>`` (C:651-689), for each
 of ``schemas.PAIRS`` (the pack's tests hold that the keys are those pairs). The types are named
 as C:55-85 names them."""
-RESOURCE_TYPES: Mapping[str, str] = {
-    "PATIENT": "PATIENT_RESOURCES",
-    "SAMPLE": "SAMPLE_RESOURCES",
-    "STUDY": "STUDY_RESOURCES",
-    "DEFINITION": "RESOURCES_DEFINITION",
-}
+RESOURCE_TYPES: Mapping[str, str] = MappingProxyType(
+    {
+        "PATIENT": "PATIENT_RESOURCES",
+        "SAMPLE": "SAMPLE_RESOURCES",
+        "STUDY": "STUDY_RESOURCES",
+        "DEFINITION": "RESOURCES_DEFINITION",
+    }
+)
 """The type of a resource meta file by its ``resource_type`` (C:717-727)."""
 STUDY = "STUDY"
 CANCER_TYPE = "CANCER_TYPE"
@@ -182,78 +187,80 @@ _GENERIC_ASSAY = (
 )
 _RESOURCE = ("cancer_study_identifier", "resource_type", "data_filename")
 
-MANDATORY: Mapping[str, tuple[str, ...]] = {
-    "CANCER_TYPE": ("genetic_alteration_type", "datatype", "data_filename"),  # C:95
-    "STUDY": ("cancer_study_identifier", "type_of_cancer", "name", "description"),  # C:100
-    "SAMPLE_ATTRIBUTES": _CLINICAL,  # C:112
-    "PATIENT_ATTRIBUTES": _CLINICAL,  # C:118
-    "CNA_DISCRETE": _PROFILE,  # C:124
-    "CNA_DISCRETE_LONG": _PROFILE,  # C:136
-    "CNA_LOG2": _PROFILE,  # C:148
-    "CNA_CONTINUOUS": _PROFILE,  # C:159
-    "SEG": (  # C:170
-        "cancer_study_identifier",
-        "genetic_alteration_type",
-        "datatype",
-        "reference_genome_id",
-        "data_filename",
-        "description",
-    ),
-    "MUTATION": _PROFILE,  # C:178
-    "MUTATION_UNCALLED": (  # C:193
-        "cancer_study_identifier",
-        "genetic_alteration_type",
-        "datatype",
-        "stable_id",
-        "profile_name",
-        "profile_description",
-        "data_filename",
-    ),
-    "EXPRESSION": _PROFILE,  # C:208
-    "METHYLATION": _PROFILE,  # C:220
-    "PROTEIN": _PROFILE,  # C:231
-    "GISTIC_GENES": (  # C:242
-        "cancer_study_identifier",
-        "genetic_alteration_type",
-        "datatype",
-        "reference_genome_id",
-        "data_filename",
-    ),
-    "TIMELINE": _CLINICAL,  # C:249
-    "MUTATION_SIGNIFICANCE": _CLINICAL,  # C:263
-    "GENE_PANEL_MATRIX": _CLINICAL,  # C:269
-    "GSVA_PVALUES": (  # C:275
-        "cancer_study_identifier",
-        "genetic_alteration_type",
-        "datatype",
-        "stable_id",
-        "source_stable_id",
-        "profile_name",
-        "profile_description",
-        "data_filename",
-        "geneset_def_version",
-    ),
-    "GSVA_SCORES": (  # C:286
-        "cancer_study_identifier",
-        "genetic_alteration_type",
-        "datatype",
-        "stable_id",
-        "source_stable_id",
-        "profile_name",
-        "profile_description",
-        "data_filename",
-        "show_profile_in_analysis_tab",
-        "geneset_def_version",
-    ),
-    "GENERIC_ASSAY_CONTINUOUS": _GENERIC_ASSAY,  # C:298
-    "GENERIC_ASSAY_BINARY": _GENERIC_ASSAY,  # C:313
-    "GENERIC_ASSAY_CATEGORICAL": _GENERIC_ASSAY,  # C:326
-    "STRUCTURAL_VARIANT": _PROFILE,  # C:339
-    "SAMPLE_RESOURCES": _RESOURCE,  # C:351
-    "PATIENT_RESOURCES": _RESOURCE,  # C:356
-    "STUDY_RESOURCES": _RESOURCE,  # C:361
-    "RESOURCES_DEFINITION": _RESOURCE,  # C:366
-}
+MANDATORY: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "CANCER_TYPE": ("genetic_alteration_type", "datatype", "data_filename"),  # C:95
+        "STUDY": ("cancer_study_identifier", "type_of_cancer", "name", "description"),  # C:100
+        "SAMPLE_ATTRIBUTES": _CLINICAL,  # C:112
+        "PATIENT_ATTRIBUTES": _CLINICAL,  # C:118
+        "CNA_DISCRETE": _PROFILE,  # C:124
+        "CNA_DISCRETE_LONG": _PROFILE,  # C:136
+        "CNA_LOG2": _PROFILE,  # C:148
+        "CNA_CONTINUOUS": _PROFILE,  # C:159
+        "SEG": (  # C:170
+            "cancer_study_identifier",
+            "genetic_alteration_type",
+            "datatype",
+            "reference_genome_id",
+            "data_filename",
+            "description",
+        ),
+        "MUTATION": _PROFILE,  # C:178
+        "MUTATION_UNCALLED": (  # C:193
+            "cancer_study_identifier",
+            "genetic_alteration_type",
+            "datatype",
+            "stable_id",
+            "profile_name",
+            "profile_description",
+            "data_filename",
+        ),
+        "EXPRESSION": _PROFILE,  # C:208
+        "METHYLATION": _PROFILE,  # C:220
+        "PROTEIN": _PROFILE,  # C:231
+        "GISTIC_GENES": (  # C:242
+            "cancer_study_identifier",
+            "genetic_alteration_type",
+            "datatype",
+            "reference_genome_id",
+            "data_filename",
+        ),
+        "TIMELINE": _CLINICAL,  # C:249
+        "MUTATION_SIGNIFICANCE": _CLINICAL,  # C:263
+        "GENE_PANEL_MATRIX": _CLINICAL,  # C:269
+        "GSVA_PVALUES": (  # C:275
+            "cancer_study_identifier",
+            "genetic_alteration_type",
+            "datatype",
+            "stable_id",
+            "source_stable_id",
+            "profile_name",
+            "profile_description",
+            "data_filename",
+            "geneset_def_version",
+        ),
+        "GSVA_SCORES": (  # C:286
+            "cancer_study_identifier",
+            "genetic_alteration_type",
+            "datatype",
+            "stable_id",
+            "source_stable_id",
+            "profile_name",
+            "profile_description",
+            "data_filename",
+            "show_profile_in_analysis_tab",
+            "geneset_def_version",
+        ),
+        "GENERIC_ASSAY_CONTINUOUS": _GENERIC_ASSAY,  # C:298
+        "GENERIC_ASSAY_BINARY": _GENERIC_ASSAY,  # C:313
+        "GENERIC_ASSAY_CATEGORICAL": _GENERIC_ASSAY,  # C:326
+        "STRUCTURAL_VARIANT": _PROFILE,  # C:339
+        "SAMPLE_RESOURCES": _RESOURCE,  # C:351
+        "PATIENT_RESOURCES": _RESOURCE,  # C:356
+        "STUDY_RESOURCES": _RESOURCE,  # C:361
+        "RESOURCES_DEFINITION": _RESOURCE,  # C:366
+    }
+)
 """The keys each type's meta file must hold (C:94-371, the members marked mandatory; checked at
 C:882-893), in C's order. A key present with an empty value is held."""
 
@@ -293,15 +300,17 @@ Python's ``int()`` reads (V:4836-4842), such as ``0``, ``+3``, ``1_0`` or ``٣``
 GENOMES = frozenset({"hg19", "hg38", "mm10"})
 """The ``reference_genome`` values cBioPortal knows (V:4732-4736, V:4811)."""
 
-MOST: Mapping[str, int] = {
-    "cancer_study_identifier": 200,
-    "name": 255,
-    "description": 1_024,
-    "citation": 200,
-    "pmid": 1_024,
-    "groups": 200,
-    "short_name": 64,
-}
+MOST: Mapping[str, int] = MappingProxyType(
+    {
+        "cancer_study_identifier": 200,
+        "name": 255,
+        "description": 1_024,
+        "citation": 200,
+        "pmid": 1_024,
+        "groups": 200,
+        "short_name": 64,
+    }
+)
 """Each value's most characters (C:939-948), in its order. Stricter for
 ``cancer_study_identifier``, which C caps at 255 (the pack's schema caps it at 200)."""
 TYPE_OF_CANCER_MOST = 63

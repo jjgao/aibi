@@ -70,7 +70,14 @@ scripts/testsite.sh start     # builds, serves and imports; prints the address (
 scripts/testsite.sh status
 scripts/testsite.sh stop
 scripts/testsite.sh reset     # stops, and deletes the site's data (the token is kept)
+scripts/testsite.sh import-study demo_onco fixtures/onco/demo_study   # a cBioPortal study, by the oncology pack
 ```
+
+The site's server installs the oncology pack, and `import-study <name> <dir>` imports a cBioPortal
+study directory with it (copied whole into the site; the clinical files become the `patients` and
+`samples` tables), restarting the server first if it is running. `fixtures/onco/demo_study` is a
+synthetic study; a real one (such as `msk_chord_2024`, whose licence keeps it out of the repository)
+is imported from wherever it was downloaded.
 
 Everything lives in `~/aibi-testsite` (`AIBI_TESTSITE_DIR`; the port is `AIBI_TESTSITE_PORT`). The
 curator token is written there once, to `curator-token` (mode 0600), and is never printed. The

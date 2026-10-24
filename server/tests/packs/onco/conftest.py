@@ -13,15 +13,18 @@ fixtures; they are small copies of the core tests' own, made from the core's pub
   ontology validators by system;
 - ``extended`` gives a descriptor ``onco`` extension members, each with its curation entry, and
   ``refused`` the ``(code, path)`` of each refusal of the pack checks on a descriptor write;
-- ``world`` is a store in ``tmp_path`` into which a directory is imported (``publish``), curated
-  through a session (``curate``), and read through a catalogue (``catalog``); ``make_world``
-  makes more, each with its own store and a clock that starts at the same time;
+- ``world`` is a store in ``tmp_path`` into which a directory is imported (``publish``, by the
+  core's importer or a pack's, ``pack=``) and re-imported (``reimport``), curated through a
+  session (``curate``), and read through a catalogue (``catalog``); ``make_world`` makes more,
+  each with its own store and a clock that starts at the same time;
 - for study discovery (M4.2a-1a): ``make_study`` builds a directory from a tree whose entries are
   files (``bytes``), subdirectories (a mapping), and the ``kinds`` (symlinks, hard links, FIFOs,
   files of a given mode); ``base`` is the small study ``clinical_grid.BASE`` holds;
   ``discovery`` runs the pack's ``discover`` on a directory through a ``RecordingReader``, which
   records every listing and read and can stand a prepared refusal in for a read, or through the
-  core's own importer checks (``through_core``).
+  core's own importer checks (``through_core``);
+- for the clinical files (M4.2a-1b): ``corpus`` is ``clinical_corpus.py``, the corpus of the
+  plan's live reference cells.
 """
 
 import importlib
@@ -44,7 +47,7 @@ from aibi.core.catalog.service import Catalog
 from aibi.core.importers.checks import run_importer
 from aibi.core.importers.confine import Confinement
 from aibi.core.importers.errors import ImportRefused
-from aibi.core.importers.run import Published, import_dataset
+from aibi.core.importers.run import Published, import_dataset, reimport_dataset
 from aibi.core.schema.curation import ChangeRequest
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.limits import ImportLimits
@@ -138,14 +141,40 @@ class World:
     store: Store
 
     def publish(
-        self, dataset: str, directory: Path, registry: PackRegistry | None = None
+        self,
+        dataset: str,
+        directory: Path,
+        registry: PackRegistry | None = None,
+        *,
+        pack: str | None = None,
+        limits: ImportLimits | None = None,
     ) -> Published:
+        """``directory`` imported as ``dataset``, by the core's importer or ``pack``'s."""
+        confinement = Confinement.of(directory.parent)
+        options = ImportOptions(
+            dataset=dataset,
+            reader=confinement,
+            limits=limits or ImportLimits(),
+            at=self.store.now(),
+        )
+        source = confinement.confine(directory)
+        return import_dataset(self.store, source, options, ADA, registry=registry, pack=pack)
+
+    def reimport(
+        self,
+        dataset: str,
+        directory: Path,
+        registry: PackRegistry | None = None,
+        *,
+        pack: str | None = None,
+    ) -> Published:
+        """``directory`` re-imported as ``dataset``'s next release (D238-D242)."""
         confinement = Confinement.of(directory.parent)
         options = ImportOptions(
             dataset=dataset, reader=confinement, limits=ImportLimits(), at=self.store.now()
         )
         source = confinement.confine(directory)
-        return import_dataset(self.store, source, options, ADA, registry=registry)
+        return reimport_dataset(self.store, source, options, ADA, registry=registry, pack=pack)
 
     def write(self, dataset: str, files: Mapping[str, bytes]) -> Path:
         directory = self.root / "imports" / dataset
@@ -215,6 +244,28 @@ def oracle() -> ModuleType:
     """``paths_oracle.py``, loaded by its path: what ``test_paths.py`` and the closure guard of
     ``test_reachability.py`` state alike about the path values (D436)."""
     spec = importlib.util.spec_from_file_location("paths_oracle", HERE / "paths_oracle.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="session")
+def corpus() -> ModuleType:
+    """``clinical_corpus.py``, loaded by its path: the clinical files' corpus (M4.2a-1b)."""
+    spec = importlib.util.spec_from_file_location("clinical_corpus", HERE / "clinical_corpus.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="session")
+def scan() -> ModuleType:
+    """``retention_scan.py``, loaded by its path: the marker scan's child (M4.2a-1b, D438)."""
+    spec = importlib.util.spec_from_file_location("retention_scan", HERE / "retention_scan.py")
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
