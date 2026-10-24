@@ -1,0 +1,13 @@
+#Patient Identifier	Sex	Age at Diagnosis	Overall Survival Status	Overall Survival (Months)	Disease Free Status	Disease Free (Months)	Smoker
+#Identifier to uniquely specify a patient.	Sex of the patient.	Age at which the condition was first diagnosed, in years.	Overall patient survival status.	Overall survival in months since initial diagnosis.	Disease free status since initial treatment.	Disease free in months since treatment.	Whether the patient ever smoked.
+#STRING	STRING	NUMBER	STRING	NUMBER	STRING	NUMBER	BOOLEAN
+#1	1	1	1	1	1	1	0
+PATIENT_ID	SEX	AGE	OS_STATUS	OS_MONTHS	DFS_STATUS	DFS_MONTHS	SMOKER
+P01	Female	54	0:LIVING	23.1	0:DiseaseFree	23.1	TRUE
+P02	Male	61	1:DECEASED	8.4	1:Recurred/Progressed	5.2	FALSE
+P03	Female	47	0:LIVING	40.0	0:DiseaseFree	40.0	FALSE
+P04	Male	NA	1:DECEASED	12.9	1:Recurred/Progressed	3.0	TRUE
+P05	Female	70	0:LIVING	[Not Available]	[Not Available]	[Not Available]	NA
+P06	Male	58	1:DECEASED	15.5	1:Recurred/Progressed	9.1	FALSE
+P07	Female 	66	0:LIVING	31.2	0:DiseaseFree	31.2	
+P08	Male	39	0:LIVING	18.0	0:DiseaseFree	18.0	TRUE

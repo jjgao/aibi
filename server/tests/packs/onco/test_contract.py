@@ -24,7 +24,7 @@ from typing import Any
 from aibi.core.schema.descriptors import ConceptDescriptor
 from aibi.core.schema.pack_api import PackRegistry
 
-MANIFEST = {"id": "onco", "version": "0.1.0", "results_version": 1, "requires_core": ">=0.0.1"}
+MANIFEST = {"id": "onco", "version": "0.2.0", "results_version": 1, "requires_core": ">=0.0.1"}
 
 TEXTS = {
     "onco:patient": ("Patient", "Rows are patients: the people a study follows."),

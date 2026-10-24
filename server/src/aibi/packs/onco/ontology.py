@@ -25,6 +25,9 @@ The forms, compared as written (no case folding, no trimming):
   ``SO:<7 digits>``.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from aibi.core.schema.pack_api import OntologyValidator
 
 DIGITS = frozenset("0123456789")
@@ -89,10 +92,12 @@ def so(code: str) -> bool:
     return len(digits) == SO_DIGITS and all(character in DIGITS for character in digits)
 
 
-SYSTEMS: dict[str, OntologyValidator] = {
-    "OncoTree": oncotree,
-    "HGNC": hgnc,
-    "NCBIGene": ncbigene,
-    "SO": so,
-}
+SYSTEMS: Mapping[str, OntologyValidator] = MappingProxyType(
+    {
+        "OncoTree": oncotree,
+        "HGNC": hgnc,
+        "NCBIGene": ncbigene,
+        "SO": so,
+    }
+)
 """The pack's ontology systems, by their canonical, case-sensitive names."""
