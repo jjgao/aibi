@@ -1,10 +1,12 @@
-"""No import reaches ``discover`` before M4.2a-1a-paths (D409's open exception, its guard).
+"""No import reaches ``discover`` before the guard PR (D409, D436: the order of the PRs).
 
-``discover`` resolves no path value outside the clinical role. Where cBioPortal, through such a
-value, reads a file aibi imports or fails on the tags file's name, it would accept a study
-cBioPortal refuses. That is acceptable only while nothing imports through it: the pack's ``PACK``
-has no importer until M4.2a-1b wires one, and 1b must land after M4.2a-1a-paths, which adds
-``study.PATH_SITES`` with the closure. The guard fails if that order is broken.
+M4.2a-1a-paths (PR A) closed D409's open exception: ``discover`` now checks every path value
+outside the clinical role (phases 9 and 10) and ``study.PATH_SITES`` names the sites. The guard
+that the table is the one ``discover`` consults, and closed, is its own PR (B), which replaces
+``closed()`` below; until it lands, this seed-key check stands. The pack's ``PACK`` has no importer
+until M4.2a-1b wires one, and 1b is stacked on B: the landing condition is that **the guard PR
+(B) merges before 1b**. The test fails if ``PACK`` gains an importer while ``PATH_SITES`` lacks a
+seed row's key.
 """
 
 import importlib
@@ -39,11 +41,12 @@ def closed(pack: object, study: object) -> bool:
 
 
 def test_discover_not_reachable_before_paths(onco: ModuleType) -> None:
-    """D409, the open exception: until M4.2a-1a-paths, ``discover`` resolves no path value outside
-    the clinical role (a non-clinical meta file's ``data_filename``, ``pd_annotations_filename``,
-    ``tags_file``), so no import may reach it. Its landing condition: 1a-paths merges before
-    M4.2a-1b wires ``discover`` into ``PACK``. This fails if ``PACK`` gains an importer while
-    ``aibi.packs.onco.study`` has no ``PATH_SITES`` holding the seed rows' keys."""
+    """D409 and D436: ``discover`` checks the path values outside the clinical role (a
+    non-clinical meta file's ``data_filename``, ``pd_annotations_filename``, ``tags_file``), and
+    no import may reach it before the guard PR (B) holds that it does. The landing condition: the
+    guard PR (B) merges before M4.2a-1b wires ``discover`` into ``PACK``. This fails if ``PACK``
+    gains an importer while ``aibi.packs.onco.study`` has no ``PATH_SITES`` holding the seed rows'
+    keys."""
     study = importlib.import_module(MODULE + ".study")
     assert closed(onco.PACK, study)
 
@@ -61,6 +64,13 @@ def test_the_guard_refuses_what_would_open_the_exception() -> None:
     assert closed(wired, SimpleNamespace(PATH_SITES=rows))
 
 
+def test_the_real_table_passes_the_guard_with_an_importer_wired() -> None:
+    """The real ``study`` module, under a wired importer, passes: the table this PR adds holds
+    every seed row's key as ``key`` (so 1b's wiring is not the first run of this check)."""
+    study = importlib.import_module(MODULE + ".study")
+    assert closed(SimpleNamespace(importer=object()), study)
+
+
 def test_the_pack_imports_nothing_yet(onco: ModuleType) -> None:
-    """At M4.2a-1a, ``PACK`` has no importer: discovery is reachable from tests alone."""
+    """Until M4.2a-1b, ``PACK`` has no importer: discovery is reachable from tests alone."""
     assert onco.PACK.importer is None

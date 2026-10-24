@@ -1,19 +1,25 @@
 """Discovering a cBioPortal study in a directory (SPEC D409): its meta files, its study meta's
-values and its clinical meta files' data files (M4.2a-1a).
+values, its clinical meta files' data files and every other path value its meta files hold
+(M4.2a-1a, M4.2a-1a-paths).
 
 ``discover`` is the pack's one way into a study. It lists the directory once, through the
 import's reader; reads only the study's meta files (Meta(S): the entries that are meta-named and
-not excluded), each with ``reader.read(path, META_MOST)``; and resolves only the clinical role, a
-clinical meta's ``data_filename``, to an entry of that listing, by name: nothing is read or opened
-through a path made from text the study holds. A data file is returned as its listing entry, for
-M4.2a-1b to read.
+not excluded), each with ``reader.read(path, META_MOST)``; and resolves every path value it
+checks to an entry of that listing, by name: nothing is read or opened through a path made from
+text the study holds. A clinical data file is returned as its listing entry, for M4.2a-1b to read.
 
-**The open exception (D409).** No other path value is resolved here: not a non-clinical meta
-file's ``data_filename`` or ``pd_annotations_filename``, nor the study meta's ``tags_file``.
-Where cBioPortal, through such a value, reads a file aibi imports, or fails on the tags file's
-name, discover accepts a study cBioPortal refuses. So no import reaches ``discover`` until
-M4.2a-1a-paths has merged and added ``PATH_SITES`` here: the pack's ``PACK`` has no importer, and
-``tests/packs/onco/test_reachability.py`` fails if it gains one first.
+**The path values (D409, ``PATH_SITES``).** Besides the clinical role (phase 7), three values name
+files: a non-clinical meta's ``data_filename``, a CNA_DISCRETE meta's
+``pd_annotations_filename`` and the study meta's ``tags_file``. None is read; each is checked
+once, against Reads(S), the clinical data files and Meta(S): (P0) the value as written is one
+name (``meta.one_name``); (Kind) no entry of kind ``symlink`` matches it, exactly or under
+``meta.fold``; (Reads) no member of Reads(S) matches it, exactly or under ``meta.fold``
+(``DATA_FILE``; ``META_VALUE`` for the tags file). Only an exact match to a listed regular file
+outside Reads(S) is accepted with a note for that entry (its earlier skip reason, if it had one,
+wins); any other data or PD value is a file of a kind never imported that the reference cannot
+open, and every other tags value is refused. Fold only ever adds refusals. The open exception
+D409 kept until M4.2a-1a-paths is closed by this; the pack's ``PACK`` still has no importer, and
+``tests/packs/onco/test_reachability.py`` holds the order of the PRs that wire one.
 
 **Totality.** ``discover`` returns a ``Study``, raises ``Refused`` with one of
 ``refusals.CODES``, or lets the reader's ``ImportRefused`` out as the instance the reader raised.
@@ -33,7 +39,10 @@ by name:
 6. the clinical metas: a second of a kind, then no sample meta;
 7. each clinical meta's data file, the metas in the order of their names, then two metas naming
    one entry;
-8. the study meta's values.
+8. the study meta's values;
+9. each meta file's data and PD values, the metas in the order of their names, and within one
+   its ``data_filename`` before its ``pd_annotations_filename`` (the order of ``PATH_SITES``);
+10. the study meta's ``tags_file``.
 
 **What it says.** A refusal or a note names an entry as ``data`` only (``refusals.shown``), and
 never a value a file holds. Every entry discover does not import gets one ``skipped_source``
@@ -46,10 +55,17 @@ from dataclasses import dataclass
 from aibi.core.importers.errors import ImportRefused
 from aibi.core.schema.limits import ImportLimits
 from aibi.core.schema.output import Segment, text
-from aibi.core.schema.pack_api import ConfinedPath, DirectoryEntry, ImportNote, SourceReader
+from aibi.core.schema.pack_api import (
+    ConfinedPath,
+    DirectoryEntry,
+    ImportNote,
+    Refused,
+    SourceReader,
+)
 from aibi.core.schema.refusals import RefusalCode
 from aibi.packs.onco.meta import (
     CLINICAL,
+    MANDATORY,
     META_MOST,
     PATIENT,
     SAMPLE,
@@ -59,12 +75,14 @@ from aibi.packs.onco.meta import (
     classify,
     excluded,
     file_name,
+    fold,
     meta_named,
+    one_name,
     parse,
     stable_id,
     study_fields,
 )
-from aibi.packs.onco.refusals import entry_refused, refused, shown
+from aibi.packs.onco.refusals import Code, entry_refused, refused, shown
 
 META_FILES_MOST = 256
 """The most meta-named entries a study may hold. Stricter: cBioPortal reads any number (D409)."""
@@ -78,6 +96,111 @@ _KIND_REASONS: Mapping[str, str] = {
     "unconfined": "cannot be confined",
 }
 """Why a meta-named entry that is not a regular file is ``META_FILE``."""
+
+
+DATA = "data"
+"""A ``PATH_SITES`` role: a value naming a data file of a kind M4.2a never imports (phase 9)."""
+TAGS = "tags"
+"""A ``PATH_SITES`` role: the value naming the study's tags file (phase 10)."""
+LISTING = "listing"
+"""A ``PATH_SITES`` role: the listing of the study's directory that Meta(S) is taken from."""
+CASE_LISTS = "case lists"
+"""A ``PATH_SITES`` role: what the reference reads of ``case_lists/``, which ``discover`` does
+not list (exit 3 (19); the contents are M4.2b's)."""
+
+
+@dataclass(frozen=True)
+class PathSite:
+    """Where the reference turns text a study holds into a path it opens (or a listing it reads),
+    at cbioportal-core 47890bb: the meta key or the listing (``key``), the meta file types whose
+    files it is read from (``meta_types``; empty for what no meta file holds), what ``discover``
+    does with it (``role``) and the reference's lines, ``V:`` and ``C:`` as ``meta.py`` names
+    them, each with a paraphrase of what happens there (``cites``)."""
+
+    key: str
+    meta_types: frozenset[str]
+    role: str
+    cites: tuple[str, ...]
+
+
+NON_CLINICAL_DATA = (
+    frozenset(kind for kind, keys in MANDATORY.items() if "data_filename" in keys) - CLINICAL
+)
+"""The types whose meta files name a data file M4.2a never imports: every type whose mandatory
+keys hold ``data_filename`` (C:95-370; all but the study meta), but the clinical ones."""
+
+PATH_SITES: tuple[PathSite, ...] = (
+    PathSite(
+        "data_filename",
+        NON_CLINICAL_DATA,
+        DATA,
+        (
+            "V:4854-4856: a validator is built for each meta file whose type's field map holds "
+            "the key",
+            "V:398: the value is joined to the study's directory as written; an absolute value "
+            "replaces it",
+            "V:437: the joined path opened to probe it; only an OSError is caught and logged",
+            "V:445: opened again for a UTF-8 pass",
+            "V:453: opened and read by the type's validator, whatever file it names",
+        ),
+    ),
+    PathSite(
+        "pd_annotations_filename",
+        frozenset({"CNA_DISCRETE"}),
+        DATA,
+        (
+            "V:1250-1253: the discrete CNA validator copies its meta with this value as the "
+            "copy's data file name",
+            "V:1251: the base is the lexical directory of the CNA data file's joined path",
+            "V:1254: a validator built for the copy, reaching V:398, V:437, V:445 and V:453",
+            "V:1232, V:1428: the DISCRETE_LONG validator is not a subclass, so it ignores the key",
+        ),
+    ),
+    PathSite(
+        "tags_file",
+        frozenset({STUDY}),
+        TAGS,
+        (
+            "V:4799, V:4845-4848: inside the study meta's branch, the value is joined to the "
+            "study's directory as written",
+            "V:5563: the tags file is validated when the key was set",
+            "V:5062: opened as text and parsed as YAML; only a YAML error is caught",
+        ),
+    ),
+    PathSite(
+        "listing:meta",
+        frozenset(MANDATORY),
+        LISTING,
+        (
+            "V:4709-4710: one listing of the study's directory, sorted",
+            "V:4711-4715: the meta-name pattern and the exclusions",
+            "C:852: each meta file opened as text, following a symlink",
+        ),
+    ),
+    PathSite(
+        "listing:case_lists",
+        frozenset(),
+        CASE_LISTS,
+        (
+            "V:4900-4901: a listing of case_lists/, unsorted, dropping dot and ~ names only",
+            "V:4909, C:852: each entry opened and parsed as a case list",
+        ),
+    ),
+    PathSite(
+        "isdir:case_lists",
+        frozenset(),
+        CASE_LISTS,
+        ("V:5566-5567: whether case_lists is a directory, following a symlink",),
+    ),
+)
+"""Every place the reference makes a path from a study's text, hand-written from a survey of
+cbioportal-core 47890bb (no tool reading its source is part of the repository; a moved pin is
+surveyed again by hand, D409). ``discover`` resolves the rows of the roles ``DATA`` (phase 9, in
+this order within a meta file) and ``TAGS`` (phase 10), for the meta types each names; the
+listing is its own; the case lists are not listed (exit 3 (19))."""
+
+_DATA_FILE_NOTE = "a data file of a meta file M4.2a does not import"
+_TAGS_NOTE = "the study's tags file"
 
 
 @dataclass(frozen=True)
@@ -140,6 +263,44 @@ def _clinical_data(
     if entry.name in metas:
         raise entry_refused("DATA_FILE", name, "has a data_filename that names a meta file")
     return entry
+
+
+def _path_value(
+    site: PathSite,
+    name: str,
+    value: str,
+    listed: Mapping[str, DirectoryEntry],
+    folded: Mapping[str, Sequence[DirectoryEntry]],
+    reads: frozenset[str],
+) -> DirectoryEntry | None:
+    """The entry a path value outside the clinical role names (phases 9 and 10), checked in
+    order: P0 on the value as written, Kind (no symlink matches it, exactly or under ``fold``),
+    Reads (no member of Reads(S) matches it, exactly or under ``fold``). Only an exact match to a
+    listed regular file is returned; a data or PD value naming nothing else returns ``None`` (a
+    file of a kind never imported, exit 3), a tags value is refused. The meta file ``name`` is
+    named, and the key, never the value."""
+    code: Code = "META_VALUE" if site.role == TAGS else "DATA_FILE"
+    verb = "holds" if site.role == TAGS else "has"
+
+    def refusal(reason: str) -> Refused:
+        return entry_refused(code, name, f"{verb} a {site.key} that {reason}")
+
+    if not one_name(value):
+        raise refusal("is not a file name M4.2a accepts")
+    alike = folded.get(fold(value), ())
+    if any(entry.kind == "symlink" for entry in alike):
+        raise refusal("names a symlink, exactly or under case and normalisation folding")
+    if any(entry.name in reads for entry in alike):
+        raise refusal(
+            "names a meta file or a clinical data file, exactly or under case and normalisation "
+            "folding"
+        )
+    entry = listed.get(value)
+    if entry is not None and entry.kind == "file":
+        return entry
+    if site.role == TAGS:
+        raise refusal("names no regular file in the study's directory")
+    return None
 
 
 def _skip_reason(entry: DirectoryEntry, why: Mapping[str, str]) -> str:
@@ -248,6 +409,20 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         )
 
     fields = study_fields(study, study_name)
+
+    reads = frozenset({*in_meta, *(entry.name for entry in data.values())})
+    folded: dict[str, list[DirectoryEntry]] = {}
+    for entry in entries:
+        folded.setdefault(fold(entry.name), []).append(entry)
+    for role, note in ((DATA, _DATA_FILE_NOTE), (TAGS, _TAGS_NOTE)):
+        for name, (kind, found) in metas.items():
+            for site in PATH_SITES:
+                if site.role != role or kind not in site.meta_types or site.key not in found:
+                    continue
+                named = _path_value(site, name, found[site.key], listed, folded, reads)
+                if named is not None:
+                    why.setdefault(named.name, note)
+
     used = frozenset({study_name, *clinical.values(), *(entry.name for entry in data.values())})
     for name in metas:
         why.setdefault(name, "a meta file of a type M4.2a does not import")
@@ -259,4 +434,17 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
     return Study(fields, patient, ClinicalMeta(clinical[SAMPLE], data[SAMPLE]), tuple(notes))
 
 
-__all__ = ["META_FILES_MOST", "NOTES_MOST", "ClinicalMeta", "Study", "discover"]
+__all__ = [
+    "CASE_LISTS",
+    "DATA",
+    "LISTING",
+    "META_FILES_MOST",
+    "NON_CLINICAL_DATA",
+    "NOTES_MOST",
+    "PATH_SITES",
+    "TAGS",
+    "ClinicalMeta",
+    "PathSite",
+    "Study",
+    "discover",
+]
