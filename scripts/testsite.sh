@@ -49,6 +49,8 @@ stop_server() {
     for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid"
     echo "stopped the server (pid $pid)"
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' "$ORIGIN/" || true)" == "200" ]] \
+      && echo "warning: something still answers at $ORIGIN (not the server this script started)" >&2
   fi
   rm -f "$PIDFILE"
 }
@@ -177,6 +179,17 @@ cmd_import_study() {
   echo "imported $name from $source (the oncology pack): $ORIGIN/"
 }
 
+# The pidfile holds the server's own pid: `cd` runs before the background command, so `$!` is the
+# `nohup` that becomes the server. (`cd … && nohup … &` backgrounds the whole list, a subshell, and
+# `$!` is that subshell: `stop` killed it and the server kept the port.)
+launch_server() {
+  (
+    CDPATH= cd -P -- "$SITE" || exit 1
+    nohup "$SERVER_DIR/.venv/bin/aibi-server" serve --config "$SITE/aibi.toml" >>"$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+  )
+}
+
 cmd_start() {
   mkdir -p "$SITE" && chmod 700 "$SITE"
   if running; then echo "already running: $ORIGIN"; return 0; fi
@@ -184,7 +197,7 @@ cmd_start() {
   make_token
   write_config
   "$SERVER_DIR/.venv/bin/aibi-server" check --config "$SITE/aibi.toml" >/dev/null
-  (CDPATH= cd -P -- "$SITE" && nohup "$SERVER_DIR/.venv/bin/aibi-server" serve --config "$SITE/aibi.toml" >>"$LOGFILE" 2>&1 & echo $! > "$PIDFILE")
+  launch_server
   wait_ready
   import_datasets
   cat <<EOF

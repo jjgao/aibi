@@ -355,3 +355,52 @@ def test_a_source_that_only_shares_the_targets_name_as_a_prefix_is_not_refused(
     assert ran.returncode == 0, ran.stderr
     assert (site / "imports" / "demo" / "MARKER").read_text() == "the study"
     assert (site / "imports" / "demo2" / "MARKER").read_text() == "the study"
+
+
+# --- start and stop: the pidfile is the server's own pid (#137) ---------------------------------
+
+FAKE_SERVER = """#!/bin/bash
+# stands in for aibi-server: records its own pid, then becomes a long sleep (the listener)
+echo $$ > "$(dirname "$0")/../../../listener.pid"
+exec sleep 300
+"""
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # a zombie that has not been reaped yet is not running
+    status = Path(f"/proc/{pid}/stat")
+    return not status.exists() or status.read_text().split(")")[-1].split()[0] != "Z"
+
+
+def test_the_pidfile_holds_the_servers_own_pid_and_stop_ends_it(tmp_path: Path) -> None:
+    """``launch_server`` backgrounds the server itself, not a subshell around it: the pid in the
+    pidfile is the process that runs the server, so ``stop`` ends the listener (a pidfile holding
+    the wrapper left the server holding its port)."""
+    site = tmp_path / "site"
+    site.mkdir()
+    server_dir = tmp_path / "server"
+    (server_dir / ".venv" / "bin").mkdir(parents=True)
+    fake = server_dir / ".venv" / "bin" / "aibi-server"
+    fake.write_text(FAKE_SERVER)
+    fake.chmod(0o755)
+    listener = tmp_path / "listener.pid"
+    wait = f'for _ in $(seq 1 50); do [[ -s "{listener}" ]] && break; sleep 0.1; done'
+    call = f'SERVER_DIR="{server_dir}"; launch_server; {wait}'
+    ran = subprocess.run(
+        ["bash", "-c", f'source "{SCRIPT}"\n{call}\nstop_server'],
+        env=environment(site),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.startswith("stopped the server (pid ")
+    pid = int(ran.stdout.split("pid ")[1].split(")")[0])
+    assert pid == int(listener.read_text()), "the pidfile held a pid other than the server's"
+    assert not alive(pid)
+    assert not (site / "server.pid").exists()
