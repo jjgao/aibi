@@ -44,7 +44,7 @@ def _with(
 
 def test_the_core_accepts_each_schema(onco: ModuleType) -> None:
     for kind, schema in onco.schemas.SCHEMAS.items():
-        assert problems(schema) == [], kind
+        assert problems(dict(schema)) == [], kind
 
 
 ACCEPTED: list[tuple[str, dict[str, JsonValue]]] = [

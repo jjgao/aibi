@@ -133,6 +133,62 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "A pack imports the pack API and the core modules it needs, nothing else of the core (D438)"
+type = "forbidden"
+source_modules = ["aibi.packs"]
+# The allow-list is aibi.core.schema, aibi.core.importers.errors, aibi.core.importers.infer,
+# aibi.core.store.sources and aibi.core.store.build; this list is its complement over the core's
+# modules, and DuckDB, which tests/packs/test_imports.py holds it to. The modules allowed import
+# more of the store (the gate, Parquet, the statistics), so the contract holds direct imports.
+allow_indirect_imports = true
+forbidden_modules = [
+    "aibi.core.analyses",
+    "aibi.core.api",
+    "aibi.core.bodies",
+    "aibi.core.catalog",
+    "aibi.core.classify",
+    "aibi.core.engine",
+    "aibi.core.mcp",
+    "aibi.core.operator",
+    "aibi.core.importers.archives",
+    "aibi.core.importers.checks",
+    "aibi.core.importers.confine",
+    "aibi.core.importers.databases",
+    "aibi.core.importers.describe",
+    "aibi.core.importers.detect",
+    "aibi.core.importers.files",
+    "aibi.core.importers.reshaped",
+    "aibi.core.importers.run",
+    "aibi.core.importers.sheets",
+    "aibi.core.importers.snapshot",
+    "aibi.core.importers.uploads",
+    "aibi.core.importers.urls",
+    "aibi.core.importers.worker",
+    "aibi.core.store.appdb",
+    "aibi.core.store.blobs",
+    "aibi.core.store.cache",
+    "aibi.core.store.carry",
+    "aibi.core.store.cells",
+    "aibi.core.store.derivations",
+    "aibi.core.store.derive",
+    "aibi.core.store.edits",
+    "aibi.core.store.erasure",
+    "aibi.core.store.gate",
+    "aibi.core.store.links",
+    "aibi.core.store.manifest",
+    "aibi.core.store.parquet",
+    "aibi.core.store.proposals",
+    "aibi.core.store.redaction",
+    "aibi.core.store.sessions",
+    "aibi.core.store.statistics",
+    "aibi.core.store.store",
+    "aibi.core.store.tables",
+    "aibi.core.store.tombstones",
+    "aibi.core.store.writes",
+    "duckdb",
+]
+
+[[tool.importlinter.contracts]]
 name = "Only a query worker's child and an import's snapshot load DuckDB (SPEC §14, D293, D306)"
 type = "forbidden"
 source_modules = ["aibi.core", "aibi.packs"]

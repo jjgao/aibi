@@ -10,9 +10,9 @@ independent of the core suite."""
 
 from tests.core import generated_set
 
-PACKS_SET_SIZE = 1
-"""The packs' types that hold server text: ``aibi.packs.onco.study.Study``, whose notes hold
-segments."""
+PACKS_SET_SIZE = 2
+"""The packs' types that hold server text: ``aibi.packs.onco.study.Study`` and
+``aibi.packs.onco.build.Described``, whose notes hold segments."""
 
 NOT_WALKED: dict[str, str] = {}
 """The packs' plain classes that carry such a type, and protocols returning one, with why."""
