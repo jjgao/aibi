@@ -54,8 +54,12 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   (`stats.py`, `timetoevent.py`, `coxfit.py`, `coxph.py`, `cone.py`, `cox.py`) are held to R, with
   `ieee.py` doing their arithmetic as C does.
 - `packs/onco/`: the oncology pack (D407), installed by `[packs] modules`: its concepts, the `OncoTree`,
-  `HGNC`, `NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet. It
-  imports only the pack API (`aibi.core.schema.pack_api`).
+  `HGNC`, `NCBIGene` and `SO` validators, its dataset, table and column extensions and its facet, and the
+  importer of a cBioPortal study's clinical files with its validator (`study.py`, `clinical.py`,
+  `missing.py`, `build.py`, `importer.py`; D409, D437, D438). It imports the pack API and, of the rest of
+  the core, only what the packs' import-linter contract allows: `aibi.core.schema`,
+  `aibi.core.importers.errors` and `infer`, `aibi.core.store.sources` and `build` (D438,
+  `tests/packs/test_imports.py`).
 - `web/` (D418): the web bundle's package (React, react-router's hash router, Vite 8), so far a
   skeleton of fixed words: the catalogue entry (`src/catalogue/`, with a lazy not-found screen)
   and the operator entry (`src/operator/`, which reads nothing from its URL: the token's shell,

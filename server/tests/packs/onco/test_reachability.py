@@ -915,8 +915,3 @@ def test_the_table_is_restored_when_discover_raises() -> None:
         closure(stand_in)
     assert stand_in.PATH_SITES is table
     assert study.PATH_SITES is table
-
-
-def test_the_pack_imports_nothing_yet(onco: ModuleType) -> None:
-    """Until M4.2a-1b, ``PACK`` has no importer: discovery is reachable from tests alone."""
-    assert onco.PACK.importer is None
