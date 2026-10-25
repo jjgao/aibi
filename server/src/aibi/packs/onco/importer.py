@@ -34,7 +34,7 @@ from aibi.packs.onco.notes import Budget
 from aibi.packs.onco.refusals import entry_refused
 from aibi.packs.onco.study import ClinicalMeta, discover
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 """The pack's version, which its manifest states and its curation entries name."""
 BY = f"importer:{PACK_ID}@{VERSION}"
 NO_LOCATION = (

@@ -11,8 +11,8 @@ declares from the source's own metadata, never a value computed from the rows (Â
 - ``table``: ``meta``, the ``<genetic_alteration_type>:<datatype>`` of the meta file the table
   came from, one of cBioPortal's 28 pairs (``PAIRS``); ``stable_id``; and ``case_list_category``,
   for a coverage table made from a case list (case lists have no ``genetic_alteration_type``).
-- ``column``: ``attribute_priority``, the fourth header row of a clinical file, which M4.2a's
-  proposer reads by name.
+- ``column``: ``attribute_priority``, the fourth header row of a clinical file, a member so that a
+  proposer can read it by name; none does (the endpoint proposer, D439, does not).
 
 The pack's next importer widens these with a pack version bump.
 """

@@ -77,7 +77,18 @@ The site's server installs the oncology pack, and `import-study <name> <dir>` im
 study directory with it (copied whole into the site; the clinical files become the `patients` and
 `samples` tables), restarting the server first if it is running. `fixtures/onco/demo_study` is a
 synthetic study; a real one (such as `msk_chord_2024`, whose licence keeps it out of the repository)
-is imported from wherever it was downloaded.
+is imported from wherever it was downloaded. The pack proposes the study's survival endpoints
+(`ep:os` and the like, SPEC D439): run `aibi proposers <dataset>` once for a study imported before
+pack 0.3.0, accept them with `aibi session open <dataset>`,
+`aibi session accept <dataset> <proposal id>...` (the ids are listed by `aibi queue <dataset>`; read
+each proposal's evidence with `aibi --json queue <dataset>` before accepting, since the plain listing
+omits it and the evidence says that PFS and DSS are unusable until an event coding is declared, that the
+clock and entry are undeclared, and that a proposal may be stale) and
+`aibi session publish <dataset>`, and
+`survival.km` and `survival.cox` then run through
+`run_analysis` (MCP or `POST /api/tools/run_analysis`; a view names its endpoint when two are usable).
+Survival does not run in the web app: its builder makes only `summary.distribution`, and survival is
+refused under any *k*.
 
 Everything lives in `~/aibi-testsite` (`AIBI_TESTSITE_DIR`; the port is `AIBI_TESTSITE_PORT`). The
 curator token is written there once, to `curator-token` (mode 0600), and is never printed. The
