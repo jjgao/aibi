@@ -3,7 +3,14 @@
 One CSV file whose six headers are hostile texts, for the web's end-to-end matrix (D431,
 `web/e2e/catalogue.spec.ts`): each survives the import as a column's label
 (`server/tests/core/catalog/test_web_fixtures.py`), and the dataset screen must show each as text,
-never as markup.
+never as markup. A second file, not in this directory, is made at setup time: its name, `<b>`,
+U+202E, `gpj.csv`, is markup and a right-to-left override, and its content is `id` and `1`. It is made by
+`server/tests/core/catalog/test_web_fixtures.py` and by the end-to-end setup
+(`web/e2e/global-setup.ts`) beside `hostile.csv`, because `<` and `>` are reserved on Windows, where
+git cannot check such a path out, and the override makes a file list show another name. It survives
+the import as its table's label, `<b>`, U+202E, `gpj` (the file's name without its suffix; id
+`b_gpj`), which the dataset screen's table heading must show as text (D440). A file name cannot
+carry a long label; the web's unit sweeps hold that case.
 
 | Header | What it probes |
 |---|---|

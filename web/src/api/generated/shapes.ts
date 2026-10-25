@@ -37,7 +37,7 @@ function frozen<T>(value: T): T {
 }
 
 /** The SHA-256 of the `schemas/openapi.json` this table was generated from (the types' too: `openapi.ts`). */
-export const DOCUMENT_DIGEST = "4c86d3b3a351e3a22a22885ef8bfb73a7e5dd6ca6dbbde288a5f77488376572b";
+export const DOCUMENT_DIGEST = "073e0c5e048a9f4bf855928cd01ecc3e3c9f32b16f8e9a67d91ca78e2e777973";
 
 /** Every component an answer reaches, by name. */
 export const SHAPES: { readonly [component: string]: Shape } = frozen({
@@ -107,7 +107,7 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "Source": {"t":"rec","p":{"document":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"leaves":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)*$",{"t":"arr","i":{"t":"str"}}]],"k":{"t":"str"}},"params":{"t":"map","v":{"t":"ref","n":"OutputJson"}}},"r":["document","leaves","params"]},
   "StatCount": {"t":"all","o":[{"t":"rec","p":{"count":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"reference":{"t":"str"}},"r":["count","reference"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/count"]}}},"r":[],"open":true}]},
   "TableGraph": {"t":"rec","p":{"edges":{"t":"arr","i":{"t":"ref","n":"GraphEdge"}},"tables":{"t":"arr","i":{"t":"str"}}},"r":["tables","edges"]},
-  "TableOut": {"t":"rec","p":{"columns":{"t":"arr","i":{"t":"ref","n":"ColumnBrief"}},"descriptor":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"rows":{"t":"ref","n":"StatCount"}},"r":["descriptor","rows","columns"]},
+  "TableOut": {"t":"rec","p":{"columns":{"t":"arr","i":{"t":"ref","n":"ColumnBrief"}},"descriptor":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"id":{"t":"str"},"label":{"t":"ref","n":"Data"},"rows":{"t":"ref","n":"StatCount"}},"r":["id","label","descriptor","rows","columns"]},
   "TableSummary": {"t":"rec","p":{"grain":{"t":"ref","n":"Data"},"id":{"t":"str"},"label":{"t":"ref","n":"Data"},"role":{"t":"enum","v":["entity","link","measurement","event","coverage"]},"rows":{"t":"ref","n":"StatCount"}},"r":["id","label","rows"]},
   "Translation": {"t":"rec","p":{"document":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"format":{"t":"str"},"notes":{"t":"arr","i":{"t":"ref","n":"TranslationNote"}}},"r":["format","document","notes"]},
   "TranslationNote": {"t":"rec","p":{"message":{"t":"arr","i":{"t":"seg"}},"pointer":{"t":"str"},"translated":{"t":"bool"}},"r":["pointer","translated","message"]},

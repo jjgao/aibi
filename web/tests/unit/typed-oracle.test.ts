@@ -686,8 +686,8 @@ function untakenArms(made: readonly Body[]): string[] {
  * models (their components reached as roots, the arms of `DistributionPosition.columns` forced and
  * told apart in the place's key) and its eleven values answers (187 bodies to 240). */
 const INPUT_COUNTS = {
-  inputs: { additions: 2066, bodies: 240, drops: 3357, keys: 456, misses: 2423, renames: 3357, swaps: 5744, values: 15595, words: 2655 },
-  merged: { additions: 16740, drops: 20793, keys: 1635, misses: 45939, renames: 20793, swaps: 15423, values: 92330, words: 16491 },
+  inputs: { additions: 2070, bodies: 240, drops: 3363, keys: 456, misses: 2430, renames: 3363, swaps: 5744, values: 15619, words: 2655 },
+  merged: { additions: 16764, drops: 20829, keys: 1635, misses: 46141, renames: 20829, swaps: 15423, values: 92474, words: 16491 },
   bodies: { all: 240, small: 238, over: 2 },
 };
 

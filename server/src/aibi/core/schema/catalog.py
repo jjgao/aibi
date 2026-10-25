@@ -401,6 +401,8 @@ class ColumnBrief(Output):
 
 
 class TableOut(Output):
+    id: TableId
+    label: Data
     descriptor: DescriptorJson
     rows: StatCount
     columns: list[ColumnBrief]

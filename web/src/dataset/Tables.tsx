@@ -1,7 +1,8 @@
 /**
- * The tables of a dataset (D431; D427's R66a; §5.3, §5.4, D311): each with its row count and its
- * `stat:` reference (`StatCount`; the reference, `stat:<manifest>/<table>/n_rows`, never cut,
- * names the table by its grammar-bound id, so two tables are told apart without a label), and its
+ * The tables of a dataset (D431, D440; D427's R66a; §5.3, §5.4, D311): each headed `Table <id>
+ * (<label>)`, its id (grammar-bound) through `Ref` and its label (data, shown as sent even when it
+ * equals the id) through `Text`, then its row count with its `stat:` reference (`StatCount`; the
+ * reference, `stat:<manifest>/<table>/n_rows`, is never cut, and a suppressed count is never 0), and its
  * columns, each with its id (`<table>.<column>`), its label, its datatype in words (absent:
  * undeclared) and `identifier` when it is one (a column not shown as one says nothing: the flag false
  * may be undeclared). A table's grain and role and the coverage and endpoint descriptors are
@@ -70,7 +71,7 @@ function ColumnLine({ column }: { readonly column: Column }): ReactElement {
   );
 }
 
-/** Every table: its row count with its reference, then its columns. */
+/** Every table: headed by its id and label, then its row count with its reference, then its columns. */
 export function Tables({ tables }: { readonly tables: TablesOut }): ReactElement {
   return (
     <section className="tables">
@@ -79,8 +80,11 @@ export function Tables({ tables }: { readonly tables: TablesOut }): ReactElement
       {tables.map((table, index) => (
         <section key={keyOf(index)} className="table">
           <h3>
-            Table: rows <StatCount value={table.rows} />
+            Table <Ref value={table.id} /> (<Text value={table.label.data} />)
           </h3>
+          <p>
+            Rows: <StatCount value={table.rows} />
+          </p>
           {table.columns.length === 0 ? (
             <p className="state">{NO_COLUMN}</p>
           ) : (

@@ -6,7 +6,8 @@
  * matrix spends it, D423); and another site's pages on another port. For the operator matrix
  * (D423): each main server holds the datasets `DATASETS` (the lending library and small CSV
  * datasets, one for each test that opens a session, since tests run in parallel; the orchard and
- * the hostile headers for the catalogue and dataset screens, D431), imported
+ * the hostile headers and a hostile file name for the catalogue and dataset screens, D431 and
+ * D440), imported
  * through the operator router; a server of each bundle keeps the default `token_failures` limit
  * (`limits`), and one more end-to-end server is there to be killed (`mortal`). Each server is
  * started, and stopped, by its own PID.
@@ -37,13 +38,19 @@ const FIXTURES = path.join(WEB, "..", "fixtures");
 /** The datasets each main server holds: the lending library (`fixtures/library`, without its
  * formats and README), a small CSV dataset for each test that opens a session, and, for the
  * catalogue and dataset screens (D431), the orchard (`fixtures/orchard`) and the hostile headers
- * (`fixtures/hostile`), and, for the result screen (D435), the hostile values
- * (`fixtures/hostile_values`), each without its README. */
+ * (`fixtures/hostile`, with a second file made here: a hostile file name, a table's label, D440),
+ * and, for the result screen (D435), the hostile values (`fixtures/hostile_values`), each without
+ * its README. */
 export const DATASETS = ["library", "flow", "tabs", "conflict", "withdrawn", "takeover", "proposals", "orchard", "hostile", "hostile_values"] as const;
 
 /** The datasets copied from a directory of `fixtures/` of the same name. */
 const COPIED: ReadonlySet<string> = new Set(["library", "orchard", "hostile", "hostile_values"]);
 
+/** The second file of the hostile dataset, written into its copy and not tracked (`<` and `>` are
+ * reserved on Windows, where git cannot check such a path out, and the override makes a file list
+ * show another name): its name without the suffix, markup and a right-to-left override, is its
+ * table's label (D440); its bytes are `test_web_fixtures.py`'s `HOSTILE_FILE_BYTES`. */
+const HOSTILE_FILE = { name: "<b>\u202egpj.csv", content: "id\n1\n" };
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -153,6 +160,9 @@ async function importDatasets(origin: string, imports: string, token: string): P
     const source = path.join(imports, dataset);
     if (COPIED.has(dataset)) {
       cpSync(path.join(FIXTURES, dataset), source, { recursive: true, filter: (from) => !from.endsWith(".md") && path.basename(from) !== "formats" });
+      if (dataset === "hostile") {
+        writeFileSync(path.join(source, HOSTILE_FILE.name), HOSTILE_FILE.content);
+      }
     } else {
       mkdirSync(source);
       writeFileSync(path.join(source, "items.csv"), "id,label\n1,a\n2,b\n3,c\n");

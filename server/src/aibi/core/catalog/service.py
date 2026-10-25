@@ -538,9 +538,12 @@ class Catalog:
             rows = None if found is None else found.n_rows
             if found is not None and rows is None:
                 suppressed.append(f"/tables/{index}/rows")
+            served = _served(table, k)
             tables_out.append(
                 TableOut(
-                    descriptor=_served(table, k),
+                    id=cast(str, served["id"]),
+                    label=Data(data=cast(str, served["label"])),
+                    descriptor=served,
                     rows=references.count(rows, table.id, "n_rows"),
                     columns=listed,
                 )

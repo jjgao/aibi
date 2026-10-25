@@ -50,7 +50,7 @@ export const UNKNOWN_STATUS = "status not known to this page:";
 
 /** The fixed words of what this page does not show yet (T8), around the dataset's id. */
 export const MEMBERS_NOT_SHOWN = [
-  "Other descriptor members (beyond the ids, labels, datatypes and identifier flags of the columns and the graph below), among them the dataset's and the tables' labels, definitions and provenance, the dataset descriptor's name, packs and source, the tables' grains, roles, primary keys and sources, the columns' units, each descriptor's kind and version, each member's curation status and who set it, the extensions, the relationships' child and parent columns, and the coverage and endpoint descriptors, are not shown on this page yet. aibi's server-rendered page at /datasets/",
+  "Other descriptor members (beyond the tables' ids and labels, the ids, labels, datatypes and identifier flags of the columns and the graph below), among them the dataset's label, the dataset's and the tables' definitions and provenance, the dataset descriptor's name, packs and source, the tables' grains, roles, primary keys and sources, the columns' units, each descriptor's kind and version, each member's curation status and who set it, the extensions, the relationships' child and parent columns, and the coverage and endpoint descriptors, are not shown on this page yet. aibi's server-rendered page at /datasets/",
   " shows them when a server runs without a web bundle (its default until M5.2-rest, D410), and the describe_dataset tool gives them whole.",
 ] as const;
 

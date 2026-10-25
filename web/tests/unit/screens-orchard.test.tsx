@@ -238,7 +238,7 @@ describe("the orchard's answers, through the real seam and the routes", () => {
     found.unmount();
     found = await at("#/datasets/orchard");
     await found.until((words) => words.startsWith("Dataset orchard"));
-    expect(found.container.textContent).toMatch(/Table: rows suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
+    expect(found.container.textContent).toMatch(/Table trees \(trees\)Rows: suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
     expect(found.container.textContent).toContain("summary.members version 1.0.0: unavailable; missing: min_cell_count");
     expect(notShownProblems(found.container, "orchard")).toEqual([]);
   });
