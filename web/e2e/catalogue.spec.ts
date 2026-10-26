@@ -4,7 +4,8 @@
  * nothing failing unexpectedly). Operator cells publish and withdraw datasets in parallel, so each
  * cell asserts the orchard's or the hostile headers' own hit and page, never a total or an order.
  * The orchard (`fixtures/orchard`, 40 trees and 60 harvests) and the hostile headers
- * (`fixtures/hostile`) are imported by the global setup.
+ * (`fixtures/hostile`, with a hostile file name, a table's label, D440, that the global setup
+ * writes beside them) are imported by the global setup.
  */
 import type { Page } from "@playwright/test";
 
@@ -51,7 +52,7 @@ test.describe("the catalogue (#/)", () => {
     await expect(main).toContainText("survival.km version 1.1.0: unavailable; missing: endpoint");
     await expect(main).toContainText("summary.distribution version 1.0.0: available with caveats; unconfirmed: columns");
     await expect(main).toContainText("UNCONFIRMED_SEMANTICS (warning)");
-    await expect(main).toContainText(/Table: rows 40 stat:sha256:[0-9a-f]{64}\/trees\/n_rows/u);
+    await expect(main).toContainText(/Table trees \(trees\)Rows: 40 stat:sha256:[0-9a-f]{64}\/trees\/n_rows/u);
     await expect(main.locator(".legend")).toBeVisible();
     await expect(main.locator(".legend")).toContainText("are not shown on this page yet. aibi's server-rendered page at /datasets/orchard shows them");
     expect(calls).toEqual(["search_catalog", "describe_dataset"]);
@@ -70,10 +71,13 @@ test.describe("the dataset's screen (#/datasets/<id>)", () => {
     watcher.clean();
   });
 
-  test("shows the hostile headers as text: visible escapes, no element from data, the long label cut, no link", async ({ page, origin, watcher }) => {
+  test("shows the hostile headers and the hostile file name as text: visible escapes, no element from data, the long label cut, no link", async ({ page, origin, watcher }) => {
     await page.goto(`${origin}/#/datasets/hostile`);
     await expect(page.getByRole("heading", { level: 1, name: "Dataset hostile" })).toBeVisible();
-    const columns = page.locator("[aria-label=columns]");
+    const named = page.locator("section.table h3");
+    await expect(named).toHaveText(["Table b_gpj (<b>\\u202egpj)", "Table hostile (hostile)"]);
+    await expect(named.first().locator(".escape", { hasText: "\\u202e" })).toHaveCount(1);
+    const columns = page.locator("section.table", { has: page.getByRole("heading", { level: 3, name: /^Table hostile / }) }).locator("[aria-label=columns]");
     await expect(columns).toContainText("<img src=x onerror=alert(1)>");
     await expect(columns).toContainText("</bdi><b>bold</b><bdi>");
     await expect(columns).toContainText("javascript:alert(1)");

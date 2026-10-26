@@ -573,6 +573,8 @@ def description_of(columns: list[dict[str, Any]], total: int) -> Any:
         "descriptor": {"kind": "dataset", "id": "dataset", "label": "Grove", "fields": {}},
         "tables": [
             {
+                "id": "plots",
+                "label": {"data": "Plots"},
                 "descriptor": {"kind": "table", "id": "plots", "label": "Plots", "fields": {}},
                 "rows": {"count": 3, "reference": reference},
                 "columns": columns,
@@ -825,6 +827,8 @@ def test_a_large_datasets_page_shows_a_bounded_window_of_its_tables() -> None:
     reference = f"stat:{MANIFEST}/t0/n_rows"
     tables = [
         {
+            "id": f"t{n}",
+            "label": {"data": f"T{n}"},
             "descriptor": {"kind": "table", "id": f"t{n}", "label": f"T{n}", "fields": {}},
             "rows": {"count": 1, "reference": reference},
             "columns": [

@@ -71,7 +71,7 @@ const CONDITIONAL: ReadonlySet<string> = new Set(["/hits/[]/tables/[]/rows/not_e
 
 /** The positions of every `Data` leaf the screens show (the text of a descriptor, cut by R01), asserted
  * exactly: the catalogue's hits (label, name, description, tags, facets' values, data-use terms,
- * tables' labels and grains) and the dataset's columns' labels. */
+ * tables' labels and grains) and the dataset's tables' labels and columns' labels. */
 const DATA_SHOWN: Readonly<Record<string, readonly string[]>> = {
   CatalogHits: [
     "/hits/[]/label/data",
@@ -85,7 +85,7 @@ const DATA_SHOWN: Readonly<Record<string, readonly string[]>> = {
     "/hits/[]/tables/[]/label/data",
     "/hits/[]/tables/[]/grain/data",
   ],
-  DatasetDescription: ["/tables/[]/columns/[]/label/data"],
+  DatasetDescription: ["/tables/[]/label/data", "/tables/[]/columns/[]/label/data"],
 };
 
 /** A row that must render raw and appears nowhere else: where it does not show, its leaf is not shown. */
@@ -452,6 +452,6 @@ describe("the orchard's own answers, swept (the smoke test)", () => {
     const cutData = new Set<string>();
     const cut = await cutSweep("DatasetDescription", (value: Answered<"describe_dataset">) => <Description answer={value} />, shown as never, cutData, new Set<string>());
     expect(cut.problems).toEqual([]);
-    expect([...cutData]).toEqual(["/tables/[]/columns/[]/label/data"]);
+    expect([...cutData]).toEqual(["/tables/[]/label/data", "/tables/[]/columns/[]/label/data"]);
   });
 });

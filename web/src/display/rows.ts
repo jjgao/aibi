@@ -811,9 +811,9 @@ export const ROWS: readonly Row[] = [
   {
     id: "R66a",
     basis: "spec statement",
-    must: "Each table is shown with its row count and its reference, which names the table; its columns with id, label, datatype and identifier flag.",
+    must: "Each table is shown with its id and label, then its row count and its reference; its columns with id, label, datatype and identifier flag.",
     screens: ["dataset"],
-    spec: ["§5.3", "§5.4", "§5.6", "§5.8", "D311"],
+    spec: ["§5.3", "§5.4", "§5.6", "§5.8", "D311", "D440"],
     owner: "M5.2-min",
     module: "src/dataset/Tables.tsx",
     test: "tests/unit/tables.test.tsx",

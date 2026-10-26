@@ -84,7 +84,7 @@ describe("Description (the view of an answer)", () => {
     expect(paged).toContain("Columns: 9; the columns from position 3 on are not on this page.");
     const floored = await textOf(describedOf(orchardText("describe_dataset", 2)));
     expect(floored).toContain("Disclosure: minimum cell count k = 50: counts of units from 1 to k − 1, and counts that would reveal them, are suppressed (§8.4).");
-    expect(floored).toMatch(/Table: rows suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
+    expect(floored).toMatch(/Table trees \(trees\)Rows: suppressed stat:sha256:[0-9a-f]{64}\/trees\/n_rows\?floor=50/u);
   });
 
   it("says in fixed words that descriptor members are not shown, where they are, and names the dataset by its id (T8, n6)", async () => {
@@ -92,9 +92,9 @@ describe("Description (the view of an answer)", () => {
     const legend = shown.container.querySelector(".legend")?.textContent;
     expect(legend).toBe(`${MEMBERS_NOT_SHOWN[0]}orchard${MEMBERS_NOT_SHOWN[1]}`);
     expect(legend).toContain("are not shown on this page yet. aibi's server-rendered page at /datasets/orchard shows them when a server runs without a web bundle (its default until M5.2-rest, D410), and the describe_dataset tool gives them whole.");
-    expect(legend?.startsWith("Other descriptor members (beyond the ids, labels, datatypes and identifier flags of the columns and the graph below), among them ")).toBe(true);
+    expect(legend?.startsWith("Other descriptor members (beyond the tables' ids and labels, the ids, labels, datatypes and identifier flags of the columns and the graph below), among them ")).toBe(true);
     expect(legend).not.toContain("every descriptor's id");
-    for (const member of ["labels, definitions and provenance", "name, packs and source", "grains, roles, primary keys and sources", "units", "each descriptor's kind and version", "curation status and who set it", "extensions", "relationships' child and parent columns, and the coverage and endpoint descriptors"]) {
+    for (const member of ["the dataset's label", "definitions and provenance", "name, packs and source", "grains, roles, primary keys and sources", "units", "each descriptor's kind and version", "curation status and who set it", "extensions", "relationships' child and parent columns, and the coverage and endpoint descriptors"]) {
       expect(legend, member).toContain(member);
     }
     expect(shown.container.querySelector("h1")?.textContent).toBe("Dataset orchard");

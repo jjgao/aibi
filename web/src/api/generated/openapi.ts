@@ -2950,6 +2950,9 @@ export interface components {
             readonly descriptor: {
                 readonly [key: string]: components["schemas"]["OutputJson"];
             };
+            /** Id */
+            readonly id: string;
+            readonly label: components["schemas"]["Data"];
             readonly rows: components["schemas"]["StatCount"];
         };
         /** TableSummary */

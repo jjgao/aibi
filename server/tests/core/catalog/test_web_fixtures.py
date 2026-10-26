@@ -2,7 +2,8 @@
 ``fixtures/orchard`` is the orchard of ``world.py`` (40 trees, 60 harvests), the same files the
 web's unit fixtures are answers over; ``fixtures/hostile``'s headers are hostile texts, each of
 which must survive the import and reach the screens as a column's label, unchanged (the matrix
-then asserts that each is shown as text, never as markup)."""
+then asserts that each is shown as text, never as markup), and a hostile file name, made here and
+by the setup beside ``hostile.csv``, which reaches its table's label unchanged (D440)."""
 
 import json
 from pathlib import Path
@@ -22,6 +23,13 @@ HOSTILE_HEADERS = [
     "javascript:alert(1)",
 ]
 
+#: The second file's name, without its suffix: markup and a right-to-left override, short (a file
+#: name cannot carry a long label). The file is made here and in the web's setup
+#: (`web/e2e/global-setup.ts`), not tracked: `<` and `>` are reserved on Windows, where git cannot
+#: check such a path out, and the override makes a file list show another name.
+HOSTILE_FILE_NAME = "<b>\u202egpj"
+HOSTILE_FILE_BYTES = b"id\n1\n"
+
 
 def test_the_orchard_fixture_is_the_world_s_orchard() -> None:
     directory = FIXTURES / "orchard"
@@ -32,17 +40,22 @@ def test_the_orchard_fixture_is_the_world_s_orchard() -> None:
 
 
 def test_every_hostile_header_reaches_a_column_s_label_unchanged(world: World) -> None:
-    source = FIXTURES / "hostile" / "hostile.csv"
+    """And the hostile file name reaches its table's label unchanged (D440), typed beside the id."""
+    directory = FIXTURES / "hostile"
+    source = directory / "hostile.csv"
     header = source.read_text(encoding="utf-8").splitlines()[0]
     assert header.split(",") == HOSTILE_HEADERS
-    world.publish("hostile", {"hostile.csv": source.read_bytes()})
+    files = {path.name: path.read_bytes() for path in directory.iterdir() if path.suffix == ".csv"}
+    assert sorted(files) == ["hostile.csv"]
+    files[HOSTILE_FILE_NAME + ".csv"] = HOSTILE_FILE_BYTES
+    world.publish("hostile", files)
     found = world.tool(world.catalog(), "describe_dataset", {"dataset": "hostile"})
     assert isinstance(found, Output)
     described = json.loads(found.model_dump_json())
-    labels = [
-        column["label"]["data"] for table in described["tables"] for column in table["columns"]
-    ]
+    labels = [column["label"]["data"] for column in described["tables"][1]["columns"]]
     assert sorted(labels) == sorted(HOSTILE_HEADERS)
+    named = [(table["id"], table["label"]["data"]) for table in described["tables"]]
+    assert named == [("b_gpj", HOSTILE_FILE_NAME), ("hostile", "hostile")]
     hits = world.tool(world.catalog(), "search_catalog", {})
     assert isinstance(hits, Output)
     assert [hit["dataset"] for hit in json.loads(hits.model_dump_json())["hits"]] == ["hostile"]

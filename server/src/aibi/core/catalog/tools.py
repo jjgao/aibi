@@ -118,10 +118,11 @@ TOOLS: tuple[Tool, ...] = (
         "describe_dataset",
         _described(
             "Describe a release of a dataset (the latest published one unless release names "
-            "a label, a manifest hash or the draft): its descriptor, tables with row counts and "
-            "columns, relationships, coverage, endpoints, the table graph, the analyses that "
-            "apply to it (for some keyed table as the unit) and its standing caveats, those a "
-            "query may raise from the descriptors alone."
+            "a label, a manifest hash or the draft): its descriptor, its tables, each named by its "
+            "id and label, with its descriptor, row count and columns, the relationships, "
+            "coverage, endpoints, the table graph, the analyses that apply to it (for some "
+            "keyed table as the unit) and its standing caveats, those a query may raise from the "
+            "descriptors alone."
         ),
         lambda catalog, request, client: catalog.describe_dataset(request),
     ),

@@ -814,11 +814,25 @@
           "type": "object",
           "x-aibi-data": true
         },
+        "id": {
+          "maxLength": 64,
+          "not": {
+            "pattern": "__"
+          },
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/Data"
+        },
         "rows": {
           "$ref": "#/$defs/StatCount"
         }
       },
       "required": [
+        "id",
+        "label",
         "descriptor",
         "rows",
         "columns"
