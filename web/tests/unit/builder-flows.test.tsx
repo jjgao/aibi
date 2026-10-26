@@ -330,14 +330,21 @@ describe("the lists and their words", () => {
   it("offers each unit's own view columns of the offered datatypes, and leaves of text and categories, with the words of what is left out", async () => {
     page = await builderPage();
     const options = (select: HTMLSelectElement | undefined): string[] => [...(select?.options ?? [])].map((one) => one.text);
-    expect(options(page.selects("Unit table")[0])).toEqual(["(choose)", "harvests", "trees"]);
+    expect(options(page.selects("Unit table")[0])).toEqual(["(choose)", "harvests \u2014 harvests", "trees \u2014 trees"]);
     expect(options(page.selects("Column")[0])).toEqual(["(choose)"]);
     await page.choose("Unit table", "trees");
-    expect(options(page.selects("Column")[0])).toEqual(["(choose)", "trees.height_m", "trees.variety"]);
+    expect(options(page.selects("Column")[0])).toEqual(["(choose)", "trees.height_m \u2014 height_m", "trees.variety \u2014 variety"]);
     await page.choose("Unit table", "harvests");
-    expect(options(page.selects("Column")[0])).toEqual(["(choose)", "harvests.grade", "harvests.kg"]);
+    expect(options(page.selects("Column")[0])).toEqual(["(choose)", "harvests.grade \u2014 grade", "harvests.kg \u2014 kg"]);
     await page.press("Add a condition");
-    expect(options(page.selects("Column")[0])).toEqual(["(choose)", "harvests.grade", "harvests.harvest_id", "harvests.tree_id", "trees.tree_id", "trees.variety"]);
+    expect(options(page.selects("Column")[0])).toEqual([
+      "(choose)",
+      "harvests.grade \u2014 grade",
+      "harvests.harvest_id \u2014 harvest_id",
+      "harvests.tree_id \u2014 tree_id",
+      "trees.tree_id \u2014 tree_id",
+      "trees.variety \u2014 variety",
+    ]);
     const text = page.text();
     expect(text).toContain(WORDS.leaves);
     expect(text).toContain(WORDS.view);
@@ -366,14 +373,14 @@ describe("the lists and their words", () => {
     const body = JSON.parse(DESCRIBED.whole) as { graph: { tables: string[] } };
     body.graph.tables.push("Not-An-Id");
     page = await builderPage(byRequest, JSON.stringify(body));
-    expect([...(page.selects("Unit table")[0]?.options ?? [])].map((one) => one.text)).toEqual(["(choose)", "harvests", "trees"]);
+    expect([...(page.selects("Unit table")[0]?.options ?? [])].map((one) => one.text)).toEqual(["(choose)", "harvests \u2014 harvests", "trees \u2014 trees"]);
     expect(page.text()).toContain(WORDS.tables);
   });
 
   it("under a floor (D431's floored answer): only the unit's columns of categories and booleans are offered, with their words", async () => {
     page = await builderPage(byRequest, DESCRIBED.floored);
     await page.choose("Unit table", "trees");
-    expect([...(page.selects("Column")[0]?.options ?? [])].map((one) => one.text)).toEqual(["(choose)", "trees.variety"]);
+    expect([...(page.selects("Column")[0]?.options ?? [])].map((one) => one.text)).toEqual(["(choose)", "trees.variety \u2014 variety"]);
     expect(page.text()).toContain(WORDS.underK);
     expect(page.text()).not.toContain(WORDS.view);
   });

@@ -11,6 +11,7 @@
 import type { Locator, Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
+import { choose } from "./options";
 
 /** A dataset's builder. */
 async function open(page: Page, origin: string, dataset: string): Promise<Locator> {
@@ -20,13 +21,14 @@ async function open(page: Page, origin: string, dataset: string): Promise<Locato
   return builder;
 }
 
-/** Builds a document: the unit, conditions on the first cohort, a second cohort of every unit, the view's columns. */
+/** Builds a document: the unit, conditions on the first cohort, a second cohort of every unit, the view's columns (each
+ * list's option chosen by its id, `choose`). */
 async function build(builder: Locator, unit: string, conditions: readonly (readonly [string, string])[], second: boolean, view: readonly string[]): Promise<void> {
-  await builder.locator(":scope > label > select").selectOption({ label: unit });
+  await choose(builder.locator(":scope > label > select"), unit);
   for (const [column, value] of conditions) {
     await builder.locator('section.cohort[aria-label="cohort first"]').getByRole("button", { name: "Add a condition" }).click();
     const leaf = builder.locator('section.cohort[aria-label="cohort first"] .leaf').last();
-    await leaf.locator("select").selectOption({ label: column });
+    await choose(leaf.locator("select"), column);
     await leaf.locator("input").fill(value);
   }
   if (second) {
@@ -36,7 +38,7 @@ async function build(builder: Locator, unit: string, conditions: readonly (reado
     if (index > 0) {
       await builder.getByRole("button", { name: "Add a column" }).click();
     }
-    await builder.locator("section.view .column select").last().selectOption({ label: column });
+    await choose(builder.locator("section.view .column select").last(), column);
   }
 }
 

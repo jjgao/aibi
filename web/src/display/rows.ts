@@ -147,9 +147,9 @@ export const ROWS: readonly Row[] = [
   {
     id: "R07",
     basis: "derived",
-    must: "An option's label shows the visible form's escapes as literal text (an `<option>` holds text alone), with no raw unsafe character, and its value is the option's index, never a string from data (derived: A6 and D312 bind every position text from data reaches).",
+    must: "An option's label shows the visible form's escapes as literal text (an `<option>` holds text alone), with no raw unsafe character, and its value is the option's index, never a string from data; an option with a name shows its id, then ` — ` and the name, each part in that form and cut on its own, the name not isolated and its white space collapsed by the list (D441's residuals) (derived: A6 and D312 bind every position text from data reaches).",
     screens: ["builder"],
-    spec: ["A6", "D312"],
+    spec: ["A6", "D312", "D441"],
     owner: "2b-1a",
     module: "src/layout/Option.tsx",
     test: "tests/unit/layout.test.tsx",

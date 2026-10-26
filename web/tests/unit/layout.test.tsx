@@ -32,7 +32,25 @@ describe("the injection harness over every position that opens a box", () => {
       "Option",
       (box: ReturnType<typeof boxText>) => (
         <select aria-label="list">
-          <Option label={box} at={keyOf(0)} />
+          <Option label={box} name={null} at={keyOf(0)} />
+        </select>
+      ),
+      ["SELECT", "OPTION"],
+    ],
+    [
+      "Option's name, after a fixed id (D441)",
+      (box: ReturnType<typeof boxText>) => (
+        <select aria-label="list">
+          <Option label={boxText("trees.height_m")} name={box} at={keyOf(0)} />
+        </select>
+      ),
+      ["SELECT", "OPTION"],
+    ],
+    [
+      "Option's id, before a fixed name (D441)",
+      (box: ReturnType<typeof boxText>) => (
+        <select aria-label="list">
+          <Option label={box} name={boxText("Height (m)")} at={keyOf(0)} />
         </select>
       ),
       ["SELECT", "OPTION"],
@@ -120,7 +138,15 @@ const COMPONENTS: readonly (readonly [string, (box: ReturnType<typeof boxText>) 
     "Option",
     (box) => (
       <select aria-label="list">
-        <Option label={box} at={keyOf(0)} />
+        <Option label={box} name={null} at={keyOf(0)} />
+      </select>
+    ),
+  ],
+  [
+    "Option's name",
+    (box) => (
+      <select aria-label="list">
+        <Option label={boxText("trees.height_m")} name={box} at={keyOf(0)} />
       </select>
     ),
   ],
@@ -152,7 +178,7 @@ describe("each component sets its own form: its output does not depend on an anc
     for (const [, element] of COMPONENTS) {
       shown.push(await html(element(boxText(LONG))));
     }
-    const [text, ref, , segment, option] = shown;
+    const [text, ref, , segment, option, named] = shown;
     expect(text).toContain('<span class="escape">\\u202e</span>');
     expect(text).toContain('<span class="cut" title="cut">…</span>');
     expect(ref).toContain('<span class="escape">\\u202e</span>');
@@ -161,6 +187,9 @@ describe("each component sets its own form: its output does not depend on an anc
     expect(segment).not.toContain('class="cut"');
     expect(option).not.toContain("<span");
     expect(option).toContain("a\\u202eb");
+    expect(named).not.toContain("<span");
+    expect(named).toContain("trees.height_m \u2014 a\\u202eb");
+    expect(named).toContain("x\u2026</option>");
   });
 
   it("the ancestor does decide for the bare door (the matrix's own control: showText has no form of its own)", async () => {
@@ -174,7 +203,7 @@ describe("each component sets its own form: its output does not depend on an anc
   });
 
   it("shows a real U+202E and the six characters that spell it apart, in every component but Option's (a marked escape cannot pass for data that spells one, D312)", async () => {
-    for (const [name, element] of COMPONENTS.filter(([name]) => name !== "Option")) {
+    for (const [name, element] of COMPONENTS.filter(([name]) => !name.startsWith("Option"))) {
       const real = await render(<FORM value="flat">{element(boxText("a\u202eb"))}</FORM>);
       const spelled = await render(<FORM value="flat">{element(boxText("a\\u202eb"))}</FORM>);
       expect(real.container.innerHTML, name).not.toBe(spelled.container.innerHTML);
@@ -200,8 +229,8 @@ describe("Option", () => {
     expect.hasAssertions();
     const shown = await render(
       <select aria-label="list">
-        <Option label={boxText("a\u202eb\r\nc")} at={keyOf(0)} />
-        <Option label={boxText("q".repeat(2001))} at={keyOf(1)} />
+        <Option label={boxText("a\u202eb\r\nc")} name={null} at={keyOf(0)} />
+        <Option label={boxText("q".repeat(2001))} name={null} at={keyOf(1)} />
       </select>,
     );
     const options = [...shown.container.querySelectorAll("option")];
@@ -214,12 +243,61 @@ describe("Option", () => {
     shown.unmount();
   });
 
+  it("R07: an option with a name shows its id, the separator and the name, each in the flat form and cut on its own; with none, the id alone (D441)", async () => {
+    expect.hasAssertions();
+    const shown = await render(
+      <select aria-label="list">
+        <Option label={boxText("trees.height_m")} name={boxText("Height (m)")} at={keyOf(0)} />
+        <Option label={boxText("trees")} name={null} at={keyOf(1)} />
+        <Option label={boxText("a\u202eb")} name={boxText("<b>x</b>\u202e\u2069\r\nq")} at={keyOf(2)} />
+        <Option label={boxText("t")} name={boxText("q".repeat(2001))} at={keyOf(3)} />
+        <Option label={boxText("q".repeat(2001))} name={boxText("r".repeat(2001))} at={keyOf(4)} />
+        <Option label={boxText("e")} name={boxText("")} at={keyOf(5)} />
+        <Option label={boxText("w")} name={boxText("\n\t  \n")} at={keyOf(6)} />
+        <Option label={boxText("s")} name={boxText("x \u2014 trees")} at={keyOf(7)} />
+        <Option label={boxText("h")} name={boxText("\u05e9\u05dc\u05d5\u05dd 12")} at={keyOf(8)} />
+      </select>,
+    );
+    const options = [...shown.container.querySelectorAll("option")];
+    expect(options.flatMap((option) => [...option.childNodes].map((node) => node.nodeType))).toEqual(options.flatMap((option) => [...option.childNodes].map(() => Node.TEXT_NODE)));
+    expect(options.map((option) => option.children.length)).toEqual(options.map(() => 0));
+    expect(options.map((option) => option.textContent)).toEqual([
+      "trees.height_m \u2014 Height (m)",
+      "trees",
+      "a\\u202eb \u2014 <b>x</b>\\u202e\\u2069\nq",
+      `t \u2014 ${"q".repeat(2000)}\u2026`,
+      `${"q".repeat(2000)}\u2026 \u2014 ${"r".repeat(2000)}\u2026`,
+      "e \u2014 ",
+      "w \u2014 \n\t  \n",
+      "s \u2014 x \u2014 trees",
+      "h \u2014 \u05e9\u05dc\u05d5\u05dd 12",
+    ]);
+    // What a native list shows: its white space collapsed, its ends stripped (the residual D441 records).
+    expect(options.map((option) => option.text).slice(5, 7)).toEqual(["e \u2014", "w \u2014"]);
+    expect(options.map((option) => option.value)).toEqual(options.map((_, index) => String(index)));
+    // No isolate, override or other unsafe code point raw: the page adds none, and the data's are escaped.
+    expect(/[\u2066-\u2069\u202a-\u202e\u200e\u200f\u061c]/u.test(shown.container.textContent)).toBe(false);
+    shown.unmount();
+  });
+
+  it("R07: an option's text is bounded: a name of 2,001 tag characters shows at most 129 + 3 + 20,000 + 1 code points (D441)", async () => {
+    const shown = await render(
+      <select aria-label="list">
+        <Option label={boxText(`t.${"a".repeat(127)}`)} name={boxText("\u{e0041}".repeat(2001))} at={keyOf(0)} />
+      </select>,
+    );
+    const text = shown.container.querySelector("option")?.textContent ?? "";
+    expect(Array.from(text).length).toBe(129 + 3 + 2000 * 10 + 1);
+    expect(text.endsWith(`${"\\U000e0041".repeat(2)}\u2026`)).toBe(true);
+    shown.unmount();
+  });
+
   it("R07: NoOption chooses nothing: fixed words, its value empty, never an index", async () => {
     expect.hasAssertions();
     const shown = await render(
       <select aria-label="list" defaultValue="">
         <NoOption />
-        <Option label={boxText("a")} at={keyOf(0)} />
+        <Option label={boxText("a")} name={null} at={keyOf(0)} />
       </select>,
     );
     const options = [...shown.container.querySelectorAll("option")];

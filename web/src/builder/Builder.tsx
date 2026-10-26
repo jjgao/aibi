@@ -5,9 +5,10 @@
  *
  * - **The form** (`model.ts`): a unit table, one or two cohorts (`first`, `second`) of conditions,
  *   each a column and a typed value (`Field`), and the columns of one `summary.distribution` view.
- *   Every list is drawn from `optionsOf`' options, every `<select>` is controlled (its value the
- *   pick's index, or `NoOption`'s `""`), every row keyed by the id the model minted. Fixed words say
- *   what the lists leave out, when they do.
+ *   Every list is drawn from `optionsOf`' options, each shown as its id, then ` — ` and its label
+ *   when it has one (D441: `Option`'s `label` and `name`), every `<select>` is controlled (its value
+ *   the pick's index, or `NoOption`'s `""`), every row keyed by the id the model minted. Fixed words
+ *   say what the lists leave out, when they do.
  * - **The buttons.** Validate is enabled while the form gives a draft and no builder call is
  *   pending; Count and Run while the validation shown is of the form as it stands, done, valid and
  *   nothing pending; they send the validated draft. Each press makes its store in the `onClick`
@@ -282,7 +283,7 @@ export function Builder({ options }: { readonly options: Options }): ReactElemen
         >
           <NoOption />
           {options.units.map((one, index) => (
-            <Option key={keyOf(index)} label={one.label} at={keyOf(index)} />
+            <Option key={keyOf(index)} label={one.label} name={one.name} at={keyOf(index)} />
           ))}
         </select>
       </label>
@@ -302,7 +303,7 @@ export function Builder({ options }: { readonly options: Options }): ReactElemen
                 >
                   <NoOption />
                   {options.leaves.map((one, at) => (
-                    <Option key={keyOf(at)} label={one.label} at={keyOf(at)} />
+                    <Option key={keyOf(at)} label={one.label} name={one.name} at={keyOf(at)} />
                   ))}
                 </select>
               </label>{" "}
@@ -372,7 +373,7 @@ export function Builder({ options }: { readonly options: Options }): ReactElemen
               >
                 <NoOption />
                 {view.map((one, at) => (
-                  <Option key={keyOf(at)} label={one.label} at={keyOf(at)} />
+                  <Option key={keyOf(at)} label={one.label} name={one.name} at={keyOf(at)} />
                 ))}
               </select>
             </label>{" "}

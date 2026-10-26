@@ -2,13 +2,14 @@
  * What the builder's tests share (D433): the builder rendered under `<StrictMode>` from a fresh module
  * graph (the tab's queue is module state), its options minted by the real seam from a describe answer
  * the real walk returned (`fetch` stubbed), every later request recorded, and a person's actions
- * fired through the rendered controls alone: a list's option chosen by its text, a field typed into
+ * fired through the rendered controls alone: a list's option chosen by its id (`optionAt`, D441), a field typed into
  * with the native setter, a button pressed. The builder's answers are the server's own
  * (`orchard-answers.json`'s last eight, each with its request, written by `test_openapi_results.py`).
  */
 import { act, StrictMode } from "react";
 import { vi } from "vitest";
 
+import { optionAt } from "../../e2e/options";
 import { render, type Rendered } from "./render";
 import { answersOf, json, orchardText, type Sent } from "./screens";
 
@@ -75,7 +76,8 @@ export interface BuilderPage {
   /** The builder's requests, in order (the describe call before the render is not among them). A
    * request that no answer answers fails the cell when the page closes. */
   readonly sent: Sent[];
-  /** Choose the option whose text is `text` in the `nth` list labelled `label` (`"(choose)"`: none). */
+  /** Choose the option of the id `text` (its text the id, or the id, ` — ` and its name: `optionAt`) in
+   * the `nth` list labelled `label` (`"(choose)"`: none). */
   choose(label: "Unit table" | "Column", text: string, nth?: number): Promise<void>;
   /** Type `text` into the `nth` field. */
   type(nth: number, text: string): Promise<void>;
@@ -163,7 +165,7 @@ export function pageOf(shown: Rendered, sent: Sent[], unanswered: readonly strin
       if (select === undefined) {
         throw new Error(`no list ${label} #${String(nth)}`);
       }
-      const option = [...select.options].find((one) => one.text === text);
+      const option = select.options[optionAt([...select.options].map((one) => one.textContent), text)];
       if (option === undefined) {
         throw new Error(`no option ${text} in ${label} #${String(nth)}`);
       }
