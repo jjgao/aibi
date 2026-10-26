@@ -106,7 +106,7 @@ function Corpus({ segments }: { readonly segments: readonly BoxedSegment[] }) {
       </p>
       <select aria-label="corpus list">
         {boxes.map((box, index) => (
-          <Option key={keyOf(index)} label={box} at={keyOf(index)} />
+          <Option key={keyOf(index)} label={box} name={box} at={keyOf(index)} />
         ))}
       </select>
     </div>

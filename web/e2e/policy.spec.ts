@@ -5,6 +5,7 @@
  * never stored, never a document; (4) the documents' headers are D411's.
  */
 import { expect, test, words, WORDS } from "./fixtures";
+import { SEPARATOR } from "./options";
 
 const POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; " +
@@ -113,6 +114,14 @@ test.describe("the visible form under the policy (D428)", () => {
     expect(await corpus.evaluate((root) => /(?![\t\n\u200c\u200d])[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(root.textContent))).toBe(false);
     expect(await corpus.evaluate((root) => root.textContent.includes("\u{1f468}\u200d\u{1f469}\u200d\u{1f467}") && root.textContent.includes("a\u200cb"))).toBe(true);
     expect(await corpus.locator(".cut").count()).toBeGreaterThan(0);
+    // Each option of the corpus list is its id, the separator and its name (the Harness passes the
+    // same box as both, D441): the two parts in the flat form, the same text, no isolate between.
+    const options = await corpus.locator("select option").allTextContents();
+    expect(options.length).toBeGreaterThan(0);
+    for (const text of options) {
+      const half = (text.length - SEPARATOR.length) / 2;
+      expect([text.slice(0, half), text.slice(half, half + SEPARATOR.length)]).toEqual([text.slice(half + SEPARATOR.length), SEPARATOR]);
+    }
     watcher.clean();
   });
 });

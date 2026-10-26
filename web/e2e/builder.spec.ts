@@ -3,11 +3,13 @@
  * both builds, under the documents' policy (no CSP or Trusted Types violation, nothing failing
  * unexpectedly), over the orchard (`fixtures/orchard`, 40 trees, no disclosure floor): a document
  * built through the form's controls, validated, counted and run; hostile values typed; a middle
- * condition removed; the lists the form offers.
+ * condition removed; the lists the form offers, each option its id, ` — ` and its label (D441), and
+ * the hostile dataset's (`fixtures/hostile`) lists, its labels shown as text.
  */
 import type { Locator, Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
+import { choose, SEPARATOR } from "./options";
 
 /** The tool calls a page sends (`POST /api/tools/<name>`), with their bodies, in order. */
 function toolCalls(page: Page): { readonly tool: string; readonly body: string }[] {
@@ -37,7 +39,7 @@ const columns = (builder: Locator): Locator => builder.locator("section.view .co
 async function condition(builder: Locator, column: string, value: string): Promise<void> {
   await builder.locator('section.cohort[aria-label="cohort first"]').getByRole("button", { name: "Add a condition" }).click();
   const leaf = leaves(builder, "first").last();
-  await leaf.locator("select").selectOption({ label: column });
+  await choose(leaf.locator("select"), column);
   await leaf.locator("input").fill(value);
 }
 
@@ -62,12 +64,13 @@ test.describe("the builder (#/datasets/orchard)", () => {
   test("(a) builds, validates, counts and runs a two-cohort document: one call a press, the bodies the document shown", async ({ page, origin, watcher }) => {
     const calls = toolCalls(page);
     const builder = await open(page, origin);
-    await unit(builder).selectOption({ label: "trees" });
+    // Chosen by each option's whole text (its id, the separator, its label: D441), as a person reads it.
+    await unit(builder).selectOption({ label: "trees \u2014 trees" });
     await condition(builder, "trees.variety", "apple");
     await builder.getByRole("button", { name: "Add a second cohort" }).click();
-    await columns(builder).first().selectOption({ label: "trees.height_m" });
+    await columns(builder).first().selectOption({ label: "trees.height_m \u2014 height_m" });
     await builder.getByRole("button", { name: "Add a column" }).click();
-    await columns(builder).last().selectOption({ label: "trees.variety" });
+    await columns(builder).last().selectOption({ label: "trees.variety \u2014 variety" });
     await builder.getByRole("button", { name: "Validate", exact: true }).click();
     const validation = builder.locator('section.outcome[aria-label="validation"]');
     await expect(validation).toContainText("The document is valid.");
@@ -89,8 +92,8 @@ test.describe("the builder (#/datasets/orchard)", () => {
   test("(b) hostile values are one leaf's string value each: no element, visible escapes in the readback, $x sent as $$x", async ({ page, origin, watcher }) => {
     const calls = toolCalls(page);
     const builder = await open(page, origin);
-    await unit(builder).selectOption({ label: "trees" });
-    await columns(builder).first().selectOption({ label: "trees.variety" });
+    await choose(unit(builder), "trees");
+    await choose(columns(builder).first(), "trees.variety");
     const values = ["<img src=x onerror=alert(1)>", "$x", "‮abc"];
     for (const value of values) {
       await condition(builder, "trees.variety", value);
@@ -111,8 +114,8 @@ test.describe("the builder (#/datasets/orchard)", () => {
   test("(c) a middle condition removed: the body and the readback hold exactly the other two", async ({ page, origin, watcher }) => {
     const calls = toolCalls(page);
     const builder = await open(page, origin);
-    await unit(builder).selectOption({ label: "trees" });
-    await columns(builder).first().selectOption({ label: "trees.variety" });
+    await choose(unit(builder), "trees");
+    await choose(columns(builder).first(), "trees.variety");
     await condition(builder, "trees.variety", "apple");
     await condition(builder, "trees.tree_id", "t1");
     await condition(builder, "trees.variety", "pear");
@@ -131,12 +134,56 @@ test.describe("the builder (#/datasets/orchard)", () => {
 
   test("(d) the lists: the view holds the unit's summarised columns alone, the conditions columns of text and categories", async ({ page, origin, watcher }) => {
     const builder = await open(page, origin);
-    await unit(builder).selectOption({ label: "trees" });
-    expect(await columns(builder).first().locator("option").allTextContents()).toEqual(["(choose)", "trees.height_m", "trees.variety"]);
+    expect(await unit(builder).locator("option").allTextContents()).toEqual(["(choose)", "harvests \u2014 harvests", "trees \u2014 trees"]);
+    await choose(unit(builder), "trees");
+    expect(await columns(builder).first().locator("option").allTextContents()).toEqual(["(choose)", "trees.height_m \u2014 height_m", "trees.variety \u2014 variety"]);
     await builder.locator('section.cohort[aria-label="cohort first"]').getByRole("button", { name: "Add a condition" }).click();
     const offered = await leaves(builder, "first").first().locator("select option").allTextContents();
-    expect(offered).toEqual(["(choose)", "harvests.grade", "harvests.harvest_id", "harvests.tree_id", "trees.tree_id", "trees.variety"]);
-    expect(offered).not.toContain("trees.height_m");
+    expect(offered).toEqual([
+      "(choose)",
+      "harvests.grade \u2014 grade",
+      "harvests.harvest_id \u2014 harvest_id",
+      "harvests.tree_id \u2014 tree_id",
+      "trees.tree_id \u2014 tree_id",
+      "trees.variety \u2014 variety",
+    ]);
+    // No option of the number column, whatever its label: no text whose id part is it.
+    expect(offered.filter((text) => text === "trees.height_m" || text.startsWith(`trees.height_m${SEPARATOR}`))).toEqual([]);
+    watcher.clean();
+  });
+});
+
+test.describe("the builder's lists over the hostile dataset (#/datasets/hostile, D441)", () => {
+  test("each option is its id, the separator and its label, as text: visible escapes, no element, the long label cut, chosen by its id", async ({ page, origin, watcher }) => {
+    await page.goto(`${origin}/#/datasets/hostile`);
+    const builder = page.locator("section.builder");
+    await expect(builder.getByRole("heading", { level: 2, name: "Build an analysis" })).toBeVisible();
+    // The tables: the hostile file name's label (markup and an override) after its id, escaped as text.
+    expect(await unit(builder).locator("option").allTextContents()).toEqual(["(choose)", "b_gpj \u2014 <b>\\u202egpj", "hostile \u2014 hostile"]);
+    await choose(unit(builder), "hostile");
+    expect(await unit(builder).evaluate((select: HTMLSelectElement) => select.selectedIndex)).toBe(2);
+    expect(await columns(builder).first().locator("option").allTextContents()).toEqual(["(choose)", "hostile.img_src_x_onerror_alert_1 \u2014 <img src=x onerror=alert(1)>"]);
+    await builder.locator('section.cohort[aria-label="cohort first"]').getByRole("button", { name: "Add a condition" }).click();
+    const list = leaves(builder, "first").first().locator("select");
+    const offered = await list.locator("option").allTextContents();
+    // The hostile headers' labels, each after its column's id: the escapes literal, the markup text.
+    expect(offered.filter((text) => !text.startsWith("hostile.h"))).toEqual([
+      "(choose)",
+      "hostile.a_b_c \u2014 a\\u200bb\\u2060c",
+      "hostile.bdi_b_bold_b_bdi \u2014 </bdi><b>bold</b><bdi>",
+      "hostile.javascript_alert_1 \u2014 javascript:alert(1)",
+      "hostile.txt_exe \u2014 \\u202etxt.exe",
+    ]);
+    // The label of 3,000 characters cut at 2,000 and marked, after its whole id.
+    const long = offered.filter((text) => text.startsWith("hostile.h"));
+    expect(long).toHaveLength(1);
+    expect(long[0]).toMatch(/^hostile\.hx+ \u2014 hx{1999}\u2026$/u);
+    await choose(list, "hostile.txt_exe");
+    expect(await list.evaluate((select: HTMLSelectElement) => select.options[select.selectedIndex]?.textContent)).toBe("hostile.txt_exe \u2014 \\u202etxt.exe");
+    // No element inside an option, none the data spelled, and no raw control, override or isolate in a list.
+    expect(await builder.locator("select option *").count()).toBe(0);
+    expect(await page.locator("main img, main b, main script, main iframe").count()).toBe(0);
+    expect(await builder.evaluate((root) => [...root.querySelectorAll("select")].some((select) => /(?![\t\n\u200c\u200d])[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(select.textContent)))).toBe(false);
     watcher.clean();
   });
 });

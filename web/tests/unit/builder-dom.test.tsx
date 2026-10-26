@@ -24,6 +24,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WORDS } from "../../src/builder/Builder";
+import { idPart } from "../../e2e/options";
 import { ANSWERS, type BuilderPage, builderPage, respond, settle } from "./builder-support";
 import type { Sent } from "./screens";
 
@@ -53,7 +54,13 @@ interface Shown {
 
 const NONE = "(choose)";
 
-const selectedText = (select: HTMLSelectElement | null): string => select?.options[select.selectedIndex]?.text ?? "?";
+/** The id the chosen option shows: the part of its `textContent` (not its `text`, which collapses an
+ * empty name's `id — ` to `id —`) before the first ` — ` (an id holds no space, so a label holding the
+ * separator, or another option's id, cannot move it; D441). */
+const selectedText = (select: HTMLSelectElement | null): string => {
+  const option = select?.options[select.selectedIndex];
+  return option === undefined ? "?" : idPart(option.textContent);
+};
 
 function shownOf(container: Element): Shown {
   return {
@@ -193,7 +200,7 @@ describe("the builder, driven through its controls (B6.4)", () => {
             continue;
           }
           const index = kind === "complete" ? 1 + Math.floor(next() * (select.options.length - 1)) : Math.floor(next() * select.options.length);
-          const text = select.options[index]?.text ?? "?";
+          const text = idPart(select.options[index]?.textContent ?? "?");
           const isUnit = select.closest("section.cohort") === null && select.closest("section.view") === null;
           const isView = select.closest("section.view") !== null;
           const leafAt = [...container.querySelectorAll("section.cohort .leaf select")].indexOf(select);

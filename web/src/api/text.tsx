@@ -42,7 +42,8 @@
  *   position it renders in chooses the form through the layout's `FORM` context (`src/layout/form.ts`:
  *   `cut`, the default; `whole`, not cut, for pointers, references, data tokens and the server's
  *   words; `flat`, an `<option>`'s text, the escapes as literal text with no span); the layout's
- *   `Text`, `Ref`, `Segments` and `Option` add the `<bdi>`, the data mark and the server's cut mark.
+ *   `Text`, `Ref` and `Segments` add the `<bdi>`, the data mark and the server's cut mark, and
+ *   `Option` adds none of them (an option holds text alone: its id, then ` — ` and its name, D441).
  *   Every form escapes the same code points. Residuals (D419's boundary, deliberate code): narrowing
  *   the element's `props` gives the box back, never its text; a detached `createRoot` and its
  *   `textContent`, or `react-dom/server`, read the visible form's text (closed in the app by D429's

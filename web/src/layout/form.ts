@@ -14,7 +14,8 @@
  *   tokens (which the server cuts and marks itself, `truncated`) and the server's own words;
  * - `flat`: an `<option>`'s text, which a native list shows as text alone: no span, so each escape
  *   is literal text (`\u202e`, six characters, as the same characters written in the data would
- *   read: the residual, named in D428), cut and marked with `…`.
+ *   read: the residual, named in D428), cut and marked with `…`; an option's id and its name (D441)
+ *   are each shown in it, cut on their own.
  */
 import { createContext } from "react";
 

@@ -14,7 +14,9 @@
  *   the dataset's id (`idOf`, or `null`); the units, each a graph table of the table grammar with
  *   its view columns (the columns whose id's table part is the unit's, of `DATATYPES.view`'s
  *   datatypes, or of `view_under_k`'s when the answer's `disclosure.min_cell_count` is not `null`);
- *   the leaf columns (every column of `DATATYPES.leaf`'s datatypes); and booleans of the page's own
+ *   the leaf columns (every column of `DATATYPES.leaf`'s datatypes); each option with its id's box
+ *   and its name (D441: a column's own label; a unit's, the label of the first `TableOut` whose id is
+ *   the table's by `sameText`, or `null` when none is), shown and never written; and booleans of the page's own
  *   lists (`left`: a table, a leaf column or **any unit's** column left out, one boolean over every
  *   unit, so a screen shows it beside the list, never beside one unit; `partial`: `columns_total` is
  *   a number other than the count of columns the answer lists, which holds for every page of a paged
@@ -48,7 +50,7 @@ import type { ServerText } from "./box";
 import { ClientError, type RequestBody } from "./client";
 import { DATATYPES } from "./datatypes";
 import { isCountOf } from "./numbers";
-import { type Choice, choiceFor, choiceText, type DatasetId, idOf, kindOf, ofTable, type Role } from "./text";
+import { type Choice, choiceFor, choiceText, type DatasetId, idOf, kindOf, ofTable, type Role, sameText } from "./text";
 import { type Answered, countCohort, type Outcome, runAnalysis, validateDocument, walkedAs } from "./typed";
 
 /** A value leaf of a cohort: its column, and what the person typed. */
@@ -70,9 +72,16 @@ export interface Draft {
   readonly view: { readonly columns: readonly [Choice<"view">, ...Choice<"view">[]] };
 }
 
-/** An option of a picker: its label (the id's box, shown as data) and its choice. */
+/**
+ * An option of a picker: its label, its name and its choice. **`label` stays the id's box** (what the
+ * option is listed by, shown first) and **`name` is the descriptor's label** (D441: a column's
+ * `ColumnBrief.label`, a unit's the first `TableOut` whose id is the table's by `sameText`, or `null`
+ * when none is), shown after it as data: a swap-prone naming, so read it twice. Neither reaches a
+ * document: the writer reads the choice alone.
+ */
 export interface Option<R extends Role> {
   readonly label: ServerText;
+  readonly name: ServerText | null;
   readonly choice: Choice<R>;
 }
 
@@ -148,9 +157,12 @@ export function optionsOf(answer: Answered<"describe_dataset">): Options {
         continue;
       }
       UNITS.set(made, choice);
-      view.push(Object.freeze({ label: column.id, choice: made }));
+      view.push(Object.freeze({ label: column.id, name: column.label.data, choice: made }));
     }
-    units.push(Object.freeze({ label: table, choice, view: Object.freeze(view) }));
+    // The table's name: the label of the first `TableOut` whose id is the graph table's (D441's
+    // lookup rule); none, no name (the id alone).
+    const named = answer.tables.find((one) => sameText(one.id, table));
+    units.push(Object.freeze({ label: table, name: named === undefined ? null : named.label.data, choice, view: Object.freeze(view) }));
   }
   const leaves: Option<"leaf">[] = [];
   for (const column of columns) {
@@ -160,7 +172,7 @@ export function optionsOf(answer: Answered<"describe_dataset">): Options {
       leftLeaves = true;
       continue;
     }
-    leaves.push(Object.freeze({ label: column.id, choice: made }));
+    leaves.push(Object.freeze({ label: column.id, name: column.label.data, choice: made }));
   }
   const options: Options = Object.freeze({
     dataset: idOf(answer.dataset),
