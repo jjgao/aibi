@@ -28,7 +28,7 @@ import { type Answered, type ColumnRead, type ValuesRead, valuesOf } from "../..
 import { runAnalysis } from "../../src/api/typed";
 import { Failure } from "../../src/catalogue/Failure";
 import { render } from "./render";
-import { bodies, ORCHARD } from "./typed-support";
+import { answerAt, bodies, ORCHARD } from "./typed-support";
 
 type Json = Record<string, unknown>;
 type Result = Answered<"run_analysis">["results"][number];
@@ -104,16 +104,16 @@ function seen(read: ValuesRead): Expected {
 
 const RUNS = ORCHARD.flatMap((answer, index) => (answer.operation === "run_analysis" && answer.status === 200 ? [[index, answer.body] as const] : []));
 
-/** The live answers by the index the server's test gives them (D434's values answers, from 25). */
+/** The live answers by their place in the sections the server's test records (D434's values answers). */
 const LIVE = (index: number): Json => JSON.parse(ORCHARD[index]?.body ?? "null") as Json;
-const BUILT = 25;
-const FLOOR_FIVE = 28;
-const BINNED = 32;
-const UNSORTED = 35;
+const BUILT = answerAt("values", 0);
+const FLOOR_FIVE = answerAt("values", 3);
+const BINNED = answerAt("values", 7);
+const UNSORTED = answerAt("values", 10);
 
 describe("every live answer reads as its raw JSON says (D434)", () => {
   it("there are the live answers the server's test writes: fourteen runs, four of them before the values answers", () => {
-    expect(RUNS.map(([index]) => index)).toEqual([6, 7, 8, 21, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35]);
+    expect(RUNS.map(([index]) => index)).toEqual([...[6, 7, 8].map((place) => answerAt("orchard", place)), answerAt("builder", 4), ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 10].map((place) => answerAt("values", place))]);
   });
 
   it("the answer whose columns are written in an order that is not sorted (j) reads its labels in that order, each over its own arm (the server's cell holds the labels' column types)", async () => {
@@ -158,7 +158,7 @@ describe("every live answer reads as its raw JSON says (D434)", () => {
   });
 
   it("the refused run (i) gives no result to read: it is a refusal", () => {
-    const refused = ORCHARD[34];
+    const refused = ORCHARD[answerAt("values", 9)];
     expect([refused?.operation, refused?.status]).toEqual(["run_analysis", 422]);
   });
 

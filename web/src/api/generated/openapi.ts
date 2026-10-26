@@ -987,6 +987,8 @@ export interface components {
         readonly ColumnDescription: {
             /** Caveats */
             readonly caveats: readonly components["schemas"]["Caveat"][];
+            /** Column */
+            readonly column: string;
             /** Dataset */
             readonly dataset: string;
             /** Descriptor */
@@ -996,8 +998,11 @@ export interface components {
             readonly disclosure: components["schemas"]["DisclosureOut"];
             /** Identifier */
             readonly identifier: boolean;
+            readonly label: components["schemas"]["Data"];
             readonly release: components["schemas"]["ReleaseOut"];
             readonly statistics: components["schemas"]["ColumnStatistics"];
+            /** Table */
+            readonly table: string;
         };
         /** ColumnStatistics */
         readonly ColumnStatistics: {

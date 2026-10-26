@@ -72,7 +72,7 @@
 import { createHash } from "node:crypto";
 
 /** The public tools the web calls, each with a function of `src/api/typed.ts`. */
-export const TYPED_OPERATIONS = ["search_catalog", "describe_dataset", "list_analyses", "validate_document", "count_cohort", "run_analysis", "explain"];
+export const TYPED_OPERATIONS = ["search_catalog", "describe_dataset", "describe_column", "list_analyses", "validate_document", "count_cohort", "run_analysis", "explain"];
 
 /** The JSON types, the closed set an opaque (`x-aibi-json`) value may take: the arms beside the mark list each once. */
 export const JSON_TYPES = ["null", "boolean", "number", "string", "array", "object"];

@@ -384,6 +384,12 @@ class ColumnStatistics(Output):
 
 class ColumnDescription(Output):
     dataset: DatasetId
+    column: ColumnRef
+    """The column's id, the served descriptor's ``/id`` (D442)."""
+    label: Data
+    """The column's label, the served descriptor's ``/label``: declared text, as written (D442)."""
+    table: TableId
+    """The column's table: the table part of ``column`` (D442)."""
     release: ReleaseOut
     disclosure: DisclosureOut
     descriptor: DescriptorJson
@@ -391,6 +397,12 @@ class ColumnDescription(Output):
     """Declared, or a key or foreign-key column (§5.4)."""
     statistics: ColumnStatistics
     caveats: list[Caveat]
+
+    @model_validator(mode="after")
+    def _table(self) -> Self:
+        if not self.column.startswith(self.table + "."):
+            raise PydanticCustomError("column_table", "A column's id begins with its table's id")
+        return self
 
 
 class ColumnBrief(Output):

@@ -388,6 +388,7 @@ const EXPORTS = [
   "compareText",
   "components",
   "countDraft",
+  "describeColumn",
   "describeDataset",
   "entriesOf",
   "explain",

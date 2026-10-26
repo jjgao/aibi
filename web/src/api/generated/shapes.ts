@@ -37,7 +37,7 @@ function frozen<T>(value: T): T {
 }
 
 /** The SHA-256 of the `schemas/openapi.json` this table was generated from (the types' too: `openapi.ts`). */
-export const DOCUMENT_DIGEST = "073e0c5e048a9f4bf855928cd01ecc3e3c9f32b16f8e9a67d91ca78e2e777973";
+export const DOCUMENT_DIGEST = "b901e50a124bfecab6479698966076e10ec4f126afd015b39d6e8b87144a7a6c";
 
 /** Every component an answer reaches, by name. */
 export const SHAPES: { readonly [component: string]: Shape } = frozen({
@@ -48,8 +48,11 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "AnalysisRef": {"t":"rec","p":{"id":{"t":"str"},"version":{"t":"str"}},"r":["id","version"]},
   "AnalysisResults": {"t":"rec","p":{"params":{"t":"ref","n":"Parameters"},"results":{"t":"arr","i":{"t":"ref","n":"ResultEnvelope"}}},"r":["results","params"]},
   "ApplicableAnalysis": {"t":"rec","p":{"analysis":{"t":"str"},"missing":{"t":"arr","i":{"t":"str"}},"status":{"t":"enum","v":["available","unavailable","available_with_caveats"]},"unconfirmed":{"t":"arr","i":{"t":"str"}},"version":{"t":"str"}},"r":["analysis","version","status","missing","unconfirmed"]},
+  "Bin": {"t":"all","o":[{"t":"rec","p":{"count":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"high":{"t":"or","o":[{"t":"num"},{"t":"ref","n":"Data"}]},"includes_high":{"t":"bool"},"includes_low":{"t":"bool"},"low":{"t":"or","o":[{"t":"num"},{"t":"ref","n":"Data"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"reference":{"t":"str"}},"r":["count","reference","includes_low","includes_high"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/count"]}}},"r":[],"open":true}]},
   "CatalogHit": {"t":"rec","p":{"concepts":{"t":"arr","i":{"t":"str"}},"data_use":{"t":"arr","i":{"t":"ref","n":"OntologyTerm"}},"dataset":{"t":"str"},"description":{"t":"ref","n":"Data"},"disclosure":{"t":"ref","n":"DisclosureOut"},"domain_tags":{"t":"arr","i":{"t":"ref","n":"Data"}},"facets":{"t":"map","v":{"t":"never"},"pp":[["^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",{"t":"arr","i":{"t":"ref","n":"Data"}}]],"k":{"t":"str"}},"label":{"t":"ref","n":"Data"},"name":{"t":"ref","n":"Data"},"packs":{"t":"arr","i":{"t":"str"}},"release":{"t":"ref","n":"ReleaseOut"},"tables":{"t":"arr","i":{"t":"ref","n":"TableSummary"}},"tables_left_out":{"t":"num"}},"r":["dataset","release","disclosure","label","domain_tags","data_use","packs","concepts","facets","tables","tables_left_out"]},
   "CatalogHits": {"t":"rec","p":{"caveats":{"t":"arr","i":{"t":"ref","n":"Caveat"}},"hits":{"t":"arr","i":{"t":"ref","n":"CatalogHit"}},"next_offset":{"t":"num"},"total":{"t":"num"}},"r":["hits","total","caveats"]},
+  "CategoriesOut": {"t":"rec","p":{"categories":{"t":"arr","i":{"t":"ref","n":"CategoryCount"}},"kind":{"t":"const","v":"categories"},"multi_membership":{"t":"bool"},"pooled":{"t":"ref","n":"StatCount"}},"r":["kind","categories","multi_membership"]},
+  "CategoryCount": {"t":"all","o":[{"t":"rec","p":{"count":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"reference":{"t":"str"},"value":{"t":"ref","n":"Data"}},"r":["count","reference","value"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/count"]}}},"r":[],"open":true}]},
   "CategoryDistribution": {"t":"all","o":[{"t":"rec","p":{"categories":{"t":"or","o":[{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},{"t":"null"}]},"kind":{"t":"const","v":"categories"},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}}},"r":["kind","categories"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/categories"]}}},"r":[],"open":true}]},
   "CategoryRows": {"t":"rec","p":{"categories":{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},"excluded_rows":{"t":"map","v":{"t":"num"},"r":["NOT_ASSESSED","NOT_COVERED","NO_INFORMATION","NO_PARENT","OUT_OF_SCOPE","NO_ROWS","NOT_APPLICABLE","INVALID_VALUE"],"k":{"t":"ref","n":"ExclusionReason"}},"kind":{"t":"const","v":"category_rows"}},"r":["kind","categories","excluded_rows"]},
   "CategoryShare": {"t":"rec","p":{"other_values":{"t":"const","v":true},"proportion":{"t":"ref","n":"Proportion"},"values":{"t":"arr","i":{"t":"ref","n":"Data"}}},"r":["values","proportion"]},
@@ -59,6 +62,8 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "CohortCounts": {"t":"rec","p":{"counts":{"t":"arr","i":{"t":"ref","n":"NamedCount"}},"params":{"t":"ref","n":"Parameters"},"views":{"t":"arr","i":{"t":"ref","n":"ViewCheck"}}},"r":["counts","views","params"]},
   "CohortRef": {"t":"rec","p":{"id":{"t":"str"},"position":{"t":"num"},"reference":{"t":"bool"}},"r":["position","id","reference"]},
   "ColumnBrief": {"t":"rec","p":{"datatype":{"t":"enum","v":["number","integer","string","boolean","category","list<category>","date","datetime","time_offset"]},"id":{"t":"str"},"identifier":{"t":"bool"},"label":{"t":"ref","n":"Data"}},"r":["id","label","identifier"]},
+  "ColumnDescription": {"t":"rec","p":{"caveats":{"t":"arr","i":{"t":"ref","n":"Caveat"}},"column":{"t":"str"},"dataset":{"t":"str"},"descriptor":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"disclosure":{"t":"ref","n":"DisclosureOut"},"identifier":{"t":"bool"},"label":{"t":"ref","n":"Data"},"release":{"t":"ref","n":"ReleaseOut"},"statistics":{"t":"ref","n":"ColumnStatistics"},"table":{"t":"str"}},"r":["dataset","column","label","table","release","disclosure","descriptor","identifier","statistics","caveats"]},
+  "ColumnStatistics": {"t":"rec","p":{"distribution":{"t":"or","o":[{"t":"ref","n":"CategoriesOut"},{"t":"ref","n":"HistogramOut"},{"t":"ref","n":"NoDistribution"}]},"rows":{"t":"ref","n":"StatCount"},"states":{"t":"ref","n":"StateCounts"}},"r":["rows","states","distribution"]},
   "CrossDatasetOut": {"t":"rec","p":{"method":{"t":"str"}},"r":["method"]},
   "Data": {"t":"rec","p":{"data":{"t":"str"}},"r":["data"]},
   "DatasetDescription": {"t":"rec","p":{"applicable_analyses":{"t":"arr","i":{"t":"ref","n":"ApplicableAnalysis"}},"caveats":{"t":"arr","i":{"t":"ref","n":"Caveat"}},"columns_next":{"t":"num"},"columns_total":{"t":"num"},"coverage":{"t":"arr","i":{"t":"map","v":{"t":"ref","n":"OutputJson"}}},"dataset":{"t":"str"},"descriptor":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"disclosure":{"t":"ref","n":"DisclosureOut"},"endpoints":{"t":"arr","i":{"t":"map","v":{"t":"ref","n":"OutputJson"}}},"graph":{"t":"ref","n":"TableGraph"},"relationships":{"t":"arr","i":{"t":"map","v":{"t":"ref","n":"OutputJson"}}},"release":{"t":"ref","n":"ReleaseOut"},"tables":{"t":"arr","i":{"t":"ref","n":"TableOut"}}},"r":["dataset","release","disclosure","descriptor","tables","relationships","coverage","endpoints","graph","applicable_analyses","caveats","columns_total"]},
@@ -76,6 +81,7 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "GraphEdge": {"t":"rec","p":{"cardinality":{"t":"enum","v":["many-to-one","one-to-one"]},"child":{"t":"str"},"parent":{"t":"str"},"relationship":{"t":"str"}},"r":["relationship","child","parent","cardinality"]},
   "Histogram": {"t":"rec","p":{"bins":{"t":"arr","i":{"t":"ref","n":"HistogramBin"}},"edges_from":{"t":"enum","v":["params","range","data"]}},"r":["edges_from","bins"]},
   "HistogramBin": {"t":"rec","p":{"count":{"t":"num"},"high":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"includes_high":{"t":"bool"},"includes_low":{"t":"bool"},"low":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["low","high","includes_low","includes_high","count"]},
+  "HistogramOut": {"t":"rec","p":{"bins":{"t":"arr","i":{"t":"ref","n":"Bin"}},"edges_from":{"t":"enum","v":["range","data"]},"kind":{"t":"const","v":"histogram"},"max":{"t":"ref","n":"StatValue"},"min":{"t":"ref","n":"StatValue"}},"r":["kind","edges_from","bins"]},
   "Interval": {"t":"rec","p":{"high":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"level":{"t":"num"},"low":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"method":{"t":"str"}},"r":["method","level","low","high"]},
   "Issuance": {"t":"rec","p":{"cache_hit":{"t":"bool"},"id":{"t":"str"},"values_from":{"t":"str"}},"r":["id","cache_hit","values_from"]},
   "IssuanceRecord": {"t":"rec","p":{"at":{"t":"str"},"derivation":{"t":"str"},"engine":{"t":"str"},"id":{"t":"str"},"packs":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"sql":{"t":"ref","n":"OutputJson"},"tool":{"t":"enum","v":["count_cohort","run_analysis"]},"values_from":{"t":"str"}},"r":["id","derivation","tool","values_from","engine","packs","at"]},
@@ -83,6 +89,7 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "Limit": {"t":"rec","p":{"max":{"t":"num"},"name":{"t":"str"}},"r":["name","max"]},
   "MembershipDistribution": {"t":"rec","p":{"categories":{"t":"arr","i":{"t":"ref","n":"CategoryShare"}},"kind":{"t":"const","v":"memberships"},"multi_membership":{"t":"const","v":true}},"r":["kind","multi_membership","categories"]},
   "NamedCount": {"t":"rec","p":{"cohort":{"t":"ref","n":"Data"},"count":{"t":"ref","n":"CohortCount"},"leaves":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)*$",{"t":"arr","i":{"t":"str"}}]],"k":{"t":"str"}}},"r":["cohort","count","leaves"]},
+  "NoDistribution": {"t":"rec","p":{"kind":{"t":"const","v":"none"},"reason":{"t":"enum","v":["identifier","text","undeclared","categories","out_of_range","empty","no_declared_range","suppressed","unrepresentable"]}},"r":["kind","reason"]},
   "NoViewValues": {"t":"map","v":{"t":"never"}},
   "NotEstimableReason": {"t":"enum","v":["no_units","no_events","zero_denominator","zero_variance","not_reached","beyond_follow_up","separation","not_converged","degenerate_table","overlapping_cohorts","confounded_with_dataset","suppressed"]},
   "NumberDistribution": {"t":"all","o":[{"t":"rec","p":{"histogram":{"t":"or","o":[{"t":"ref","n":"Histogram"},{"t":"null"}]},"kind":{"t":"const","v":"numbers"},"max":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"mean":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"median":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"median_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"min":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"n":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"q1":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q1_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q3":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"q3_bin":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"sd":{"t":"or","o":[{"t":"num"},{"t":"null"}]}},"r":["kind","n","mean","sd","median","q1","q3","min","max","histogram"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/n","/mean","/sd","/median","/q1","/q3","/min","/max","/histogram","/q1_bin","/median_bin","/q3_bin"]}}},"r":[],"open":true}]},
@@ -106,6 +113,8 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
   "Severity": {"t":"str"},
   "Source": {"t":"rec","p":{"document":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"leaves":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)*$",{"t":"arr","i":{"t":"str"}}]],"k":{"t":"str"}},"params":{"t":"map","v":{"t":"ref","n":"OutputJson"}}},"r":["document","leaves","params"]},
   "StatCount": {"t":"all","o":[{"t":"rec","p":{"count":{"t":"or","o":[{"t":"num"},{"t":"null"}]},"not_estimable":{"t":"map","v":{"t":"never"},"pp":[["^(?:/(?:[^~/]|~[01])*)+$",{"t":"ref","n":"NotEstimableReason"}]],"k":{"t":"str"}},"reference":{"t":"str"}},"r":["count","reference"]},{"t":"rec","p":{"not_estimable":{"t":"map","v":{"t":"any"},"k":{"t":"enum","v":["/count"]}}},"r":[],"open":true}]},
+  "StatValue": {"t":"rec","p":{"reference":{"t":"str"},"value":{"t":"or","o":[{"t":"num"},{"t":"ref","n":"Data"}]}},"r":["value","reference"]},
+  "StateCounts": {"t":"rec","p":{"NOT_APPLICABLE":{"t":"ref","n":"StatCount"},"NOT_ASSESSED":{"t":"ref","n":"StatCount"},"PRESENT":{"t":"ref","n":"StatCount"},"UNKNOWN":{"t":"ref","n":"StatCount"}},"r":["PRESENT","NOT_APPLICABLE","NOT_ASSESSED","UNKNOWN"]},
   "TableGraph": {"t":"rec","p":{"edges":{"t":"arr","i":{"t":"ref","n":"GraphEdge"}},"tables":{"t":"arr","i":{"t":"str"}}},"r":["tables","edges"]},
   "TableOut": {"t":"rec","p":{"columns":{"t":"arr","i":{"t":"ref","n":"ColumnBrief"}},"descriptor":{"t":"map","v":{"t":"ref","n":"OutputJson"}},"id":{"t":"str"},"label":{"t":"ref","n":"Data"},"rows":{"t":"ref","n":"StatCount"}},"r":["id","label","descriptor","rows","columns"]},
   "TableSummary": {"t":"rec","p":{"grain":{"t":"ref","n":"Data"},"id":{"t":"str"},"label":{"t":"ref","n":"Data"},"role":{"t":"enum","v":["entity","link","measurement","event","coverage"]},"rows":{"t":"ref","n":"StatCount"}},"r":["id","label","rows"]},
@@ -116,7 +125,7 @@ export const SHAPES: { readonly [component: string]: Shape } = frozen({
 });
 
 /** The component of each typed operation's 200 answer. */
-export const OPERATIONS = frozen({"search_catalog":"CatalogHits","describe_dataset":"DatasetDescription","list_analyses":"AnalysisListing","validate_document":"DocumentValidation","count_cohort":"CohortCounts","run_analysis":"AnalysisResults","explain":"Explanation"} as const);
+export const OPERATIONS = frozen({"search_catalog":"CatalogHits","describe_dataset":"DatasetDescription","describe_column":"ColumnDescription","list_analyses":"AnalysisListing","validate_document":"DocumentValidation","count_cohort":"CohortCounts","run_analysis":"AnalysisResults","explain":"Explanation"} as const);
 
 /** The values model of each published analysis and version (D434), by `<id>@<version>`. */
 export const VALUES = frozen({"summary.distribution@1.0.0":"DistributionValues"} as const);
@@ -132,6 +141,9 @@ export const VOCABULARIES = frozen({
   "AnalysedVariable.not_estimable{key}": ["/n","/excluded","/excluded_units"],
   "AnalysisEntry.kind": ["analysis"],
   "ApplicableAnalysis.status": ["available","unavailable","available_with_caveats"],
+  "Bin.not_estimable{key}": ["/count"],
+  "CategoriesOut.kind": ["categories"],
+  "CategoryCount.not_estimable{key}": ["/count"],
   "CategoryDistribution.kind": ["categories"],
   "CategoryDistribution.not_estimable{key}": ["/categories"],
   "CategoryRows.kind": ["category_rows"],
@@ -144,8 +156,12 @@ export const VOCABULARIES = frozen({
   "Explanation.status": ["issued","not_issued","unknown","withdrawn","discarded","unknown_release","erased"],
   "GraphEdge.cardinality": ["many-to-one","one-to-one"],
   "Histogram.edges_from": ["params","range","data"],
+  "HistogramOut.edges_from": ["range","data"],
+  "HistogramOut.kind": ["histogram"],
   "IssuanceRecord.tool": ["count_cohort","run_analysis"],
   "MembershipDistribution.kind": ["memberships"],
+  "NoDistribution.kind": ["none"],
+  "NoDistribution.reason": ["identifier","text","undeclared","categories","out_of_range","empty","no_declared_range","suppressed","unrepresentable"],
   "NotEstimableReason": ["no_units","no_events","zero_denominator","zero_variance","not_reached","beyond_follow_up","separation","not_converged","degenerate_table","overlapping_cohorts","confounded_with_dataset","suppressed"],
   "NumberDistribution.kind": ["numbers"],
   "NumberDistribution.not_estimable{key}": ["/n","/mean","/sd","/median","/q1","/q3","/min","/max","/histogram","/q1_bin","/median_bin","/q3_bin"],

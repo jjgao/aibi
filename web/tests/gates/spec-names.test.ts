@@ -335,6 +335,58 @@ describe("the names D435 gives exist (the class of MA-1 of #121 round 2, for the
   });
 });
 
+/** The helpers of the tests D442 names, each declared in a test file alone. */
+const D442_TEST_NAMES: Readonly<Record<string, string>> = {
+  INPUT_COUNTS: "the typed oracle's reviewed counts (tests/unit/typed-oracle.test.ts)",
+  answerAt: "an orchard answer by its section and place (tests/unit/typed-support.ts)",
+};
+
+/** The names D442 gives that are no declaration of the web, each with why. */
+const D442_NOT_DECLARED: Readonly<Record<string, string>> = {
+  ColumnRef: "the server's type of a column id (aibi.core.schema.ids), a pattern in the document",
+  TableId: "the server's type of a table id (aibi.core.schema.ids), a pattern in the document",
+  Label: "the server's type of a label (aibi.core.schema.descriptors)",
+  WILD: "the server's sampled shapes (tests/core/catalog/test_table_names.py)",
+  _COLUMNS_ASKED: "the server's fixture writer's list (tests/core/analyses/test_openapi_results.py)",
+  SomeAtLeast: "the server's quantifier model (aibi.core.schema.document), a component of openapi.json the grid's body carries",
+  OntologyCode: "the server's data-use code model (aibi.core.schema.catalog), a component of openapi.json the grid's body carries",
+  CONFLICTING_MEMBERS: "the server's refusal code (aibi.core.schema.refusals) for two exclusive members in one object",
+  AllClause: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  AnyClause: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  NotClause: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  KnownClause: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  UnknownClause: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  ExistsLeaf: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  CoveredLeaf: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  IdsLeaf: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  CohortLeaf: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  PackLeaf: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  Range: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+  UnitKey: "the server's document model (aibi.core.schema.document), a component of openapi.json the typed grid's body does not carry",
+};
+
+describe("the names D442 gives exist (the class of MA-1 of #121 round 2, for the column answer)", () => {
+  const spans = spansOf(readFileSync(path.join(ROOT, "SPEC.md"), "utf8"), "D442", "v0.8.88");
+
+  it("names a good many symbols and files", () => {
+    expect(spans.length).toBeGreaterThan(20);
+    for (const span of ["ColumnDescription", "describeColumn", "TYPED_OPERATIONS", "aibi.core.catalog.service._named", "answerAt"]) {
+      expect(spans).toContain(span);
+    }
+  });
+
+  it("finds every identifier, constant and file D442 names in the repository, and no stale entry of its lists of exceptions", () => {
+    expect(stale(spans, SOURCES, PYTHON, FILES, D442_TEST_NAMES, D442_NOT_DECLARED)).toEqual({ missing: [], unused: [] });
+  });
+
+  it("the server's names it gives are the server's", () => {
+    const source = (end: string): string => [...PYTHON].find(([file]) => file.endsWith(end))?.[1] ?? "";
+    expect(source("/aibi/core/schema/ids.py")).toMatch(/^(?:ColumnRef|type ColumnRef)\b/mu);
+    expect(source("/aibi/core/schema/ids.py")).toMatch(/^(?:TableId|type TableId)\b/mu);
+    expect(source("/aibi/core/schema/descriptors.py")).toMatch(/^(?:Label|type Label)\b/mu);
+  });
+});
+
 /** One row of D432's table of the server's rules (`web/tests/fixtures/seam-rules.json`). */
 interface Rule {
   readonly id: string;

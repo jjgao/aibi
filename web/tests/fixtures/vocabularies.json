@@ -24,6 +24,15 @@
       "unavailable",
       "available_with_caveats"
     ],
+    "Bin.not_estimable{key}": [
+      "/count"
+    ],
+    "CategoriesOut.kind": [
+      "categories"
+    ],
+    "CategoryCount.not_estimable{key}": [
+      "/count"
+    ],
     "CategoryDistribution.kind": [
       "categories"
     ],
@@ -107,12 +116,33 @@
       "range",
       "data"
     ],
+    "HistogramOut.edges_from": [
+      "range",
+      "data"
+    ],
+    "HistogramOut.kind": [
+      "histogram"
+    ],
     "IssuanceRecord.tool": [
       "count_cohort",
       "run_analysis"
     ],
     "MembershipDistribution.kind": [
       "memberships"
+    ],
+    "NoDistribution.kind": [
+      "none"
+    ],
+    "NoDistribution.reason": [
+      "identifier",
+      "text",
+      "undeclared",
+      "categories",
+      "out_of_range",
+      "empty",
+      "no_declared_range",
+      "suppressed",
+      "unrepresentable"
     ],
     "NotEstimableReason": [
       "no_units",

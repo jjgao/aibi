@@ -20,7 +20,7 @@ two synthetic ones, as their JSON goes over the wire:
   the typed answers' seam (D426), is what ``scripts/export_envelopes.py`` writes from these
   envelopes now (``AIBI_WRITE_WEB_FIXTURES=1`` writes it from this test too);
 - **the orchard's answers**: ``web/tests/fixtures/orchard-answers.json``, a second writer here,
-  holds the server's own answers, as the text it writes, for the seven public tools the web calls
+  holds the server's own answers, as the text it writes, for the eight public tools the web calls
   (D426's seam) over the orchard (``tests/core/catalog/world.py``'s CSV files, imported by the
   core's file importer, uncurated): each answer and two refusals, which the web package's tests
   decode, walk, hold to their ``Boxed`` types and scan for a raw string; then four answers the
@@ -30,7 +30,12 @@ two synthetic ones, as their JSON goes over the wire:
   40 rows suppressed), appended after the thirteen, which stay as they were; then the builder's
   eight (D433), and the ten whose ``values`` the web's values seam reads (D434,
   ``_VALUES_DOCUMENTS``: runs over the orchard and ``fixtures/hostile_values`` under no floor and
-  floors of 5 and 50, and one refusal), each from a world of its own. The state is made
+  floors of 5 and 50, and one refusal), then the ten of ``describe_column`` (D442,
+  ``_COLUMNS_ASKED``: a column of each distribution's shape, under no floor and floors of 5 and 50,
+  the hostile values' column with a curated hostile label, and the last, categories under a floor
+  of 5), each from a world of its own. The
+  file records each section's ``start`` and ``end`` (``sections``), which its readers use instead of
+  an absolute index (a section appended moves none). The state is made
   with a clock and issuance ids that are the same on every run; a change to what the server
   answers fails here until the file is written again (from ``server/``:
   ``AIBI_WRITE_WEB_FIXTURES=1 uv run pytest tests/core/analyses/test_openapi_results.py``).
@@ -422,8 +427,59 @@ _VALUES_DOCUMENTS = (
 )
 """The values answers' documents (D434), each with its disclosure floor."""
 
-VALUES_FIRST = 25
-"""The index of the first values answer in the orchard's answers file."""
+HOSTILE_LABEL = "<img src=x onerror=alert(1)> \u202etxt.exe </bdi>"
+"""A curated column label of markup, a bidi override and a closing isolate (A6, D442)."""
+
+_COLUMNS_ASKED: tuple[tuple[int | None, str, str], ...] = (
+    (None, "orchard", "trees.variety"),  # categories
+    (None, "orchard", "trees.height_m"),  # a histogram from the data, numeric edges
+    (None, "orchard", "trees.planted"),  # a histogram with date edges (Data)
+    (None, "orchard", "trees.tags"),  # a list column: categories by membership
+    (None, "orchard", "trees.tree_id"),  # an identifier: no distribution
+    (None, "orchard", "harvests.kg"),  # another table's column
+    (5, "orchard", "trees.height_m"),  # under a floor of 5: no declared range
+    (50, "orchard", "trees.variety"),  # under a floor of 50: suppressed
+    (None, "hostile_values", "items.kind"),  # hostile category values and a curated label
+    # Categories under a floor of 5: the counts a floor shows, beside the references that name it.
+    # No histogram under a floor is in this file: a floor shows bins only for a column with a
+    # declared range, and none of the orchard's numeric or date columns declares one
+    # (``no_declared_range``, as for ``trees.height_m`` above). That is a choice, not a lack: one
+    # curation away, a ``/fields/range`` curated on ``trees.height_m`` gives ``edges_from: "range"``
+    # bins under a floor of 5 (round 2's probe). M5.2-rest-c-2, whose screen shows describe_column's
+    # bins under *k*, records that fixture and its answer; c-1 does not.
+    (5, "orchard", "trees.variety"),
+)
+"""describe_column's answers (D442), each with its disclosure floor, dataset and column."""
+
+
+def _column_answers(world: World) -> list[dict[str, Any]]:
+    """describe_column's answers (D442, ``_COLUMNS_ASKED``), from a world of their own: the
+    orchard and ``fixtures/hostile_values`` published, ``items.kind`` curated to a hostile label."""
+    world.publish("orchard", orchard_files(rows=40, harvests=60))
+    world.publish("hostile_values", {"items.csv": HOSTILE_VALUES.read_bytes()})
+    world.curate(
+        "hostile_values",
+        {"op": "set", "descriptor": "items.kind", "pointer": "/label", "value": HOSTILE_LABEL},
+    )
+    catalogs = {
+        floor: Catalog(world.store, workers=Workers(QueryLimits()), floor=floor)
+        for floor in (None, 5, 50)
+    }
+    return [
+        _answer(world, catalogs[floor], "describe_column", {"dataset": dataset, "column": column})
+        for floor, dataset, column in _COLUMNS_ASKED
+    ]
+
+
+_SECTIONS = ("orchard", "screens", "builder", "values", "columns")
+"""The file's sections, in order, each from a world of its own: its ``sections`` member gives each
+one's ``start`` and ``end`` (exclusive), so that no reader pins an absolute index."""
+
+
+def _section(answers_file: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    """The answers of one section of the file, by the bounds it records."""
+    bounds = answers_file["sections"][name]
+    return answers_file["answers"][bounds["start"] : bounds["end"]]
 
 
 def _values_answers(world: World) -> list[dict[str, Any]]:
@@ -448,6 +504,14 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
     """The orchard's answers as the server writes them, on a store whose clock ticks from a fixed
     start and whose issuance ids are made from a fixed clock and fixed bits (``derivations``'
     one source of ULIDs), so that the file is the same on every run."""
+    sections: dict[str, dict[str, int]] = {}
+
+    def made(name: str, found: list[dict[str, Any]]) -> None:
+        start = sum(bounds["end"] - bounds["start"] for bounds in sections.values())
+        sections[name] = {"start": start, "end": start + len(found)}
+        answers.extend(found)
+
+    answers: list[dict[str, Any]] = []
     ticks = iter(range(1_767_225_600_000, 1_767_225_600_000 + 10_000))
     monkeypatch.setattr(derivations._ULIDS, "_clock", lambda: next(ticks) * 1_000_000)
     monkeypatch.setattr(derivations._ULIDS, "_entropy", lambda size: bytes(size))
@@ -462,7 +526,7 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         ),
     )
     try:
-        answers = _orchard_answers(world)
+        made("orchard", _orchard_answers(world))
     finally:
         world.store.close()
     second = tmp_path / "screens"
@@ -476,7 +540,7 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         ),
     )
     try:
-        answers += _screen_answers(screens)
+        made("screens", _screen_answers(screens))
     finally:
         screens.store.close()
     third = tmp_path / "builder"
@@ -490,7 +554,7 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         ),
     )
     try:
-        answers += _builder_answers(builder)
+        made("builder", _builder_answers(builder))
     finally:
         builder.store.close()
     fourth = tmp_path / "values"
@@ -504,10 +568,27 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
         ),
     )
     try:
-        answers += _values_answers(values)
+        made("values", _values_answers(values))
     finally:
         values.store.close()
-    rendered = json.dumps({"answers": answers}, indent=2, ensure_ascii=False) + "\n"
+    fifth = tmp_path / "columns"
+    (fifth / "imports").mkdir(parents=True)
+    after = iter(range(10_000))
+    columns = World(
+        fifth,
+        Store(
+            fifth / "data",
+            clock=lambda: datetime(2026, 5, 1, tzinfo=UTC) + timedelta(seconds=next(after)),
+        ),
+    )
+    try:
+        made("columns", _column_answers(columns))
+    finally:
+        columns.store.close()
+    assert tuple(sections) == _SECTIONS
+    rendered = (
+        json.dumps({"answers": answers, "sections": sections}, indent=2, ensure_ascii=False) + "\n"
+    )
     if os.environ.get("AIBI_WRITE_WEB_FIXTURES") == "1":
         ORCHARD_ANSWERS.write_text(rendered, encoding="utf-8")
     assert ORCHARD_ANSWERS.read_text(encoding="utf-8") == rendered
@@ -515,8 +596,15 @@ def test_the_web_client_s_orchard_answers_are_the_server_s(
 
 def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
     """Every typed operation answers, the first validation is valid and the second is not (a 200
-    either way), the three analyses run, and two refusals: a 404 and a 422."""
-    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
+    either way), the three analyses run, and two refusals: a 404 and a 422; the sections the file
+    records tile it, in order."""
+    written = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))
+    answers = written["answers"]
+    assert tuple(written["sections"]) == _SECTIONS
+    ends = [0, *(bounds["end"] for bounds in written["sections"].values())]
+    assert [bounds["start"] for bounds in written["sections"].values()] == ends[:-1]
+    assert ends[-1] == len(answers)
+    assert [len(_section(written, name)) for name in _SECTIONS] == [13, 4, 8, 11, 10]
     by = [(found["operation"], found["status"]) for found in answers]
     assert by == [
         ("search_catalog", 200),
@@ -547,12 +635,15 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         *[("run_analysis", 200)] * 9,
         ("run_analysis", 422),
         ("run_analysis", 200),
+        *[("describe_column", 200)] * len(_COLUMNS_ASKED),
     ]
-    assert [json.loads(answers[n]["body"])["valid"] for n in (3, 4)] == [True, False]
+    orchard = _section(written, "orchard")
+    assert [json.loads(orchard[n]["body"])["valid"] for n in (3, 4)] == [True, False]
+    builder = _section(written, "builder")
     built, counted, category, floored, ran, numeric, refused_count, text = (
-        json.loads(answers[n]["body"]) for n in range(17, 25)
+        json.loads(found["body"]) for found in builder
     )
-    requests = [json.loads(answers[n]["request"])["document"] for n in range(17, 25)]
+    requests = [json.loads(found["request"])["document"] for found in builder]
     assert requests == [
         _BUILT,
         _BUILT,
@@ -564,7 +655,10 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         _BUILT_STRING,
     ]
     assert all(
-        "request" not in answers[n] for n in [*range(17), *range(VALUES_FIRST, len(answers))]
+        "request" not in found
+        for name in _SECTIONS
+        if name != "builder"
+        for found in _section(written, name)
     )
     population = [found["count"]["population"] for found in counted["counts"]]
     assert built["valid"] is True
@@ -584,7 +678,9 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
     assert [(r["code"], r["path"]) for r in text["refusals"]] == [
         ("NOT_SUPPORTED", "/views/0/params/columns/0/column")
     ]
-    page, columns, hits, described = (json.loads(answers[n]["body"]) for n in range(13, 17))
+    page, columns, hits, described = (
+        json.loads(found["body"]) for found in _section(written, "screens")
+    )
     assert (len(page["hits"]), page["next_offset"], page["total"]) == (1, 1, 2)
     assert (len([c for t in columns["tables"] for c in t["columns"]]), columns["columns_next"]) == (
         3,
@@ -599,6 +695,7 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
     assert {found["operation"] for found in answers} == {
         "search_catalog",
         "describe_dataset",
+        "describe_column",
         "list_analyses",
         "validate_document",
         "count_cohort",
@@ -606,6 +703,62 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         "explain",
     }
     assert all(name in BY_NAME for name, _ in by)
+
+
+def test_the_column_answers_hold_what_the_column_screen_needs() -> None:
+    """describe_column's answers (D442, ``_COLUMNS_ASKED``): each names the column asked, its table
+    and its label, and holds the distribution the next screen reads: categories, a list's
+    memberships, a histogram from the data with numeric and with date edges, an identifier's
+    none, ``no_declared_range`` under a floor of 5, ``suppressed`` under 50, the hostile values'
+    column with its curated hostile label, and categories with their counts under a floor of 5."""
+    written = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))
+    found = [json.loads(answer["body"]) for answer in _section(written, "columns")]
+    assert len(found) == len(_COLUMNS_ASKED)
+    for body, (floor, dataset, column) in zip(found, _COLUMNS_ASKED, strict=True):
+        assert (body["dataset"], body["column"], body["table"]) == (
+            dataset,
+            column,
+            column.split(".", 1)[0],
+        )
+        assert body["label"] == {"data": body["descriptor"]["label"]}
+        assert body["descriptor"]["id"] == column
+        assert body["disclosure"]["min_cell_count"] == floor
+    shapes = [
+        (
+            body["label"]["data"],
+            body["statistics"]["distribution"]["kind"],
+            body["statistics"]["distribution"].get("reason"),
+            body["statistics"]["distribution"].get("edges_from"),
+            body["statistics"]["distribution"].get("multi_membership"),
+            body["identifier"],
+        )
+        for body in found
+    ]
+    assert shapes == [
+        ("variety", "categories", None, None, False, False),
+        ("height_m", "histogram", None, "data", None, False),
+        ("planted", "histogram", None, "data", None, False),
+        ("tags", "categories", None, None, True, False),
+        ("tree_id", "none", "identifier", None, None, True),
+        ("kg", "histogram", None, "data", None, False),
+        ("height_m", "none", "no_declared_range", None, None, False),
+        ("variety", "none", "suppressed", None, None, False),
+        (HOSTILE_LABEL, "categories", None, None, False, False),
+        ("variety", "categories", None, None, False, False),
+    ]
+    edges = [
+        [
+            bin_[end]
+            for bin_ in body["statistics"]["distribution"]["bins"]
+            for end in ("low", "high")
+            if end in bin_
+        ]
+        for body in found[1:3]
+    ]
+    assert edges[0]
+    assert all(isinstance(edge, float) for edge in edges[0])
+    assert edges[1]
+    assert all(set(edge) == {"data"} for edge in edges[1])
 
 
 def test_the_web_client_s_fixture_is_rendered_one_envelope_a_line() -> None:
@@ -641,8 +794,7 @@ def test_the_values_answers_hold_what_the_values_seam_needs() -> None:
     """The values answers (D434, ``_VALUES_DOCUMENTS``): each ``values`` is valid against the
     component the document publishes for its analysis and version (``x-aibi-values``, an independent
     validator), and each holds exactly the facts the web's cells read of it."""
-    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
-    found = answers[VALUES_FIRST:]
+    found = _section(json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8")), "values")
     assert len(found) == len(_VALUES_DOCUMENTS)
     document: dict[str, Any] = json.loads(json.dumps(openapi_module.document()))
     roots = document["x-aibi-values"]
@@ -767,8 +919,9 @@ def test_every_live_label_names_a_column_of_its_arm_s_type() -> None:
     orchard's answers' second) whose arms include the kind of the values' column ``j`` at every
     position; and one answer writes its columns in an order that is not sorted, so that a document
     whose columns were reordered apart from the values would fail here."""
-    answers = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))["answers"]
-    described = json.loads(answers[1]["body"])
+    written = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))
+    answers = written["answers"]
+    described = json.loads(_section(written, "orchard")[1]["body"])
     assert described["dataset"] == "orchard"
     datatype = {c["id"]: c["datatype"] for t in described["tables"] for c in t["columns"]}
     checked, orders = 0, set()

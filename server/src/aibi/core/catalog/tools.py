@@ -129,9 +129,10 @@ TOOLS: tuple[Tool, ...] = (
     Tool(
         "describe_column",
         _described(
-            "Describe one column, <table>.<column>: its full descriptor, its observation-state "
-            "counts (PRESENT, NOT_APPLICABLE, NOT_ASSESSED, UNKNOWN) and its value distribution, "
-            "under the disclosure settings. Identifier columns never have distributions."
+            "Describe one column, <table>.<column>: the column named by its id and label, its "
+            "table's id, its full descriptor, its observation-state counts (PRESENT, "
+            "NOT_APPLICABLE, NOT_ASSESSED, UNKNOWN) and its value distribution, under the "
+            "disclosure settings. Identifier columns never have distributions."
         ),
         lambda catalog, request, client: catalog.describe_column(request),
     ),

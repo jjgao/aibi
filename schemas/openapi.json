@@ -2625,6 +2625,15 @@
             "title": "Caveats",
             "type": "array"
           },
+          "column": {
+            "maxLength": 129,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}\\.[a-z][a-z0-9_]{0,63}$",
+            "title": "Column",
+            "type": "string"
+          },
           "dataset": {
             "maxLength": 64,
             "not": {
@@ -2649,15 +2658,30 @@
             "title": "Identifier",
             "type": "boolean"
           },
+          "label": {
+            "$ref": "#/components/schemas/Data"
+          },
           "release": {
             "$ref": "#/components/schemas/ReleaseOut"
           },
           "statistics": {
             "$ref": "#/components/schemas/ColumnStatistics"
+          },
+          "table": {
+            "maxLength": 64,
+            "not": {
+              "pattern": "__"
+            },
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Table",
+            "type": "string"
           }
         },
         "required": [
           "dataset",
+          "column",
+          "label",
+          "table",
           "release",
           "disclosure",
           "descriptor",

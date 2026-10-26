@@ -684,11 +684,13 @@ function untakenArms(made: readonly Body[]): string[] {
  * passes while it tests less. Last moved by D431's four orchard answers (175 bodies to 179, and the
  * places they add); then by D433's eight builder answers (179 bodies to 187); then by D434's values
  * models (their components reached as roots, the arms of `DistributionPosition.columns` forced and
- * told apart in the place's key) and its eleven values answers (187 bodies to 240). */
+ * told apart in the place's key) and its eleven values answers (187 bodies to 240); then by D442's
+ * `describe_column`, typed (its `ColumnDescription` reached as a root, the three arms of its
+ * distribution forced; 240 bodies to 285, 38,955 inputs). */
 const INPUT_COUNTS = {
-  inputs: { additions: 2070, bodies: 240, drops: 3363, keys: 456, misses: 2430, renames: 3363, swaps: 5744, values: 15619, words: 2655 },
-  merged: { additions: 16764, drops: 20829, keys: 1635, misses: 46141, renames: 20829, swaps: 15423, values: 92474, words: 16491 },
-  bodies: { all: 240, small: 238, over: 2 },
+  inputs: { additions: 2294, bodies: 285, drops: 3638, keys: 481, misses: 2667, renames: 3638, swaps: 6189, values: 16747, words: 3016 },
+  merged: { additions: 17890, drops: 22329, keys: 1669, misses: 52661, renames: 22329, swaps: 16389, values: 98588, words: 18459 },
+  bodies: { all: 285, small: 283, over: 2 },
 };
 
 describe("the walk agrees with an independent validator of the document, over a bounded set of inputs (MA3)", () => {
@@ -789,9 +791,10 @@ describe("the walk agrees with an independent validator of the document, over a 
       visit(shape, name);
     }
     expect(seenShapes.size).toBeGreaterThan(300);
-    // D434: `ColumnDistribution` (a values model's column) is the one alternative of object arms; the
-    // place's key holds the arm walked there (`armsOf`), so the dedupe does not merge its arms.
-    expect(crowded, "an alternative of two object arms: its places are told apart by the walked arm (armsOf); a new one is a reviewed change").toEqual(["DistributionPosition.columns[]"]);
+    // D434: `ColumnDistribution` (a values model's column) is an alternative of object arms, and D442's
+    // `ColumnStatistics.distribution` (categories, a histogram or none) the other; the place's key holds
+    // the arm walked there (`armsOf`), so the dedupe does not merge their arms.
+    expect(crowded, "an alternative of two object arms: its places are told apart by the walked arm (armsOf); a new one is a reviewed change").toEqual(["ColumnStatistics.distribution", "DistributionPosition.columns[]"]);
   });
 
   it("the place's key tells the arms of an alternative of object arms apart, and every arm of every alternative is taken by a body (D434)", () => {
