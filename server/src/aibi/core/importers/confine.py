@@ -6,12 +6,25 @@ be a file's name (a lone surrogate outside U+DC80-DCFF, which no file system's b
 D398), then a path holding a NUL character, then a URL (a scheme, or ``://``), a glob (``*``, ``?``
 or ``[`` in a path that does not exist as written, so a file named ``[draft] a.csv`` is a path), a
 relative path, a path that does not exist, anything that is neither a regular file nor a directory,
-and anything whose real path is outside every root. It records the device and inode of what it
-confined. A hard link is the file it links, wherever its other names are: it is accepted, as any
-file an operator put inside a root is (D232).
+and anything whose real path is outside every root. A path whose symlinks are too many for
+``realpath`` to follow (a chain Python's recursion cannot resolve) is refused as one that cannot be
+resolved, as a loop is. It records the device and inode of what it confined. A hard link is the file
+it links, wherever its other names are: it is accepted, as any file an operator put inside a root
+is (D232).
 
-``read`` opens the real path once, with ``O_NOFOLLOW``, ``O_NOCTTY`` and ``O_NONBLOCK``, so
-that opening never waits: a FIFO that replaced the file waits for no writer, and a file under
+A path ``read``, ``files`` or ``identity`` is given that the reader did not hand out (one a pack
+joined below its source) is confined in its turn, and must then be its own real path as it is
+written: no component of it but ``..`` may be a symlink (each is classified by ``lstat``, in
+order, through the path as written; "The path passes through a symlink"), and the path normalised
+lexically must be the real path ``confine`` returned ("The path is not its own real path"). So a
+symlink is followed nowhere in a pack's path, not even one a later ``..`` cancels, and a ``..``
+with no symlink before it is accepted where it leads inside the roots. A path ``confine`` returned
+is its own real path and is not checked again. That a component is swapped for a symlink between
+these checks and the open is the race of issue #146, which this module does not close.
+
+``read`` opens the path it is given once (the real path ``confine`` returned, or a pack's path that
+passed the rule above), with ``O_NOFOLLOW``, ``O_NOCTTY`` and ``O_NONBLOCK``, so that opening
+never waits: a FIFO that replaced the file waits for no writer, and a file under
 another process's write lease is refused at once (``PATH_NOT_CONFINED``, saying that the file is
 locked and opening does not wait). On a regular file the open answers ``EWOULDBLOCK`` under
 ``O_NONBLOCK`` for that and nothing else; a node of another kind that answered it would be
@@ -21,9 +34,9 @@ give. The descriptor is checked: it must be the file confined (the same device a
 FIFO). The descriptor is closed on every refusal; ``O_NONBLOCK`` is cleared, and the file is read
 into memory under a limit, which a file that grows while it is read cannot pass. Everything after
 works on those bytes, so nothing is opened twice and no file can be swapped between the check and
-the use. ``files`` lists a directory in the same way: it opens the real path once, with
-``O_DIRECTORY`` and ``O_NOFOLLOW``, checks through that descriptor that it is the directory
-confined, and lists and classifies (``lstat``) each entry directly inside it through the
+the use, but for the race named above. ``files`` lists a directory in the same way: it opens the
+path once, with ``O_DIRECTORY`` and ``O_NOFOLLOW``, checks through that descriptor that it is the
+directory confined, and lists and classifies (``lstat``) each entry directly inside it through the
 descriptor, by its own name, before anything is resolved, so a directory swapped after it was
 confined is refused rather than listed. A regular file is confined in its turn (an entry's name is
 a name, never a glob), and must be the file listed; a symlink is never followed, and it, a
@@ -48,6 +61,7 @@ _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _GLOB = frozenset("*?[")
 _CHUNK = 1 << 20
 _WHERE = "An absolute path to a file or directory inside the upload area or an import directory"
+_MISSING = "No such file or directory: "
 
 
 def _not_confined(message: str, given: str) -> ImportRefused:
@@ -97,8 +111,10 @@ class Confinement:
         try:
             real = Path(os.path.realpath(written, strict=True))
             status = os.stat(real, follow_symlinks=False)
-        except (OSError, ValueError):
-            raise _not_confined("No such file or directory: ", written) from None
+        except (OSError, ValueError, RecursionError):
+            # Python 3.12's ``realpath`` recurses once per symlink, so a chain of about a thousand
+            # links raises ``RecursionError``: the path cannot be resolved, as a loop cannot.
+            raise _not_confined(_MISSING, written) from None
         if not (stat.S_ISREG(status.st_mode) or stat.S_ISDIR(status.st_mode)):
             raise _not_confined("Neither a regular file nor a directory: ", written)
         if not any(real.is_relative_to(root) for root in self.roots):
@@ -111,11 +127,36 @@ class Confinement:
         return self._identity(path)
 
     def _identity(self, path: ConfinedPath) -> tuple[int, int]:
+        """The identity recorded for ``path``; a path not confined yet (one a pack joined below
+        its source) is confined now, must be its own real path as written (``_unlinked``), and
+        its identity is that of its real path, which the descriptor opened at ``path`` must then
+        be."""
         found = self._confined.get(Path(path))
         if found is None:
-            self.confine(path)
-            found = self._confined[Path(path)]
+            real = self.confine(path)
+            self._unlinked(os.fspath(path), real)
+            found = self._confined[Path(real)]
         return found
+
+    @staticmethod
+    def _unlinked(written: str, real: ConfinedPath) -> None:
+        """Refuses ``written`` unless it is its own real path ``real`` as written: each of its
+        components but ``..`` is classified by ``lstat`` through the path as written, in order,
+        and none may be a symlink; then the path normalised lexically must be ``real``."""
+        parts = Path(written).parts
+        prefix = parts[0]
+        for part in parts[1:]:
+            prefix = os.path.join(prefix, part)
+            if part == os.pardir:
+                continue
+            try:
+                status = os.lstat(prefix)
+            except OSError:  # a NUL, the one ValueError, was refused by ``confine``
+                raise _not_confined(_MISSING, written) from None
+            if stat.S_ISLNK(status.st_mode):
+                raise _not_confined("The path passes through a symlink: ", written)
+        if os.path.normpath(written) != os.fspath(real):
+            raise _not_confined("The path is not its own real path: ", written)
 
     def read(self, path: ConfinedPath, limit: int) -> bytes:
         """The bytes of the regular file confined at ``path``, at most ``limit`` of them."""

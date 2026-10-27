@@ -173,7 +173,10 @@ class SourceReader(Protocol):
     """The only way any importer, the core's or a pack's, reads a file (SPEC §14, D232).
 
     Every path it takes or returns is confined to the upload area or an import directory, and
-    ``read`` reads the file it confined, whatever replaced it since, or refuses."""
+    ``read`` reads the file it confined, whatever replaced it since, or refuses. A path it did
+    not hand out (one an importer joins below its source) must be its own real path as written:
+    no component of it may be a symlink, and only a ``..`` with no symlink before it is
+    resolved (``PATH_NOT_CONFINED`` otherwise)."""
 
     def read(self, path: ConfinedPath, limit: int) -> bytes:
         """The file's bytes, at most ``limit`` of them, or a ``LIMIT_EXCEEDED`` refusal."""
@@ -181,7 +184,7 @@ class SourceReader(Protocol):
 
     def files(self, directory: ConfinedPath) -> Sequence[DirectoryEntry]:
         """What is directly inside a directory, by name; each regular file confined in its
-        turn, and no symlink followed."""
+        turn, and no symlink followed, neither an entry nor a component of ``directory``."""
         ...
 
     def location(self, path: ConfinedPath) -> str:
