@@ -1,5 +1,5 @@
 /**
- * The catalogue and the dataset screens (D431), the end-to-end path's first two steps, through the
+ * The catalogue, the dataset and the column screens (D431, D443), the end-to-end path's first steps, through the
  * real server and both builds, under the documents' policy (no CSP or Trusted Types violation,
  * nothing failing unexpectedly). Operator cells publish and withdraw datasets in parallel, so each
  * cell asserts the orchard's or the hostile headers' own hit and page, never a total or an order.
@@ -71,7 +71,7 @@ test.describe("the dataset's screen (#/datasets/<id>)", () => {
     watcher.clean();
   });
 
-  test("shows the hostile headers and the hostile file name as text: visible escapes, no element from data, the long label cut, no link", async ({ page, origin, watcher }) => {
+  test("shows the hostile headers and the hostile file name as text: visible escapes, no element from data, the long label cut, no link but each column's to its screen", async ({ page, origin, watcher }) => {
     await page.goto(`${origin}/#/datasets/hostile`);
     await expect(page.getByRole("heading", { level: 1, name: "Dataset hostile" })).toBeVisible();
     const named = page.locator("section.table h3");
@@ -85,10 +85,56 @@ test.describe("the dataset's screen (#/datasets/<id>)", () => {
     await expect(columns.locator(".escape", { hasText: "\\u200b" })).toHaveCount(1);
     await expect(columns.locator(".escape", { hasText: "\\u2060" })).toHaveCount(1);
     await expect(columns.locator(".cut")).toHaveCount(1);
-    expect(await page.locator("main img, main b, main script, main iframe, main a").count()).toBe(0);
+    expect(await page.locator("main img, main b, main script, main iframe").count()).toBe(0);
+    // The one link of each column (D443: seven, the hostile table's six and b_gpj's id), each to its
+    // column's screen, minted from the answer's id: never a label, a script URL or another origin.
+    const links = await page.locator("main a").evaluateAll((anchors) => anchors.map((anchor) => [anchor.getAttribute("href"), anchor.textContent]));
+    expect(links).toHaveLength(7);
+    for (const [href, id] of links) {
+      expect(href).toMatch(/^#\/datasets\/hostile\/columns\/[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u);
+      expect(href).toBe(`#/datasets/hostile/columns/${id ?? ""}`);
+    }
     const text = await page.locator("main").evaluate((main) => main.textContent);
     expect(/[\u202e\u200b\u2060]/u.test(text)).toBe(false);
     expect(await page.evaluate(() => document.querySelectorAll("img, script:not([src])").length)).toBe(0);
+    watcher.clean();
+  });
+
+  test("links each column's id to the column's screen (D443): the orchard's trees.variety, its states and categories with their references, one describe_column more", async ({ page, origin, watcher }) => {
+    const calls = toolCalls(page);
+    await page.goto(`${origin}/#/datasets/orchard`);
+    await expect(page.getByRole("heading", { level: 1, name: "Dataset orchard" })).toBeVisible();
+    await expect(page.locator("main .legend")).toContainText("Neither gives a column's descriptor");
+    await page.getByRole("link", { name: "trees.variety", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Column trees.variety (variety)" })).toBeVisible();
+    expect(await page.evaluate(() => location.hash)).toBe("#/datasets/orchard/columns/trees.variety");
+    const main = page.locator("main");
+    await expect(main).toContainText(/PRESENT: 40 stat:sha256:[0-9a-f]{64}\/trees\.variety\/states\/PRESENT/u);
+    await expect(main).toContainText(/apple: 13 stat:sha256:[0-9a-f]{64}\/trees\.variety\/categories\/apple/u);
+    await expect(main.locator(".legend")).toBeVisible();
+    await expect(main.locator(".legend")).toContainText("The values of the column's descriptor are not shown on this page yet");
+    await expect(page.getByRole("link", { name: "The dataset", exact: true })).toHaveAttribute("href", "#/datasets/orchard");
+    expect(calls).toEqual(["describe_dataset", "describe_column"]);
+    watcher.clean();
+  });
+
+  test("shows the hostile values' column (D443): every category value as text, visible escapes, the long one cut, no element from data, one describe_column", async ({ page, origin, watcher }) => {
+    const calls = toolCalls(page);
+    await page.goto(`${origin}/#/datasets/hostile_values/columns/items.kind`);
+    await expect(page.getByRole("heading", { level: 1, name: /^Column items\.kind \(/u })).toBeVisible();
+    const categories = page.locator("[aria-label=categories]");
+    await expect(categories).toContainText("<img src=x onerror=alert(1)>");
+    await expect(categories).toContainText("</bdi><b>bold</b><bdi>");
+    await expect(categories).toContainText("javascript:alert(1)");
+    await expect(categories.locator(".escape", { hasText: "\\u202e" })).toHaveCount(1);
+    await expect(categories.locator(".escape", { hasText: "\\u200b" })).toHaveCount(1);
+    await expect(categories.locator(".cut")).toHaveCount(1);
+    expect(await page.locator("main img, main b, main script, main iframe").count()).toBe(0);
+    // The one link: back to the dataset, by the address's id.
+    expect(await page.locator("main a").evaluateAll((anchors) => anchors.map((anchor) => anchor.getAttribute("href")))).toEqual(["#/datasets/hostile_values"]);
+    const text = await page.locator("main").evaluate((main) => main.textContent);
+    expect(/[\u202e\u200b\u2060]/u.test(text)).toBe(false);
+    expect(calls).toEqual(["describe_column"]);
     watcher.clean();
   });
 

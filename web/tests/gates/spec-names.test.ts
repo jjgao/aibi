@@ -387,6 +387,40 @@ describe("the names D442 gives exist (the class of MA-1 of #121 round 2, for the
   });
 });
 
+/** The names D443 gives that are declared in a test file, each with why. */
+const D443_TEST_NAMES: Readonly<Record<string, string>> = {
+  INPUT_COUNTS: "the typed oracle's reviewed counts (tests/unit/typed-oracle.test.ts)",
+  OUTPUT_PINS: "the index gate's pinned outputs of the doors (tests/gates/api-graph.test.ts)",
+};
+
+/** The names D443 gives that are no declaration of the web, each with why. */
+const D443_NOT_DECLARED: Readonly<Record<string, string>> = {
+  className: "a JSX attribute (React's), which the lint holds to a literal",
+  _COLUMNS_APPENDED: "the server's fixture writer's list (tests/core/analyses/test_openapi_results.py), held below",
+  PLANTED_RANGE: "the server's fixture writer's curated range (tests/core/analyses/test_openapi_results.py), held below",
+};
+
+describe("the names D443 gives exist (the class of MA-1 of #121 round 2, for the column screen)", () => {
+  const spans = spansOf(readFileSync(path.join(ROOT, "SPEC.md"), "utf8"), "D443", "v0.8.89");
+
+  it("names a good many symbols and files", () => {
+    expect(spans.length).toBeGreaterThan(20);
+    for (const span of ["ColumnAddress", "columnOfAddress", "ColumnLink", "HREF_TEMPLATE", "BRANDS", "GRAMMAR_ALSO", "web/src/dataset/Column.tsx", "_COLUMNS_APPENDED", "PLANTED_RANGE"]) {
+      expect(spans).toContain(span);
+    }
+  });
+
+  it("finds every identifier, constant and file D443 names in the repository, and no stale entry of its lists of exceptions", () => {
+    expect(stale(spans, SOURCES, PYTHON, FILES, D443_TEST_NAMES, D443_NOT_DECLARED)).toEqual({ missing: [], unused: [] });
+  });
+
+  it("the server's names it gives are the server's (the fixture writer's)", () => {
+    const source = readFileSync(path.join(ROOT, "server/tests/core/analyses/test_openapi_results.py"), "utf8");
+    expect(source).toMatch(/^_COLUMNS_APPENDED\b/mu);
+    expect(source).toMatch(/^PLANTED_RANGE\b/mu);
+  });
+});
+
 /** One row of D432's table of the server's rules (`web/tests/fixtures/seam-rules.json`). */
 interface Rule {
   readonly id: string;

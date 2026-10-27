@@ -348,6 +348,7 @@ const EXPORTS = [
   "Choice",
   "ClientError",
   "CohortDraft",
+  "ColumnId",
   "ColumnRead",
   "DatasetId",
   "DecodeError",
@@ -385,6 +386,8 @@ const EXPORTS = [
   "UnitOption",
   "ValuesRead",
   "VocabularyName",
+  "columnOf",
+  "columnOfAddress",
   "compareText",
   "components",
   "countDraft",
@@ -782,6 +785,7 @@ const TEXT_PINS: Readonly<Record<string, readonly [string, string]>> = {
   isServerNumber: ["(value: unknown): value is ServerNumber", "the number box's brand check: a boolean"],
   kindOf: ["<K extends VocabularyName>(text: ServerText, vocabulary: K): Kind<K>", "a generated vocabulary's own member (a literal of the code), or null; Severity fail-closed"],
   idOf: ["(text: ServerText): DatasetId | null", "a DatasetId, whose generated grammar bounds its characters"],
+  columnOf: ["(text: ServerText): ColumnId | null", "a ColumnId (D443), whose generated grammar bounds its characters: the dataset screen's link to a column"],
   optionsOf: [
     '(answer: Answered<"describe_dataset">): Options',
     "the document seam (D432): opaque choices of a walked describe answer's ids (holding the boxes), the answer's own boxes as labels, its DatasetId and booleans of the page's lists (pinned by identity: signatureText)",
@@ -835,6 +839,8 @@ const OUTPUT_PINS: Readonly<Record<string, string>> = {
   "index.ts:optionsOf().dataset: DatasetId":
     "the describe answer's dataset id (D432), idOf's: a string whose generated grammar bounds its characters, which a Draft hands back as its dataset (documentOf holds it to the one its choices were minted from)",
   "index.ts:idOfAddress(): DatasetId": "the address's dataset id (D428): the router module's door, idOf's generated grammar over a text of the address, so its characters are bounded and nothing else of the address is given back",
+  "index.ts:columnOf(): ColumnId": "a column id (D443), a string whose generated grammar bounds its characters (the brand proves form, not provenance): the dataset screen's link to a column",
+  "index.ts:columnOfAddress(): ColumnId": "the address's column id (D443): the router module's second door, columnOf's generated grammar over a text of the address, so its characters are bounded and nothing else of the address is given back",
   "index.ts:Num(): ReactElement (an unlisted library type)":
     "shows a server number by its exact source text (D430): its props hold the box, never its digits, which a module-private context hands to the digits as they render; a detached root's textContent reads them by deliberate code (D419's boundary; react-dom/client entry-only, D429)",
   "index.ts:RetryAfter(): ReactElement (an unlisted library type)": "a refusal's Retry-After in whole seconds (D430): a count the client parsed from a header, shown, never a server number",

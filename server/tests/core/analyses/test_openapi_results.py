@@ -33,7 +33,9 @@ two synthetic ones, as their JSON goes over the wire:
   floors of 5 and 50, and one refusal), then the ten of ``describe_column`` (D442,
   ``_COLUMNS_ASKED``: a column of each distribution's shape, under no floor and floors of 5 and 50,
   the hostile values' column with a curated hostile label, and the last, categories under a floor
-  of 5), each from a world of its own. The
+  of 5) and the four appended after them for the column screen (D443, ``_COLUMNS_APPENDED``: the
+  pooled rows under floors of 14 and 21, then a declared date range curated and its histogram under
+  a floor of 5 and under none), each from a world of its own. The
   file records each section's ``start`` and ``end`` (``sections``), which its readers use instead of
   an absolute index (a section appended moves none). The state is made
   with a clock and issuance ids that are the same on every run; a change to what the server
@@ -441,20 +443,31 @@ _COLUMNS_ASKED: tuple[tuple[int | None, str, str], ...] = (
     (50, "orchard", "trees.variety"),  # under a floor of 50: suppressed
     (None, "hostile_values", "items.kind"),  # hostile category values and a curated label
     # Categories under a floor of 5: the counts a floor shows, beside the references that name it.
-    # No histogram under a floor is in this file: a floor shows bins only for a column with a
-    # declared range, and none of the orchard's numeric or date columns declares one
-    # (``no_declared_range``, as for ``trees.height_m`` above). That is a choice, not a lack: one
-    # curation away, a ``/fields/range`` curated on ``trees.height_m`` gives ``edges_from: "range"``
-    # bins under a floor of 5 (round 2's probe). M5.2-rest-c-2, whose screen shows describe_column's
-    # bins under *k*, records that fixture and its answer; c-1 does not.
+    # A floor shows bins only for a column with a declared range, and none of the orchard's numeric
+    # or date columns declares one (``no_declared_range``, as for ``trees.height_m`` above): the
+    # histograms under a floor are ``_COLUMNS_APPENDED``'s, after a curation.
     (5, "orchard", "trees.variety"),
 )
 """describe_column's answers (D442), each with its disclosure floor, dataset and column."""
 
+PLANTED_RANGE: dict[str, Any] = {"min": "2010-01-01", "max": "2011-01-01"}
+"""The range curated on ``trees.planted`` before ``_COLUMNS_APPENDED``'s last two (D443)."""
+
+_COLUMNS_APPENDED: tuple[tuple[int | None, str, str], ...] = (
+    (14, "orchard", "trees.variety"),  # pear's 14 shown, apple's and plum's 13 pooled: 26 (D271)
+    (21, "orchard", "trees.tags"),  # a list column: no category shown, its pooled row suppressed
+    (5, "orchard", "trees.planted"),  # the declared range: merged bins, no minimum or maximum
+    (None, "orchard", "trees.planted"),  # the declared range's bins, with the minimum and maximum
+)
+"""The column screen's answers (D443), appended after ``_COLUMNS_ASKED``'s ten, so that none of
+them moves: a curation publishes a release, which would move every orchard manifest recorded
+before it. ``PLANTED_RANGE`` is curated after the first two, so the last two are of release 2."""
+
 
 def _column_answers(world: World) -> list[dict[str, Any]]:
-    """describe_column's answers (D442, ``_COLUMNS_ASKED``), from a world of their own: the
-    orchard and ``fixtures/hostile_values`` published, ``items.kind`` curated to a hostile label."""
+    """describe_column's answers (D442, ``_COLUMNS_ASKED``, then D443's ``_COLUMNS_APPENDED``), from
+    a world of their own: the orchard and ``fixtures/hostile_values`` published, ``items.kind``
+    curated to a hostile label, and ``trees.planted``'s range curated before the last two."""
     world.publish("orchard", orchard_files(rows=40, harvests=60))
     world.publish("hostile_values", {"items.csv": HOSTILE_VALUES.read_bytes()})
     world.curate(
@@ -463,12 +476,26 @@ def _column_answers(world: World) -> list[dict[str, Any]]:
     )
     catalogs = {
         floor: Catalog(world.store, workers=Workers(QueryLimits()), floor=floor)
-        for floor in (None, 5, 50)
+        for floor in (None, 5, 14, 21, 50)
     }
-    return [
+    found = [
         _answer(world, catalogs[floor], "describe_column", {"dataset": dataset, "column": column})
-        for floor, dataset, column in _COLUMNS_ASKED
+        for floor, dataset, column in (*_COLUMNS_ASKED, *_COLUMNS_APPENDED[:2])
     ]
+    world.curate(
+        "orchard",
+        {
+            "op": "set",
+            "descriptor": "trees.planted",
+            "pointer": "/fields/range",
+            "value": PLANTED_RANGE,
+        },
+    )
+    found.extend(
+        _answer(world, catalogs[floor], "describe_column", {"dataset": dataset, "column": column})
+        for floor, dataset, column in _COLUMNS_APPENDED[2:]
+    )
+    return found
 
 
 _SECTIONS = ("orchard", "screens", "builder", "values", "columns")
@@ -604,7 +631,7 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
     ends = [0, *(bounds["end"] for bounds in written["sections"].values())]
     assert [bounds["start"] for bounds in written["sections"].values()] == ends[:-1]
     assert ends[-1] == len(answers)
-    assert [len(_section(written, name)) for name in _SECTIONS] == [13, 4, 8, 11, 10]
+    assert [len(_section(written, name)) for name in _SECTIONS] == [13, 4, 8, 11, 14]
     by = [(found["operation"], found["status"]) for found in answers]
     assert by == [
         ("search_catalog", 200),
@@ -635,7 +662,7 @@ def test_the_orchard_answers_hold_what_the_web_client_s_tests_need() -> None:
         *[("run_analysis", 200)] * 9,
         ("run_analysis", 422),
         ("run_analysis", 200),
-        *[("describe_column", 200)] * len(_COLUMNS_ASKED),
+        *[("describe_column", 200)] * (len(_COLUMNS_ASKED) + len(_COLUMNS_APPENDED)),
     ]
     orchard = _section(written, "orchard")
     assert [json.loads(orchard[n]["body"])["valid"] for n in (3, 4)] == [True, False]
@@ -710,11 +737,15 @@ def test_the_column_answers_hold_what_the_column_screen_needs() -> None:
     and its label, and holds the distribution the next screen reads: categories, a list's
     memberships, a histogram from the data with numeric and with date edges, an identifier's
     none, ``no_declared_range`` under a floor of 5, ``suppressed`` under 50, the hostile values'
-    column with its curated hostile label, and categories with their counts under a floor of 5."""
+    column with its curated hostile label, and categories with their counts under a floor of 5;
+    then the column screen's four (D443, ``_COLUMNS_APPENDED``): a pooled row shown, a list's
+    pooled row suppressed, and a declared range's histogram under a floor of 5 (merged bins, no
+    minimum or maximum, D329) and under none (both shown)."""
     written = json.loads(ORCHARD_ANSWERS.read_text(encoding="utf-8"))
     found = [json.loads(answer["body"]) for answer in _section(written, "columns")]
-    assert len(found) == len(_COLUMNS_ASKED)
-    for body, (floor, dataset, column) in zip(found, _COLUMNS_ASKED, strict=True):
+    asked = (*_COLUMNS_ASKED, *_COLUMNS_APPENDED)
+    assert len(found) == len(asked)
+    for body, (floor, dataset, column) in zip(found, asked, strict=True):
         assert (body["dataset"], body["column"], body["table"]) == (
             dataset,
             column,
@@ -745,7 +776,38 @@ def test_the_column_answers_hold_what_the_column_screen_needs() -> None:
         ("variety", "none", "suppressed", None, None, False),
         (HOSTILE_LABEL, "categories", None, None, False, False),
         ("variety", "categories", None, None, False, False),
+        ("variety", "categories", None, None, False, False),
+        ("tags", "categories", None, None, True, False),
+        ("planted", "histogram", None, "range", None, False),
+        ("planted", "histogram", None, "range", None, False),
     ]
+    variety, tags, floored, ranged = (body["statistics"]["distribution"] for body in found[10:])
+    assert [one["value"]["data"] for one in variety["categories"]] == ["pear"]
+    assert variety["pooled"]["count"] == 26
+    assert variety["pooled"]["reference"].endswith("/trees.variety/pooled?floor=14")
+    assert tags["categories"] == []
+    assert tags["pooled"]["count"] is None
+    assert tags["pooled"]["not_estimable"] == {"/count": "suppressed"}
+    orchard = [body["release"]["label"] for body in found if body["dataset"] == "orchard"]
+    assert orchard == [1] * 11 + [2, 2]
+    assert [body["descriptor"]["fields"]["range"] for body in found[12:]] == [PLANTED_RANGE] * 2
+    assert "min" not in floored
+    assert "max" not in floored
+    assert {"min", "max"} <= set(ranged)
+    assert len(floored["bins"]) < len(ranged["bins"])
+    assert all(
+        set(bin_.get(end, {"data": ""})) == {"data"}
+        for bin_ in (*floored["bins"], *ranged["bins"])
+        for end in ("low", "high")
+    )
+    # The column screen's notice (D443) says that under a floor describe_column serves the
+    # descriptor without its curation evidence (D271's ``_served``): every answer under a floor has
+    # none, every other one has some.
+    evidence = [
+        any("evidence" in member for member in body["descriptor"].get("curation", {}).values())
+        for body in found
+    ]
+    assert evidence == [body["disclosure"]["min_cell_count"] is None for body in found]
     edges = [
         [
             bin_[end]

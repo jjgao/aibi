@@ -44,7 +44,8 @@
  *   `src/` (`ELEMENTS`, `ATTRIBUTES`, and the prefixes `aria-` and `data-`); an `<option>` in
  *   `src/layout/Option.tsx` alone (D428); no spread; `ref` in the reviewed modules alone
  *   (`REF_MODULES`); `className`, `role`, `href`, `aria-*` and `data-*` of a literal type, `href`
- *   also exactly `Link`'s template (`HREF_TEMPLATE`: `#/datasets/` and one `DatasetId`).
+ *   also exactly one of a closed list of templates (`HREF_TEMPLATE`: `Link`'s `#/datasets/` and one
+ *   `DatasetId`, and `ColumnLink`'s, which adds `/columns/` and one `ColumnId`).
  * - **`display/dom` (R91)**: no write to a member of a value of a type the DOM library declares, or
  *   to a member it declares (through `Pick`, `Partial` or a mapped type), and no reference to a
  *   function, method or constructor it declares (a call or not: `.call`, `.apply`, `.bind`, an
@@ -93,6 +94,12 @@ export const BRANDS = [
     file: "src/layout/Field.tsx",
     reason: "What the person typed into a field (`Field`'s mint, D428): an `<input>`'s value, their own text.",
   },
+  {
+    type: "ColumnId",
+    brand: "columnBrand",
+    file: "src/api/text.tsx",
+    reason: "A column's id, of the generated grammar (`columnOf`, `columnOfAddress`, D428, D443): its characters are bounded, so it is shown raw by design.",
+  },
   { type: "Key", brand: "keyBrand", file: "src/layout/key.ts", reason: "An index (`keyOf`, D428): an element's `key` and an `<option>`'s value, a whole number the page made." },
 ];
 
@@ -129,7 +136,7 @@ export const ATTRIBUTES = [
 ];
 
 /** The attributes whose value must be of a literal type, beside `aria-*` and `data-*`: a brand is no
- * literal, but `href`'s template of a `DatasetId` (`Link`'s target; a bare id is no address). */
+ * literal, but `href`'s templates (`HREF_TEMPLATE`: `Link`'s and `ColumnLink`'s targets; a bare id is no address). */
 export const LITERAL_ATTRIBUTES = ["className", "href", "role"];
 
 /** The modules that may write `ref` (D423's uncontrolled token field; the end-to-end harness's fields). */
@@ -520,12 +527,36 @@ export function rawIn(checker, type, brands, seen = new Set(), depth = 0) {
   return checker.isTypeAssignableTo(checker.getStringType(), type) || checker.isTypeAssignableTo(checker.getNumberType(), type) ? "an object type a string or a number is assignable to" : null;
 }
 
-/** The one template a literal attribute takes: `href`'s `#/datasets/${DatasetId}`, `Link`'s (its
- * literal text exactly the prefix, its one hole a `DatasetId`), never a bare id or another shape. */
-export const HREF_TEMPLATE = { attribute: "href", prefix: "#/datasets/", brand: "DatasetId" };
+/** The templates a literal attribute takes, a closed list (D429, D443): `href`'s `#/datasets/${DatasetId}`
+ * (`Link`'s) and `#/datasets/${DatasetId}/columns/${ColumnId}` (`ColumnLink`'s), each matched text by
+ * text and hole by hole (each hole exactly its brand), never a bare id or another shape. */
+export const HREF_TEMPLATE = {
+  attribute: "href",
+  shapes: [
+    { texts: ["#/datasets/", ""], brands: ["DatasetId"] },
+    { texts: ["#/datasets/", "/columns/", ""], brands: ["DatasetId", "ColumnId"] },
+  ],
+};
+
+/** Whether a template literal type is exactly one of `template`'s shapes: its texts each the shape's,
+ * its holes each of the shape's brand at that place.
+ * @param {ts.TypeChecker} checker @param {ts.TemplateLiteralType} type @param {typeof HREF_TEMPLATE} template */
+function isShape(checker, type, template) {
+  const { texts, types } = type;
+  return template.shapes.some(
+    (shape) =>
+      texts.length === shape.texts.length &&
+      texts.every((text, at) => text === shape.texts[at]) &&
+      types.length === shape.brands.length &&
+      shape.brands.every((brand, at) => {
+        const hole = types[at];
+        return hole !== undefined && hole.isIntersection() && hole.types.some((member) => brandsOf(checker, member).includes(brand));
+      }),
+  );
+}
 
 /** What makes a type no literal (the literal attributes, `display/elements`), in words, or `null`:
- * a literal, a union of them, or (for `template`'s attribute alone) exactly that template.
+ * a literal, a union of them, or (for `template`'s attribute alone) exactly one of its shapes.
  * @param {ts.TypeChecker} checker @param {ts.Type} type @param {typeof HREF_TEMPLATE | null} template @returns {string | null} */
 export function notLiteral(checker, type, template) {
   if (type.isUnion()) {
@@ -534,18 +565,14 @@ export function notLiteral(checker, type, template) {
   if ((type.flags & LITERAL_FLAGS) !== 0) {
     return null;
   }
-  if (template !== null && (type.flags & ts.TypeFlags.TemplateLiteral) !== 0) {
-    const { texts, types } = /** @type {ts.TemplateLiteralType} */ (type);
-    const [hole] = types;
-    if (texts.length === 2 && texts[0] === template.prefix && texts[1] === "" && hole !== undefined && hole.isIntersection() && hole.types.some((member) => brandsOf(checker, member).includes(template.brand))) {
-      return null;
-    }
+  if (template !== null && (type.flags & ts.TypeFlags.TemplateLiteral) !== 0 && isShape(checker, /** @type {ts.TemplateLiteralType} */ (type), template)) {
+    return null;
   }
   return checker.typeToString(type);
 }
 
 const RAW_TEXT =
-  "No text reaches the DOM raw (D429, R90): {{what}} {{where}} ({{type}}). Show a server text through the layout (Text, Ref, Segments, Option), words as literals or an `as const` table, a number through its door; a `DatasetId`, a `Typed` and a `Key` are the only brands allowed.";
+  "No text reaches the DOM raw (D429, R90): {{what}} {{where}} ({{type}}). Show a server text through the layout (Text, Ref, Segments, Option), words as literals or an `as const` table, a number through its door; a `DatasetId`, a `ColumnId`, a `Typed` and a `Key` are the only brands allowed.";
 
 /** The ESTree kinds of a function. */
 const FUNCTIONS = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"];

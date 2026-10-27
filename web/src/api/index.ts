@@ -59,5 +59,5 @@ export {
 } from "./typed";
 export { type Facet, type Listed, type Lists, type ListShown, listOf, NOT_READ, Num, type Refused, RetryAfter } from "./format";
 export { isPositive, isZero, largestOf, LISTED } from "./numbers";
-export { compareText, idOf, idOfAddress, kindOf, memberOf, sameText, showText, type Choice, type DatasetId, type GrammarName, type Kind, type Member, type Role, type VocabularyName } from "./text";
+export { columnOf, columnOfAddress, compareText, idOf, idOfAddress, kindOf, memberOf, sameText, showText, type Choice, type ColumnId, type DatasetId, type GrammarName, type Kind, type Member, type Role, type VocabularyName } from "./text";
 export { countDraft, optionsOf, runDraft, validateDraft, type CohortDraft, type Draft, type LeafDraft, type Option, type Options, type UnitOption } from "./document";

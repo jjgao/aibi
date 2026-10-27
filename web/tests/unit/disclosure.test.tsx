@@ -94,8 +94,9 @@ describe("Disclosure", () => {
       return k === null ? [] : [{ index, k, counts: unitCounts(body) }];
     });
     // the screens' two under a floor of 50, the builder's floored count, the four values answers under a
-    // floor, and describe_column's under floors of 5 and 50, the last with its categories (D442)
-    expect(floored.map(({ index }) => index)).toEqual(expect.arrayContaining([answerAt("screens", 2), answerAt("screens", 3), answerAt("builder", 3), ...[3, 4, 7, 8].map((place) => answerAt("values", place)), answerAt("columns", 6), answerAt("columns", 7), answerAt("columns", 9)]));
+    // floor, describe_column's under floors of 5 and 50, the last with its categories (D442), and the
+    // column screen's under floors of 14, 21 and 5: a pooled row shown, one suppressed, merged bins (D443)
+    expect(floored.map(({ index }) => index)).toEqual(expect.arrayContaining([answerAt("screens", 2), answerAt("screens", 3), answerAt("builder", 3), ...[3, 4, 7, 8].map((place) => answerAt("values", place)), ...[6, 7, 9, 10, 11, 12].map((place) => answerAt("columns", place))]));
     for (const { index, k, counts } of floored) {
       for (const [kind, count] of counts) {
         expect(count === null || count === 0 || count >= k, `answer ${String(index)}: ${kind} ${String(count)} under k = ${String(k)}`).toBe(true);

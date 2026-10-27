@@ -10,9 +10,13 @@
  * Shown: the dataset's id, its release and effective disclosure, its standing caveats, the
  * applicable analyses (worded as R45 words them: status in words, `missing` and `unconfirmed`
  * listed whenever not empty, whatever the status), how many columns it has and where the columns
- * not on this page start, the table graph (`Graph`) and the tables (`Tables`). **Not shown, said in
- * fixed words (`MEMBERS_NOT_SHOWN`):** the descriptors' other members (M5.2-rest), which the server's own
- * page shows when it runs without a web bundle, and `describe_dataset` gives whole. Under the
+ * not on this page start, the table graph (`Graph`) and the tables (`Tables`, each column's id a link
+ * to its screen, D443). **Not shown, said in fixed words (`MEMBERS_NOT_SHOWN`):** the descriptors'
+ * other members (M5.2-rest; the caveats shown name a member and its curation status, as
+ * `harvests/fields/primary_key (proposed)`, and that is the only mention of one), which the server's own page shows when it runs without a web bundle,
+ * and `describe_dataset` gives whole, or, under a disclosure setting, without their curation
+ * evidence; neither gives a column's descriptor, which the words send to the column's screen and
+ * `describe_column`. Under the
  * description stands the builder (D433), given the options `optionsOf` mints from the same answer;
  * the route keys this screen by its `DatasetId`, so another dataset's screen is a new builder.
  */
@@ -20,7 +24,7 @@ import "./dataset.css";
 
 import { Fragment, type ReactElement, useState, useSyncExternalStore } from "react";
 
-import { type Answered, type DatasetId, describeDataset, kindOf, Num, optionsOf, type Outcome, SHAPE_MISMATCH, UNREACHABLE } from "../api";
+import { type Answered, type DatasetId, describeDataset, idOf, kindOf, Num, optionsOf, type Outcome, SHAPE_MISMATCH, UNREACHABLE } from "../api";
 import { Builder } from "../builder/Builder";
 import { DEADLINE, loader } from "../catalogue/load";
 import { Caveats } from "../layout/Caveat";
@@ -50,8 +54,8 @@ export const UNKNOWN_STATUS = "status not known to this page:";
 
 /** The fixed words of what this page does not show yet (T8), around the dataset's id. */
 export const MEMBERS_NOT_SHOWN = [
-  "Other descriptor members (beyond the tables' ids and labels, the ids, labels, datatypes and identifier flags of the columns and the graph below), among them the dataset's label, the dataset's and the tables' definitions and provenance, the dataset descriptor's name, packs and source, the tables' grains, roles, primary keys and sources, the columns' units, each descriptor's kind and version, each member's curation status and who set it, the extensions, the relationships' child and parent columns, and the coverage and endpoint descriptors, are not shown on this page yet. aibi's server-rendered page at /datasets/",
-  " shows them when a server runs without a web bundle (its default until M5.2-rest, D410), and the describe_dataset tool gives them whole.",
+  "Other descriptor members (beyond the tables' ids and labels, the ids, labels, datatypes and identifier flags of the columns and the graph below), among them the dataset's label, the dataset's and the tables' definitions and provenance, the dataset descriptor's name, packs and source, the tables' grains, roles, primary keys and sources, each descriptor's kind and version, who set each member and its curation evidence, the curation status of each member the caveats above do not name, the extensions, the relationships' child and parent columns, and the coverage and endpoint descriptors, are not shown on this page yet. aibi's server-rendered page at /datasets/",
+  " shows them when a server runs without a web bundle (its default until M5.2-rest, D410), and the describe_dataset tool gives them whole, or, under a disclosure setting, without their curation evidence. Neither gives a column's descriptor: each column's id below links to the column's own screen, and the describe_column tool gives it.",
 ] as const;
 
 /** The words of each applicable analysis's status (R45's). */
@@ -142,7 +146,7 @@ export function Description({ answer }: { readonly answer: Described }): ReactEl
         {MEMBERS_NOT_SHOWN[1]}
       </p>
       <Graph graph={answer.graph} />
-      <Tables tables={answer.tables} />
+      <Tables tables={answer.tables} dataset={idOf(answer.dataset)} />
     </>
   );
 }

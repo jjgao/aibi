@@ -72,14 +72,22 @@ describe("the catalogue entry", () => {
     expect(await shown.until((words) => CATALOGUE.test(words))).toMatch(CATALOGUE);
   });
 
-  it("composes no link from the URL or from data: the screens' literal hrefs are the fixed paths, and Link's template the one composed", () => {
+  it("composes no link from the URL or from data: the app's literal hrefs are the fixed paths, and Link's and ColumnLink's templates the ones composed, in Link.tsx alone (all of src/, D443)", () => {
     const hrefs: string[] = [];
-    for (const directory of ["catalogue", "dataset", "router", "layout"]) {
-      const at_ = path.join(import.meta.dirname, "../../src", directory);
-      for (const name of readdirSync(at_).filter((file) => file.endsWith(".tsx"))) {
-        hrefs.push(...[...readFileSync(path.join(at_, name), "utf8").matchAll(/href=("[^"]*"|\{[^}]*\})/gu)].map((m) => `${directory}/${name} ${m[1] ?? ""}`));
-      }
+    const templates: string[] = [];
+    const root = path.join(import.meta.dirname, "../../src");
+    for (const name of readdirSync(root, { recursive: true, encoding: "utf8" }).filter((file) => /\.tsx?$/u.test(file))) {
+      const text = readFileSync(path.join(root, name), "utf8");
+      const file = name.split(path.sep).join("/");
+      hrefs.push(...[...text.matchAll(/href=("[^"]*"|\{[^}]*\})/gu)].map((m) => `${file} ${m[1] ?? ""}`));
+      templates.push(...[...text.matchAll(/`#\/datasets\/\$\{[^`]*`/gu)].map((m) => `${file} ${m[0]}`));
     }
-    expect(hrefs.sort()).toEqual(['catalogue/Catalogue.tsx "/curate"', 'catalogue/NotFound.tsx "#/"', "layout/Link.tsx {target}", 'router/address.tsx "#/"']);
+    expect(hrefs.sort()).toEqual(['catalogue/Catalogue.tsx "/curate"', 'catalogue/NotFound.tsx "#/"', "layout/Link.tsx {target}", "layout/Link.tsx {target}", 'operator/Operator.tsx "/"', 'router/address.tsx "#/"']);
+    expect(templates.sort()).toEqual([
+      "layout/Link.tsx `#/datasets/${DatasetId}/columns/${ColumnId}`",
+      "layout/Link.tsx `#/datasets/${DatasetId}`",
+      "layout/Link.tsx `#/datasets/${dataset}/columns/${column}`",
+      "layout/Link.tsx `#/datasets/${to}`",
+    ]);
   });
 });

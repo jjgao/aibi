@@ -686,11 +686,13 @@ function untakenArms(made: readonly Body[]): string[] {
  * models (their components reached as roots, the arms of `DistributionPosition.columns` forced and
  * told apart in the place's key) and its eleven values answers (187 bodies to 240); then by D442's
  * `describe_column`, typed (its `ColumnDescription` reached as a root, the three arms of its
- * distribution forced; 240 bodies to 285, 38,955 inputs). */
+ * distribution forced; 240 bodies to 285, 38,955 inputs); then by D443's four column answers (a
+ * pooled row shown and one suppressed, a declared range's histogram under a floor and without one;
+ * 285 bodies to 289, 39,017 inputs). */
 const INPUT_COUNTS = {
-  inputs: { additions: 2294, bodies: 285, drops: 3638, keys: 481, misses: 2667, renames: 3638, swaps: 6189, values: 16747, words: 3016 },
-  merged: { additions: 17890, drops: 22329, keys: 1669, misses: 52661, renames: 22329, swaps: 16389, values: 98588, words: 18459 },
-  bodies: { all: 285, small: 283, over: 2 },
+  inputs: { additions: 2298, bodies: 289, drops: 3645, keys: 481, misses: 2667, renames: 3645, swaps: 6198, values: 16778, words: 3016 },
+  merged: { additions: 18242, drops: 22806, keys: 1670, misses: 53641, renames: 22806, swaps: 16660, values: 100554, words: 18835 },
+  bodies: { all: 289, small: 287, over: 2 },
 };
 
 describe("the walk agrees with an independent validator of the document, over a bounded set of inputs (MA3)", () => {

@@ -144,9 +144,11 @@ def test_the_rows_of_m5_2_rest_are_read_from_appendix_c() -> None:
         "src/dataset/Descriptor.tsx",
         "src/dataset/Relationships.tsx",
         "src/dataset/TableDescriptors.tsx",
-        "src/dataset/Column.tsx",
         "src/dataset/Paging.tsx",
     ]
+    # R67, the column screen's row, was re-owned to M5.2-min by D443: built, it leaves the gate (it
+    # never governed D311's page, which shows no distribution).
+    assert "src/dataset/Column.tsx" not in modules
     assert absent(modules)
 
 

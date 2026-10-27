@@ -5,14 +5,18 @@
  * reference, `stat:<manifest>/<table>/n_rows`, is never cut, and a suppressed count is never 0), and its
  * columns, each with its id (`<table>.<column>`), its label, its datatype in words (absent:
  * undeclared) and `identifier` when it is one (a column not shown as one says nothing: the flag false
- * may be undeclared). A table's grain and role and the coverage and endpoint descriptors are
+ * may be undeclared). Each column's id links to the column's screen (D443: `ColumnLink`, its
+ * `ColumnId` minted from the answer's own `ColumnBrief.id` through `columnOf`, never from a label or
+ * the address, with the answer's dataset's `DatasetId`); an id or a dataset not of its grammar gets
+ * no link, its id shown all the same. A table's grain and role and the coverage and endpoint descriptors are
  * descriptor members (R66b, M5.2-rest): not shown here. A table with no column on this page says so
  * (`NO_COLUMN`): the columns' paging may hold them on another.
  */
 import type { ReactElement } from "react";
 
-import { type Answered, kindOf } from "../api";
+import { type Answered, columnOf, type DatasetId, kindOf } from "../api";
 import { keyOf } from "../layout/key";
+import { ColumnLink } from "../layout/Link";
 import { StatCount } from "../layout/StatCount";
 import { Ref, Text } from "../layout/Text";
 
@@ -51,12 +55,20 @@ export type TablesOut = Answered<"describe_dataset">["tables"];
 
 type Column = TablesOut[number]["columns"][number];
 
-/** A column: its id, label, datatype and, when it is one, `identifier`. */
-function ColumnLine({ column }: { readonly column: Column }): ReactElement {
+/** A column: its id (a link to its screen), label, datatype and, when it is one, `identifier`. */
+function ColumnLine({ column, dataset }: { readonly column: Column; readonly dataset: DatasetId | null }): ReactElement {
+  const named = columnOf(column.id);
   const datatype = column.datatype === undefined ? null : kindOf(column.datatype, "ColumnBrief.datatype");
   return (
     <p role="listitem">
-      <Ref value={column.id} /> <Text value={column.label.data} />,{" "}
+      {dataset === null || named === null ? (
+        <Ref value={column.id} />
+      ) : (
+        <ColumnLink dataset={dataset} column={named}>
+          <Ref value={column.id} />
+        </ColumnLink>
+      )}{" "}
+      <Text value={column.label.data} />,{" "}
       {column.datatype === undefined ? (
         UNDECLARED
       ) : datatype === null ? (
@@ -71,8 +83,9 @@ function ColumnLine({ column }: { readonly column: Column }): ReactElement {
   );
 }
 
-/** Every table: headed by its id and label, then its row count with its reference, then its columns. */
-export function Tables({ tables }: { readonly tables: TablesOut }): ReactElement {
+/** Every table: headed by its id and label, then its row count with its reference, then its columns
+ * (each linked to its screen in `dataset`, the answer's own dataset). */
+export function Tables({ tables, dataset }: { readonly tables: TablesOut; readonly dataset: DatasetId | null }): ReactElement {
   return (
     <section className="tables">
       <h2>Tables</h2>
@@ -90,7 +103,7 @@ export function Tables({ tables }: { readonly tables: TablesOut }): ReactElement
           ) : (
             <div role="list" aria-label="columns">
               {table.columns.map((column, at) => (
-                <ColumnLine key={keyOf(at)} column={column} />
+                <ColumnLine key={keyOf(at)} column={column} dataset={dataset} />
               ))}
             </div>
           )}

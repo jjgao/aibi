@@ -113,10 +113,11 @@ export function wordsOf(source: ts.Node, checker: ts.TypeChecker): string[] {
   return found.filter(wordy);
 }
 
-/** The program of the roots, under the app's options. */
-export function censusProgram(): ts.Program {
+/** The program of the roots (the result screen's, or another screen's: the column screen's census,
+ * D443), under the app's options. */
+export function censusProgram(roots: readonly string[] = ROOTS): ts.Program {
   return ts.createProgram(
-    ROOTS.map((root) => path.join(WEB, root)),
+    roots.map((root) => path.join(WEB, root)),
     appOptions(),
   );
 }
@@ -128,11 +129,11 @@ function renders(checker: ts.TypeChecker, symbol: ts.Symbol, at: ts.Node): boole
 
 /** The modules the census reads, project-relative, and past the api's index each constant imported
  * that does not render (a variable's declaration: its words are read, not its module's). */
-function reached(program: ts.Program): { readonly modules: string[]; readonly constants: ts.VariableDeclaration[] } {
+function reached(program: ts.Program, roots: readonly string[]): { readonly modules: string[]; readonly constants: ts.VariableDeclaration[] } {
   const checker = program.getTypeChecker();
   const seen = new Set<string>();
   const constants: ts.VariableDeclaration[] = [];
-  const queue = ROOTS.map((root) => path.join(WEB, root));
+  const queue = roots.map((root) => path.join(WEB, root));
   const src = path.join(WEB, "src") + path.sep;
   while (queue.length > 0) {
     const file = queue.shift() ?? "";
@@ -180,15 +181,15 @@ function reached(program: ts.Program): { readonly modules: string[]; readonly co
 }
 
 /** The modules the census reads, project-relative. */
-export function censusModules(program: ts.Program): string[] {
-  return reached(program).modules;
+export function censusModules(program: ts.Program, roots: readonly string[] = ROOTS): string[] {
+  return reached(program, roots).modules;
 }
 
 /** Every word of the census's modules, by module. */
-export function enumerated(program: ts.Program = censusProgram()): Map<string, string[]> {
+export function enumerated(program: ts.Program = censusProgram(), roots: readonly string[] = ROOTS): Map<string, string[]> {
   const checker = program.getTypeChecker();
   const out = new Map<string, string[]>();
-  const { modules, constants } = reached(program);
+  const { modules, constants } = reached(program, roots);
   for (const module of modules) {
     const source = program.getSourceFile(path.join(WEB, module));
     if (source !== undefined) {

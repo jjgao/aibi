@@ -253,8 +253,9 @@ describe("the class test: nothing raw survives the walk, value or key (m3, m7)",
     expect(bounds.map(({ start }) => start)).toEqual([0, ...bounds.slice(0, -1).map(({ end }) => end)]);
     expect(bounds.at(-1)?.end).toBe(ORCHARD.length);
     expect(bounds.every(({ start, end }) => end > start)).toBe(true);
-    // describe_column's answers, the section the seam's eighth function reads (D442)
-    expect(ORCHARD.slice(SECTIONS.columns.start, SECTIONS.columns.end).map(({ operation }) => operation)).toEqual(Array<string>(10).fill("describe_column"));
+    // describe_column's answers, the section the seam's eighth function reads (D442's ten, then the
+    // column screen's four, D443)
+    expect(ORCHARD.slice(SECTIONS.columns.start, SECTIONS.columns.end).map(({ operation }) => operation)).toEqual(Array<string>(14).fill("describe_column"));
     expect(answerAt("values", 0)).toBe(SECTIONS.values.start);
     expect(() => answerAt("values", SECTIONS.values.end - SECTIONS.values.start)).toThrow("no answer");
     expect(() => answerAt("values", -1)).toThrow("no answer");

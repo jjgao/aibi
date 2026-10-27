@@ -1,7 +1,10 @@
 /**
  * The brands of D428 and their one mint each: `DatasetId` (`src/api/text.tsx`'s grammar: `idOf`
- * and `idOfAddress`), `Typed` (`src/layout/Field.tsx`: what the person typed) and `Key`
- * (`src/layout/key.ts`: an index). Over the app's program, the files that mint one, by any of the
+ * and `idOfAddress`), `ColumnId` (the same module's, D443: `columnOf` and `columnOfAddress`), `Typed`
+ * (`src/layout/Field.tsx`: what the person typed) and `Key` (`src/layout/key.ts`: an index), read
+ * from the display lint's own list (`BRANDS` of `scripts/lint/display.mjs`, D429), so that a brand
+ * the lint lets reach the DOM is a brand whose mint is checked here, and the two lists cannot drift.
+ * Over the app's program, the files that mint one, by any of the
  * ways the checker takes on trust (a type assertion, a type predicate, an overload signature whose
  * implementation gives a wider type, an ambient declaration), are exactly the brand's module: a
  * second mint by one of those ways fails here, whatever its name (the lint refuses an assertion and
@@ -11,22 +14,29 @@
  * none of these ways; they are deliberate code (D419's boundary), and the last describe holds that
  * this check does not see them. And what the brands are for, held
  * by the checker: a `Choice` is no `<select>` or `<option>` value, an `<option>`'s value is a
- * `Key`, an `<input>`'s a `Typed`, a `Link`'s target a `DatasetId`, and a box none of them.
+ * `Key`, an `<input>`'s a `Typed`, a `Link`'s target a `DatasetId`, a `ColumnLink`'s a `DatasetId`
+ * and a `ColumnId` (neither taking the other), and a box none of them.
  */
 import path from "node:path";
 
 import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { BRANDS as LINT_BRANDS } from "../../scripts/lint/display.mjs";
 import { isTooling } from "../../scripts/tooling.mjs";
 import { appOptions, check, WEB } from "./program";
 
-/** Each brand, the module that declares and mints it. */
-const BRANDS = [
-  { name: "DatasetId", file: "src/api/text.tsx" },
-  { name: "Typed", file: "src/layout/Field.tsx" },
-  { name: "Key", file: "src/layout/key.ts" },
-] as const;
+/** Each brand, the module that declares and mints it: the display lint's list (D429), whole. */
+const BRANDS: readonly { readonly name: string; readonly file: string }[] = LINT_BRANDS.map(({ type, file }) => ({ name: type, file }));
+
+/** A brand of the list, by its name. */
+function brandNamed(name: string): { readonly name: string; readonly file: string } {
+  const found = BRANDS.find((one) => one.name === name);
+  if (found === undefined) {
+    throw new Error(`no brand ${name}`);
+  }
+  return found;
+}
 
 /** The brand's type, from its module. */
 function brandOf(program: ts.Program, checker: ts.TypeChecker, file: string, name: string): ts.Type {
@@ -111,13 +121,18 @@ describe("each brand has one mint", () => {
     ["an assertion", "Key", "import type { Key } from './layout/key';\nexport const k = 1 as Key;\n"],
     ["a predicate", "DatasetId", "import type { DatasetId } from './api';\nexport function is(raw: string): raw is DatasetId {\n  return raw.length > 0;\n}\n"],
     ["a nullable overload", "DatasetId", "import type { DatasetId } from './api';\nexport function mint(raw: string): DatasetId | null;\nexport function mint(raw: string): string | null {\n  return raw;\n}\n"],
+    ["a nullable overload of a ColumnId (round 1 of the column screen's plan: it passed tsc, the lint and this file while the list was hand-kept)", "ColumnId", "import type { ColumnId } from './api';\nexport function mint(raw: string | null): ColumnId | null;\nexport function mint(raw: string | null): string | null {\n  return raw;\n}\n"],
+    ["a predicate of a ColumnId", "ColumnId", "import type { ColumnId } from './api';\nexport function is(raw: string): raw is ColumnId {\n  return raw.includes('.');\n}\n"],
+    ["an assertion to a ColumnId", "ColumnId", "import type { ColumnId } from './api';\nexport const c = 'trees.variety' as ColumnId;\n"],
   ];
 
+  it("checks every brand the display lint lets reach the DOM, by its name and module", () => {
+    expect(BRANDS.map(({ name }) => name).sort()).toEqual(["ColumnId", "DatasetId", "Key", "Typed"]);
+    expect(brandNamed("ColumnId").file).toBe("src/api/text.tsx");
+  });
+
   it.each(MINTS)("sees a second mint: %s (the check's own controls)", (_case, name, text) => {
-    const brand = BRANDS.find((one) => one.name === name);
-    if (brand === undefined) {
-      throw new Error(name);
-    }
+    const brand = brandNamed(name);
     const checked = check({ "src/probe-mint.tsx": text });
     expect(minters(checked.program, checked.checker, brandOf(checked.program, checked.checker, brand.file, name))).toEqual([brand.file, "src/probe-mint.tsx"].sort());
   });
@@ -139,20 +154,27 @@ describe("what the brands are for, held by the checker", () => {
     ["no name for an Option", "<Option label={box} name={null} at={keyOf(0)} />", []],
     ["a Typed as a Field's value", "<Field value={UNTYPED} onChange={() => undefined}>x</Field>", []],
     ["a DatasetId as a Link's target", "id === null ? null : <Link to={id}>x</Link>", []],
+    ["a ColumnId as a Link's target", "column === null ? null : <Link to={column}>x</Link>", [2322]],
+    ["a string as a ColumnLink's column", "id === null ? null : <ColumnLink dataset={id} column={'trees.variety'}>x</ColumnLink>", [2322]],
+    ["a box as a ColumnLink's column", "id === null ? null : <ColumnLink dataset={id} column={box}>x</ColumnLink>", [2322]],
+    ["a DatasetId as a ColumnLink's column", "id === null ? null : <ColumnLink dataset={id} column={id}>x</ColumnLink>", [2322]],
+    ["a ColumnId as a ColumnLink's dataset", "column === null ? null : <ColumnLink dataset={column} column={column}>x</ColumnLink>", [2322]],
+    ["a DatasetId and a ColumnId as a ColumnLink's", "id === null || column === null ? null : <ColumnLink dataset={id} column={column}>x</ColumnLink>", []],
   ];
 
   it.each(PROBES)("%s", (_case, expression, codes) => {
     const text = [
-      "import { type Choice, type ServerText, idOfAddress } from './api';",
+      "import { type Choice, type ServerText, columnOfAddress, idOfAddress } from './api';",
       "import { Field, UNTYPED } from './layout/Field';",
       "import { keyOf } from './layout/key';",
-      "import { Link } from './layout/Link';",
+      "import { ColumnLink, Link } from './layout/Link';",
       "import { Option } from './layout/Option';",
       "declare const choice: Choice<\"unit\">;",
       "declare const box: ServerText;",
       "const id = idOfAddress('orchard');",
+      "const column = columnOfAddress('trees.variety');",
       `export const probe = ${expression};`,
-      "export const used = [Field, UNTYPED, keyOf, Link, Option, id, choice, box];",
+      "export const used = [Field, UNTYPED, keyOf, Link, ColumnLink, Option, id, column, choice, box];",
       "",
     ].join("\n");
     expect(check({ "src/probe-brand.tsx": text }).codes("src/probe-brand.tsx")).toEqual(codes);
@@ -174,7 +196,7 @@ describe("a residual: the brands' unsound spots mint with no assertion, predicat
   it("array covariance mints a Typed, and the checker accepts it: the mint check does not see it", () => {
     const checked = check({ "src/probe-covariance.ts": COVARIANCE });
     expect(checked.codes("src/probe-covariance.ts")).toEqual([]);
-    const brand = BRANDS[1];
+    const brand = brandNamed("Typed");
     expect(minters(checked.program, checked.checker, brandOf(checked.program, checked.checker, brand.file, brand.name))).toEqual([brand.file]);
   });
 });

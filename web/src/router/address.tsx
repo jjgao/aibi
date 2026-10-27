@@ -4,8 +4,9 @@
  * refused elsewhere; the others are closed where their text would land, as the last paragraph says),
  * and the one, beside the operator entry's `url.ts`, that writes it.
  * The address is the adversary's (a link from another site, D314): no text of it reaches the DOM.
- * A dataset id is read from it through `idOfAddress` alone (the generated grammar of `idOf`), and
- * an address that is not of it is shown in fixed words, never echoed.
+ * A dataset id is read from it through `idOfAddress` alone (the generated grammar of `idOf`), a
+ * column id through `columnOfAddress` alone (`columnOf`'s), and an address that is not of them is
+ * shown in fixed words, never echoed.
  *
  * - **`redirectAddress`**, before the router starts: the server serves the bundle at
  *   `/datasets/<one segment>` too (D410), which the hash router does not route; the raw, undecoded
@@ -23,6 +24,12 @@
  *   `Refused`. So the same refusal answers twice: a path segment that is no id lands on the catalogue
  *   page, a hash that is none shows `Refused`; and a path segment with an escape is none while the
  *   hash route decodes it (`/datasets/orch%61rd` lands on the catalogue, `#/datasets/orch%61rd` is `orchard`).
+ * - **`ColumnAddress`** (D443), the hash route `#/datasets/:id/columns/:column`: the dataset's
+ *   parameter through `idOfAddress` and the column's through `columnOfAddress` (the column grammar
+ *   of `columnOf`, `<table>.<column>`, decoded once by the router as the dataset's is); two ids
+ *   render the column's screen, handed both, anything else `Refused`'s fixed words (an address that
+ *   names no dataset's column names no dataset's screen either), never echoed. Nothing is redirected
+ *   for a column: the server serves the bundle at `/datasets/<one segment>` alone (D410).
  *
  * What is checked outside this module, and no more. (1) The app names an allow-list of the router
  * package alone (`createHashRouter`, `RouteObject`, `RouterProvider`: the lint's
@@ -51,7 +58,7 @@
 import type { ReactElement } from "react";
 import { useParams } from "react-router";
 
-import { type DatasetId, idOfAddress } from "../api";
+import { type ColumnId, columnOfAddress, type DatasetId, idOfAddress } from "../api";
 
 /** A path the server serves the bundle at for a dataset (D410): `/datasets/<one segment>`. */
 const DATASET_PATH = /^\/datasets\/([^/]*)$/u;
@@ -84,4 +91,13 @@ export function DatasetAddress({ screen }: { readonly screen: (id: DatasetId) =>
   const { id } = useParams();
   const found = id === undefined ? null : idOfAddress(id);
   return found === null ? <Refused /> : screen(found);
+}
+
+/** The screen of the column the hash route names (`screen`, handed its dataset's id and its own), or
+ * `Refused` when either is not of its grammar. */
+export function ColumnAddress({ screen }: { readonly screen: (id: DatasetId, column: ColumnId) => ReactElement }): ReactElement {
+  const { id, column } = useParams();
+  const found = id === undefined ? null : idOfAddress(id);
+  const named = column === undefined ? null : columnOfAddress(column);
+  return found === null || named === null ? <Refused /> : screen(found, named);
 }

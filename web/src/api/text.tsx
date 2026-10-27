@@ -2,7 +2,7 @@
  * The takers of a server text (D426): the one module that reads a `ServerText`'s text
  * (`readText`, `box.ts`'s, which the lint and the import-graph test let this module alone import),
  * and gives back what is not data: a vocabulary's member (`kindOf`), an id that only its grammar
- * makes (`idOf`, a `DatasetId`), an opaque choice of a role (`choiceFor`, `document.ts`'s alone,
+ * makes (`idOf`, a `DatasetId`; `columnOf`, a `ColumnId`), an opaque choice of a role (`choiceFor`, `document.ts`'s alone,
  * D432), a boolean (`sameText`) or an order (`compareText`). Each the index exports is pinned by its
  * exact signature in the index's gate (`tests/gates/api-graph.test.ts`), and no other export of the
  * index takes a box but the document seam's, each pinned there by identity (D432).
@@ -52,6 +52,11 @@
  *   parameter, as the router decoded it, or the raw path segment of `/datasets/<id>`, never
  *   decoded): the grammar of `idOf`, so a text that is not of it gives `null`, which the router
  *   module shows in fixed words, never echoed.
+ * - **`columnOf(text)`** and **`columnOfAddress(raw)`** (D443): a `ColumnId`, the same for a column
+ *   (`GRAMMARS.column`, `ColumnBrief.id`'s grammar, which the generator holds equal to
+ *   `ColumnDescription.column`'s and `DescribeColumn.column`'s): `columnOf` mints it from a column's
+ *   id in an answer (the dataset screen's link to a column), `columnOfAddress` from the column
+ *   route's parameter (the router module's second door), and neither from anything else.
  */
 import { Fragment, type ReactElement, type ReactNode, useContext } from "react";
 
@@ -131,6 +136,29 @@ export function idOf(text: ServerText): DatasetId | null {
  * module's door: a hash route's decoded parameter, or a path segment as written). */
 export function idOfAddress(raw: string): DatasetId | null {
   return isDatasetId(raw) ? raw : null;
+}
+
+declare const columnBrand: unique symbol;
+
+/** A column's id, made by `columnOf` or `columnOfAddress` alone: a string of `GRAMMARS.column`'s form
+ * (`<table>.<column>`, its characters bounded, so it can stand in a request and a fragment). */
+export type ColumnId = string & { readonly [columnBrand]: true };
+
+/** Whether a string is of the column grammar (a checked predicate: the brand's one mint). */
+function isColumnId(raw: string): raw is ColumnId {
+  return matches(raw, "column");
+}
+
+/** The column id a text is, or `null` if it is not of the grammar. */
+export function columnOf(text: ServerText): ColumnId | null {
+  const raw = readText(text);
+  return isColumnId(raw) ? raw : null;
+}
+
+/** The column id an address names, or `null` if the text is not of the grammar (the router
+ * module's door: the column route's decoded parameter). */
+export function columnOfAddress(raw: string): ColumnId | null {
+  return isColumnId(raw) ? raw : null;
 }
 
 /** The words of a refused construction of a choice: fixed. */
