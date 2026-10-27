@@ -43,7 +43,7 @@ import { Catalogue } from "../../src/catalogue/Catalogue";
 import { Failure } from "../../src/catalogue/Failure";
 import { NotFound } from "../../src/catalogue/NotFound";
 import { catalogueRoutes } from "../../src/catalogue/routes";
-import { DatasetAddress } from "../../src/router/address";
+import { ColumnAddress, DatasetAddress } from "../../src/router/address";
 import { check, type Checked, WEB } from "./program";
 import { sources } from "./router-scan";
 
@@ -51,7 +51,7 @@ import { sources } from "./router-scan";
 const ROUTE_KEYS: ReadonlySet<PropertyKey> = new Set(["path", "index", "element", "lazy", "children", "errorElement"]);
 
 /** The types an `element` or `errorElement` may be an element of (D431): the app's route screens. */
-const ELEMENT_TYPES: ReadonlySet<unknown> = new Set([Catalogue, DatasetAddress, NotFound, Failure]);
+const ELEMENT_TYPES: ReadonlySet<unknown> = new Set([Catalogue, DatasetAddress, ColumnAddress, NotFound, Failure]);
 
 /** What is wrong with a route's `element` or `errorElement`: none if absent or an element of a type
  * of `ELEMENT_TYPES`. */

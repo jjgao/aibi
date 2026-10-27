@@ -103,6 +103,7 @@ const LAYOUT_EXPORTS = [
   "src/layout/Figure.tsx: NOT_SHOWN",
   "src/layout/Figure.tsx: REASON_WORDS",
   "src/layout/Figure.tsx: SUPPRESSED",
+  "src/layout/Link.tsx: ColumnLink",
   "src/layout/Link.tsx: Link",
   "src/layout/List.tsx: List",
   "src/layout/List.tsx: ServerList",

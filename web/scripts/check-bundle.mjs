@@ -18,7 +18,10 @@
  *   the policy asks for no re-measure; both again at M5.2-min (D431), whose catalogue and lazy
  *   dataset screen add a stylesheet each and the dataset's chunk with the shared `jsx-runtime`:
  *   before, 363,667 B in 5 files (prod) and 374,520 B in 8 (e2e); after, 388,362 B in 9 and
- *   393,303 B in 12, so 446,617 and 9, and 452,299 and 12);
+ *   393,303 B in 12, so 446,617 and 9, and 452,299 and 12; the e2e line later stood at 476,427 B
+ *   and 13 files; at M5.2-rest-c-2 (D443) the column screen's lazy chunk is a file of its own:
+ *   prod 431,084 B in 9 files before and 438,177 B in 10 after, e2e 443,270 B in 14, so only the
+ *   files' caps rise, to 10 and 14, and the bytes' caps, 446,617 and 476,427, hold);
  * - the build's own HTML holds no inline script or style (the server never serves it, but a build
  *   that writes one has code the policy would refuse);
  * - the harness's marker is absent from every script of a production build (`--mode prod`) and

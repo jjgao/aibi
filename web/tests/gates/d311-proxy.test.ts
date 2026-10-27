@@ -46,7 +46,7 @@ describe("D311's pages stay the default until M5.2-rest (a proxy of the server's
   const rest = readTable().rows.filter((row) => row.owner === "M5.2-rest");
 
   it("M5.2-rest owns rows, and while any of their modules is absent the server names no packaged bundle and includes the page's router", () => {
-    expect(rest.map((row) => row.id)).toEqual(["R53b", "R60", "R61", "R62", "R65b", "R66b", "R67", "R68b"]);
+    expect(rest.map((row) => row.id)).toEqual(["R53b", "R60", "R61", "R62", "R65b", "R66b", "R68b"]);
     const absent = rest.filter((row) => !existsSync(path.join(WEB, row.module)));
     if (absent.length === 0) {
       // M5.2-rest is built: the proxy no longer applies (the server's test says so too).

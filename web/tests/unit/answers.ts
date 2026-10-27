@@ -17,6 +17,22 @@ export function walked(component: string, json: string): unknown {
   return found.value;
 }
 
+/** `value` (parsed JSON) with every string leaf replaced by `mark`, so that a screen which reads a leaf
+ * of it shows `mark`: how a test derives which members of a descriptor a screen shows (a key is not
+ * replaced: the members' names are not what the screens read). */
+export function sentinelled(value: unknown, mark: string): unknown {
+  if (typeof value === "string") {
+    return mark;
+  }
+  if (Array.isArray(value)) {
+    return value.map((one) => sentinelled(one, mark));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, one]) => [key, sentinelled(one, mark)]));
+  }
+  return value;
+}
+
 /** The parts of JSON's number grammar: a sign, an integer part, a fraction, an exponent. */
 const SIGNS = ["", "-"];
 const INTEGERS = ["0", "1", "7", "10", "123", "468", "9007199254740993", `1${"0".repeat(30)}`];

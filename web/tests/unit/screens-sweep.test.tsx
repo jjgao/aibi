@@ -1,6 +1,7 @@
 /**
- * The screens' views swept by construction (D428's harness, D431): `Hits` (the catalogue) and
- * `Description` (the dataset) are each given the bodies `typed-support.ts` makes from the table
+ * The screens' views swept by construction (D428's harness, D431, D443): `Hits` (the catalogue),
+ * `Description` (the dataset) and `ColumnDescription` (the column) are each given the bodies
+ * `typed-support.ts` makes from the table
  * (`synthetic`, built to reach every position) under every plan (each arm of an `or`, each kind of
  * segment), in full and minimal, walked as the seam walks them, and every `ServerText` leaf of each
  * is replaced in turn by every hostile row (`leafSweep`): no element, span or raw unsafe code point
@@ -14,7 +15,7 @@
  *
  * **What is not shown raw, asserted exactly (m5, n7).** A second sweep replaces each leaf by a
  * sentinel row that must render raw: the positions where it never shows, united over the plans,
- * are exactly the named exceptions E1–E4, each present, no more:
+ * are exactly the named exceptions E1–E5, each present, no more:
  * - E1 every leaf under `descriptor`, `tables[].descriptor`, `relationships[]`, `coverage[]` and
  *   `endpoints[]` (descriptor members, not shown in this PR: T8's words; M5.2-rest);
  * - E2 `caveats[].severity` (read fail-closed: an unknown severity is `block`, R23);
@@ -23,13 +24,21 @@
  *   unknown status as its text, R52);
  * - E4 the keys of a row count's `not_estimable` (read by the page's word `/count`: another key is
  *   no reason, so the null is suppressed, R14).
+ * - E5 (`ColumnDescription` alone, D443) every leaf under its `descriptor` (not shown: T8's words),
+ *   its distribution's `kind` (the arms are told apart by the member each alone has; the constant is
+ *   not shown), `release.status` (as E3), the keys of every count's `not_estimable` (as E4), and the
+ *   reasons of a category's and of the pooled row's `not_estimable`: these two are shown (a null count
+ *   with its reason at `/count`, through `StatCount`, as a bin's is), but no plan reaches them, since
+ *   a plan takes the same arm at every alternative and the categories are the distribution's first
+ *   arm, where every count is a number; `column.test.tsx` holds both shown, as text, with a recorded
+ *   pooled reason and a hostile one.
  *
  * **The cut (R01; round 1 of #123, m1).** A third sweep puts the 5,000-character row at every leaf,
  * and asserts, by the leaf's shape in the table, how many cut marks the rendering holds: **every leaf
  * whose shape is `Data` (the text of a descriptor, which the server's page cuts) renders exactly one
  * `.cut`**, and every other leaf renders none (ids, references, pointers and the words of a
  * vocabulary are shown whole), but the members of the page's vocabularies, which an unknown member
- * shows as text (`VOCABULARY`, asserted exactly): a leaf not shown (E1-E4) renders none. A screen
+ * shows as text (`VOCABULARY`, asserted exactly): a leaf not shown (E1-E5) renders none. A screen
  * that showed a `Data` leaf through `Ref`, or an id through `Text`, fails here.
  *
  * The orchard's own answers are swept too, over a few rows (the smoke test).
@@ -41,6 +50,7 @@ import { boxMap, boxText, type ServerText } from "../../src/api/box";
 import { type Shape, SHAPES } from "../../src/api/generated/shapes";
 import type { Answered } from "../../src/api/typed";
 import { Hits } from "../../src/catalogue/Catalogue";
+import { ColumnDescription } from "../../src/dataset/Column";
 import { Description } from "../../src/dataset/Dataset";
 import { Ref, Text } from "../../src/layout/Text";
 import { walked } from "./answers";
@@ -58,20 +68,25 @@ const LONG: readonly Row[] = HOSTILE.filter((row) => row.name === "5,000 charact
 
 /** The positions of a vocabulary's member (`kindOf`), which a member the page does not know shows as
  * a text through `Text`, so that it is cut: a release's status, a table's role, an analysis's status,
- * a relationship's cardinality, a column's datatype, and the reason of a row count that is not
- * estimable (the word `StatCount` shows for it, in the plans where the count is `null` with a reason at
- * `/count`: there at most once, and in some plan once, `CONDITIONAL`). Asserted exactly. */
+ * a relationship's cardinality, a column's datatype, the column screen's `edges_from` and its no
+ * distribution's `reason` (D443), and the reason of a count that is not estimable (a row count, a
+ * column's rows, states and bins: the word `StatCount` shows for it, in the plans where the count is
+ * `null` with a reason at `/count`: there at most once, and in some plan once, `CONDITIONAL`).
+ * Asserted exactly. */
 const VOCABULARY: Readonly<Record<string, readonly string[]>> = {
   CatalogHits: ["/hits/[]/release/status", "/hits/[]/tables/[]/role", "/hits/[]/tables/[]/rows/not_estimable/{}"],
   DatasetDescription: ["/applicable_analyses/[]/status", "/graph/edges/[]/cardinality", "/tables/[]/columns/[]/datatype", "/tables/[]/rows/not_estimable/{}"],
+  ColumnDescription: ["/statistics/distribution/bins/[]/not_estimable/{}", "/statistics/distribution/edges_from", "/statistics/distribution/reason", "/statistics/rows/not_estimable/{}", "/statistics/states/NOT_APPLICABLE/not_estimable/{}", "/statistics/states/NOT_ASSESSED/not_estimable/{}", "/statistics/states/PRESENT/not_estimable/{}", "/statistics/states/UNKNOWN/not_estimable/{}"],
 };
 
 /** The vocabulary positions a plan shows or not, by its arm of the shape: cut once where shown. */
-const CONDITIONAL: ReadonlySet<string> = new Set(["/hits/[]/tables/[]/rows/not_estimable/{}", "/tables/[]/rows/not_estimable/{}"]);
+const CONDITIONAL: ReadonlySet<string> = new Set(["/hits/[]/tables/[]/rows/not_estimable/{}", "/tables/[]/rows/not_estimable/{}", "/statistics/distribution/bins/[]/not_estimable/{}", "/statistics/rows/not_estimable/{}", "/statistics/states/NOT_APPLICABLE/not_estimable/{}", "/statistics/states/NOT_ASSESSED/not_estimable/{}", "/statistics/states/PRESENT/not_estimable/{}", "/statistics/states/UNKNOWN/not_estimable/{}"]);
 
 /** The positions of every `Data` leaf the screens show (the text of a descriptor, cut by R01), asserted
  * exactly: the catalogue's hits (label, name, description, tags, facets' values, data-use terms,
- * tables' labels and grains) and the dataset's tables' labels and columns' labels. */
+ * tables' labels and grains), the dataset's tables' labels and columns' labels, and the column's
+ * label, its categories' values, its bins' edges and its smallest and largest values (D443: a date or
+ * an instant, data; a number edge is no leaf). */
 const DATA_SHOWN: Readonly<Record<string, readonly string[]>> = {
   CatalogHits: [
     "/hits/[]/label/data",
@@ -86,6 +101,7 @@ const DATA_SHOWN: Readonly<Record<string, readonly string[]>> = {
     "/hits/[]/tables/[]/grain/data",
   ],
   DatasetDescription: ["/tables/[]/label/data", "/tables/[]/columns/[]/label/data"],
+  ColumnDescription: ["/label/data", "/statistics/distribution/bins/[]/high/data", "/statistics/distribution/bins/[]/low/data", "/statistics/distribution/categories/[]/value/data", "/statistics/distribution/max/value/data", "/statistics/distribution/min/value/data"],
 };
 
 /** A row that must render raw and appears nowhere else: where it does not show, its leaf is not shown. */
@@ -96,6 +112,7 @@ type Swept = { readonly component: string; readonly make: (value: never) => Reac
 const SCREENS: readonly Swept[] = [
   { component: "CatalogHits", make: (value: Answered<"search_catalog">) => <Hits answer={value} /> },
   { component: "DatasetDescription", make: (value: Answered<"describe_dataset">) => <Description answer={value} /> },
+  { component: "ColumnDescription", make: (value: Answered<"describe_column">) => <ColumnDescription answer={value} /> },
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -266,6 +283,7 @@ function problemPositions(component: string, problems: readonly string[]): Set<s
 // The exceptions.
 
 const EXCEPTIONS: readonly (readonly [string, (component: string, position: string) => boolean])[] = [
+  ["E5 the column's descriptor, its distribution's kind, and the reasons no plan reaches", (component, position) => component === "ColumnDescription" && (/^\/descriptor\//u.test(position) || position === "/statistics/distribution/kind" || position === "/release/status" || /\/not_estimable\/\{key\}$/u.test(position) || /^\/statistics\/distribution\/(?:categories\/\[\]|pooled)\/not_estimable\/\{\}$/u.test(position))],
   ["E1 descriptor members", (component, position) => component === "DatasetDescription" && /^\/(?:descriptor|tables\/\[\]\/descriptor|relationships|coverage|endpoints)\//u.test(position)],
   ["E2 a caveat's severity", (_component, position) => position === "/caveats/[]/severity"],
   ["E3 a release's label as text", (_component, position) => position === "/hits/[]/release/label" || position === "/release/label"],
@@ -355,13 +373,13 @@ describe.each(SCREENS)("$component's view, swept by construction", ({ component,
     expect(required.filter((position) => !swept.has(position))).toEqual([]);
   });
 
-  it("shows every position raw but the named exceptions E1-E4, each present (united over the plans)", () => {
+  it("shows every position raw but the named exceptions E1-E5, each present (united over the plans)", () => {
     const never = [...swept].filter((position) => !shown.has(position));
     expect(never.filter((position) => exceptionOf(component, position) === null)).toEqual([]);
     // Each exception's positions in this answer are never shown, and each exception of this answer is present.
     expect([...swept].filter((position) => exceptionOf(component, position) !== null && !never.includes(position))).toEqual([]);
     const present = new Set(never.map((position) => exceptionOf(component, position)));
-    const expected = component === "CatalogHits" ? ["E2 a caveat's severity", "E3 a release's label as text", "E4 the keys of a row count's not_estimable"] : EXCEPTIONS.map(([name]) => name);
+    const expected = component === "CatalogHits" ? ["E2 a caveat's severity", "E3 a release's label as text", "E4 the keys of a row count's not_estimable"] : component === "ColumnDescription" ? ["E2 a caveat's severity", "E3 a release's label as text", "E5 the column's descriptor, its distribution's kind, and the reasons no plan reaches"] : EXCEPTIONS.map(([name]) => name).filter((name) => !name.startsWith("E5"));
     expect([...present].sort()).toEqual([...expected].sort());
   });
 });

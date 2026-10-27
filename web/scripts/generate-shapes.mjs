@@ -93,6 +93,21 @@ export const GRAMMAR_POSITIONS = new Map([
   ["analysis", ["ApplicableAnalysis", "analysis"]],
 ]);
 
+/** The other positions of a grammar whose text the page carries from one to another (D443): a
+ * column id minted from `ColumnBrief.id` (`columnOf`) or from the address (`columnOfAddress`) is
+ * sent as `DescribeColumn.column` and comes back as `ColumnDescription.column`, so each must have
+ * exactly the grammar `GRAMMAR_POSITIONS` reads, or the generation fails. */
+/** @type {ReadonlyMap<string, readonly (readonly [string, string])[]>} */
+export const GRAMMAR_ALSO = new Map([
+  [
+    "column",
+    [
+      ["ColumnDescription", "column"],
+      ["DescribeColumn", "column"],
+    ],
+  ],
+]);
+
 /**
  * The keywords each node builder consumes: the census (`census`) refuses any other keyword of a
  * schema its builder builds that is no annotation and no residual. Each list is the keys the builder
@@ -665,6 +680,14 @@ export function shapesOf(document, observer) {
       throw new ShapeError(`${name}: the grammar's component ${String(owner)} no answer reaches`);
     }
     grammars[name] = grammar(object(object(object(components[owner], owner)["properties"], owner)[member], `${owner}.${member}`), `${owner}.${member}`);
+  }
+  for (const [name, positions] of GRAMMAR_ALSO) {
+    for (const [owner, member] of positions) {
+      const found = JSON.stringify(grammar(object(object(object(components[owner], owner)["properties"], owner)[member], `${owner}.${member}`), `${owner}.${member}`));
+      if (found !== JSON.stringify(grammars[name])) {
+        throw new ShapeError(`${owner}.${member}: not the grammar of ${name}`);
+      }
+    }
   }
 
   return {
