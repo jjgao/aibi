@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Shape } from "../../src/api/generated/shapes";
 import { valuesOf } from "../../src/api";
 import { runAnalysis } from "../../src/api/typed";
-import { ORCHARD } from "./typed-support";
+import { answerAt, ORCHARD } from "./typed-support";
 
 /** The replaced table, which each cell changes. */
 const table = vi.hoisted((): { shapes: Record<string, Shape> } => ({ shapes: {} }));
@@ -42,7 +42,7 @@ function withView(view: Shape, component?: Shape): void {
 
 /** The read of the builder's live answer (a), through the real decoder and walk. */
 async function readOfBuilt(): Promise<unknown> {
-  const body = ORCHARD[25]?.body ?? "";
+  const body = ORCHARD[answerAt("values", 0)]?.body ?? "";
   vi.stubGlobal(
     "fetch",
     vi.fn(() => Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }))),

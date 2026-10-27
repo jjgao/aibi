@@ -67,7 +67,7 @@ describe("the table of the real document", () => {
     }
   });
 
-  it("is the committed one, and covers the seven operations the web calls", () => {
+  it("is the committed one, and covers the eight operations the web calls", () => {
     expect(renderShapes(real(), TEXT)).toBe(readFileSync(path.join(WEB, "src/api/generated/shapes.ts"), "utf8"));
     expect(Object.keys(OPERATIONS).sort()).toEqual([...TYPED_OPERATIONS].sort());
     expect(Object.keys(SHAPES).length).toBeGreaterThan(50);

@@ -18,8 +18,8 @@ stay on the operator router.
 - ``list_analyses`` gives the registry's entries, and for a dataset their applicability (D316).
 - ``list_leaf_kinds`` gives every registered leaf kind with its pack's version and its schema
   as registered (D421).
-- ``describe_column`` gives a column's descriptor with its observation-state counts and value
-  distribution, disclosed (D276).
+- ``describe_column`` gives a column's id, label and table, its descriptor with its
+  observation-state counts and value distribution, disclosed (D276, D442).
 - ``curation_queue`` gives the queue of §11.1 (D250), its counts disclosed and referenced (D277).
 - ``propose_descriptor`` records an agent's proposal (D248), attributed to ``agent:<name>``.
 - ``resources`` and ``read_resource`` serve every descriptor as an MCP resource (D279), the
@@ -196,6 +196,14 @@ _WITHDRAWN = "The release was withdrawn: its data and descriptors are not kept"
 
 def _dumped(descriptor: Descriptor) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], descriptor.model_dump(mode="json"))
+
+
+def _named(served: Mapping[str, JsonValue]) -> tuple[str, Data]:
+    """A served descriptor's id and its label as an answer names it, both read from its top-level
+    ``/id`` and ``/label`` (``_served``'s value, under the same *k*): the one source of
+    ``TableOut``'s and ``ColumnDescription``'s (D440, D442). A label is declared text, served as
+    written under any *k* (D271's last clause), whole, never cut, stripped or normalised."""
+    return cast(str, served["id"]), Data(data=cast(str, served["label"]))
 
 
 def _served(descriptor: Descriptor, k: int | None) -> dict[str, JsonValue]:
@@ -539,10 +547,11 @@ class Catalog:
             if found is not None and rows is None:
                 suppressed.append(f"/tables/{index}/rows")
             served = _served(table, k)
+            table_id, table_label = _named(served)
             tables_out.append(
                 TableOut(
-                    id=cast(str, served["id"]),
-                    label=Data(data=cast(str, served["label"])),
+                    id=table_id,
+                    label=table_label,
                     descriptor=served,
                     rows=references.count(rows, table.id, "n_rows"),
                     columns=listed,
@@ -665,11 +674,16 @@ class Catalog:
             or disclosed.distributions[name].get("reason") == "suppressed"
         ):
             caveats.append(_suppressed(["/statistics"]))
+        served = _served(column, k)
+        column_id, column_label = _named(served)
         return ColumnDescription(
             dataset=release.dataset,
+            column=column_id,
+            label=column_label,
+            table=column_id.split(".", 1)[0],
             release=release.out,
             disclosure=DisclosureOut(min_cell_count=k),
-            descriptor=_served(column, k),
+            descriptor=served,
             identifier=name in statistics.identifiers(descriptors).get(table, set()),
             statistics=output,
             caveats=sort_caveats(caveats),

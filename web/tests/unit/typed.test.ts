@@ -25,7 +25,7 @@
  *   (that is the oracle's); and a miss at a position inside an `allOf` check may be refused by the
  *   base before the check (the oracle's swaps isolate it).
  * - **The coverage** (MA3 of round 2): `constraintsOf` lists, from the table alone, every constraint
- *   position (2,048: each place, and each thing wrong there) and the test fails on any that has no
+ *   position (2,667: each place, and each thing wrong there) and the test fails on any that has no
  *   miss. The bodies are built to reach every one: each arm of an `or`, each kind of segment, a
  *   map with an entry of each shape its keys can take, and what the checks of an `allOf` ask of the
  *   first member's value (the keys, constants and lengths): so `Proportion.excluded`'s eight required
@@ -43,6 +43,9 @@
  *   at a `propertyNames` position, every segment that is not exactly one arm; and the residuals, each
  *   passing by name (`if`/`then`, `pattern`, the inside of an `x-aibi-json` value).
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BoxedMap, entriesOf, isServerNumber, readText, ServerText, textOf } from "../../src/api/box";
@@ -54,6 +57,7 @@ import { kindOf } from "../../src/api/text";
 import {
   type Boxed,
   countCohort,
+  describeColumn,
   describeDataset,
   explain,
   type InvalidCause,
@@ -68,7 +72,7 @@ import {
   walkComponent,
 } from "../../src/api/typed";
 
-import { bodies, componentOf, constraintsOf, ENVELOPES, ORCHARD, REF, synthetic, UNMADE, variants, without } from "./typed-support";
+import { answerAt, bodies, componentOf, constraintsOf, ENVELOPES, ORCHARD, REF, SECTION_NAMES, SECTIONS, synthetic, UNMADE, variants, without } from "./typed-support";
 
 type Schemas = components["schemas"];
 
@@ -241,6 +245,19 @@ describe("the class test: nothing raw survives the walk, value or key (m3, m7)",
     for (const [name, text] of ENVELOPES) {
       expect(audit(REF("ResultEnvelope"), walked("ResultEnvelope", text), "$"), name).toEqual([]);
     }
+  });
+
+  it("the orchard's answers are tiled by the sections the file records, in order, and an index outside its section is refused", () => {
+    expect(Object.keys(SECTIONS)).toEqual([...SECTION_NAMES]);
+    const bounds = SECTION_NAMES.map((name) => SECTIONS[name]);
+    expect(bounds.map(({ start }) => start)).toEqual([0, ...bounds.slice(0, -1).map(({ end }) => end)]);
+    expect(bounds.at(-1)?.end).toBe(ORCHARD.length);
+    expect(bounds.every(({ start, end }) => end > start)).toBe(true);
+    // describe_column's answers, the section the seam's eighth function reads (D442)
+    expect(ORCHARD.slice(SECTIONS.columns.start, SECTIONS.columns.end).map(({ operation }) => operation)).toEqual(Array<string>(10).fill("describe_column"));
+    expect(answerAt("values", 0)).toBe(SECTIONS.values.start);
+    expect(() => answerAt("values", SECTIONS.values.end - SECTIONS.values.start)).toThrow("no answer");
+    expect(() => answerAt("values", -1)).toThrow("no answer");
   });
 
   it("over the orchard's answers, each as its operation's component or the refusals'", () => {
@@ -478,16 +495,248 @@ describe("every constraint the table states has a miss, made from a valid body t
 /** A refusal body, well formed, with a marker no outcome may echo. */
 const REFUSAL = '{"refusals":[{"code":"UNKNOWN_DATASET","path":"/dataset","message":[{"text":"No such "},{"data":"MARK-echo"}],"alternatives":[{"data":"orchard"}]}]}';
 
-/** Each typed operation, called with a body of its own, and the 200 answer of the orchard for it. */
-const CALLS: Readonly<Record<TypedOperation, () => Promise<Outcome<unknown>>>> = {
-  search_catalog: () => searchCatalog({}),
-  describe_dataset: () => describeDataset({ dataset: "orchard" }),
-  list_analyses: () => listAnalyses({ dataset: "orchard" }),
-  validate_document: () => validateDocument({ document: {} }),
-  count_cohort: () => countCohort({ document: { aibi: "1", dataset: "orchard", unit: "trees", cohorts: { all_trees: { all: [] } } } }),
-  run_analysis: () => runAnalysis({ document: { aibi: "1", dataset: "orchard", unit: "trees", cohorts: { all_trees: { all: [] } }, views: [] } }),
-  explain: () => explain({ id: `drv:${"0".repeat(64)}` }),
+/** A document carrying every member of an analysis document, of its cohort, its value leaf, a step of
+ * its `via`, its quantifier and its view (`UNCARRIED` names the members a single object cannot carry
+ * beside another), so that a function that drops, empties, defaults or swaps one sends another body.
+ * It carries one leaf, a value leaf, and no clause: the other leaf kinds and clauses are not in it. */
+const DOCUMENT = {
+  aibi: "1",
+  dataset: "orchard",
+  unit: "trees",
+  drafted_by: "operator:Ada",
+  notes: "a note",
+  packs: { onco: "1" },
+  params: { limit: 3 },
+  cohorts: {
+    apple: {
+      dataset: "orchard",
+      notes: "the apples",
+      unmapped: "allow",
+      all: [
+        {
+          kind: "value",
+          column: "trees.variety",
+          values: ["apple"],
+          lift: "strict",
+          match: "any",
+          negate: true,
+          quantifier: { some: 2 },
+          units: "cm",
+          via: [{ rel: "rel:trees.orchard", dir: "up" }],
+        },
+      ],
+    },
+  },
+  views: [
+    {
+      analysis: "summary.distribution",
+      cohorts: ["apple"],
+      note: "a view",
+      overlap: "allow",
+      params: { columns: ["trees.height_m"] },
+      reference: "apple",
+      unmapped: "allow",
+    },
+  ],
 };
+
+/** Each typed operation's request body: every member of its request component and of each request
+ * component it carries (the analysis document, a cohort, a value leaf, a step, a view, a quantifier,
+ * `completeness` and a `data_use` item: `Cohort`, `ValueLeaf`, `Step`, `View`, `SomeAtLeast`,
+ * `Completeness`, `OntologyCode`), none empty at any depth and none its default (`faultsOf` walks it
+ * against `schemas/openapi.json`). It does not carry the other components a document can reach
+ * (`AllClause`, `AnyClause`, `NotClause`, `KnownClause`, `UnknownClause`, `ExistsLeaf`,
+ * `CoveredLeaf`, `IdsLeaf`, `CohortLeaf`, `PackLeaf`, `Range`, `UnitKey`): a function that dropped one
+ * of their members by name would go unseen here. */
+const GIVEN = {
+  search_catalog: {
+    text: "apple",
+    domain_tags: ["fruit"],
+    data_use: [{ system: "DUO", code: "DUO:0000042" }],
+    concepts: ["demo:fruit"],
+    roles: ["entity"],
+    min_rows: 2,
+    completeness: { min_present: 0.5, concept: "demo:height", datatype: "number" },
+    facets: { "orchards.region": ["north"] },
+    limit: 3,
+    offset: 1,
+  },
+  describe_dataset: { dataset: "orchard", release: 2, columns_limit: 5, columns_offset: 1 },
+  describe_column: { dataset: "orchard", column: "trees.variety", release: 2 },
+  list_analyses: { dataset: "orchard", release: 2, unit: "trees" },
+  validate_document: { document: DOCUMENT, format: "demo.document" },
+  count_cohort: { document: DOCUMENT },
+  run_analysis: { document: DOCUMENT },
+  explain: { id: `drv:${"0".repeat(64)}` },
+} as const;
+
+/** Each typed operation, called with its body, and the 200 answer of the orchard for it. */
+const CALLS: Readonly<Record<TypedOperation, () => Promise<Outcome<unknown>>>> = {
+  search_catalog: () => searchCatalog(GIVEN.search_catalog),
+  describe_dataset: () => describeDataset(GIVEN.describe_dataset),
+  describe_column: () => describeColumn(GIVEN.describe_column),
+  list_analyses: () => listAnalyses(GIVEN.list_analyses),
+  validate_document: () => validateDocument(GIVEN.validate_document),
+  count_cohort: () => countCohort(GIVEN.count_cohort),
+  run_analysis: () => runAnalysis(GIVEN.run_analysis),
+  explain: () => explain(GIVEN.explain),
+};
+
+/** Each typed operation's smallest request body: the members its request component requires, and of
+ * those the members of the document, its cohort and nothing else. */
+const MINIMAL = {
+  search_catalog: {},
+  describe_dataset: { dataset: "orchard" },
+  describe_column: { dataset: "orchard", column: "trees.variety" },
+  list_analyses: {},
+  validate_document: { document: { aibi: "1", unit: "trees", cohorts: { apple: { all: [] } } } },
+  count_cohort: { document: { aibi: "1", unit: "trees", cohorts: { apple: { all: [] } } } },
+  run_analysis: { document: { aibi: "1", unit: "trees", cohorts: { apple: { all: [] } } } },
+  explain: { id: `drv:${"0".repeat(64)}` },
+} as const;
+
+/** Each typed operation, called with the body it is handed (which `SEND` does not type). */
+const SEND: Readonly<Record<TypedOperation, (body: unknown) => Promise<Outcome<unknown>>>> = {
+  search_catalog: (body) => searchCatalog(body as Parameters<typeof searchCatalog>[0]),
+  describe_dataset: (body) => describeDataset(body as Parameters<typeof describeDataset>[0]),
+  describe_column: (body) => describeColumn(body as Parameters<typeof describeColumn>[0]),
+  list_analyses: (body) => listAnalyses(body as Parameters<typeof listAnalyses>[0]),
+  validate_document: (body) => validateDocument(body as Parameters<typeof validateDocument>[0]),
+  count_cohort: (body) => countCohort(body as Parameters<typeof countCohort>[0]),
+  run_analysis: (body) => runAnalysis(body as Parameters<typeof runAnalysis>[0]),
+  explain: (body) => explain(body as Parameters<typeof explain>[0]),
+};
+
+/** A node of the OpenAPI document (a schema, or anything in one). */
+type Node = { readonly [key: string]: unknown };
+
+/** The OpenAPI document the types are generated from: each operation's request component. */
+const OPENAPI = JSON.parse(readFileSync(path.join(import.meta.dirname, "../../../schemas/openapi.json"), "utf8")) as {
+  readonly paths: Readonly<Record<string, { readonly post: { readonly requestBody: { readonly content: { readonly "application/json": { readonly schema: { readonly $ref: string } } } } } }>>;
+  readonly components: { readonly schemas: Readonly<Record<string, Node>> };
+};
+
+const isNode = (value: unknown): value is Node => typeof value === "object" && value !== null && !Array.isArray(value);
+const nodeOf = (value: unknown): Node => (isNode(value) ? value : {});
+const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? (value as readonly unknown[]) : []);
+
+/** What a body holds that its request component and the components it carries do not, by
+ * `Component.member`, each with why: the members one object cannot hold beside another (a cohort's
+ * `datasets` beside its `dataset`, a value leaf's `range`, `op` and `value` beside its `values`). The
+ * exclusion is per object: the server refuses each pair inside one object (`CONFLICTING_MEMBERS`), but
+ * sibling leaves and cohorts of one body can carry the excluded members, and this body does not carry
+ * them, so a function that dropped one by name would go unseen. Anything else a carried component
+ * names must be in the body (`faultsOf`), and an entry that no body leaves out, or names no member,
+ * fails (`excused`). */
+const UNCARRIED: Readonly<Record<string, string>> = {
+  "Cohort.datasets": "a cohort names its dataset or its datasets, never both (the schema's own `not required` rule); `dataset` is carried",
+  "ValueLeaf.op": "a value leaf holds exactly one of `values`, `range`, or `op` with `value` (the schema's own rule); `values` is carried",
+  "ValueLeaf.range": "a value leaf holds exactly one of `values`, `range`, or `op` with `value` (the schema's own rule); `values` is carried",
+  "ValueLeaf.value": "a value leaf holds exactly one of `values`, `range`, or `op` with `value` (the schema's own rule); `values` is carried",
+};
+
+/** A schema node with its `$ref` followed, and the name of the component it is (or `owner`). */
+function resolved(node: Node, owner: string): readonly [Node, string] {
+  const reference = node["$ref"];
+  if (typeof reference !== "string") {
+    return [node, owner];
+  }
+  const name = reference.replace("#/components/schemas/", "");
+  return resolved(nodeOf(OPENAPI.components.schemas[name]), name);
+}
+
+/** The arms a node offers (`anyOf` and `oneOf` followed down to schemas that have none), each with its
+ * component's name; a parameter reference is no arm, since a body holds no `$name`. */
+function armsOf(node: Node, owner: string): readonly (readonly [Node, string])[] {
+  const [found, name] = resolved(node, owner);
+  if (name === "ParameterReference") {
+    return [];
+  }
+  const alternatives = [...listOf(found["anyOf"]), ...listOf(found["oneOf"])];
+  return alternatives.length === 0 ? [[found, name]] : alternatives.flatMap((arm) => armsOf(nodeOf(arm), name));
+}
+
+const kindOfJson = (value: unknown): string => (value === null ? "null" : Array.isArray(value) ? "array" : typeof value);
+
+/** Whether an arm takes a value: its const, enum, JSON type and, for an object, the members it
+ * names (closed, its required ones present, each one's value taken by an arm of it). */
+function takes(arm: Node, value: unknown): boolean {
+  if (Object.hasOwn(arm, "const")) {
+    return arm["const"] === value;
+  }
+  if (Array.isArray(arm["enum"])) {
+    return (arm["enum"] as readonly unknown[]).includes(value);
+  }
+  const kind = kindOfJson(value);
+  const types = [arm["type"]].flat().filter((type): type is string => typeof type === "string");
+  if (types.length > 0 && !types.some((type) => type === kind || (type === "integer" && Number.isInteger(value)))) {
+    return false;
+  }
+  if ((arm["items"] !== undefined) !== (kind === "array") && (arm["items"] !== undefined || types.includes("array"))) {
+    return false;
+  }
+  const named = arm["properties"] !== undefined || arm["patternProperties"] !== undefined || arm["additionalProperties"] !== undefined;
+  if (named && kind !== "object") {
+    return false;
+  }
+  if (isNode(value) && arm["properties"] !== undefined && arm["additionalProperties"] === false && arm["patternProperties"] === undefined) {
+    const members = nodeOf(arm["properties"]);
+    return Object.keys(value).every((key) => key in members && armsOf(nodeOf(members[key]), "").some(([inner]) => takes(inner, value[key]))) && listOf(arm["required"]).every((key) => typeof key === "string" && key in value);
+  }
+  return true;
+}
+
+/** The default a property's schema states, in it or in an arm. */
+const defaultOf = (node: Node): unknown => armsOf(node, "").map(([arm]) => arm["default"]).find((found) => found !== undefined);
+
+/** What a body holds less than its schema asks, at each depth: an empty value (`null`, `""`, `0`, an
+ * empty list or object), a member of a schema it carries that it does not (but for the `UNCARRIED`
+ * ones, which `excused` collects), a value that is its default, or one no arm of the schema takes. */
+function faultsOf(node: Node, owner: string, value: unknown, at: string, faults: string[], excused: Set<string>): void {
+  if (value === null || value === "" || value === 0 || (Array.isArray(value) && value.length === 0) || (isNode(value) && Object.keys(value).length === 0)) {
+    faults.push(`${at}: empty`);
+  }
+  const chosen = armsOf(node, owner).find(([arm]) => takes(arm, value));
+  if (chosen === undefined) {
+    faults.push(`${at}: no arm of its schema takes it`);
+    return;
+  }
+  const [arm, name] = chosen;
+  const members = nodeOf(arm["properties"]);
+  if (isNode(value)) {
+    for (const key of Object.keys(members)) {
+      if (!(key in value)) {
+        if (Object.hasOwn(UNCARRIED, `${name}.${key}`)) {
+          excused.add(`${name}.${key}`);
+        } else {
+          faults.push(`${at}.${key}: a member of ${name} the body does not carry`);
+        }
+      }
+    }
+    for (const [key, member] of Object.entries(value)) {
+      if (key in members) {
+        const given = defaultOf(nodeOf(members[key]));
+        if (given !== undefined && JSON.stringify(given) === JSON.stringify(member)) {
+          faults.push(`${at}.${key}: its default`);
+        }
+        faultsOf(nodeOf(members[key]), `${name}.${key}`, member, `${at}.${key}`, faults, excused);
+      } else {
+        const patterns = Object.entries(nodeOf(arm["patternProperties"])).find(([pattern]) => new RegExp(pattern, "u").test(key));
+        faultsOf(nodeOf(patterns?.[1] ?? arm["additionalProperties"]), name, member, `${at}.${key}`, faults, excused);
+      }
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((item: unknown, index) => { faultsOf(nodeOf(arm["items"]), name, item, `${at}[${String(index)}]`, faults, excused); });
+  }
+}
+
+/** What `body` holds less than `operation`'s request component asks (see `faultsOf`). */
+function bodyFaults(operation: TypedOperation, body: unknown, excused = new Set<string>()): string[] {
+  const reference = OPENAPI.paths[`/api/tools/${operation}`]?.post.requestBody.content["application/json"].schema.$ref ?? "";
+  const faults: string[] = [];
+  faultsOf({ $ref: reference }, "", body, operation, faults, excused);
+  return faults;
+}
 
 const OK_BODY = (operation: TypedOperation): string => {
   const found = ORCHARD.find((answer) => answer.operation === operation && answer.status === 200);
@@ -513,8 +762,100 @@ describe("the outcome grid: every operation, every status class, every failure",
 
   const operations = Object.keys(OPERATIONS) as TypedOperation[];
 
-  it("covers the seven operations of the table, each with a typed function", () => {
-    expect(operations.sort()).toEqual(["count_cohort", "describe_dataset", "explain", "list_analyses", "run_analysis", "search_catalog", "validate_document"]);
+  it("covers the eight operations of the table, each with a typed function", () => {
+    expect(operations.sort()).toEqual(["count_cohort", "describe_column", "describe_dataset", "explain", "list_analyses", "run_analysis", "search_catalog", "validate_document"]);
+  });
+
+  it.each(operations)("%s: the body given holds every member of its request and of each request component it carries, none empty at any depth and none its default", (operation) => {
+    expect(bodyFaults(operation, JSON.parse(JSON.stringify(GIVEN[operation])))).toEqual([]);
+  });
+
+  it("the members one object cannot hold beside another are each named, each a member no body of any operation carries, and each only so (UNCARRIED)", () => {
+    const excused = new Set<string>();
+    for (const operation of operations) {
+      bodyFaults(operation, GIVEN[operation], excused);
+    }
+    expect([...excused].sort()).toEqual(Object.keys(UNCARRIED).sort());
+  });
+
+  /** A copy of the body given for `operation`, with the value at `at` replaced, or dropped if `undefined`. */
+  const edited = (operation: TypedOperation, at: readonly (string | number)[], value: unknown): unknown => {
+    const body = JSON.parse(JSON.stringify(GIVEN[operation])) as unknown;
+    let holder = body as Record<string | number, unknown>;
+    for (const step of at.slice(0, -1)) {
+      holder = holder[step] as Record<string | number, unknown>;
+    }
+    const last = at.at(-1) ?? "";
+    if (value === undefined) {
+      Reflect.deleteProperty(holder, last);
+    } else {
+      holder[last] = value;
+    }
+    return body;
+  };
+
+  const LEAF = ["document", "cohorts", "apple", "all", 0] as const;
+  /** Each way a body may hold less than its request component asks, in a request whose component
+   * `faultsOf` walks (the document of `validate_document` is free JSON, so only its emptiness is held). */
+  const LESS: readonly (readonly [TypedOperation, string, readonly (string | number)[], unknown])[] = [
+    ["run_analysis", "a document's views emptied", ["document", "views"], []],
+    ["run_analysis", "a cohort's leaves emptied", ["document", "cohorts", "apple", "all"], []],
+    ["count_cohort", "a cohort's leaves emptied", ["document", "cohorts", "apple", "all"], []],
+    ["count_cohort", "a document without its views", ["document", "views"], undefined],
+    ["count_cohort", "a document without its notes", ["document", "notes"], undefined],
+    ["run_analysis", "a document's params emptied", ["document", "params"], {}],
+    ["run_analysis", "a cohort without its notes", ["document", "cohorts", "apple", "notes"], undefined],
+    ["run_analysis", "a cohort without its dataset (its datasets are no stand-in)", ["document", "cohorts", "apple", "dataset"], undefined],
+    ["run_analysis", "a leaf's values emptied", [...LEAF, "values"], [""]],
+    ["run_analysis", "a leaf's member null", [...LEAF, "lift"], null],
+    ["run_analysis", "a leaf's negate its default", [...LEAF, "negate"], false],
+    ["run_analysis", "a leaf without its units", [...LEAF, "units"], undefined],
+    ["run_analysis", "a leaf's quantifier emptied", [...LEAF, "quantifier"], {}],
+    ["run_analysis", "a leaf's via emptied", [...LEAF, "via"], []],
+    ["run_analysis", "a leaf's step without its direction", [...LEAF, "via", 0, "dir"], undefined],
+    ["run_analysis", "a view's params emptied", ["document", "views", 0, "params"], {}],
+    ["run_analysis", "a view without its overlap", ["document", "views", 0, "overlap"], undefined],
+    ["run_analysis", "a view's cohorts emptied", ["document", "views", 0, "cohorts"], []],
+    ["validate_document", "a view's params emptied", ["document", "views", 0, "params"], {}],
+    ["validate_document", "a document's views emptied", ["document", "views"], []],
+    ["search_catalog", "completeness cut to min_present", ["completeness", "concept"], undefined],
+    ["search_catalog", "completeness without its datatype", ["completeness", "datatype"], undefined],
+    ["search_catalog", "completeness min_present zero", ["completeness", "min_present"], 0],
+    ["search_catalog", "a data_use item without its code", ["data_use", 0, "code"], undefined],
+    ["search_catalog", "data_use emptied", ["data_use"], []],
+    ["search_catalog", "a facet emptied", ["facets", "orchards.region"], []],
+    ["search_catalog", "limit its default", ["limit"], 20],
+    ["describe_dataset", "a member dropped", ["columns_offset"], undefined],
+    ["explain", "the id empty", ["id"], ""],
+  ];
+
+  it.each(LESS)("the body's own controls: %s, %s, is a fault", (operation, _what, at, value) => {
+    expect(bodyFaults(operation, edited(operation, at, value)).length).toBeGreaterThan(0);
+  });
+
+  it.each(operations)("%s: posts to its own route the exact body given, full and smallest, once, and leaves the caller's copy as it was", async (operation) => {
+    const seen: (readonly [unknown, RequestInit | undefined])[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: unknown, init?: RequestInit) => {
+        seen.push([url, init] as const);
+        return Promise.resolve(new Response(OK_BODY(operation), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }),
+    );
+    for (const body of [GIVEN[operation], MINIMAL[operation]]) {
+      // the expected text is taken before the call, from the body as given; the function is handed
+      // a copy, and the caller's own is held unchanged after it (an edit in place, or a default
+      // filled in for an absent member, is another body sent or the caller's own changed)
+      const expected = JSON.stringify(body);
+      const handed = structuredClone(body);
+      seen.length = 0;
+      expect((await SEND[operation](handed)).kind).toBe("ok");
+      expect(seen).toHaveLength(1);
+      expect(String(seen[0]?.[0])).toBe(`/api/tools/${operation}`);
+      expect(seen[0]?.[1]?.method).toBe("POST");
+      expect(seen[0]?.[1]?.body).toBe(expected);
+      expect(JSON.stringify(handed)).toBe(expected);
+    }
   });
 
   it.each(operations)("%s: a 200 of its component is ok, walked, and nothing raw survives", async (operation) => {

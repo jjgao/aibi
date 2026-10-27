@@ -1,7 +1,7 @@
 /**
  * The typed answers (D426): the one seam through which the web reads a public tool's answer. Each
- * tool the web calls has one function here (`searchCatalog`, `describeDataset`, `listAnalyses`,
- * `validateDocument`, `countCohort`, `runAnalysis`, `explain`), which takes the operation's request
+ * tool the web calls has one function here (`searchCatalog`, `describeDataset`, `describeColumn`,
+ * `listAnalyses`, `validateDocument`, `countCohort`, `runAnalysis`, `explain`), which takes the operation's request
  * body as the generated types state it (`RequestBody<O>`: a request's strings and JS numbers, which
  * no box is assignable to), builds the request inside `src/api/` (the route is the generated one,
  * the body is encoded by `client.ts`), and gives a closed outcome:
@@ -631,6 +631,11 @@ export function searchCatalog(body: RequestBody<"search_catalog">): Promise<Outc
 /** `describe_dataset`. */
 export function describeDataset(body: RequestBody<"describe_dataset">): Promise<Outcome<Answered<"describe_dataset">>> {
   return asked("describe_dataset", () => exchange(generated.describe_dataset(), body));
+}
+
+/** `describe_column` (D276, D442): the column named by its id, label and table. */
+export function describeColumn(body: RequestBody<"describe_column">): Promise<Outcome<Answered<"describe_column">>> {
+  return asked("describe_column", () => exchange(generated.describe_column(), body));
 }
 
 /** `list_analyses` (D316, D417). */

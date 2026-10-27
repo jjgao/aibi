@@ -27,11 +27,36 @@ export interface Written {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
-  /** The request a builder answer answers, as the page sends it (D433: the builder's seven alone). */
+  /** The request a builder answer answers, as the page sends it (D433: the builder section's eight alone). */
   readonly request?: string;
 }
 
-export const ORCHARD: readonly Written[] = (JSON.parse(readFileSync(path.join(FIXTURES, "orchard-answers.json"), "utf8")) as { answers: Written[] }).answers;
+/** A section of the orchard's answers, a world of the server's test: its first index and its end
+ * (exclusive), as the file records them. */
+export interface Section {
+  readonly start: number;
+  readonly end: number;
+}
+
+/** The sections' names, in the file's order. */
+export const SECTION_NAMES = ["orchard", "screens", "builder", "values", "columns"] as const;
+
+const WRITTEN = JSON.parse(readFileSync(path.join(FIXTURES, "orchard-answers.json"), "utf8")) as { answers: Written[]; sections: Record<(typeof SECTION_NAMES)[number], Section> };
+
+export const ORCHARD: readonly Written[] = WRITTEN.answers;
+
+/** Each section's bounds (`test_openapi_results.py` writes them), so that no test pins an absolute index:
+ * an answer is named by its section and its place in it, and a section appended moves none. */
+export const SECTIONS: Readonly<Record<(typeof SECTION_NAMES)[number], Section>> = WRITTEN.sections;
+
+/** The index of the `place`-th answer of a section (from 0), which must be in it. */
+export function answerAt(section: (typeof SECTION_NAMES)[number], place: number): number {
+  const { start, end } = SECTIONS[section];
+  if (!Number.isInteger(place) || place < 0 || start + place >= end) {
+    throw new Error(`no answer ${String(place)} in the section ${section}`);
+  }
+  return start + place;
+}
 
 /** The component of an orchard answer: its operation's 200, or the refusals'. */
 export const componentOf = (answer: Written): string => (answer.status === 200 ? OPERATIONS[answer.operation] : "Refusals");

@@ -38,6 +38,7 @@ export type { OperationId, Route } from "./route";
 export { ClientError, REFUSALS, RESPONSE_CAP_BYTES, start, type RequestBody } from "./client";
 export { DecodeError } from "./decode";
 export {
+  describeColumn,
   describeDataset,
   explain,
   listAnalyses,

@@ -10,13 +10,24 @@ import { vi } from "vitest";
 
 import { type Answered, runAnalysis } from "../../src/api/typed";
 import { RunOf } from "../../src/builder/Builder";
-import { ORCHARD } from "./typed-support";
+import { answerAt, ORCHARD } from "./typed-support";
 
 export type Json = Record<string, unknown>;
 export type Ran = Answered<"run_analysis">;
 
-/** The live answers by letter (D434's values answers, from 25) and the earlier runs of the orchard. */
-export const LIVE = { a: 25, b: 26, c: 27, d: 28, e: 29, f: 30, g: 31, h: 32, hPrime: 33, i: 34 } as const;
+/** The live answers by letter (D434's values answers, by their place in the file's `values` section)
+ * and the earlier runs of the orchard. */
+export const LIVE = {
+  a: answerAt("values", 0),
+  b: answerAt("values", 1),
+  c: answerAt("values", 2),
+  d: answerAt("values", 3),
+  e: answerAt("values", 4),
+  f: answerAt("values", 5),
+  g: answerAt("values", 6),
+  h: answerAt("values", 7),
+  hPrime: answerAt("values", 8),
+} as const;
 
 /** Every live `run_analysis` answer of status 200, by index. */
 export const RUNS: readonly (readonly [number, string])[] = ORCHARD.flatMap((answer, index) => (answer.operation === "run_analysis" && answer.status === 200 ? [[index, answer.body] as const] : []));

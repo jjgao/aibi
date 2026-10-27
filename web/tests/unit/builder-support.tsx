@@ -4,7 +4,7 @@
  * the real walk returned (`fetch` stubbed), every later request recorded, and a person's actions
  * fired through the rendered controls alone: a list's option chosen by its id (`optionAt`, D441), a field typed into
  * with the native setter, a button pressed. The builder's answers are the server's own
- * (`orchard-answers.json`'s last eight, each with its request, written by `test_openapi_results.py`).
+ * (`orchard-answers.json`'s `builder` section, eight answers, each with its request, written by `test_openapi_results.py`).
  */
 import { act, StrictMode } from "react";
 import { vi } from "vitest";

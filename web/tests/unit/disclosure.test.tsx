@@ -18,7 +18,7 @@ import { Disclosure, NO_SETTING } from "../../src/layout/Disclosure";
 import { walked } from "./answers";
 import { leavesOf } from "./injection";
 import { render } from "./render";
-import { componentOf, ORCHARD } from "./typed-support";
+import { answerAt, componentOf, ORCHARD } from "./typed-support";
 
 type Setting = { readonly min_cell_count: ServerNumber | null };
 
@@ -71,7 +71,7 @@ describe("Disclosure", () => {
   it("B10: on every live result under a floor, every count shown is null, 0 or at least k; a 0 occurs, so the words before B10 were false", () => {
     const floored = liveResults().filter(({ result }) => result.k !== null);
     // (d), (e), (h) and (h'): the four values answers under a floor.
-    expect(floored.map(({ index }) => index)).toEqual([28, 29, 32, 33]);
+    expect(floored.map(({ index }) => index)).toEqual([3, 4, 7, 8].map((place) => answerAt("values", place)));
     let zeros = 0;
     for (const { result } of floored) {
       const counts = underKCounts(result.raw);
@@ -93,7 +93,9 @@ describe("Disclosure", () => {
       const k = settingOf(body);
       return k === null ? [] : [{ index, k, counts: unitCounts(body) }];
     });
-    expect(floored.map(({ index }) => index)).toEqual(expect.arrayContaining([15, 16, 20, 28, 29, 32, 33]));
+    // the screens' two under a floor of 50, the builder's floored count, the four values answers under a
+    // floor, and describe_column's under floors of 5 and 50, the last with its categories (D442)
+    expect(floored.map(({ index }) => index)).toEqual(expect.arrayContaining([answerAt("screens", 2), answerAt("screens", 3), answerAt("builder", 3), ...[3, 4, 7, 8].map((place) => answerAt("values", place)), answerAt("columns", 6), answerAt("columns", 7), answerAt("columns", 9)]));
     for (const { index, k, counts } of floored) {
       for (const [kind, count] of counts) {
         expect(count === null || count === 0 || count >= k, `answer ${String(index)}: ${kind} ${String(count)} under k = ${String(k)}`).toBe(true);
@@ -103,6 +105,12 @@ describe("Disclosure", () => {
     // A table's row count (n_rows) and a histogram bin's count are among those held.
     const kinds = new Set(floored.flatMap(({ counts }) => counts.map(([kind]) => kind)));
     expect([kinds.has("stat"), kinds.has("bin")]).toEqual([true, true]);
+    // A category's count under a floor of 5 is among them (describe_column's last answer), each at least k.
+    const place = answerAt("columns", 9);
+    const shown = (JSON.parse(ORCHARD[place]?.body ?? "null") as { statistics: { distribution: { categories: { count: number }[] } } }).statistics.distribution.categories.map(({ count }) => count);
+    const held = floored.find(({ index }) => index === place)?.counts.map(([, count]) => count) ?? [];
+    expect(shown.length).toBeGreaterThan(1);
+    expect(shown.every((count) => count >= 5 && held.includes(count))).toBe(true);
   });
 });
 
