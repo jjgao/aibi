@@ -28,12 +28,40 @@ from aibi.core.schema.output import TextSegment
 from aibi.core.schema.pack_api import ConfinedPath, DirectoryEntry, Refused
 
 DATA = "data"
+"""A checked role: a meta file's value naming a data file of a type never imported (phase 9).
+``discover`` resolves it against the listing and never reads what it names."""
 TAGS = "tags"
+"""A checked role: the study meta's ``tags_file`` (phase 10), resolved as the data role's values
+are; the file is never read."""
 LISTING = "listing"
+"""A declared role: the listing of the study's directory, which Meta(S) is taken from.
+``discover`` lists the directory itself (once, through the reader), not from this row."""
 CASE_LISTS = "case lists"
+"""A declared role: what the reference lists and reads of ``case_lists/`` (V:4900-4909) and its
+test that ``case_lists`` is a directory (V:5566-5567). ``discover`` neither lists nor reads
+``case_lists/`` (exit 3 (19)): the reference's listing alone, never read by the pack. M4.2b-1b
+makes it a read role, which changes this role's entry in ``study.PATH_SITES`` and the statements
+of the guard that name it (``caselists``, ``roles`` and ``closure``'s handling of a declared row),
+each of which must stay pinned by a self-check."""
 CHECKED = (DATA, TAGS)
-"""The roles whose values ``discover`` resolves (phases 9 and 10); the others are declared."""
+"""The roles whose values ``discover`` resolves (phases 9 and 10); the others are declared:
+``discover`` does not consult their rows."""
 STUDY = "STUDY"
+
+NEVER_IMPORTED = ("METHYLATION", "CONTINUOUS", "METHYLATION")
+"""The one profile type the corpus, the oracle's declared case, the guard's self-checks and the
+discovery and import tests use as a meta file the pack never imports, as a ``PAIRS`` entry: its
+``genetic_alteration_type``, its ``datatype`` and the type they classify to. No slice of M4.2b
+reads it (the MAF, structural variants, discrete CNA, SEG and panels are what M4.2b reads). The
+modules that cannot load this one when they are imported (``test_paths.py``, ``test_study.py``)
+keep a literal of their own, each pinned to this constant by a test (``test_importer.py`` reads the
+constant at call time and keeps none), and ``test_the_never_imported_type_is_not_imported`` fails if
+the type becomes a clinical type (``meta.CLINICAL``) or leaves ``NON_CLINICAL_DATA``, that is, when
+the pack's own tables say it is read: that is the moment to move the corpus to another type. Choose
+one whose profile needs no case list (V:5034-5048), change this constant and those literals, run
+the 52 cells and C24 again, live, on the pinned reference, and re-record ``test_paths.REFERENCE``
+and its ``RECORDED_UNDER`` (the type the cells were recorded under, which a test pins to this
+constant)."""
 
 DATA_TYPES = frozenset(
     {
@@ -89,7 +117,8 @@ ROWS = (
 ``pd_annotations_filename``), then phase 10, then the listings: V:4854-4856 and V:1250-1254 for the
 data and PD values (V:1232 and V:1428: not the DISCRETE_LONG validator), V:4799 and V:5563 for the
 tags file, which the study meta alone holds; the listing of the study's directory, every meta
-file's type; the case lists, which ``discover`` does not list (exit 3 (19))."""
+file's type; the case lists, which ``discover`` neither lists nor reads (exit 3 (19)). Each role is
+stated above, where its constant is."""
 
 PAIRS = (
     ("CANCER_TYPE", "CANCER_TYPE", "CANCER_TYPE"),
@@ -218,14 +247,15 @@ def guard_case(
 
 def declared_case(base: Mapping[str, bytes], row: Row) -> dict[str, tuple[str, bytes]]:
     """``base`` with what a declared row is about, every path value clean: a ``case_lists``
-    directory for the case lists (exit 3 (19)), a meta file of a type never imported naming
+    directory for the case lists (exit 3 (19)), a meta file of the type ``NEVER_IMPORTED`` naming
     ``PLAIN`` for the listing. Both are accepted."""
     entries = {name: ("file", content) for name, content in base.items()}
     entries[PLAIN] = ("file", b"x")
     if row.role == CASE_LISTS:
         entries["case_lists"] = ("directory", b"")
     else:
-        head = "genetic_alteration_type: MUTATION_EXTENDED\ndatatype: MAF\n"
+        alteration, datatype, _ = NEVER_IMPORTED
+        head = f"genetic_alteration_type: {alteration}\ndatatype: {datatype}\n"
         entries["meta_x.txt"] = ("file", f"{EVERY_KEY}{head}data_filename: {PLAIN}\n".encode())
     return entries
 

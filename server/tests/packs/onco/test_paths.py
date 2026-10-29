@@ -28,7 +28,17 @@ fixture.
   ``clinical_grid.BASE`` and the cell's own entries, with aibi's expected outcome (a refusal, or
   accepted with the notes it carries). Each cell also carries the reference's outcome as it was
   recorded, per error: data, not asserted (``REFERENCE``). Two rows are modelled, not run: APFS
-  opens a name's fold-equal entry, so there the reference reads what Linux cannot open.
+  opens a name's fold-equal entry, so there the reference reads what Linux cannot open. The cells
+  of a non-clinical profile meta are of ``paths_oracle.NEVER_IMPORTED``'s type (METHYLATION), which
+  no slice of M4.2b reads: until M4.2b-1a they were MUTATION_EXTENDED's (with the ``_sequenced``
+  case list it needs), and M4.2b-1a ran the 52 again on the reference as they are built here, with
+  C24, whose value names their shared file, before it recorded them: each outcome is as before,
+  per error, ``via`` included. ``meth_meta`` keeps a literal of that type (this module cannot load
+  the oracle when it is imported), pinned to the constant by
+  ``test_meth_meta_is_the_never_imported_type``, which also pins ``RECORDED_UNDER``, the type
+  ``REFERENCE`` was recorded under: to move the corpus to another type, choose one whose profile
+  needs no case list (V:5034-5048), change the constant and the literals, run the 52 cells and C24
+  again, live, on the pinned reference, re-record ``REFERENCE`` and update ``RECORDED_UNDER``.
 - **The items and the exits.** A refused cell names its D409 item; an accepted cell records the
   exit 3 item of each of its errors (``exits``), held by the hand-written map ``EXITS``: total,
   single-valued and witnessed, every other exit on any accepted cell caught.
@@ -102,16 +112,10 @@ def kept_out(name: str) -> str | None:
 # --- The meta files the cells use (the live run's builders, re-expressed) ------------------------
 
 SID = "demo_study"
-MAF = (
-    b"Hugo_Symbol\tEntrez_Gene_Id\tTumor_Sample_Barcode\tVariant_Classification\tHGVSp_Short\n"
-    b"TP53\t7157\tS1\tMissense_Mutation\tp.R175H\n"
-)
-SEQ = (
-    b"cancer_study_identifier: demo_study\nstable_id: demo_study_sequenced\n"
-    b"case_list_name: s\ncase_list_description: s\ncase_list_ids: S1\tS2\n"
-)
+METH = b"Hugo_Symbol\tEntrez_Gene_Id\tS1\tS2\nTP53\t7157\t0.5\t0.25\n"
+"""A valid methylation data file (a gene-wise matrix of the base study's samples)."""
 CNA = b"Hugo_Symbol\tEntrez_Gene_Id\tS1\nTP53\t7157\t0\n"
-BAD_MAF = b"Hugo_Symbol\tfoo\nTP53\tx\n"
+BAD_METH = b"Hugo_Symbol\tfoo\nTP53\tx\n"
 TL = b"PATIENT_ID\tSTART_DATE\tSTOP_DATE\tEVENT_TYPE\nP1\t0\t10\tTREATMENT\n"
 PD = (
     b"SAMPLE_ID\tHugo_Symbol\tEntrez_Gene_Id\tcbp_driver\tcbp_driver_annotation\n"
@@ -125,10 +129,15 @@ DUAL_PATIENT = (
 """A patient file that is also a valid timeline file."""
 
 
-def maf_meta(value: str) -> bytes:
+def meth_meta(value: str) -> bytes:
+    """A meta file of ``paths_oracle.NEVER_IMPORTED``'s type (METHYLATION) naming ``value``: the
+    corpus's profile type that the pack never imports, which no slice of M4.2b reads. The literal
+    is pinned to the constant by ``test_meth_meta_is_the_never_imported_type``. MUTATION_EXTENDED,
+    which M4.2b imports, was that type until M4.2b-1a moved its cells here and ran each again on
+    the reference (D436)."""
     return (
-        f"cancer_study_identifier: {SID}\ngenetic_alteration_type: MUTATION_EXTENDED\n"
-        "datatype: MAF\nstable_id: mutations\nshow_profile_in_analysis_tab: true\n"
+        f"cancer_study_identifier: {SID}\ngenetic_alteration_type: METHYLATION\n"
+        "datatype: CONTINUOUS\nstable_id: methylation_hm27\nshow_profile_in_analysis_tab: true\n"
         f"profile_name: M\nprofile_description: M\ndata_filename: {value}\n"
     ).encode()
 
@@ -250,8 +259,10 @@ def cell(
     """A cell's study: ``clinical_grid.BASE`` less ``drop``, the study meta's ``tags_file``
     (a ``str``) or a whole study meta (``bytes``), the clinical metas naming other files, and the
     cell's entries, a path inside a subdirectory written ``sub/name``; a node is ``bytes``, ``{}``
-    (a directory), ``(SYM, target)``, ``(MODE, content, mode)`` or ``FIFO``. As in the live run, a
-    study with a ``meta_mut*`` meta gets ``case_lists/cases_sequenced.txt``."""
+    (a directory), ``(SYM, target)``, ``(MODE, content, mode)`` or ``FIFO``. Nothing is added: a
+    METHYLATION profile needs no case list (V:5034-5048 ask one of a mutation or a discrete CNA
+    profile alone), so the ``case_lists/cases_sequenced.txt`` the MAF cells carried until M4.2b-1a
+    is gone, and a cell about ``case_lists`` holds its own."""
 
     def build(base: Mapping[str, bytes], shared: Path) -> dict[str, Node]:
         tree: dict[str, Node] = {
@@ -273,15 +284,13 @@ def cell(
                 value = base[value.removeprefix(b"<base>").decode()]
             head, _, name = path.rpartition("/")
             (tree.setdefault(head, {}) if head else tree)[name] = value
-        if any(name.startswith("meta_mut") for name in tree) and "case_lists" not in tree:
-            tree["case_lists"] = {"cases_sequenced.txt": SEQ}
         return tree
 
     return build
 
 
 def _absolute(shared: Path) -> bytes:
-    return maf_meta(str(shared / "data_mut.txt"))
+    return meth_meta(str(shared / "data_meth.txt"))
 
 
 NFC_SAMPLE = unicodedata.normalize("NFC", "data_clinical_samplé.txt")
@@ -313,33 +322,36 @@ GENERIC_TARGETS = {
 CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "02": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "data_clinical_sample.txt")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "data_clinical_sample.txt")),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "03": (
-        cell(("meta_mut.txt", maf_meta("link/data_clinical_sample.txt")), ("link", (SYM, "."))),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("link/data_clinical_sample.txt")), ("link", (SYM, "."))),
+        data("meta_meth.txt", P0),
     ),
     "04": (
         cell(
-            ("meta_mut.txt", maf_meta("sub/data_mut.txt")),
-            ("sub/data_mut.txt", (SYM, "../data_clinical_sample.txt")),
+            ("meta_meth.txt", meth_meta("sub/data_meth.txt")),
+            ("sub/data_meth.txt", (SYM, "../data_clinical_sample.txt")),
         ),
-        data("meta_mut.txt", P0),
+        data("meta_meth.txt", P0),
     ),
     "05": (
-        cell(("meta_mut.txt", maf_meta("sub/data_mut.txt")), ("sub/data_mut.txt", MAF)),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("sub/data_meth.txt")), ("sub/data_meth.txt", METH)),
+        data("meta_meth.txt", P0),
     ),
-    "06": (cell(("meta_mut.txt", maf_meta("../shared/data_mut.txt"))), data("meta_mut.txt", P0)),
-    "07": (cell(("meta_mut.txt", _absolute)), data("meta_mut.txt", P0)),
+    "06": (
+        cell(("meta_meth.txt", meth_meta("../shared/data_meth.txt"))),
+        data("meta_meth.txt", P0),
+    ),
+    "07": (cell(("meta_meth.txt", _absolute)), data("meta_meth.txt", P0)),
     "08": (
-        cell(("meta_mut.txt", maf_meta("data_clinical_sample.txt"))),
-        data("meta_mut.txt", READS),
+        cell(("meta_meth.txt", meth_meta("data_clinical_sample.txt"))),
+        data("meta_meth.txt", READS),
     ),
-    "09": (cell(("meta_mut.txt", maf_meta("meta_study.txt"))), data("meta_mut.txt", READS)),
+    "09": (cell(("meta_meth.txt", meth_meta("meta_study.txt"))), data("meta_meth.txt", READS)),
     "10": (cell(("meta_seg.txt", seg_meta("meta_study.txt"))), data("meta_seg.txt", READS)),
     "11": (cell(("meta_tl.txt", timeline_meta("meta_study.txt"))), data("meta_tl.txt", READS)),
     "12": (cell(("meta_ct.txt", cancer_meta("meta_study.txt"))), data("meta_ct.txt", READS)),
@@ -376,8 +388,8 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"data_cna.txt": DATA_NOTE}),
     ),
     "23": (
-        cell(("meta_mut.txt", maf_meta("DATA_CLINICAL_SAMPLE.txt"))),
-        data("meta_mut.txt", READS),
+        cell(("meta_meth.txt", meth_meta("DATA_CLINICAL_SAMPLE.txt"))),
+        data("meta_meth.txt", READS),
     ),
     "24": (
         cell(("tags.yml", (SYM, "real.yml")), ("real.yml", YAML), study="tags.yml"),
@@ -385,18 +397,18 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "25": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
             (
-                "meta_mut2.txt",
-                maf_meta("data_mut.txt").replace(
-                    b"stable_id: mutations", b"stable_id: mutations_uncalled"
+                "meta_meth2.txt",
+                meth_meta("data_meth.txt").replace(
+                    b"stable_id: methylation_hm27", b"stable_id: methylation_other"
                 ),
             ),
-            ("data_mut.txt", MAF),
+            ("data_meth.txt", METH),
         ),
-        Accept({"data_mut.txt": DATA_NOTE}),
+        Accept({"data_meth.txt": DATA_NOTE}),
     ),
-    "26": (cell(("meta_mut.txt", maf_meta("meta_mut.txt"))), data("meta_mut.txt", READS)),
+    "26": (cell(("meta_meth.txt", meth_meta("meta_meth.txt"))), data("meta_meth.txt", READS)),
     "27": (
         cell(
             (
@@ -423,14 +435,14 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "54": (cell(study=""), tags(P0)),
     "55": (
         cell(
-            ("meta_mut.txt", maf_meta("DATA_CLINICAL_SAMPLE.txt")),
-            ("DATA_CLINICAL_SAMPLE.txt", MAF),
+            ("meta_meth.txt", meth_meta("DATA_CLINICAL_SAMPLE.txt")),
+            ("DATA_CLINICAL_SAMPLE.txt", METH),
         ),
-        data("meta_mut.txt", READS),
+        data("meta_meth.txt", READS),
     ),
     "56": (
-        cell(("meta_mut.txt", maf_meta("./data_mut.txt")), ("data_mut.txt", MAF)),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("./data_meth.txt")), ("data_meth.txt", METH)),
+        data("meta_meth.txt", P0),
     ),
     "57": (
         cell(
@@ -456,24 +468,29 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         cell(("meta_cna.txt", cna_meta("data_cna.txt", "")), ("data_cna.txt", CNA)),
         data("meta_cna.txt", P0, "pd_annotations_filename"),
     ),
-    "61": (cell(("meta_mut.txt", maf_meta(""))), data("meta_mut.txt", P0)),
-    "62": (cell(("meta_mut.txt", maf_meta("case_lists"))), Accept({"case_lists": CASES_SUBDIR})),
-    "63": (cell(("meta_mut.txt", maf_meta("nofile.txt"))), Accept()),
+    "61": (cell(("meta_meth.txt", meth_meta(""))), data("meta_meth.txt", P0)),
+    "62": (
+        cell(("meta_meth.txt", meth_meta("case_lists")), ("case_lists", {})),
+        Accept({"case_lists": CASES_SUBDIR}),
+    ),
+    "63": (cell(("meta_meth.txt", meth_meta("nofile.txt"))), Accept()),
     "64": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")), ("data_mut.txt", MAF), study="data_mut.txt"
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", METH),
+            study="data_meth.txt",
         ),
-        Accept({"data_mut.txt": DATA_NOTE}),
+        Accept({"data_meth.txt": DATA_NOTE}),
     ),
     "65": (
         cell(
-            ("meta_mut.txt", maf_meta(NFD_SAMPLE)),
-            (NFD_SAMPLE, MAF),
+            ("meta_meth.txt", meth_meta(NFD_SAMPLE)),
+            (NFD_SAMPLE, METH),
             (NFC_SAMPLE, SAMPLE_FILE),
             sample_meta=NFC_SAMPLE,
             drop=("data_clinical_sample.txt",),
         ),
-        data("meta_mut.txt", READS),
+        data("meta_meth.txt", READS),
     ),
     "66": (
         cell(("meta_cna.txt", cna_meta("data_cna.txt", "data_cna.txt")), ("data_cna.txt", CNA)),
@@ -494,11 +511,11 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "69": (cell(("case_lists", {}), study="case_lists"), tags(NONE)),
     "70": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", MAF),
-            ("DATA_MUT.txt", (SYM, "data_mut.txt")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", METH),
+            ("DATA_METH.txt", (SYM, "data_meth.txt")),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "71": (
         cell(("tags.yml", YAML), ("TAGS.yml", YAML), study="tags.yml"),
@@ -512,9 +529,11 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "74": (cell(("tags.yml", b"a: [1,\n"), study="tags.yml"), Accept({"tags.yml": TAGS_NOTE})),
     "75": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")), ("data_mut.txt", MAF), study="data_mut.txt"
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", METH),
+            study="data_meth.txt",
         ),
-        Accept({"data_mut.txt": DATA_NOTE}),
+        Accept({"data_meth.txt": DATA_NOTE}),
     ),
     "76": (cell((".tags.yml", YAML), study=".tags.yml"), Accept({".tags.yml": HIDDEN})),
     "77": (
@@ -529,8 +548,8 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"tags.yml": TAGS_NOTE}),
     ),
     "79": (
-        cell(("meta_mut.txt", maf_meta(".data_mut.txt")), (".data_mut.txt", MAF)),
-        Accept({".data_mut.txt": HIDDEN}),
+        cell(("meta_meth.txt", meth_meta(".data_meth.txt")), (".data_meth.txt", METH)),
+        Accept({".data_meth.txt": HIDDEN}),
     ),
     "80": (
         cell(
@@ -559,50 +578,54 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "83": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "real_mut.txt")),
-            ("real_mut.txt", MAF),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "real_meth.txt")),
+            ("real_meth.txt", METH),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "84": (
-        cell(("meta_mut.txt", maf_meta("sub/../data_mut.txt")), ("sub", {}), ("data_mut.txt", MAF)),
-        data("meta_mut.txt", P0),
+        cell(
+            ("meta_meth.txt", meth_meta("sub/../data_meth.txt")),
+            ("sub", {}),
+            ("data_meth.txt", METH),
+        ),
+        data("meta_meth.txt", P0),
     ),
     "85": (
-        cell(("meta_mut.txt", maf_meta("data_mut.txt/")), ("data_mut.txt", MAF)),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("data_meth.txt/")), ("data_meth.txt", METH)),
+        data("meta_meth.txt", P0),
     ),
     "86": (
-        cell(("meta_mut.txt", maf_meta("tags.yml")), ("tags.yml", YAML), study="tags.yml"),
+        cell(("meta_meth.txt", meth_meta("tags.yml")), ("tags.yml", YAML), study="tags.yml"),
         Accept({"tags.yml": DATA_NOTE}),
     ),
     "87": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", SAMPLE_FILE),
-            sample_meta="data_mut.txt",
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", SAMPLE_FILE),
+            sample_meta="data_meth.txt",
             drop=("data_clinical_sample.txt",),
         ),
-        data("meta_mut.txt", READS),
+        data("meta_meth.txt", READS),
     ),
     "88": (
         cell(
-            ("meta_mut.txt", maf_meta("data_s.txt")),
-            ("data_s.txt", MAF),
+            ("meta_meth.txt", meth_meta("data_s.txt")),
+            ("data_s.txt", METH),
             ("Data_S.txt", SAMPLE_FILE),
             sample_meta="Data_S.txt",
             drop=("data_clinical_sample.txt",),
         ),
-        data("meta_mut.txt", READS),
+        data("meta_meth.txt", READS),
     ),
     "89": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", MAF),
-            ("DATA_MUT.txt", {}),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", METH),
+            ("DATA_METH.txt", {}),
         ),
-        Accept({"data_mut.txt": DATA_NOTE, "DATA_MUT.txt": "a subdirectory"}),
+        Accept({"data_meth.txt": DATA_NOTE, "DATA_METH.txt": "a subdirectory"}),
     ),
     "90": (
         cell(
@@ -616,7 +639,7 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "91": (cell(study="META_CLINICAL_PATIENT.txt"), tags(READS)),
     "92": (
-        cell(("meta_mut.txt", maf_meta("meta_x.txt~")), ("meta_x.txt~", MAF)),
+        cell(("meta_meth.txt", meth_meta("meta_x.txt~")), ("meta_x.txt~", METH)),
         Accept({"meta_x.txt~": BACKUP}),
     ),
     "93": (
@@ -630,8 +653,8 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"data_cna.txt": DATA_NOTE}),
     ),
     "94": (
-        cell(("meta_mut.txt", maf_meta("data_mut.txt")), ("data_mut.txt", FIFO)),
-        Accept({"data_mut.txt": "not a regular file"}),
+        cell(("meta_meth.txt", meth_meta("data_meth.txt")), ("data_meth.txt", FIFO)),
+        Accept({"data_meth.txt": "not a regular file"}),
     ),
     "95": (cell(("tags.yml", {}), ("TAGS.yml", YAML), study="tags.yml"), tags(NONE)),
     "96": (
@@ -664,40 +687,41 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         data("meta_cna.txt", READS, "pd_annotations_filename"),
     ),
     "N13": (
-        cell(("meta_mut.txt", maf_meta("data\\mut.txt")), ("data\\mut.txt", MAF)),
-        Accept({"data\\mut.txt": DATA_NOTE}),
+        cell(("meta_meth.txt", meth_meta("data\\meth.txt")), ("data\\meth.txt", METH)),
+        Accept({"data\\meth.txt": DATA_NOTE}),
     ),
     "C01": (
-        cell(("meta_mut.txt", maf_meta("data\0mut.txt")), ("data", MAF)),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("data\0meth.txt")), ("data", METH)),
+        data("meta_meth.txt", P0),
     ),
-    "C02": (cell(("meta_mut.txt", maf_meta("."))), data("meta_mut.txt", P0)),
-    "C03": (cell(("meta_mut.txt", maf_meta(".."))), data("meta_mut.txt", P0)),
-    "C04": (cell(("meta_mut.txt", maf_meta("a" * 256))), data("meta_mut.txt", P0)),
+    "C02": (cell(("meta_meth.txt", meth_meta("."))), data("meta_meth.txt", P0)),
+    "C03": (cell(("meta_meth.txt", meth_meta(".."))), data("meta_meth.txt", P0)),
+    "C04": (cell(("meta_meth.txt", meth_meta("a" * 256))), data("meta_meth.txt", P0)),
     "C05": (cell(study="."), tags(P0)),
     "C06": (cell(study=".."), tags(P0)),
     "C07": (cell(("t", YAML), study="t\0.yml"), tags(P0)),
     "C08": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "nowhere.txt")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "nowhere.txt")),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "C09": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "case_lists")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "case_lists")),
+            ("case_lists", {}),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "C10": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "real.txt")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "real.txt")),
             ("real.txt", b"garbage\n"),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "C11": (
         cell(
@@ -713,17 +737,17 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "C13": (
         cell(
-            ("meta_mut.txt", maf_meta("link/data_mut.txt")),
+            ("meta_meth.txt", meth_meta("link/data_meth.txt")),
             ("link", lambda shared: (SYM, str(shared))),
         ),
-        data("meta_mut.txt", P0),
+        data("meta_meth.txt", P0),
     ),
     "C14": (
         cell(
-            ("meta_mut.txt", maf_meta("link/../data_mut.txt")),
+            ("meta_meth.txt", meth_meta("link/../data_meth.txt")),
             ("link", lambda shared: (SYM, str(shared / "sub"))),
         ),
-        data("meta_mut.txt", P0),
+        data("meta_meth.txt", P0),
     ),
     "C16": (
         cell(
@@ -738,11 +762,11 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "C18": (cell(("tags.yml", YAML), study="tags.yml/"), tags(P0)),
     "C20": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "pipe")),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "pipe")),
             ("pipe", FIFO),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "C21": (
         cell(("tags.yml", (SYM, "real.yml")), ("real.yml", b"a: [1,\n"), study="tags.yml"),
@@ -750,16 +774,16 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "C22": (
         cell(
-            ("meta_mut.txt", maf_meta("sub/" + "b" * 200 + "/../../data_mut.txt")),
+            ("meta_meth.txt", meth_meta("sub/" + "b" * 200 + "/../../data_meth.txt")),
             ("sub/" + "b" * 200, {}),
-            ("data_mut.txt", MAF),
+            ("data_meth.txt", METH),
         ),
-        data("meta_mut.txt", P0),
+        data("meta_meth.txt", P0),
     ),
     "C23": (cell(("tags.yml", YAML), study="./tags.yml"), tags(P0)),
     "C24": (
         cell(
-            ("meta_cna.txt", cna_meta("data_cna.txt", "../../shared/data_mut.txt")),
+            ("meta_cna.txt", cna_meta("data_cna.txt", "../../shared/data_meth.txt")),
             ("data_cna.txt", CNA),
             ("case_lists/cases_cna.txt", CNA_LIST),
         ),
@@ -772,48 +796,48 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"tags.yml": TAGS_NOTE}),
     ),
     "C31": (
-        cell(("meta_mut.txt", maf_meta("data_mut.txt")), ("data_mut.txt", (MODE, MAF, 0))),
-        Accept({"data_mut.txt": DATA_NOTE}),
+        cell(("meta_meth.txt", meth_meta("data_meth.txt")), ("data_meth.txt", (MODE, METH, 0))),
+        Accept({"data_meth.txt": DATA_NOTE}),
     ),
     # A hidden symlink and a backup-named one, excluded from Meta(S) but not from the listing:
     # the reference reads the sample file through the first and cannot open the second.
     "C40": (
         cell(
-            ("meta_mut.txt", maf_meta(".lnk")),
+            ("meta_meth.txt", meth_meta(".lnk")),
             (".lnk", (SYM, "data_clinical_sample.txt")),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "C41": (
         cell(
-            ("meta_mut.txt", maf_meta("LNK~")),
+            ("meta_meth.txt", meth_meta("LNK~")),
             ("lnk~", (SYM, "data_clinical_sample.txt")),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     # The third code review's cells: a value of each branch whose reference outcome depends on the
     # content of what it names (D00, a control, and D08, which is cell 09, are not repeated).
     "D01": (
         cell(
-            ("meta_mut.txt", maf_meta("data_mut.txt")),
-            ("data_mut.txt", (SYM, "real.txt")),
-            ("real.txt", BAD_MAF),
+            ("meta_meth.txt", meth_meta("data_meth.txt")),
+            ("data_meth.txt", (SYM, "real.txt")),
+            ("real.txt", BAD_METH),
         ),
-        data("meta_mut.txt", SYMLINK),
+        data("meta_meth.txt", SYMLINK),
     ),
     "D02": (
-        cell(("meta_mut.txt", maf_meta("sub/nofile.txt")), ("sub", {})),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("sub/nofile.txt")), ("sub", {})),
+        data("meta_meth.txt", P0),
     ),
     "D03": (
-        cell(("meta_mut.txt", maf_meta("sub/data_mut.txt")), ("sub/data_mut.txt", BAD_MAF)),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("sub/data_meth.txt")), ("sub/data_meth.txt", BAD_METH)),
+        data("meta_meth.txt", P0),
     ),
     "D04": (
-        cell(("meta_mut.txt", maf_meta("./data_clinical_sample.txt"))),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("./data_clinical_sample.txt"))),
+        data("meta_meth.txt", P0),
     ),
-    "D05": (cell(("meta_mut.txt", maf_meta("/nonexistent/x.txt"))), data("meta_mut.txt", P0)),
+    "D05": (cell(("meta_meth.txt", meth_meta("/nonexistent/x.txt"))), data("meta_meth.txt", P0)),
     "D06": (cell(("sub", {}), study="sub/nofile.yml"), tags(P0)),
     "D07": (
         cell(study=b"<base>citation: a: b\ntags_file: meta_study.txt\n"),
@@ -821,8 +845,8 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     ),
     "D09": (cell(("sub/t.yml", b"a: [1,\n"), study="sub/t.yml"), tags(P0)),
     "D10": (
-        cell(("meta_mut.txt", maf_meta("lnk.txt")), ("lnk.txt", (SYM, "meta_study.txt"))),
-        data("meta_mut.txt", SYMLINK),
+        cell(("meta_meth.txt", meth_meta("lnk.txt")), ("lnk.txt", (SYM, "meta_study.txt"))),
+        data("meta_meth.txt", SYMLINK),
     ),
     "D11": (
         cell(
@@ -832,13 +856,13 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         tags(SYMLINK),
     ),
     "D12": (
-        cell(("meta_mut.txt", maf_meta("../cell_D12/data_clinical_sample.txt"))),
-        data("meta_mut.txt", P0),
+        cell(("meta_meth.txt", meth_meta("../cell_D12/data_clinical_sample.txt"))),
+        data("meta_meth.txt", P0),
     ),
     # Modelled, not run: on APFS the reference opens the name's fold-equal entry.
     "23-apfs": (
-        cell(("meta_mut.txt", maf_meta("DATA_CLINICAL_SAMPLE.txt"))),
-        data("meta_mut.txt", READS),
+        cell(("meta_meth.txt", meth_meta("DATA_CLINICAL_SAMPLE.txt"))),
+        data("meta_meth.txt", READS),
     ),
     "50-apfs": (cell(("tags.yml", YAML), study="TAGS.yml"), tags(NONE)),
 }
@@ -1030,6 +1054,14 @@ def reports_no_error(record: Recorded) -> bool:
     return all(error == CASCADE for error in record.errors)
 
 
+RECORDED_UNDER = ("METHYLATION", "CONTINUOUS", "METHYLATION")
+"""The ``(genetic_alteration_type, datatype, type)`` triple the 52 cells and C24 of ``REFERENCE``
+were recorded under, on the pinned reference (M4.2b-1a). ``REFERENCE`` is data recorded under that
+one type: ``test_meth_meta_is_the_never_imported_type`` pins this to
+``paths_oracle.NEVER_IMPORTED``, so a move of the corpus to another type is red until the cells
+are run again, live, on the pinned reference, ``REFERENCE`` is re-recorded and this literal is
+updated with it."""
+
 REFERENCE: dict[str, Recorded] = {
     "02": Recorded("1", ("content",), "31", via=("data_clinical_sample.txt",)),
     "03": Recorded("1", ("content",), "29", via=("data_clinical_sample.txt",)),
@@ -1057,7 +1089,7 @@ REFERENCE: dict[str, Recorded] = {
     "23": Recorded("1", ("open-fail",), "33"),
     "24": Recorded("3", (), "30"),
     "25": Recorded("1", ("type-meta",), exits=(("type-meta", "25"),)),
-    "26": Recorded("3", (), "32", via=("meta_mut.txt",)),
+    "26": Recorded("3", (), "32", via=("meta_meth.txt",)),
     "27": Recorded("3", ()),
     "30m": Recorded("1", ("cna",), "32", via=("meta_study.txt",)),
     "30s": Recorded("1", ("cna",), "32", via=("meta_clinical_sample.txt",)),
@@ -1109,7 +1141,7 @@ REFERENCE: dict[str, Recorded] = {
     "84": Recorded("3", (), "28"),
     "85": Recorded("1", ("open-fail",), "29"),
     "86": Recorded("3", ()),
-    "87": Recorded("1", ("content",), "33", via=("data_mut.txt",)),
+    "87": Recorded("1", ("content",), "33", via=("data_meth.txt",)),
     "88": Recorded("3", (), "32"),
     "89": Recorded("3", ()),
     "90": Recorded("3", (), "32"),
@@ -1473,7 +1505,7 @@ def _study_of(
         pytest.skip("no FIFOs here")  # the FIFO is made, never opened
     shared = tmp_path / "imports" / "shared"
     (shared / "sub").mkdir(parents=True, exist_ok=True)
-    (shared / "data_mut.txt").write_bytes(MAF)
+    (shared / "data_meth.txt").write_bytes(METH)
     tree = _expanded(build(base, shared), base, kinds)
     return tree, make_study(tree, name=f"cell_{cell_id}")
 
@@ -1536,7 +1568,11 @@ class Role:
 
 ROLES = (
     Role(
-        "MAF data_filename", "meta_mutations.txt", "data_filename", True, lambda b, v: maf_meta(v)
+        "methylation data_filename",
+        "meta_methylation.txt",
+        "data_filename",
+        True,
+        lambda b, v: meth_meta(v),
     ),
     Role(
         "timeline data_filename",
@@ -1562,11 +1598,11 @@ ROLES = (
         lambda b, v: b["meta_study.txt"] + f"data_filename: {v}\n".encode(),
     ),
     Role(
-        "MAF tags_file",
-        "meta_mutations.txt",
+        "methylation tags_file",
+        "meta_methylation.txt",
         "tags_file",
         False,
-        lambda b, v: maf_meta("nofile.txt") + f"tags_file: {v}\n".encode(),
+        lambda b, v: meth_meta("nofile.txt") + f"tags_file: {v}\n".encode(),
     ),
     Role(
         "sample tags_file",
@@ -1584,11 +1620,11 @@ ROLES = (
         {"data_cnal.txt": CNA},
     ),
     Role(
-        "MAF pd_annotations_filename",
-        "meta_mutations.txt",
+        "methylation pd_annotations_filename",
+        "meta_methylation.txt",
         "pd_annotations_filename",
         False,
-        lambda b, v: maf_meta("nofile.txt") + f"pd_annotations_filename: {v}\n".encode(),
+        lambda b, v: meth_meta("nofile.txt") + f"pd_annotations_filename: {v}\n".encode(),
     ),
 )
 
@@ -1935,6 +1971,22 @@ def test_the_brute_force_is_the_size_it_is_said_to_be(base: Any) -> None:
     assert sum(1 for _ in brute_cases(base)) == checked + ignored + 9 * 3 + excluded + long + spaced
 
 
+def test_meth_meta_is_the_never_imported_type(oracle: ModuleType) -> None:
+    """The literal of ``meth_meta`` is the one type of ``paths_oracle.NEVER_IMPORTED``: its
+    ``genetic_alteration_type`` and ``datatype``, which this module cannot take from the oracle
+    when it is imported. ``RECORDED_UNDER``, the type ``REFERENCE`` was recorded under, is the same
+    triple: moving the corpus to another type fails here until ``REFERENCE`` is re-recorded."""
+    alteration, datatype, _ = oracle.NEVER_IMPORTED
+    fields = dict(line.split(": ", 1) for line in meth_meta("x").decode().splitlines())
+    assert fields["genetic_alteration_type"] == alteration
+    assert fields["datatype"] == datatype
+    assert RECORDED_UNDER == oracle.NEVER_IMPORTED, (
+        "REFERENCE was recorded under RECORDED_UNDER's type: move the corpus to another type by "
+        "running the 52 cells and C24 again, live, on the pinned reference, re-recording REFERENCE "
+        "and updating RECORDED_UNDER with it"
+    )
+
+
 # --- The table and the sites it names ------------------------------------------------------------
 
 
@@ -2026,7 +2078,10 @@ HOSTILE = ("", "/abs", "x/../data_clinical_sample.txt", "data_clinical_sample.tx
     ("meta", "content"),
     [
         ("meta_study.txt", lambda b, v: b["meta_study.txt"] + f"data_filename: {v}\n".encode()),
-        ("meta_mutations.txt", lambda b, v: maf_meta("nofile.txt") + f"tags_file: {v}\n".encode()),
+        (
+            "meta_methylation.txt",
+            lambda b, v: meth_meta("nofile.txt") + f"tags_file: {v}\n".encode(),
+        ),
         (
             "meta_clinical_sample.txt",
             lambda b, v: b["meta_clinical_sample.txt"] + f"tags_file: {v}\n".encode(),
@@ -2036,8 +2091,8 @@ HOSTILE = ("", "/abs", "x/../data_clinical_sample.txt", "data_clinical_sample.tx
             lambda b, v: cna_meta("nofile.txt", v, "DISCRETE_LONG"),
         ),
         (
-            "meta_mutations.txt",
-            lambda b, v: maf_meta("nofile.txt") + f"pd_annotations_filename: {v}\n".encode(),
+            "meta_methylation.txt",
+            lambda b, v: meth_meta("nofile.txt") + f"pd_annotations_filename: {v}\n".encode(),
         ),
         (
             "meta_cna.txt",
@@ -2046,10 +2101,10 @@ HOSTILE = ("", "/abs", "x/../data_clinical_sample.txt", "data_clinical_sample.tx
     ],
     ids=[
         "study data_filename",
-        "MAF tags_file",
+        "methylation tags_file",
         "sample tags_file",
         "DISCRETE_LONG pd",
-        "MAF pd",
+        "methylation pd",
         "CNA tags_file",
     ],
 )
@@ -2078,7 +2133,7 @@ def test_a_hard_link_is_the_stated_residual(
     without ``stat``)."""
     tree = {
         **base,
-        "meta_mut.txt": maf_meta("hard.txt"),
+        "meta_meth.txt": meth_meta("hard.txt"),
         "hard.txt": kinds.hard_link("data_clinical_sample.txt"),
     }
     by_entry, _ = notes_by_entry(discovery.run(make_study(tree)))
@@ -2120,8 +2175,8 @@ def test_nothing_but_the_listing_and_meta_s_is_read(
     reads Meta(S), and opens nothing a value names (the audit hook sees every ``open``)."""
     tree = {
         **base,
-        "meta_mut.txt": maf_meta("data_mut.txt"),
-        "data_mut.txt": MAF,
+        "meta_meth.txt": meth_meta("data_meth.txt"),
+        "data_meth.txt": METH,
         "meta_cna.txt": cna_meta("data_cna.txt", "data_pd.txt"),
         "data_cna.txt": CNA,
         "data_pd.txt": PD,
@@ -2134,12 +2189,12 @@ def test_nothing_but_the_listing_and_meta_s_is_read(
     opened.clear()
     found = discovery.study.discover(reader, source, ImportLimits())
     metas = ["meta_clinical_patient.txt", "meta_clinical_sample.txt", "meta_cna.txt"]
-    metas += ["meta_mut.txt", "meta_study.txt"]
+    metas += ["meta_meth.txt", "meta_study.txt"]
     assert [name for name, _ in reader.reads] == metas
     assert reader.listed == [directory.name]
     touched = {Path(path).name if os.path.isabs(path) else path for path in opened}
     assert touched <= {directory.name, *metas}, touched
-    assert not touched & {"data_mut.txt", "data_cna.txt", "data_pd.txt", "tags.yml"}
+    assert not touched & {"data_meth.txt", "data_cna.txt", "data_pd.txt", "tags.yml"}
     by_entry, _ = notes_by_entry(found)
     assert by_entry["tags.yml"] == TAGS_NOTE
 

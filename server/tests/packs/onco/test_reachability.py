@@ -27,20 +27,36 @@ only when ``closure(study)`` finds nothing wrong, by these legs, each a failure 
   do not say which of them carries ``tags_file``, but ``holds`` makes that set ``STUDY`` alone; that
   the row reads at all is the ``refuses`` leg's); ``roles``, the rows whose key holds no ``:`` (a
   meta file's key never does; the listing rows' are ``listing:...`` and ``isdir:...``) are exactly
-  the rows of the checked roles (``CHECKED``, the data and tags roles), and there is a row of each.
+  the rows of the checked roles (``CHECKED``, the data and tags roles), and there is a row of each;
+  ``caselists``, the rows whose key names ``case_lists`` (``<what>:case_lists``, the reference's
+  directory of case lists, V:4900 and V:5566) are exactly the rows of the case lists role, a
+  ``listing:`` row is among them, and none reads a meta file's type (no meta file holds them).
   A type dropped from the oracle and the table alike, a row swapped in both, a role relabelled in
-  both, ``CHECKED`` emptied, the tags key renamed in both, are red here though another row still
-  covers them. What the anchor does **not** hold: which of the two checked roles a key has beyond
-  that structure, the spelling of the keys ``pd_annotations_filename`` and ``tags_file`` (the
-  reference's, in no table of ``meta``), and the refusals' codes, verbs and wording
-  (``guard_expected``). Those are held by PR A: ``test_paths.ROLES`` writes each checked site's key
-  literally and what it refuses, and ``test_path_sites_is_the_survey`` lists the keys literally.
+  both, ``CHECKED`` emptied, the tags key renamed in both, the case lists role moved to another
+  row, its listing row deleted or one of its rows given a type in both, are red here though
+  another row still covers them. What the anchor does **not** hold: which of the two checked roles
+  a key has beyond that structure, the spelling of the keys ``pd_annotations_filename`` and
+  ``tags_file`` (the reference's, in no table of ``meta``), and the refusals' codes, verbs and
+  wording (``guard_expected``). Those are held by PR A: ``test_paths.ROLES`` writes each checked
+  site's key literally and what it refuses, and ``test_path_sites_is_the_survey`` lists the keys
+  literally.
   **When ``meta``'s tables change legitimately** (a new type, a type made clinical, a new
   mandatory key, a type without ``data_filename``) the anchor goes red until the hand facts are
   stated again from the new survey: ``paths_oracle.py`` (``DATA_TYPES``, ``PAIRS``, ``RESOURCES``,
   ``ROWS``, and ``EVERY_KEY`` for a new mandatory key), and ``anchored`` for a type without
   ``data_filename`` (its ``holds`` statement); that is a moved pin, re-surveyed (D409), and the
   edit is acceptable there. M4.2a-1b changes none of these tables.
+- **The roles** (each stated in ``paths_oracle.py``, where its constant is): ``data`` and ``tags``
+  are the checked roles, a meta file's value that ``discover`` resolves against the listing
+  (phases 9 and 10) and never reads what it names; ``listing`` is the listing of the study's
+  directory, Meta(S)'s source, which ``discover`` makes itself; ``case lists`` is what the
+  reference lists and reads of ``case_lists/`` and its test that it is a directory, which
+  ``discover`` neither lists nor reads (exit 3 (19)): the reference's listing alone, never read.
+  The last two are declared: ``discover`` does not consult their rows (the ``declared`` leg).
+  M4.2b-1b makes ``case lists`` a read role: that changes the role's entry in
+  ``study.PATH_SITES`` and the statements that name it (the ``caselists`` statement, the ``roles``
+  statement and ``closure``'s handling of a declared row, which files the role with the declared
+  rows), and each must stay pinned by a self-check.
 - **refused**, **names**, **ignored**: for each checked hand row (``data``, ``tags``) and each type
   of the codomain, a study whose meta file of that type holds a member of Reads(S) at the row's
   key, every other site clean (``paths_oracle.guard_case``), is refused where the hand row reads
@@ -50,8 +66,8 @@ only when ``closure(study)`` finds nothing wrong, by these legs, each a failure 
 - **deletion**: deleting a checked row from ``study.PATH_SITES`` turns at least one of its refuse
   cases accepted, so ``discover`` consults the row (a table it never reads fails here); and
   **declared**: each declared row (``listing``, ``case lists``) has its case, accepted
-  (``paths_oracle.declared_case``: a meta file of a type never imported, a ``case_lists``
-  directory, exit 3 (19)), and deleting it changes no case's outcome.
+  (``paths_oracle.declared_case``: a meta file of the type ``paths_oracle.NEVER_IMPORTED``, a
+  ``case_lists`` directory, exit 3 (19)), and deleting it changes no case's outcome.
   The contract is that ``discover`` reads ``study.PATH_SITES`` at call time, each row's types
   included (``study.py``, its loop over the table inside ``discover``): a refactor that binds the
   table, or a row's types, at import, though it behaves the same, fails here by that contract (the
@@ -140,8 +156,22 @@ def without(study: Any, key: str) -> Iterator[None]:
 
 DISCRETE_CNA = "COPY_NUMBER_ALTERATION:DISCRETE"
 """The pair of the discrete CNA validator (V:1250), whose meta type the PD row reads."""
-STATEMENTS = ("pairs", "resources", "datatypes", "holds", "data", "listing", "pd", "tags", "roles")
+STATEMENTS = (
+    "pairs",
+    "resources",
+    "datatypes",
+    "holds",
+    "data",
+    "listing",
+    "pd",
+    "tags",
+    "roles",
+    "caselists",
+)
 """The anchor's statements, in the order they are checked; each has a self-check that pins it."""
+CASE_LISTS_DIRECTORY = "case_lists"
+"""The directory the reference lists and tests for case lists (V:4900, V:5566), which the keys of
+the case lists role's rows name after their ``:``."""
 
 
 def derived_heads(meta: Any) -> dict[str, str]:
@@ -184,6 +214,8 @@ def anchored(
     bare = {row.key for row in hand if ":" not in row.key}
     read = {row.key for row in hand if row.role in oracle.CHECKED}
     roles = {row.role for row in hand if row.key in bare}
+    named = {row.key for row in hand if row.key.endswith(":" + CASE_LISTS_DIRECTORY)}
+    case_lists = {row.key for row in hand if row.role == oracle.CASE_LISTS}
     pairs = sorted(
         (*label.split(":", 1), kind)
         for label, kind in meta.PAIR_TYPES.items()
@@ -222,6 +254,13 @@ def anchored(
         "roles": (
             bare == read and set(oracle.CHECKED) == roles == {oracle.DATA, oracle.TAGS},
             "the rows whose key holds no ':' are not exactly the checked rows, of both roles",
+        ),
+        "caselists": (
+            named == case_lists
+            and any(key.startswith("listing:") for key in named)
+            and not any(types[key] for key in named),
+            "the rows whose key names case_lists are not exactly the case lists rows, with a "
+            "listing among them and no meta type",
         ),
     }
     assert set(found) == set(STATEMENTS)
@@ -354,6 +393,26 @@ def test_the_real_table_is_closed() -> None:
     assert closed(WIRED, study)
 
 
+def test_the_never_imported_type_is_not_imported() -> None:
+    """The type the corpus builds its cells from (``paths_oracle.NEVER_IMPORTED``) is one the pack
+    does not import: its pair is in the oracle's ``PAIRS`` and classifies to its type, which is
+    not a clinical type (the roles the importer reads) and is among ``NON_CLINICAL_DATA``. It fails
+    if the type becomes a clinical type or leaves ``NON_CLINICAL_DATA``, that is, when the pack's
+    own tables say it is read, not on any other import of it. Then the cells that use it, which
+    would otherwise pass without testing a never-imported type, move to another type: choose one
+    whose profile needs no case list (V:5034-5048), change the constant in ``paths_oracle.py`` and
+    the literals of ``test_paths.py`` and ``test_study.py``, run the 52 cells and C24 again, live,
+    on the pinned reference, and re-record ``test_paths.REFERENCE`` and ``RECORDED_UNDER``."""
+    alteration, datatype, kind = helper("paths_oracle").NEVER_IMPORTED
+    assert (alteration, datatype, kind) in helper("paths_oracle").PAIRS
+    meta = importlib.import_module(MODULE + ".meta")
+    study = importlib.import_module(MODULE + ".study")
+    found = {"genetic_alteration_type": alteration, "datatype": datatype}
+    assert meta.classify(found, "meta_x.txt") == kind
+    assert kind not in meta.CLINICAL
+    assert kind in study.NON_CLINICAL_DATA
+
+
 def test_the_guard_refuses_a_stub_or_a_bare_seed_key_set() -> None:
     """A wired importer with no ``PATH_SITES``, an empty one, a stub of it, or the seed rows' keys
     alone (as strings, or as rows with a ``key`` and nothing else, which PR A's check let pass)
@@ -420,12 +479,12 @@ def edited(table: Sequence[Any], key: str, **changes: Any) -> tuple[Any, ...]:
 
 
 def narrowed(less: str) -> Callable[[Mapping[str, str], str], str]:
-    """``meta.classify``, but a meta file of the type ``less`` is another type (the pack loaded
-    at the call, never when the self-checks are listed)."""
+    """``meta.classify``, but a meta file of the type ``less`` is another type, EXPRESSION (the
+    pack loaded at the call, never when the self-checks are listed)."""
 
     def narrow(found: Mapping[str, str], name: str) -> str:
         kind = importlib.import_module(MODULE + ".meta").classify(found, name)
-        return "MUTATION_UNCALLED" if kind == less else kind
+        return "EXPRESSION" if kind == less else kind
 
     return narrow
 
@@ -435,6 +494,22 @@ def refuses_all(found: Mapping[str, str], name: str) -> str:
 
 
 Mutant = Callable[[ModuleType, pytest.MonkeyPatch], tuple[Any, dict[str, Any]]]
+
+
+def never_imported_type() -> str:
+    """The type the corpus uses as never imported (``paths_oracle.NEVER_IMPORTED``), read when a
+    self-check runs, never when the self-checks are listed (no module is loaded then)."""
+    kind: str = helper("paths_oracle").NEVER_IMPORTED[2]
+    return kind
+
+
+def late(build: Callable[[], Mutant]) -> Mutant:
+    """The mutant ``build()`` makes, built when the self-check runs."""
+
+    def make(study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, Any]]:
+        return build()(study, monkeypatch)
+
+    return make
 
 
 def on_table(key: str, **changes: Any) -> Mutant:
@@ -651,6 +726,17 @@ def row_without_in_both(key: str, less: str) -> Mutant:
     return in_both(lambda row, types: types - {less} if row == key else types)
 
 
+def deleted_in_both(key: str) -> Mutant:
+    """The row ``key`` deleted from the table and the hand rows alike."""
+
+    def make(study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, Any]]:
+        monkeypatch.setattr(study, "PATH_SITES", edited(study.PATH_SITES, key))
+        rows = tuple(row for row in helper("paths_oracle").ROWS if row.key != key)
+        return study, {"oracle": hand_copy(ROWS=rows)}
+
+    return make
+
+
 def dropped_in_both(less: str) -> Mutant:
     """The type ``less`` dropped everywhere a hand statement of it is made, in the table (every
     row) and the oracle (its rows, pairs, resource types and data types) alike: the pack's own key
@@ -706,11 +792,12 @@ MUTANTS: dict[str, tuple[str, Mutant]] = {
     "PD row relabelled tags": ("pairs", on_table("pd_annotations_filename", role="tags")),
     "a declared row relabelled": ("pairs", on_table("isdir:case_lists", role="listing")),
     "PD row deleted": ("pairs", on_table("pd_annotations_filename")),
-    "data row narrowed (no MUTATION)": (
+    "data row narrowed (no never-imported type)": (
         "types",
         lambda study, monkeypatch: on_table(
             "data_filename",
-            meta_types=keyed(study.PATH_SITES)["data_filename"].meta_types - {"MUTATION"},
+            meta_types=keyed(study.PATH_SITES)["data_filename"].meta_types
+            - {never_imported_type()},
         )(study, monkeypatch),
     ),
     "PD row widened to DISCRETE_LONG": (
@@ -727,10 +814,13 @@ MUTANTS: dict[str, tuple[str, Mutant]] = {
         )(study, monkeypatch),
     ),
     "a vacuous guard (classify finds no type)": ("codomain", with_classify(refuses_all)),
-    "classify narrowed (no MUTATION)": ("codomain", with_classify(narrowed("MUTATION"))),
-    "classify and the rows narrowed alike (no MUTATION)": (
+    "classify narrowed (no never-imported type)": (
         "codomain",
-        classify_and_rows_narrowed("MUTATION"),
+        late(lambda: with_classify(narrowed(never_imported_type()))),
+    ),
+    "classify and the rows narrowed alike (no never-imported type)": (
+        "codomain",
+        late(lambda: classify_and_rows_narrowed(never_imported_type())),
     ),
     "data row without CNA_DISCRETE in the table and the hand rows": (
         "anchor",
@@ -758,7 +848,7 @@ MUTANTS: dict[str, tuple[str, Mutant]] = {
 PINNING = {
     "pairs": "a declared row relabelled",
     "types": "listing row narrowed (no TIMELINE)",
-    "codomain": "classify and the rows narrowed alike (no MUTATION)",
+    "codomain": "classify and the rows narrowed alike (no never-imported type)",
     "anchor": "data row without CNA_DISCRETE in the table and the hand rows",
     "refused": "discover skips TIMELINE",
     "names": "discover reads the tags value as data",
@@ -787,16 +877,22 @@ STATEMENT_MUTANTS: dict[str, tuple[Mutant, ...]] = {
     "listing": (
         row_without_in_both("listing:meta", "TIMELINE"),
         row_without_in_both("listing:meta", "SAMPLE_ATTRIBUTES"),
-        in_both(lambda key, types: types | {"MUTATION_X"} if key == "listing:meta" else types),
+        in_both(lambda key, types: types | {"NOT_A_TYPE"} if key == "listing:meta" else types),
     ),
-    "pd": (swapped_in_both("pd_annotations_filename", "MUTATION"),),
+    "pd": (late(lambda: swapped_in_both("pd_annotations_filename", never_imported_type())),),
     "tags": (
-        swapped_in_both("tags_file", "MUTATION"),
+        late(lambda: swapped_in_both("tags_file", never_imported_type())),
         relabelled_in_both("tags_file", key="tags_path"),
     ),
     "roles": (
         relabelled_in_both("data_filename", role="listing"),
         oracle_edited(CHECKED=lambda oracle: ()),
+    ),
+    "caselists": (
+        relabelled_in_both("isdir:case_lists", role="listing"),
+        relabelled_in_both("listing:meta", role="case lists"),
+        deleted_in_both("listing:case_lists"),
+        in_both(lambda key, types: types | {"TIMELINE"} if key == "isdir:case_lists" else types),
     ),
 }
 """For each anchor statement, mutants that violate it alone (each of its two directions where it
