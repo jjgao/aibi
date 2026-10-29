@@ -393,8 +393,16 @@ ALLOWED: dict[tuple[str, str, int], str] = {
         "(PACK_FAILED), naming nothing it gave"
     ),
     ("importers/confine.py", "Confinement._resolved", 0): (
-        "realpath and stat raise OSError, and ValueError only for a path the pre-check let "
-        "through; nothing here builds an output"
+        "realpath raises OSError, and ValueError only for a path the pre-check let through; "
+        "nothing here builds an output"
+    ),
+    ("importers/confine.py", "Confinement._resolved", 1): (
+        "the walk and the leaf's stat raise OSError, and ValueError only for a path the "
+        "pre-check let through (issue #146); nothing here builds an output"
+    ),
+    ("importers/walk.py", "_open", 0): (
+        "os.open raises ValueError for a name the system cannot take, which the walk replaces "
+        "with a fixed text naming no component; nothing here builds an output"
     ),
     ("importers/databases.py", "_reason", 0): (
         "re-validates the segments a reader child sent: whatever fails is the child's fault, "

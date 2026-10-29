@@ -209,7 +209,8 @@ def test_a_file_swapped_between_its_confining_and_its_identity_is_refused(
 ) -> None:
     """The identity of a path the reader confines is the one ``confine`` recorded, never one
     taken again from the path afterwards: a file swapped for another just after it was
-    confined is refused as changed, not read."""
+    confined (its ``lstat`` by name through its walked directory, issue #146) is refused as
+    changed, not read."""
     library = _library(roots)
     target = library / "shelves" / "a.txt"
     other = roots.write("other.txt", b"other\n")
@@ -218,7 +219,8 @@ def test_a_file_swapped_between_its_confining_and_its_identity_is_refused(
 
     def swapping(path: Any, *rest: Any, **given: Any) -> os.stat_result:
         status = real(path, *rest, **given)
-        if os.fspath(path) == str(target) and not given.get("follow_symlinks", True):
+        walked = given.get("dir_fd") is not None and not given.get("follow_symlinks", True)
+        if path == target.name and walked:
             os.replace(other, target)
             swapped.append(os.fspath(path))
         return status
@@ -226,7 +228,7 @@ def test_a_file_swapped_between_its_confining_and_its_identity_is_refused(
     monkeypatch.setattr(os, "stat", swapping)
     importer = _Lister("shelves/a.txt", read=True)
     assert _outcome(roots, importer, library) == ("PATH_NOT_CONFINED", FILE_CHANGED)
-    assert swapped == [str(target)]
+    assert swapped == [target.name]
     assert importer.found == []
 
 
@@ -246,14 +248,16 @@ def test_a_directory_swapped_between_its_confining_and_its_opening_is_refused(
 ) -> None:
     """The identity the reader confines a path that is not yet confined under is checked against
     the directory it opens: ``annex``, reached through ``..``, swapped for another directory just
-    before it is opened, is refused as changed."""
+    before it is opened, is refused as changed. The kernel never sees the ``..``: the walk opens
+    ``annex`` by its name under its real parent's descriptor (issue #146)."""
     library = _library(roots)
     annex = roots.inside / "annex"
     real = os.open
     swapped: list[str] = []
 
     def swapping(path: Any, flags: int, *rest: Any, **given: Any) -> int:
-        if flags & os.O_DIRECTORY and os.fspath(path).endswith("/annex") and not swapped:
+        listing = flags & os.O_DIRECTORY and not flags & os.O_PATH
+        if listing and path == "annex" and given.get("dir_fd") is not None and not swapped:
             os.rename(annex, roots.inside / "kept-annex")
             annex.mkdir()
             (annex / "c.txt").write_bytes(b"swapped\n")
@@ -263,7 +267,7 @@ def test_a_directory_swapped_between_its_confining_and_its_opening_is_refused(
     monkeypatch.setattr(os, "open", swapping)
     importer = _Lister("shelves/../../annex")
     assert _outcome(roots, importer, library) == ("PATH_NOT_CONFINED", CHANGED)
-    assert swapped == [str(library / "shelves/../../annex")]
+    assert swapped == ["annex"]
     assert importer.found == []
 
 

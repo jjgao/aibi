@@ -163,6 +163,7 @@ forbidden_modules = [
     "aibi.core.importers.snapshot",
     "aibi.core.importers.uploads",
     "aibi.core.importers.urls",
+    "aibi.core.importers.walk",
     "aibi.core.importers.worker",
     "aibi.core.store.appdb",
     "aibi.core.store.blobs",

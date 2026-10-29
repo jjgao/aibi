@@ -152,9 +152,12 @@ def test_a_directory_swapped_after_it_was_confined_is_not_listed(roots: Roots) -
     assert _refusal(refused)[1] == "The directory changed after it was confined: "
 
 
-def test_a_file_swapped_while_its_directory_is_listed_is_not_confined(
+def test_a_file_swapped_while_its_directory_is_listed_is_refused_when_it_is_read(
     roots: Roots, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The file is confined as listed, with the identity its ``lstat`` through the directory's
+    descriptor gave; swapped right after, it is refused when it is read (it was ``unconfined``
+    before the walk, when each listed file was confined again by its path: issue #146)."""
     listed = roots.write("dir/a.csv", b"id\n1\n")
     os.link(listed, roots.inside / "kept.csv")  # so that its inode is not reused
     directory = roots.confinement.confine(roots.inside / "dir")
@@ -168,7 +171,11 @@ def test_a_file_swapped_while_its_directory_is_listed_is_not_confined(
 
     monkeypatch.setattr(os, "lstat", swapping)
     [entry] = roots.confinement.files(directory)
-    assert (entry.name, entry.kind, entry.path) == ("a.csv", "unconfined", None)
+    monkeypatch.undo()
+    assert (entry.name, entry.kind, entry.path) == ("a.csv", "file", listed.resolve())
+    with pytest.raises(ImportRefused) as refused:
+        roots.confinement.read(entry.path, 100)
+    assert _refusal(refused) == ("PATH_NOT_CONFINED", "The file changed after it was confined: ")
 
 
 def test_a_path_with_a_nul_character_is_refused(roots: Roots) -> None:
@@ -454,7 +461,11 @@ def test_the_file_is_opened_once_and_without_waiting_or_following(
 
     monkeypatch.setattr(os, "open", spy)
     assert roots.confinement.read(confined, 100) == b"id\n1\n"
-    [flags] = opened
+    # the walk's opens are of directories (issue #146): the file itself is opened once
+    walked = [flags for flags in opened if flags & os.O_DIRECTORY]
+    assert walked
+    assert all(flags & os.O_NOFOLLOW for flags in walked)
+    [flags] = [flags for flags in opened if not flags & os.O_DIRECTORY]
     for flag in ("O_NOFOLLOW", "O_NONBLOCK", "O_NOCTTY", "O_CLOEXEC"):
         assert flags & getattr(os, flag), flag
     assert flags & os.O_ACCMODE == os.O_RDONLY
@@ -472,9 +483,10 @@ def test_the_bytes_read_are_those_of_the_descriptor_opened(
 
     def swapping(target: Any, flags: int, *rest: Any, **given: Any) -> int:
         descriptor = real(target, flags, *rest, **given)
-        monkeypatch.setattr(os, "open", real)
-        os.link(path, roots.inside / "kept.csv")  # the file opened keeps its inode
-        os.replace(other, path)
+        if target == path.name:  # the file's own open, after the walk to its directory
+            monkeypatch.setattr(os, "open", real)
+            os.link(path, roots.inside / "kept.csv")  # the file opened keeps its inode
+            os.replace(other, path)
         return descriptor
 
     monkeypatch.setattr(os, "open", swapping)
@@ -495,9 +507,10 @@ def test_the_kind_is_that_of_the_descriptor_opened_not_of_the_path(
 
     def swapping(target: Any, flags: int, *rest: Any, **given: Any) -> int:
         descriptor = real(target, flags, *rest, **given)
-        monkeypatch.setattr(os, "open", real)
-        os.rename(path, roots.inside / "kept")
-        path.write_bytes(b"id\n1\n")
+        if target == path.name:  # the node's own open, after the walk to its directory
+            monkeypatch.setattr(os, "open", real)
+            os.rename(path, roots.inside / "kept")
+            path.write_bytes(b"id\n1\n")
         return descriptor
 
     before = _open_descriptors()
@@ -551,7 +564,12 @@ def _outcome(roots: Roots, site: str, patched: pytest.MonkeyPatch, change: tuple
     if site == "entry":
         patched.setattr(os, "lstat", _told(os.lstat, change, listed=True))
         [entry] = confinement.files(directory)
-        return (entry.kind, entry.path)
+        if entry.path is None:
+            return (entry.kind, None)
+        # confined as listed: the read checks the file it opens against the listing's identity
+        with pytest.raises(ImportRefused) as refused:
+            confinement.read(entry.path, 100)
+        return (entry.kind, _refusal(refused))
     patched.setattr(os, "fstat", _told(os.fstat, change))
     with pytest.raises(ImportRefused) as refused:
         (lambda: confinement.read(file, 100) if site == "read" else confinement.files(directory))()
@@ -566,7 +584,7 @@ def _expected(site: str, change: tuple[str, str]) -> Any:
     if site == "listing":
         return ("PATH_NOT_CONFINED", "The directory changed after it was confined: ")
     if field != "st_mode":
-        return ("unconfined", None)
+        return ("file", ("PATH_NOT_CONFINED", "The file changed after it was confined: "))
     return ({"directory": "directory", "symlink": "symlink"}.get(kind, "other"), None)
 
 
@@ -630,9 +648,12 @@ def test_the_listing_opens_the_directory_once_and_as_a_directory_without_followi
 
     monkeypatch.setattr(os, "open", spy)
     assert [entry.name for entry in roots.confinement.files(directory)] == ["a.csv"]
-    [flags] = opened
-    for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
-        assert flags & getattr(os, flag), flag
+    # the walk passes the directories above it with O_PATH (issue #146): the directory listed is
+    # the one opened to be read, once
+    for flags in opened:
+        for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+            assert flags & getattr(os, flag), flag
+    [flags] = [flags for flags in opened if not flags & os.O_PATH]
     assert flags & os.O_ACCMODE == os.O_RDONLY
 
 
