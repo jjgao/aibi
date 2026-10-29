@@ -492,21 +492,25 @@ def test_a_curated_study_re_imported_with_a_defect_keeps_its_release(
 
 
 def test_an_import_through_the_pack_refuses_a_bad_path_value(
-    world: Any, registry: PackRegistry
+    world: Any, registry: PackRegistry, oracle: Any
 ) -> None:
     """The closure guard (D436) holds the ``study`` module; this holds that ``PACK.importer``
-    reaches it: a non-clinical meta naming a clinical data file is refused through the import."""
+    reaches it: a non-clinical meta naming a clinical data file is refused through the import. The
+    meta is of ``paths_oracle.NEVER_IMPORTED``'s type, which no slice of M4.2b reads (until
+    M4.2b-1a, the demo's own mutation meta, which M4.2b imports)."""
+    alteration, datatype, _ = oracle.NEVER_IMPORTED
     directory = copy_demo(world)
-    meta = (directory / "meta_mutations.txt").read_text()
-    (directory / "meta_mutations.txt").write_text(
-        meta.replace("data_filename: data_mutations.txt", "data_filename: data_clinical_sample.txt")
+    (directory / "meta_methylation.txt").write_text(
+        f"cancer_study_identifier: demo_onco_2026\ngenetic_alteration_type: {alteration}\n"
+        f"datatype: {datatype}\nstable_id: methylation_hm27\nshow_profile_in_analysis_tab: true\n"
+        "profile_name: M\nprofile_description: M\ndata_filename: data_clinical_sample.txt\n"
     )
     with pytest.raises(ImportRefused) as raised:
         world.publish("demo", directory, registry, pack="onco")
     code, said = refusal_of(raised)
     assert code == "onco.DATA_FILE"
     assert said.startswith(
-        "\u00abmeta_mutations.txt\u00bb has a data_filename that names a meta file or a clinical"
+        "\u00abmeta_methylation.txt\u00bb has a data_filename that names a meta file or a clinical"
     )
 
 

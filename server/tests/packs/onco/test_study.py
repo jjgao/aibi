@@ -38,11 +38,22 @@ from aibi.core.schema.refusals import Refusal, RefusalCode
 META_MOST = 65_536
 DATA_NOTE = "a data file of a meta file M4.2a does not import"
 REFUSALS = "aibi.packs.onco.refusals"
+METH_META = (
+    b"cancer_study_identifier: demo_study\ngenetic_alteration_type: METHYLATION\n"
+    b"datatype: CONTINUOUS\nstable_id: methylation_hm27\nshow_profile_in_analysis_tab: true\n"
+    b"profile_name: M\nprofile_description: M.\ndata_filename: data_methylation.txt\n"
+)
+"""A profile meta of ``paths_oracle.NEVER_IMPORTED``'s type (METHYLATION), which no slice of M4.2b
+reads (until M4.2b-1a, MUTATION_EXTENDED, which M4.2b imports): what these tests mean by a meta
+file M4.2a does not import. This module cannot load the oracle when it is imported, so the literal
+is pinned to the constant by ``test_meth_meta_is_the_never_imported_type``."""
 MAF_META = (
     b"cancer_study_identifier: demo_study\ngenetic_alteration_type: MUTATION_EXTENDED\n"
     b"datatype: MAF\nstable_id: mutations\nshow_profile_in_analysis_tab: true\n"
     b"profile_name: M\nprofile_description: M.\ndata_filename: data_mutations.txt\n"
 )
+"""A mutation meta, for D409's exit 3 (24) alone: its ``_sequenced`` case list is the mutation
+type's own (M4.2b-1b states it again)."""
 CANCER_TYPE_META = (
     b"genetic_alteration_type: CANCER_TYPE\ndatatype: CANCER_TYPE\ndata_filename: cancer_type.txt\n"
 )
@@ -90,6 +101,15 @@ def listed_as(reader: Any, kinds: Mapping[str, str] | None = None, reverse: bool
 
 
 # --- A study, and what is read --------------------------------------------------------------------
+
+
+def test_meth_meta_is_the_never_imported_type(oracle: Any) -> None:
+    """``METH_META`` is a meta file of the one type of ``paths_oracle.NEVER_IMPORTED``: its
+    ``genetic_alteration_type`` and ``datatype``."""
+    alteration, datatype, _ = oracle.NEVER_IMPORTED
+    fields = dict(line.split(": ", 1) for line in METH_META.decode().splitlines())
+    assert fields["genetic_alteration_type"] == alteration
+    assert fields["datatype"] == datatype
 
 
 def test_the_base_study_imports(make_study: Any, discovery: Any, base: Any) -> None:
@@ -248,7 +268,7 @@ ROLES = {
     "meta_study.txt": None,
     "meta_clinical_sample.txt": None,
     "meta_clinical_patient.txt": None,
-    "meta_mutations.txt": MAF_META,
+    "meta_methylation.txt": METH_META,
     "meta_cancer_type.txt": CANCER_TYPE_META,
     "meta_resource.txt": RESOURCE_META,
 }
@@ -527,11 +547,11 @@ def test_files_of_mode_000_that_are_not_meta_files_import(
 # --- BOMs (cause rule 2) --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", [*METAS, "meta_mutations.txt"])
+@pytest.mark.parametrize("name", [*METAS, "meta_methylation.txt"])
 def test_one_bom_on_a_meta_file_imports(
     make_study: Any, discovery: Any, base: Any, name: str
 ) -> None:
-    base["meta_mutations.txt"] = MAF_META
+    base["meta_methylation.txt"] = METH_META
     base[name] = "\ufeff".encode() + base[name]
     assert discovery.outcome(make_study(base))[0] == "ok"
 
@@ -566,16 +586,19 @@ EXIT_3: dict[str, tuple[dict[str, Any], list[str]]] = {
         {"case_lists": {"cases_all.txt": CASE_LIST.replace(b"demo_study", b"other")}},
         ["a subdirectory (case lists are M4.2b's): «case_lists»"],
     ),
-    "a MAF missing its columns": (
-        {"meta_mutations.txt": MAF_META, "data_mutations.txt": b"Hugo_Symbol\nTP53\n"},
+    "a methylation file missing its columns": (
+        {
+            "meta_methylation.txt": METH_META,
+            "data_methylation.txt": b"Hugo_Symbol\tEntrez_Gene_Id\nTP53\t7157\n",
+        },
         [
-            "a data file of a meta file M4.2a does not import: «data_mutations.txt»",
-            "a meta file of a type M4.2a does not import: «meta_mutations.txt»",
+            "a data file of a meta file M4.2a does not import: «data_methylation.txt»",
+            "a meta file of a type M4.2a does not import: «meta_methylation.txt»",
         ],
     ),
-    "a missing MAF": (
-        {"meta_mutations.txt": MAF_META},
-        ["a meta file of a type M4.2a does not import: «meta_mutations.txt»"],
+    "a missing methylation file": (
+        {"meta_methylation.txt": METH_META},
+        ["a meta file of a type M4.2a does not import: «meta_methylation.txt»"],
     ),
     "a bad timeline": (
         {
@@ -595,6 +618,7 @@ EXIT_3: dict[str, tuple[dict[str, Any], list[str]]] = {
             "a meta file of a type M4.2a does not import: «meta_cancer_type.txt»",
         ],
     ),
+    # D409's (24) for the mutation type itself (M4.2b-1b, which imports it, states it again).
     "a mutation meta without _sequenced": (
         {
             "meta_mutations.txt": MAF_META,
@@ -643,8 +667,8 @@ def test_every_skip_reason(
         **base,
         ".hidden": b"x",
         "x~": b"x",
-        "meta_mutations.txt": MAF_META,
-        "data_mutations.txt": b"x",
+        "meta_methylation.txt": METH_META,
+        "data_methylation.txt": b"x",
         "case_lists": {"cases_all.txt": CASE_LIST},
         "subdirectory": {},
         "link": kinds.symlink("."),
@@ -658,16 +682,16 @@ def test_every_skip_reason(
     assert read_names(reader) == [
         "meta_clinical_patient.txt",
         "meta_clinical_sample.txt",
-        "meta_mutations.txt",
+        "meta_methylation.txt",
         "meta_study.txt",
     ]
     assert notes_of(found) == [
         "skipped_source: a hidden file: «.hidden»",
         "skipped_source: a subdirectory (case lists are M4.2b's): «case_lists»",
-        f"skipped_source: {DATA_NOTE}: «data_mutations.txt»",
+        f"skipped_source: {DATA_NOTE}: «data_methylation.txt»",
         "skipped_source: not a regular file: «fifo»",
         "skipped_source: a symlink: «link»",
-        "skipped_source: a meta file of a type M4.2a does not import: «meta_mutations.txt»",
+        "skipped_source: a meta file of a type M4.2a does not import: «meta_methylation.txt»",
         "skipped_source: a subdirectory: «subdirectory»",
         "skipped_source: the study's tags file: «tags.yml»",
         "skipped_source: an editor or OncoKB backup: «x~»",
@@ -696,10 +720,10 @@ def test_a_tags_file_of_a_meta_that_is_not_the_study_meta_adds_no_note(
     meta of a type that is skipped, holding one adds none."""
     base["meta_clinical_sample.txt"] += b"tags_file: tags.yml\n"
     base["meta_clinical_patient.txt"] += b"tags_file:\n"
-    base["meta_mutations.txt"] = MAF_META + b"tags_file: tags.yml\n"
+    base["meta_methylation.txt"] = METH_META + b"tags_file: tags.yml\n"
     found = discovery.run(make_study(base))
     assert notes_of(found) == [
-        "skipped_source: a meta file of a type M4.2a does not import: «meta_mutations.txt»"
+        "skipped_source: a meta file of a type M4.2a does not import: «meta_methylation.txt»"
     ]
 
 
@@ -860,9 +884,9 @@ def test_a_second_clinical_meta_of_a_kind(
     )
 
 
-@pytest.mark.parametrize("name", ["meta_mutations.txt", "meta_clinical_patient.txt"])
+@pytest.mark.parametrize("name", ["meta_methylation.txt", "meta_clinical_patient.txt"])
 def test_another_study_id(make_study: Any, discovery: Any, base: Any, name: str) -> None:
-    base.setdefault(name, MAF_META)
+    base.setdefault(name, METH_META)
     base[name] = base[name].replace(b"demo_study", b"other_study")
     assert discovery.outcome(make_study(base))[:2] == ("onco.STUDY_MISMATCH", name)
 
@@ -968,7 +992,10 @@ PHASES: list[tuple[str, Callable[[dict[str, bytes]], None], tuple[str, str, str]
     ),
     (
         "stable_id",
-        _add("meta_y_stable.txt", MAF_META.replace(b"stable_id: mutations", b"stable_id: a b")),
+        _add(
+            "meta_y_stable.txt",
+            METH_META.replace(b"stable_id: methylation_hm27", b"stable_id: a b"),
+        ),
         ("onco.META_VALUE", "meta_y_stable.txt", "holds a stable_id that M4.2a does not accept"),
     ),
     (
@@ -980,7 +1007,7 @@ PHASES: list[tuple[str, Callable[[dict[str, bytes]], None], tuple[str, str, str]
         "study id",
         _add(
             "meta_w_other.txt",
-            MAF_META.replace(b"demo_study", b"other_study").replace(b"mutations", b"other"),
+            METH_META.replace(b"demo_study", b"other_study").replace(b"methylation", b"other"),
         ),
         ("onco.STUDY_MISMATCH", "meta_w_other.txt", "names another study than the study meta"),
     ),
@@ -1076,14 +1103,14 @@ def test_phase_9_by_meta_name_then_data_before_pd(
     tree = {
         **base,
         "meta_a_cna.txt": CNA_META + b"pd_annotations_filename: meta_study.txt\n",
-        "meta_b_maf.txt": MAF_META.replace(b"data_mutations.txt", b"x/y"),
+        "meta_b_meth.txt": METH_META.replace(b"data_methylation.txt", b"x/y"),
     }
     outcome = discovery.outcome(make_study(tree))
     assert outcome[:2] == ("onco.DATA_FILE", "meta_a_cna.txt")
     assert "pd_annotations_filename" in outcome[2]
     tree["meta_c_cna.txt"] = tree.pop("meta_a_cna.txt")
     outcome = discovery.outcome(make_study(tree))
-    assert outcome[:2] == ("onco.DATA_FILE", "meta_b_maf.txt")
+    assert outcome[:2] == ("onco.DATA_FILE", "meta_b_meth.txt")
 
 
 def test_a_bad_stable_id_before_a_file_that_cannot_be_read(
@@ -1091,7 +1118,7 @@ def test_a_bad_stable_id_before_a_file_that_cannot_be_read(
 ) -> None:
     """The reviewer's case: ``meta_a.txt`` holds a ``stable_id`` that is refused, ``meta_z.txt`` a
     line without ``:``; every file is read and parsed before any ``stable_id`` is checked."""
-    base["meta_a.txt"] = MAF_META.replace(b"stable_id: mutations", b"stable_id: a b")
+    base["meta_a.txt"] = METH_META.replace(b"stable_id: methylation_hm27", b"stable_id: a b")
     base["meta_z.txt"] = b"no colon\n"
     assert discovery.outcome(make_study(base))[:2] == ("onco.META_FILE", "meta_z.txt")
 
@@ -1124,8 +1151,8 @@ def _fault_bytes(content: bytes) -> Callable[[dict[str, Any], str, Any], None]:
 def _fault_stable_duplicate(tree: dict[str, Any], slot: str, kinds: Any) -> None:
     """``slot`` repeats the ``stable_id`` of a partner named like it without the extension, which
     sorts just before it."""
-    tree[slot.removesuffix(".txt")] = MAF_META
-    tree[slot] = MAF_META
+    tree[slot.removesuffix(".txt")] = METH_META
+    tree[slot] = METH_META
 
 
 def _fault_second_patient(tree: dict[str, Any], slot: str, kinds: Any) -> None:
@@ -1151,7 +1178,7 @@ STEPS = [
     Step(
         2,
         "mandatory",
-        _fault_bytes(MAF_META.replace(b"profile_name: M\n", b"")),
+        _fault_bytes(METH_META.replace(b"profile_name: M\n", b"")),
         "onco.META_FIELD",
         True,
         "lacks the key profile_name",
@@ -1159,7 +1186,7 @@ STEPS = [
     Step(
         3,
         "form",
-        _fault_bytes(MAF_META.replace(b"stable_id: mutations", b"stable_id: a b")),
+        _fault_bytes(METH_META.replace(b"stable_id: methylation_hm27", b"stable_id: a b")),
         "onco.META_VALUE",
         True,
         "holds a stable_id that M4.2a does not accept",
@@ -1287,7 +1314,7 @@ def test_the_clinical_grid(grid: Any, discovery: Any, tmp_path: Path) -> None:
         ("subdirectory", "names no regular file in the study's directory"),
         ("fifo", "names no regular file in the study's directory"),
         ("alias.txt", "is a symlink"),
-        ("meta_mutations.txt", "names a meta file"),
+        ("meta_methylation.txt", "names a meta file"),
         ("nope.txt", "names no regular file in the study's directory"),
         ("./", "is not a file name M4.2a accepts"),
     ],
@@ -1300,7 +1327,7 @@ def test_a_clinical_meta_naming_what_is_no_data_file(
         "subdirectory": {},
         "fifo": kinds.fifo(),
         "alias.txt": kinds.symlink("data_clinical_sample.txt"),
-        "meta_mutations.txt": MAF_META,
+        "meta_methylation.txt": METH_META,
     }
     tree["meta_clinical_sample.txt"] = base["meta_clinical_sample.txt"] + (
         b"data_filename: " + value.encode() + b"\n"
@@ -1628,26 +1655,30 @@ def sentinel_cases(base: dict[str, bytes]) -> dict[str, dict[str, Any]]:
             "unknown pair": other(
                 b"genetic_alteration_type: " + marked + b"\ndatatype: " + marked + b"\n"
             ),
-            "missing key": other(MAF_META.replace(b"profile_name: M", b"x: " + marked)),
-            "stable_id": other(MAF_META.replace(b"stable_id: mutations", b"stable_id: /" + marked)),
+            "missing key": other(METH_META.replace(b"profile_name: M", b"x: " + marked)),
+            "stable_id": other(
+                METH_META.replace(b"stable_id: methylation_hm27", b"stable_id: /" + marked)
+            ),
             "stable_id repeated": {
-                **other(MAF_META.replace(b"stable_id: mutations", b"stable_id: " + marked)),
-                "meta_y.txt": MAF_META.replace(b"stable_id: mutations", b"stable_id: " + marked),
+                **other(METH_META.replace(b"stable_id: methylation_hm27", b"stable_id: " + marked)),
+                "meta_y.txt": METH_META.replace(
+                    b"stable_id: methylation_hm27", b"stable_id: " + marked
+                ),
             },
-            "study mismatch": other(MAF_META.replace(b"demo_study", marked)),
-            "oversize": other(MAF_META + b"padding: " + marked + b"x" * 70_000 + b"\n"),
+            "study mismatch": other(METH_META.replace(b"demo_study", marked)),
+            "oversize": other(METH_META + b"padding: " + marked + b"x" * 70_000 + b"\n"),
             "no colon": other(marked + b"\n"),
             "not utf-8": other(marked + b": \xe9\n"),
             "data_filename P0": sample(b"data_filename: /" + marked + b"\n"),
             "data_filename none": sample(b"data_filename: " + marked + b"\n"),
             "data_filename meta": {
                 **sample(b"data_filename: meta_" + marked + b".txt\n"),
-                f"meta_{SENTINEL}.txt": MAF_META,
+                f"meta_{SENTINEL}.txt": METH_META,
             },
-            "path value P0": other(MAF_META.replace(b"data_mutations.txt", b"/" + marked)),
+            "path value P0": other(METH_META.replace(b"data_methylation.txt", b"/" + marked)),
             "path value folds to a meta file": {
-                **other(MAF_META.replace(b"data_mutations.txt", b"META_" + marked + b".TXT")),
-                f"meta_{SENTINEL}.txt": MAF_META.replace(b"mutations\n", b"other\n"),
+                **other(METH_META.replace(b"data_methylation.txt", b"META_" + marked + b".TXT")),
+                f"meta_{SENTINEL}.txt": METH_META.replace(b"methylation_hm27\n", b"other\n"),
             },
             "PD value P0": other(CNA_META + b"pd_annotations_filename: " + marked + b"/\n"),
             "tags names nothing": study(b"tags_file: " + marked + b"\n"),
@@ -1656,7 +1687,7 @@ def sentinel_cases(base: dict[str, bytes]) -> dict[str, dict[str, Any]]:
                 **study(b"description: " + marked + b"\ntags_file: tags.yml\n"),
                 "tags.yml": marked,
                 "data_clinical_sample.txt": base["data_clinical_sample.txt"] + marked,
-                "meta_x.txt": MAF_META.replace(b"profile_name: M", b"profile_name: " + marked),
+                "meta_x.txt": METH_META.replace(b"profile_name: M", b"profile_name: " + marked),
                 "data.txt": marked,
             },
         }
