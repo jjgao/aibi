@@ -11,10 +11,20 @@ upper case (a name is upper case, a dataset id lower), and, for a missing spelli
 no letter that is not the spelling's own, a random run of ``[``, ``]`` and ``|`` (a spelling
 folds them away). After each call its result or refusal is dropped and ``gc.collect()`` runs;
 **once, after the sixth call**, the heap is walked from ``gc.get_objects()`` and ``sys.modules``:
-each referent, and **each dict's keys** (a dict with only str keys has its values visited alone),
-looking at every ``str``, ``bytes``, ``bytearray`` and ``array('b')`` or ``array('B')`` for a
-marker. The match is a case-exact substring of one of the marker's forms, and ``slice`` is a leaf
-(its parts are not visited). The report, one JSON line, says what was reachable and by which chain.
+each referent (but the ``_asyncio`` module's own, on every interpreter, its dict walked in their
+place: see ``_referents``), and **each dict's keys** (a dict with only str keys has its
+values visited alone), looking at every ``str``, ``bytes``, ``bytearray`` and ``array('b')`` or
+``array('B')`` for a marker. The match is a case-exact substring of one of the marker's forms, and
+``slice`` is a leaf (its parts are not visited). The walk's own reads run no code of an object it
+walks: a type is told by its identity and by C-level subtype checks, an object is read through its
+base type's own methods, and a name is used only when it is an exact ``str``, so a class that
+raises on a hash, a comparison, a length, a format or an attribute (the suite keeps some) is
+walked. What does run code is not the walk's: the ``gc.collect()`` before it may run a finalizer
+or a weakref callback, and the interpreter's C-level traverse of an object (``gc.get_objects``,
+``gc.get_referents``) is the interpreter's own (issue #140). A hit's chain names only classes,
+functions and modules (a ``__qualname__`` or a module's ``__name__``, when it is an exact
+``str``); any other holder is named by its type. The report, one JSON line, says what was
+reachable and by which chain.
 
 What it holds: retention that carries a marker, whole or as a substring in one of those types, and
 is visible to that single walk after the sixth call. What it does not hold: a value that cannot
@@ -35,8 +45,9 @@ import secrets
 import sys
 import tempfile
 from array import array
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from types import FunctionType, ModuleType
 from typing import Any, NamedTuple
 
 LETTERS = "abcdefghjkmnpqrstuvwxyz"
@@ -47,7 +58,21 @@ CALLS = 6
 CHAIN = 12
 CANARY: list[object] = []
 """Where ``main`` holds its canary (a heap object: a frame's locals are not)."""
-LEAVES = frozenset({int, float, bool, type(None), complex, type(...), range, slice})
+LEAVES = frozenset(
+    id(kind) for kind in (int, float, bool, type(None), complex, type(...), range, slice)
+)
+"""The ids of the leaf types: never the types, which a set would hash and compare, and a type's
+metaclass may run code for either."""
+_TYPE_NAME = type.__dict__["__name__"].__get__
+_TYPE_QUALNAME = type.__dict__["__qualname__"].__get__
+_FUNCTION_QUALNAME = FunctionType.__dict__["__qualname__"].__get__
+_STR_CONTAINS: Callable[[Any, str], bool] = str.__contains__
+_BYTES_CONTAINS: Callable[[Any, bytes], bool] = bytes.__contains__
+_BYTEARRAY_CONTAINS: Callable[[Any, bytes], bool] = bytearray.__contains__
+_ARRAY_TYPECODE: Callable[[Any], str] = array.__dict__["typecode"].__get__
+_ARRAY_TOBYTES: Callable[[Any], bytes] = array.tobytes
+_DICT_KEYS: Callable[[Any], Iterable[object]] = dict.keys
+_DICT_LEN: Callable[[Any], int] = dict.__len__
 
 
 class Marker(NamedTuple):
@@ -81,13 +106,60 @@ class Hit(NamedTuple):
     chain: tuple[str, ...]
 
 
+def _module_name(module: object) -> object:
+    """A module's ``__name__``, found by iterating its dict and comparing the keys that are exactly
+    ``str``: a lookup would hash and compare a colliding key of another type."""
+    for key, value in dict.items(vars(module)):
+        if type(key) is str and str.__eq__(key, "__name__"):
+            return value
+    return None
+
+
+def _type_name(kind: type) -> str:
+    """A type's name through ``type``'s own descriptor, ``"?"`` where it is not an exact ``str``
+    (a name may be set to a ``str`` subclass, whose format or comparison runs code)."""
+    name = _TYPE_NAME(kind)
+    return name if type(name) is str else "?"
+
+
 def _describe(item: object) -> str:
-    name = getattr(item, "__qualname__", None) or getattr(item, "__name__", None)
-    if isinstance(name, str):
-        return f"{type(item).__name__} {name}"
-    if isinstance(item, dict):
-        return f"dict of {len(item)}"
-    return type(item).__name__
+    """A name for ``item`` in a chain, read without running its code: its type's name through
+    ``type``'s own descriptor, and the name of a class, of a function or of a module through
+    theirs, each used when it is an exact ``str``, never through ``getattr`` or ``len`` of the
+    object, which a class of the pack may override. Other holders are named by their type."""
+    kind = type(item)
+    name: object = None
+    if issubclass(kind, type):
+        name = _TYPE_QUALNAME(item)
+    elif kind is FunctionType:
+        name = _FUNCTION_QUALNAME(item)
+    elif kind is ModuleType:
+        name = _module_name(item)
+    if type(name) is str:
+        return f"{_type_name(kind)} {name}"
+    if issubclass(kind, dict):
+        return f"dict of {_DICT_LEN(item)}"
+    return _type_name(kind)
+
+
+def _referents(item: object) -> list[object]:
+    """What ``item`` refers to, for the walk, but for the ``_asyncio`` module, which is not asked,
+    on every interpreter. CPython before 3.12.6 (3.12.3 to 3.12.5 checked; 3.12.6 is fixed) has
+    that module's traverse visit its free list of ``FutureIter`` objects: dead ones, with a count
+    of 0 and untracked. ``gc.get_referents`` hands them out, and the count falling back to 0 when
+    the walk lets go of one frees it a second time, which links the free list into a cycle: the
+    next traverse of the module never ends (gdb: ``PyList_Append`` called from the module's
+    traverse), or the process faults. Any process that has awaited a future is exposed, as are the
+    suite's ``asyncio`` tests (issue #140). On later interpreters asking is harmless but not
+    needed, and the walk is the same everywhere. The module's own dict, which holds what it
+    exports (``_current_tasks``, ``_scheduled_tasks``), is walked in its place, and that is how
+    the current-tasks dict is seen. What the walk skips is the module's own C-level referents
+    beyond its dict: its types, its functions, a constant tuple and the free list. None of them
+    is state a call of a pack writes a value into, so none can hold a pack's marker."""
+    name = _module_name(item) if type(item) is ModuleType else None
+    if type(name) is str and str.__eq__(name, "_asyncio"):
+        return [vars(item)]
+    return gc.get_referents(item)
 
 
 def reachable(
@@ -97,13 +169,19 @@ def reachable(
     ``markers`` (the index of the marker is the call's), but for the markers' own objects and
     ``ignore`` (the scan's other objects, by identity). ``keys=False`` is the walk that skips a
     dict's keys: a mutant of the scan's own, which its unit test must refuse."""
+    modules = sys.modules
+    if type(modules) is not dict:
+        raise RuntimeError(
+            f"sys.modules is a {_type_name(type(modules))}, not a dict: the walk cannot read it "
+            "without running its code"
+        )
     gc.collect()
     found = [(index, form) for index, marker in enumerate(markers) for form in marker.forms()]
     blobs = [(index, form.encode()) for index, form in found]
     skip = {id(obj) for obj in ignore}
     skip |= {id(obj) for obj in (found, blobs, markers, *markers)}
     skip |= {id(form) for _, form in found} | {id(blob) for _, blob in blobs}
-    stack: list[object] = [*gc.get_objects(), *sys.modules.values()]
+    stack: list[object] = [*gc.get_objects(), *dict.values(modules)]
     parents: dict[int, object] = {}
     seen = set(skip)
     hits: list[Hit] = []
@@ -113,25 +191,26 @@ def reachable(
             continue
         seen.add(id(item))
         kind = type(item)
-        if kind in LEAVES:
+        if id(kind) in LEAVES:
             continue
-        if isinstance(item, str):
-            matched = [i for i, form in found if form in item]
+        if issubclass(kind, str):
+            matched = [i for i, form in found if _STR_CONTAINS(item, form)]
             kind_name = "str"
-        elif isinstance(item, bytes | bytearray):
-            matched = [i for i, blob in blobs if blob in item]
-            kind_name = kind.__name__
-        elif isinstance(item, array) and item.typecode in "bB":
-            data = item.tobytes()
+        elif issubclass(kind, bytes | bytearray):
+            contains = _BYTEARRAY_CONTAINS if issubclass(kind, bytearray) else _BYTES_CONTAINS
+            matched = [i for i, blob in blobs if contains(item, blob)]
+            kind_name = _type_name(kind)
+        elif issubclass(kind, array) and _ARRAY_TYPECODE(item) in "bB":
+            data = _ARRAY_TOBYTES(item)
             matched = [i for i, blob in blobs if blob in data]
             kind_name = "array"
         else:
-            referents = gc.get_referents(item)
+            referents = _referents(item)
             for child in referents:
                 parents.setdefault(id(child), item)
             stack.extend(referents)
-            if keys and isinstance(item, dict):
-                held = list(dict.keys(item))
+            if keys and issubclass(kind, dict):
+                held = list(_DICT_KEYS(item))
                 for child in held:
                     parents.setdefault(id(child), item)
                 stack.extend(held)

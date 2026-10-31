@@ -26,9 +26,10 @@ visible to its one walk (below, and D438 for what neither holds; issue #136 plan
   a fresh interpreter, two imports and two reads and an import and a read that are refused, each
   with a marker of its own in every value (ids, cells, names, labels, definitions, missing
   spellings, meta values, file and dataset names); **once, after the sixth call**, the heap is
-  walked from ``gc.get_objects()`` and ``sys.modules``, through every referent and every dict's
-  keys, and no ``str``, ``bytes``, ``bytearray`` or ``array('b')``/``array('B')`` may hold one
-  (a case-exact substring; ``slice`` is a leaf).
+  walked from ``gc.get_objects()`` and ``sys.modules``, through every referent (but the
+  ``_asyncio`` module's own, on every interpreter, its dict walked in their place: issue #140) and
+  every dict's keys, and no ``str``, ``bytes``, ``bytearray`` or ``array('b')``/``array('B')``
+  may hold one (a case-exact substring; ``slice`` is a leaf).
 
 What no guard here holds: a value that cannot carry a marker (a prefix, a digest: a retention the
 sentinel sees only where it grows with the rows); state outside the Python heap; an object
@@ -52,7 +53,7 @@ import sys
 import tracemalloc
 import types
 from array import array
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import Callable, Iterator, Mapping, MutableMapping, MutableSequence, MutableSet
 from pathlib import Path
 from types import ModuleType
@@ -687,6 +688,16 @@ def _make_array(text: str) -> object:
     return [array("b", text.encode())]
 
 
+def _make_default_dict_key(text: str) -> object:
+    held: defaultdict[str, int] = defaultdict(int)
+    held[text + "k"] = 1
+    return held
+
+
+def _make_array_b(text: str) -> object:
+    return [array("B", text.encode())]
+
+
 def _make_module(text: str) -> object:
     module = types.ModuleType("scratch_held")
     module.__dict__[text + "n"] = 1
@@ -707,12 +718,22 @@ HOLDERS: Mapping[str, tuple[Callable[[str], object], str]] = {
     "bytes": (_make_bytes, "lower"),
     "a bytearray": (_make_bytearray, "lower"),
     "an array": (_make_array, "lower"),
+    "an array('B')": (_make_array_b, "lower"),
+    "a defaultdict's key": (_make_default_dict_key, "lower"),
     "a module's name": (_make_module, "lower"),
     "the upper case form": (_make_list, "upper"),
     "the marks form": (_make_set, "marks"),
 }
 """Each way an object holds a marker, with the form of the marker it holds."""
-KEYED = frozenset({"a dict's key", "a default argument", "a closure cell", "a module's name"})
+KEYED = frozenset(
+    {
+        "a dict's key",
+        "a default argument",
+        "a closure cell",
+        "a module's name",
+        "a defaultdict's key",
+    }
+)
 """The holders in which a marker is the key of a dict of str keys, and nothing else."""
 KEPT: list[object] = []
 """Where the walk's unit test holds what it hides: a heap object, which a frame's locals are not."""
@@ -745,3 +766,264 @@ def test_the_walk_finds_each_way_of_holding_a_marker_and_nothing_once_it_is_rele
     finally:
         KEPT.clear()
         sys.modules.pop("scratch_held", None)
+
+
+class _Hostile(type):
+    """A metaclass whose hash, comparison and attribute lookup raise once armed: a walk that puts
+    one of its classes in a set, compares it or asks it for its name runs the pack's code."""
+
+    def __hash__(cls) -> int:
+        raise RuntimeError("the walk hashed a class")
+
+    def __eq__(cls, other: object) -> bool:
+        raise RuntimeError("the walk compared a class")
+
+    def __getattribute__(cls, name: str) -> object:
+        if ARMED:
+            raise RuntimeError("the walk asked a class for an attribute")
+        return super().__getattribute__(name)
+
+
+ARMED: list[bool] = []
+"""Non-empty while the hostile objects are armed (a list, so that it is read, not rebound)."""
+
+
+def _refusal(label: str) -> Any:
+    """A function that raises, naming the slot of the class that was called: a walk that regresses
+    fails with the read that ran code."""
+
+    def refuse(*_: object, **__: object) -> Any:
+        raise RuntimeError(f"the walk called {label}")
+
+    return refuse
+
+
+def _refusing(*slots: str) -> Callable[[type], type]:
+    """A class decorator that gives a class the slots, each raising, naming itself."""
+
+    def decorate(cls: type) -> type:
+        for slot in slots:
+            setattr(cls, slot, _refusal(f"{cls.__name__}.{slot}"))
+        return cls
+
+    return decorate
+
+
+@_refusing("__eq__", "__hash__", "__len__")
+class _HostileInstance(metaclass=_Hostile):
+    """An instance whose attribute lookup, hash, comparison and length raise once armed."""
+
+    def __getattribute__(self, name: str) -> object:
+        if ARMED:
+            raise RuntimeError("the walk asked an object for an attribute")
+        return super().__getattribute__(name)
+
+
+@_refusing("__eq__", "__hash__", "__contains__", "__len__", "__iter__", "__format__")
+class _HostileStr(str):
+    pass
+
+
+@_refusing("__eq__", "__hash__", "__contains__", "__len__", "__iter__")
+class _HostileBytes(bytes):
+    pass
+
+
+@_refusing("tobytes", "__contains__", "__len__", "__iter__")
+class _HostileArray(array):  # type: ignore[type-arg]
+    typecode = property(_refusal("_HostileArray.typecode"))  # type: ignore[assignment]
+
+
+@_refusing("__eq__", "__hash__", "__len__", "__iter__", "keys", "items", "values", "get")
+class _HostileDict(dict):  # type: ignore[type-arg]
+    pass
+
+
+class _Colliding:
+    """A key that hashes as ``__name__`` does and raises on a comparison once armed."""
+
+    def __hash__(self) -> int:
+        return hash("__name__")
+
+    def __eq__(self, other: object) -> bool:
+        if ARMED:
+            raise RuntimeError("the walk compared a key")
+        return self is other
+
+
+def _hostile_instance(text: str) -> object:
+    ARMED.clear()
+    holder = _HostileInstance()
+    holder.kept = [text]  # type: ignore[attr-defined]
+    return holder
+
+
+def _hostile_class(text: str) -> object:
+    ARMED.clear()
+    return _Hostile("Held", (), {"kept": (text,)})
+
+
+def _hostile_str(text: str) -> object:
+    return [_HostileStr("xx" + text + "yy")]
+
+
+def _hostile_bytes(text: str) -> object:
+    return [_HostileBytes(b"xx" + text.encode() + b"yy")]
+
+
+def _hostile_array(text: str) -> object:
+    return [_HostileArray("b", text.encode())]
+
+
+def _hostile_dict(text: str) -> object:
+    return _HostileDict({1: [text]})
+
+
+def _hostile_module_name(text: str) -> object:
+    """A module whose ``__name__`` is a ``str`` subclass that raises on a comparison."""
+    module = types.ModuleType("scratch_hostile")
+    module.__dict__["__name__"] = _HostileStr("scratch_hostile")
+    module.__dict__["kept"] = [text]
+    return module
+
+
+def _hostile_module_key(text: str) -> object:
+    """A module whose dict has, probed before ``__name__``, a key that collides with it."""
+    module = types.ModuleType("scratch_hostile")
+    module.__dict__.clear()
+    module.__dict__[_Colliding()] = 1  # type: ignore[index]
+    module.__dict__["__name__"] = "scratch_hostile"
+    module.__dict__["kept"] = [text]
+    return module
+
+
+def _hostile_type_name(text: str) -> object:
+    """An instance of a class named by a ``str`` subclass, whose format raises."""
+    ARMED.clear()
+    kind = type("Named", (), {})
+    kind.__name__ = _HostileStr("Named")
+    holder = kind()
+    holder.kept = [text]  # type: ignore[attr-defined]
+    return holder
+
+
+def _hostile_qualname(text: str) -> object:
+    """A class whose ``__qualname__`` is a ``str`` subclass: it is in the chain of the marker."""
+    kind = type("Named", (), {"kept": (text,)})
+    kind.__qualname__ = _HostileStr("Named")
+    return kind
+
+
+HOSTILE: Mapping[str, Callable[[str], object]] = {
+    "an instance of a class whose metaclass runs code": _hostile_instance,
+    "a class whose metaclass runs code": _hostile_class,
+    "a str subclass": _hostile_str,
+    "a bytes subclass": _hostile_bytes,
+    "an array subclass": _hostile_array,
+    "a dict subclass": _hostile_dict,
+    "a module named by a str subclass": _hostile_module_name,
+    "a module dict with a key that collides with __name__": _hostile_module_key,
+    "an instance of a class named by a str subclass": _hostile_type_name,
+    "a class qualified by a str subclass": _hostile_qualname,
+}
+"""Objects of types that run code on a hash, a comparison, a length, an iteration or an attribute
+lookup, each holding a marker: the walk must finish, and find each."""
+
+
+def test_the_walk_runs_no_code_of_an_object_it_walks(scan: ModuleType) -> None:
+    """The walk reads the whole heap of the process, the suite's own objects among them (issue
+    #140: ``tests/core/schema/test_guards.py`` keeps a class whose metaclass raises in ``__hash__``
+    and ``__eq__``, and a set lookup of its type ran that). It decides what an object is by its
+    type's identity, reads it through the base type's own methods and uses a name only when it is
+    an exact ``str``, so an object of a type that raises on a hash, a comparison, a length, an
+    iteration, a format or an attribute lookup is walked, a marker it holds is found, and every
+    step of a chain is a plain ``str``. What this does not hold: ``gc.collect()`` may run a
+    finalizer, and the interpreter's own traverse of an object is the interpreter's."""
+    names = list(HOSTILE)
+    markers = [scan.Marker.new() for _ in names]
+    try:
+        for marker, make in zip(markers, HOSTILE.values(), strict=True):
+            KEPT.append(make(scan.fresh(marker.lower)))
+        ARMED.append(True)
+        found = scan.reachable(markers)
+        ARMED.clear()
+        assert sorted({names[hit.call] for hit in found}) == sorted(names)
+        assert all(type(step) is str for hit in found for step in hit.chain)
+    finally:
+        ARMED.clear()
+        KEPT.clear()
+
+
+def test_the_walk_refuses_a_sys_modules_that_is_not_a_dict(
+    scan: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``sys.modules`` is read through ``dict.values``, which is safe for a dict alone: any other
+    mapping fails the walk, saying so, before one of its methods runs."""
+
+    class _Rebound(dict):  # type: ignore[type-arg]
+        values = items = keys = __iter__ = _refusal("sys.modules")
+
+    monkeypatch.setattr(sys, "modules", _Rebound(sys.modules))
+    with pytest.raises(RuntimeError, match=r"sys\.modules is a _Rebound, not a dict"):
+        scan.reachable([scan.Marker.new()])
+
+
+def test_the_walk_asks_no_module_but_asyncio_for_its_referents(
+    scan: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exception of issue #140 is as narrow as it says, on every interpreter: the ``_asyncio``
+    module is walked through its dict alone, and every other module in ``sys.modules`` through
+    ``gc.get_referents``, as before. A spy on ``gc.get_referents`` raises if it is asked for the
+    ``_asyncio`` module, so that a regression fails here at once, and never hands the module's
+    dead objects to this process (where, on CPython before 3.12.6, it would hang at exit)."""
+    import _asyncio
+
+    real = gc.get_referents
+
+    def spy(*objects: object) -> list[object]:
+        assert not any(o is _asyncio for o in objects), (
+            "the walk asked the _asyncio module for its referents (issue #140)"
+        )
+        return real(*objects)
+
+    monkeypatch.setattr(gc, "get_referents", spy)
+    assert scan._referents(_asyncio) == [vars(_asyncio)]
+    for name, module in list(sys.modules.items()):
+        if isinstance(module, ModuleType) and module is not _asyncio:
+            assert scan._referents(module) == real(module), name
+
+
+def test_the_walk_survives_a_process_that_has_awaited_a_future() -> None:
+    """Issue #140: on CPython before 3.12.6 (3.12.3 to 3.12.5 checked) the ``_asyncio`` module's
+    traverse hands out the dead objects of its free list of ``FutureIter``, and a walk of the heap
+    in a process that has awaited a future (the suite's ``asyncio`` tests) hangs or faults. The
+    walk runs in a child that has, and must end; the child dumps its traceback and exits after 20
+    s, so that a hang fails in 20 s and the failure names issue #140 and the interpreter (the dump
+    proves only a hang: it is in finalization, with no Python frame)."""
+    code = (
+        "import faulthandler\n"
+        "faulthandler.dump_traceback_later(20, exit=True)\n"
+        "import asyncio, importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('retention_scan', sys.argv[1])\n"
+        "scan = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(scan)\n"
+        "async def main():\n"
+        "    loop = asyncio.get_running_loop()\n"
+        "    for _ in range(3):\n"
+        "        future = loop.create_future()\n"
+        "        loop.call_soon(future.set_result, 1)\n"
+        "        await future\n"
+        "asyncio.run(main())\n"
+        "assert scan.reachable([scan.Marker.new()]) == []\n"
+        "asyncio.run(main())\n"
+        "print('walked')\n"
+    )
+    ran = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(SCAN)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert ran.returncode == 0, f"issue #140 on CPython {sys.version}: {ran.stderr[-2000:]}"
+    assert ran.stdout.strip() == "walked"
