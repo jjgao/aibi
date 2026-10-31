@@ -81,6 +81,7 @@ def _one_column(datatype: str, value: Cell) -> Release:
         ("list<category>", present("a")),
         ("list<category>", items(Cell(PRESENT, 1))),  # pyright: ignore[reportArgumentType]
         ("list<category>", items(missing(ObservationState.ABSENT))),
+        ("list<category>", items(Cell(ObservationState.UNKNOWN, "x"))),  # a stray item value
         ("string", missing(ObservationState.ABSENT)),
         ("string", Cell(ObservationState.UNKNOWN, "x")),
     ],

@@ -22,7 +22,8 @@ import { describe, expect, it } from "vitest";
 
 import { boxMap, boxText, readText } from "../../src/api/box";
 import type { Answered } from "../../src/api/typed";
-import { BACK, ColumnDescription, EDGES_WORDS, FAILED, MULTI_MEMBERSHIP, NONE_WORDS, NOT_SHOWN, OPEN, PENDING, POOLED, REFUSED } from "../../src/dataset/Column";
+import { SHAPES } from "../../src/api/generated/shapes";
+import { BACK, ColumnDescription, EDGES_WORDS, FAILED, MULTI_MEMBERSHIP, NONE_WORDS, NOT_SHOWN, OPEN, PENDING, POOLED, REFUSED, STATE_WORDS } from "../../src/dataset/Column";
 import { SEVERITY_WORDS } from "../../src/layout/Caveat";
 import { NO_SETTING } from "../../src/layout/Disclosure";
 import { walked } from "./answers";
@@ -128,7 +129,7 @@ describe("ColumnDescription (R67), over the recorded answers", () => {
       `PRESENT: 40 ${R1}/trees.variety/states/PRESENT`,
       `NOT_APPLICABLE: 0 ${R1}/trees.variety/states/NOT_APPLICABLE`,
       `NOT_ASSESSED: 0 ${R1}/trees.variety/states/NOT_ASSESSED`,
-      `UNKNOWN: 0 ${R1}/trees.variety/states/UNKNOWN`,
+      `UNKNOWN (no usable value): 0 ${R1}/trees.variety/states/UNKNOWN`,
     ]);
     expect(variety.categories).toEqual([`apple: 13 ${R1}/trees.variety/categories/apple`, `pear: 14 ${R1}/trees.variety/categories/pear`, `plum: 13 ${R1}/trees.variety/categories/plum`]);
     expect(variety.pooled).toEqual([]);
@@ -209,7 +210,7 @@ describe("ColumnDescription (R67), over the recorded answers", () => {
       `PRESENT: suppressed ${R1}/trees.variety/states/PRESENT?floor=50`,
       `NOT_APPLICABLE: suppressed ${R1}/trees.variety/states/NOT_APPLICABLE?floor=50`,
       `NOT_ASSESSED: suppressed ${R1}/trees.variety/states/NOT_ASSESSED?floor=50`,
-      `UNKNOWN: suppressed ${R1}/trees.variety/states/UNKNOWN?floor=50`,
+      `UNKNOWN (no usable value): suppressed ${R1}/trees.variety/states/UNKNOWN?floor=50`,
     ]);
     expect(floored.html).not.toMatch(/>0</u);
   });
@@ -321,6 +322,7 @@ const RECORDED: readonly Raw[] = ORCHARD.slice(SECTIONS.columns.start, SECTIONS.
 
 describe("every recorded describe_column answer, read from its raw text", () => {
   const STATES = ["PRESENT", "NOT_APPLICABLE", "NOT_ASSESSED", "UNKNOWN"] as const;
+  const WORDS: Readonly<Record<(typeof STATES)[number], string>> = STATE_WORDS;
   const counted = (value: { readonly count: number | null; readonly reference: string }): string => `${value.count === null ? "suppressed" : String(value.count)} ${value.reference}`;
 
   it("holds the file's count, the section's, and the places this file names", () => {
@@ -332,7 +334,7 @@ describe("every recorded describe_column answer, read from its raw text", () => 
     expect.hasAssertions();
     for (const [at, raw] of RECORDED.entries()) {
       const found = await shown(of(JSON.stringify(raw)));
-      expect(found.states, String(at)).toEqual([`Rows: ${counted(raw.statistics.rows)}`, ...STATES.map((state) => `${state}: ${counted(raw.statistics.states[state])}`)]);
+      expect(found.states, String(at)).toEqual([`Rows: ${counted(raw.statistics.rows)}`, ...STATES.map((state) => `${WORDS[state]}: ${counted(raw.statistics.states[state])}`)]);
       const list = "categories" in raw.statistics.distribution && raw.statistics.distribution.multi_membership === true;
       expect(found.words.includes(MULTI_MEMBERSHIP), `${String(at)}: ${raw.column}`).toBe(list);
       const setting = raw.disclosure.min_cell_count;
@@ -701,6 +703,33 @@ describe("what the screen shows of the column's descriptor (the notice's claim, 
   });
 });
 
+describe("the observation states' words (D443, §6.2)", () => {
+  const shape = SHAPES["StateCounts"];
+
+  it("are keyed by the answer's own states, in its order: a fifth state, or a reordering, fails here until the table is changed with it", () => {
+    expect(shape?.t).toBe("rec");
+    expect(Object.keys(STATE_WORDS)).toEqual(shape?.t === "rec" ? [...shape.r] : []);
+    expect(Object.keys(STATE_WORDS)).toEqual(["PRESENT", "NOT_APPLICABLE", "NOT_ASSESSED", "UNKNOWN"]);
+  });
+
+  it("each label begins with its own code, the state the `stat:` reference beside the count names, and only UNKNOWN has a gloss", () => {
+    for (const [state, words] of Object.entries(STATE_WORDS)) {
+      expect(words.startsWith(state), state).toBe(true);
+      expect(words === state, state).toBe(state !== "UNKNOWN");
+    }
+    expect(STATE_WORDS.UNKNOWN).toBe("UNKNOWN (no usable value)");
+  });
+
+  it("are shown beside each count, in the table's order, with the state's own reference", async () => {
+    expect.hasAssertions();
+    const found = await showing("variety");
+    expect(found.states.slice(1).map((line) => line.slice(0, line.indexOf(":")))).toEqual(Object.values(STATE_WORDS));
+    for (const [state, line] of Object.keys(STATE_WORDS).map((one, at) => [one, found.states[at + 1]] as const)) {
+      expect(line?.endsWith(`/trees.variety/states/${state}`), state).toBe(true);
+    }
+  });
+});
+
 /** Every word of `Column.tsx` (the census's enumeration, D435's, rooted at the column screen), each
  * with why it is there: a new word fails here until it is classified. */
 const COLUMN_WORDS: Readonly<Record<string, string>> = {
@@ -714,10 +743,11 @@ const COLUMN_WORDS: Readonly<Record<string, string>> = {
   ...Object.fromEntries(PAIRS.map(([reason, words]) => [words, `live: NoDistribution.reason ${reason}, held as a pair`])),
   [EDGES_WORDS.range]: "live: edges_from range (the range cells)",
   [EDGES_WORDS.data]: "live: edges_from data (the histogram cells)",
-  PRESENT: "neutral: a state's own name (§6.3)",
-  NOT_APPLICABLE: "neutral: a state's own name (§6.3)",
-  NOT_ASSESSED: "neutral: a state's own name (§6.3)",
-  UNKNOWN: "neutral: a state's own name (§6.3)",
+  UNKNOWN: "neutral: a state's own name (§6.2), the code the gloss follows",
+  PRESENT: "neutral: a state's own name (§6.2)",
+  NOT_APPLICABLE: "neutral: a state's own name (§6.2)",
+  NOT_ASSESSED: "neutral: a state's own name (§6.2)",
+  [STATE_WORDS.UNKNOWN]: "live: UNKNOWN's words, a code and a gloss true of every cell in the state (§6.2, §6.4), quoted in D443",
   Categories: "neutral: a section's heading",
   categories: "no word: an aria-label and a member's name",
   Histogram: "neutral: a section's heading",

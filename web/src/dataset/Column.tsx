@@ -14,7 +14,9 @@
  * through `Text`), its table's id and its dataset's (the answer's, through `Ref`; a coverage table's
  * column is shown alike, never looked up), its release and effective disclosure, its caveats, the
  * table's row count and the column's four observation states, each a count with its `stat:`
- * reference (`StatCount`: a suppressed count as suppressed, never 0 or blank), and its distribution:
+ * reference (`StatCount`: a suppressed count as suppressed, never 0 or blank) and a label from
+ * `STATE_WORDS` (the state's code; for UNKNOWN, with a gloss, `UNKNOWN (no usable value)`), and its
+ * distribution:
  * **categories** (each value, data, through `Text`, with its count and reference; the row pooled
  * under the disclosure setting, `pooled`, apart from the categories and never as one; a list
  * column's `multi_membership` said in words), a **histogram** (each bin's edges, a number through
@@ -100,10 +102,25 @@ export const EDGES_WORDS = {
   data: "the column's smallest and largest values",
 } as const satisfies Record<NonNullable<Kind<"HistogramOut.edges_from">>, string>;
 
-/** The four observation states, in the page's order, each shown by its own name (the answer's key, §6.3). */
-const STATES = ["PRESENT", "NOT_APPLICABLE", "NOT_ASSESSED", "UNKNOWN"] as const;
-
 type Described = Answered<"describe_column">;
+
+/** The words of each observation state (§6.2), keyed by the answer's own key and exhaustive over it
+ * (a fifth state fails the type until it is worded). Every label begins with its own code, which the
+ * `stat:` reference beside the count names too. UNKNOWN is §6.2's "no information either way", and a
+ * cell in it carries no value and the engine reads none (§6.4), whatever made it so (an empty cell, a
+ * token that does not parse, a non-finite number, a derived cell that is undefined, a code a curator
+ * declared): "no usable value" is true of each, where "not recorded" is true of the empty cell alone.
+ * The other states keep their code as their words. Fixed words of the page, never data (A6). */
+export const STATE_WORDS = {
+  PRESENT: "PRESENT",
+  NOT_APPLICABLE: "NOT_APPLICABLE",
+  NOT_ASSESSED: "NOT_ASSESSED",
+  UNKNOWN: "UNKNOWN (no usable value)",
+} as const satisfies Record<keyof Described["statistics"]["states"], string>;
+
+/** The four observation states, in the page's order (the answer's own, `StateCounts`'s), each shown by
+ * its words in `STATE_WORDS`; a fixed tuple, checked against the table's keys. */
+const STATES = ["PRESENT", "NOT_APPLICABLE", "NOT_ASSESSED", "UNKNOWN"] as const satisfies readonly (keyof typeof STATE_WORDS)[];
 type Distribution = Described["statistics"]["distribution"];
 type Categories = Extract<Distribution, { readonly categories: unknown }>;
 type Histogram = Extract<Distribution, { readonly bins: unknown }>;
@@ -216,7 +233,7 @@ export function ColumnDescription({ answer }: { readonly answer: Described }): R
         <div role="list" aria-label="states">
           {STATES.map((state, index) => (
             <p role="listitem" key={keyOf(index)}>
-              {state}: <StatCount value={statistics.states[state]} />
+              {STATE_WORDS[state]}: <StatCount value={statistics.states[state]} />
             </p>
           ))}
         </div>
