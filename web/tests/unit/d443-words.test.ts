@@ -1,16 +1,16 @@
 /**
  * The fixed words D443 quotes are the column screen's own, word for word (as `d431-words.test.ts`
- * holds D431's): the states' words, the link back, the T8 notice, the list's and the pooled row's
- * words, the open ends', each reason's words beside its reason and each source of a histogram's
- * edges beside its member, so that rewording one, or giving a reason another's words, fails here
- * until the row is changed with it.
+ * holds D431's): the link back, the T8 notice, the list's and the pooled row's words, each
+ * observation state's words beside its code, the open ends', each reason's words beside its reason
+ * and each source of a histogram's edges beside its member, so that rewording one, or giving a
+ * state or a reason another's words, fails here until the row is changed with it.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { BACK, EDGES_WORDS, FAILED, MULTI_MEMBERSHIP, NONE_WORDS, NOT_SHOWN, OPEN, PENDING, POOLED, REFUSED } from "../../src/dataset/Column";
+import { BACK, EDGES_WORDS, FAILED, MULTI_MEMBERSHIP, NONE_WORDS, NOT_SHOWN, OPEN, PENDING, POOLED, REFUSED, STATE_WORDS } from "../../src/dataset/Column";
 
 const SPEC = readFileSync(path.join(import.meta.dirname, "../../../SPEC.md"), "utf8");
 const ROW = SPEC.split("\n").find((line) => line.startsWith("| D443 |")) ?? "";
@@ -37,6 +37,10 @@ describe("the words D443 quotes are the column screen's own", () => {
     expect(ROW).toContain(`"${words}"`);
   });
 
+  it.each(Object.entries(STATE_WORDS))("the state %s is quoted beside its own words", (state, words) => {
+    expect(ROW).toContain(`\`${state}\` "${words}"`);
+  });
+
   it.each(Object.entries(NONE_WORDS))("the reason %s is quoted beside its own words", (reason, words) => {
     expect(ROW).toContain(`\`${reason}\` "${words}"`);
   });
@@ -48,6 +52,9 @@ describe("the words D443 quotes are the column screen's own", () => {
   it("finds a word that was changed and a pair that was swapped (the controls)", () => {
     expect(ROW).not.toContain(`"${NOT_SHOWN.replace("whole, or", "whole, and")}"`);
     expect(ROW).not.toContain(`\`out_of_range\` "${NONE_WORDS.empty}"`);
+    expect(ROW).not.toContain(`\`UNKNOWN\` "${STATE_WORDS.NOT_ASSESSED}"`);
+    expect(ROW).not.toContain(`\`NOT_ASSESSED\` "${STATE_WORDS.UNKNOWN}"`);
+    expect(ROW).not.toContain(`\`UNKNOWN\` "UNKNOWN (not recorded)"`);
     expect(ROW).not.toContain(`(\`range\`: "${EDGES_WORDS.data}")`);
   });
 });
