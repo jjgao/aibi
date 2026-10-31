@@ -92,17 +92,22 @@ D309). DuckDB's values are read as Arrow, whose types the Parquet reader reads
 ``FIELD_CHARACTERS`` characters is ``UNPARSEABLE_SOURCE``, as a text file's field over it is, its
 row named by its place in that order, from 1 (a snapshot has no header row).
 
-The file of a SQLite or DuckDB connection must be the file confined (its device and inode) when it
-is opened and when the snapshot ends; each file the database keeps beside it (SQLite's ``-wal``,
-``-shm`` and ``-journal``, DuckDB's ``.wal``) must be a regular file where it exists; and, where
-``/proc/self/fd`` lists them, the regular files the reader opened must be those, since neither
-SQLite nor DuckDB can be made to open a path without following a link that replaced it after the
-check. Whatever the database or its driver raises, but a refusal and running out of memory, is
-``UNPARSEABLE_SOURCE`` naming the exception's class alone, and the table being counted or read when
-there is one: DuckDB's and the drivers' messages can hold the URL, and so a credential (§14). A name
-from the catalogue that a refusal gives is a data token, which writes each lone surrogate and
-noncharacter as its escape (``output.data``, D398), and a file is named by its location in its
-import directory. At most ``import_tables`` skipped relations are named, and the rest counted
+The file of a SQLite or DuckDB connection must be the file confined (its device and inode, which
+confinement's walk recorded, D232) when it is opened and when the snapshot ends; each file the
+database keeps beside it (SQLite's ``-wal``, ``-shm`` and ``-journal``, DuckDB's ``.wal``) must be a
+regular file where it exists; and, where ``/proc/self/fd`` lists them, the regular files the reader
+opened must be those, since neither SQLite nor DuckDB can be made to open a path without following
+a link that replaced it after the check. These checks are by path text, as the database's open is:
+a middle directory swapped for a symlink around them is followed. ``_same_file`` then fails closed
+(another file's identity differs), but ``_beside`` does not (the file it finds beside another
+file joins those the reader may open), and where there is no ``/proc`` the open is not checked at
+all; the swap is not defended against here (D310, #149). Whatever the
+database or its driver raises, but a refusal and running out of memory, is ``UNPARSEABLE_SOURCE``
+naming the exception's class alone, and the table being counted or read when there is one:
+DuckDB's and the drivers' messages can hold the URL, and so a credential (§14). A name from the
+catalogue that a refusal gives is a data token, which writes each lone surrogate and noncharacter
+as its escape (``output.data``, D398), and a file is named by its location in its import
+directory. At most ``import_tables`` skipped relations are named, and the rest counted
 (D309).
 """
 

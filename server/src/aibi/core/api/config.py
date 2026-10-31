@@ -550,6 +550,7 @@ def _file_problems(config: ServerConfig) -> list[str]:
             "storage.data: its real path is not Unicode text; rename the directory (D253, D398)"
         )
     imports: list[Path] = []
+    indices: list[int] = []
     for index, directory in enumerate(config.storage.imports):
         where = f"storage.imports[{index}]"
         if not directory.is_dir():
@@ -560,7 +561,11 @@ def _file_problems(config: ServerConfig) -> list[str]:
             problems.append(
                 f"{where}: its real path is not Unicode text; rename the directory (D253, D398)"
             )
+        for other, earlier in zip(indices, imports, strict=True):
+            if real.is_relative_to(earlier) or earlier.is_relative_to(real):
+                problems.append(f"{where}: it holds, lies inside, or is storage.imports[{other}]")
         imports.append(real)
+        indices.append(index)
         if real.is_relative_to(data) or data.is_relative_to(real):
             problems.append(f"{where}: it holds, or lies inside, the data directory")
     problems += _bundle_problems(server.web_bundle, data, config.storage.imports)

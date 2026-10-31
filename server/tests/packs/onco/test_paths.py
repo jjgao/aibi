@@ -2193,7 +2193,9 @@ def test_nothing_but_the_listing_and_meta_s_is_read(
     assert [name for name, _ in reader.reads] == metas
     assert reader.listed == [directory.name]
     touched = {Path(path).name if os.path.isabs(path) else path for path in opened}
-    assert touched <= {directory.name, *metas}, touched
+    # the reader walks to each file from ``/``, one directory at a time by its name (issue #146)
+    walked = {Path("/").name, *Path(os.path.realpath(directory)).parts[1:]}
+    assert touched <= {directory.name, *metas, *walked}, touched
     assert not touched & {"data_meth.txt", "data_cna.txt", "data_pd.txt", "tags.yml"}
     by_entry, _ = notes_by_entry(found)
     assert by_entry["tags.yml"] == TAGS_NOTE

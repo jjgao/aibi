@@ -3,6 +3,7 @@ must not do is refused, every problem at once with its TOML path."""
 
 import dataclasses
 import errno
+import itertools
 import os
 import shutil
 import threading
@@ -148,8 +149,152 @@ def test_an_import_directory_must_exist_apart_from_the_data(
         "through a link": "link",
     }[case]
     text = minimal(storage=f'data = "data"\nimports = ["imports", "{directory}"]')
-    [found] = problems(write_config, text)
-    assert found.startswith("storage.imports[1]: ")
+    found = problems(write_config, text)
+    # "." holds the other import directory as well as the data directory (D253, issue #146)
+    assert len(found) == (2 if case == "holding" else 1), found
+    assert all(problem.startswith("storage.imports[1]: ") for problem in found)
+
+
+@pytest.mark.parametrize("second", ["holder/imports/team", "holder", "holder/imports", "link"])
+def test_import_directories_that_nest_are_refused(
+    write_config: Write, tmp_path: Path, second: str
+) -> None:
+    """By real paths, one inside another, holding it or the same: a writer of the outer one could
+    swap an ancestor of the inner one (D253, issue #146). Directories apart are accepted."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "holder" / "imports").mkdir(parents=True)
+    (tmp_path / "holder" / "imports" / "team").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "holder" / "imports")
+    (tmp_path / "apart").mkdir()
+    first = "holder/imports"
+    nested = minimal(storage=f'data = "data"\nimports = ["{first}", "{second}"]')
+    found = problems(write_config, nested)
+    assert found == ["storage.imports[1]: it holds, lies inside, or is storage.imports[0]"]
+    apart = minimal(storage=f'data = "data"\nimports = ["{first}", "apart"]')
+    assert load_config(write_config(apart)).storage.imports
+
+
+def test_import_directories_nest_exactly_when_one_path_holds_the_other(
+    write_config: Write, tmp_path: Path
+) -> None:
+    """Held against ``os.path.commonpath`` on the real paths, over every ordered pair of
+    directories (equal, nested, deeper, and siblings whose names share a prefix: ``imports`` and
+    ``imports2`` do not nest) written with a trailing or a doubled slash, a ``.`` or a ``..``, or
+    through a link: nested by path components, never by the text's prefix (D253)."""
+    names = (
+        "imports",
+        "imports2",
+        "imports/team",
+        "imports2/team",
+        "imports/team2",
+        "imports/team/deep",
+        "import",
+        "other",
+        "other/imports",
+    )
+    tree = tmp_path / "tree"
+    (tmp_path / "data").mkdir()
+    (tree / "links").mkdir(parents=True)
+    spelt: dict[str, list[str]] = {}
+    for number, name in enumerate(names):
+        (tree / name).mkdir(parents=True, exist_ok=True)
+        (tree / "links" / str(number)).symlink_to(tree / name)
+        spelt[name] = [
+            f"{tree}/{name}",
+            f"{tree}/{name}/",
+            f"{tree}//{name.replace('/', '//')}",
+            f"{tree}/./{name}",
+            f"{tree}/other/../{name}",
+            f"{tree}/links/{number}",
+        ]
+    wrong: list[tuple[str, str, bool]] = []
+    nested = apart = 0
+    nesting = ["storage.imports[1]: it holds, lies inside, or is storage.imports[0]"]
+    for first in names:
+        for second in names:
+            for how in range(6):
+                a, b = spelt[first][how], spelt[second][(how + 1) % 6]
+                real_a, real_b = os.path.realpath(a), os.path.realpath(b)
+                expected = os.path.commonpath([real_a, real_b]) in (real_a, real_b)
+                text = minimal(storage=f'data = "{tmp_path}/data"\nimports = ["{a}", "{b}"]')
+                try:
+                    load_config(write_config(text))
+                    found: list[str] = []
+                except ConfigError as refused:
+                    found = list(refused.problems)
+                nested += expected
+                apart += not expected
+                if found != (nesting if expected else []):
+                    wrong.append((a, b, expected))
+    assert wrong == []
+    assert nested > 50  # both outcomes were held against the oracle
+    assert apart > 50
+
+
+def test_import_directories_nest_exactly_when_some_pair_of_three_does(
+    write_config: Write, tmp_path: Path
+) -> None:
+    """The same oracle over every ordered triple of directories, each written in one of six ways
+    (the spelling of the third rotated from the first's): the configuration names each earlier
+    directory that a later one nests with, and no other, so that a root compared with the first
+    alone, or with the last alone, is refused for the wrong reason or not at all (D253)."""
+    names = (
+        "imports",
+        "imports2",
+        "imports/team",
+        "imports2/team",
+        "imports/team2",
+        "imports/team/deep",
+        "import",
+        "other",
+        "other/imports",
+    )
+    tree = tmp_path / "tree"
+    (tmp_path / "data").mkdir()
+    (tree / "links").mkdir(parents=True)
+    spelt: dict[str, list[str]] = {}
+    for number, name in enumerate(names):
+        (tree / name).mkdir(parents=True, exist_ok=True)
+        (tree / "links" / str(number)).symlink_to(tree / name)
+        spelt[name] = [
+            f"{tree}/{name}",
+            f"{tree}/{name}/",
+            f"{tree}//{name.replace('/', '//')}",
+            f"{tree}/./{name}",
+            f"{tree}/other/../{name}",
+            f"{tree}/links/{number}",
+        ]
+    real = {name: [os.path.realpath(written) for written in spelt[name]] for name in names}
+    wrong: list[tuple[tuple[str, ...], list[str]]] = []
+    nested = apart = checked = 0
+    for first, second, third in itertools.product(names, repeat=3):
+        for how in range(0, 6, 2):  # a deterministic sample of the spellings: 3 of 6 for each
+            chosen = (first, how), (second, (how + 1) % 6), (third, (how + 3) % 6)
+            written = [spelt[name][spelling] for name, spelling in chosen]
+            paths = [real[name][spelling] for name, spelling in chosen]
+            expected = [
+                f"storage.imports[{later}]: it holds, lies inside, or is storage.imports[{earlier}]"
+                for later in range(3)
+                for earlier in range(later)
+                if os.path.commonpath([paths[earlier], paths[later]])
+                in (paths[earlier], paths[later])
+            ]
+            listed = ", ".join(f'"{path}"' for path in written)
+            text = minimal(storage=f'data = "{tmp_path}/data"\nimports = [{listed}]')
+            try:
+                load_config(write_config(text))
+                found: list[str] = []
+            except ConfigError as refused:
+                found = list(refused.problems)
+            checked += 1
+            nested += bool(expected)
+            apart += not expected
+            if found != expected:
+                wrong.append((tuple(written), expected))
+    assert wrong == []
+    assert checked == 9**3 * 3
+    assert nested > 500  # both outcomes were held against the oracle
+    assert apart > 500
 
 
 def test_a_configuration_its_group_or_others_can_write_is_refused(write_config: Write) -> None:

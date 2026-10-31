@@ -107,6 +107,12 @@ core/importers/checks.py	run_importer	_failed	cast(_Failed, error).what	the chec
 core/importers/confine.py	Confinement._too_large	refused	limit	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/confine.py	Confinement.files	_not_confined	message	the server's own sentence (a literal or a number of a limit), or a segment already
 core/importers/confine.py	_not_confined	refused	[_WHERE]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/confine.py	Confinement._resolved	_not_confined	_failed('identity', 'resolve', error)	one of the module's fixed sentences, chosen by the one table of operation, step and error (`_failed`, D232)
+core/importers/confine.py	Confinement._resolved	_not_confined	_failed('identity', 'walk', error)	one of the module's fixed sentences, chosen by the one table of operation, step and error (`_failed`, D232)
+core/importers/confine.py	Confinement._unlinked	_not_confined	_failed('identity', 'components', error)	one of the module's fixed sentences, chosen by the one table of operation, step and error (`_failed`, D232)
+core/importers/confine.py	Confinement.files	_not_confined	_failed('listing', 'walk', error)	one of the module's fixed sentences, chosen by the one table of operation, step and error (`_failed`, D232)
+core/importers/confine.py	Confinement.of	refused	[_APART]	the server's own sentence (a literal or a number of a limit), or a segment already
+core/importers/confine.py	Confinement.read	_not_confined	_failed('read', 'walk', error)	one of the module's fixed sentences, chosen by the one table of operation, step and error (`_failed`, D232)
 core/importers/databases.py	DatabaseImporter.import_database	refused	*error.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
 core/importers/databases.py	_server	_variable_refused	*refusal.message	a Message of segments (SourceError, a Parquet error, a UrlError): data already (D397)
 core/importers/databases.py	_skipped	text	rest	the server's own sentence (a literal or a number of a limit), or a segment already

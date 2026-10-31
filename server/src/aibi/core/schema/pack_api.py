@@ -162,9 +162,11 @@ class DirectoryEntry:
 
     name: str
     kind: EntryKind
-    """A regular ``file``, confined; a ``directory``; a ``symlink``, never followed; an ``other``
-    kind (a FIFO, a socket, a device); or a regular file that could not be confined
-    (``unconfined``), which is moved or swapped while it is listed."""
+    """A regular ``file``, confined as listed (its identity the listing's, which ``read`` checks
+    the file it opens against, so that a file swapped after the listing is refused when it is
+    read); a ``directory``; a ``symlink``, never followed; an ``other`` kind (a FIFO, a socket, a
+    device); or an entry that could not be confined (``unconfined``), one whose ``lstat`` failed
+    (for any error: one gone before the listing classified it, in the main)."""
     path: ConfinedPath | None = None
     """For a ``file``, its confined path."""
 
@@ -175,16 +177,16 @@ class SourceReader(Protocol):
     Every path it takes or returns is confined to the upload area or an import directory, and
     ``read`` reads the file it confined, whatever replaced it since, or refuses. A path it did
     not hand out (one an importer joins below its source) must be its own real path as written:
-    no component of it may be a symlink, and only a ``..`` with no symlink before it is
-    resolved (``PATH_NOT_CONFINED`` otherwise)."""
+    no component of it may be a symlink, and only a ``..`` that follows a directory, with no
+    symlink before it, is resolved (``PATH_NOT_CONFINED`` otherwise)."""
 
     def read(self, path: ConfinedPath, limit: int) -> bytes:
         """The file's bytes, at most ``limit`` of them, or a ``LIMIT_EXCEEDED`` refusal."""
         ...
 
     def files(self, directory: ConfinedPath) -> Sequence[DirectoryEntry]:
-        """What is directly inside a directory, by name; each regular file confined in its
-        turn, and no symlink followed, neither an entry nor a component of ``directory``."""
+        """What is directly inside a directory, by name; each regular file confined as it is
+        listed, and no symlink followed, neither an entry nor a component of ``directory``."""
         ...
 
     def location(self, path: ConfinedPath) -> str:
