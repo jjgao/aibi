@@ -1,9 +1,10 @@
 """The pack keeps nothing past a call, by the routes these guards name (M4.2a-1b, D438): a
 process-level cache or list would hold the cells and ids of an erased dataset for the server's life.
 
-Three guards, none of which names a module, a function or a column. None holds the class of
-retention: the first two hold what they name, by name, and the third what carries a marker and is
-visible to its one walk (below, and D438 for what neither holds; issue #136 plans the hardening):
+The guards are for trusted pack code that keeps a copy of a call's values by accident or
+carelessness; a pack set on evading them is not their concern (D438). Three guards, none of which
+names a module, a function or a column, and none of which holds the class of retention (D438 says
+what none holds, and which mutants of its table, ``retention_mutants/table.py``, live):
 
 - ``banned``, over **every** module under ``packs/onco`` (the whole tree, whatever is added to
   it): a **deny-list**. The AST holds no ``functools`` (every cache the standard library has), no
@@ -23,37 +24,33 @@ visible to its one walk (below, and D438 for what neither holds; issue #136 plan
   what grows with the file. A retention that does not grow with it (a memo of the last 128
   values, the first file's reader, a dataset's first ids, a study's meta bytes) it does not see;
 - the marker scan (``retention_scan.py``, run by ``test_nothing_of_a_file_is_reachable...``): in
-  a fresh interpreter, two imports and two reads and an import and a read that are refused, each
-  with a marker of its own in every value (ids, cells, names, labels, definitions, missing
-  spellings, meta values, file and dataset names); **once, after the sixth call**, the heap is
-  walked from ``gc.get_objects()`` and ``sys.modules``, through every referent (but the
-  ``_asyncio`` module's own, on every interpreter, its dict walked in their place: issue #140) and
-  every dict's keys, and no ``str``, ``bytes``, ``bytearray`` or ``array('b')``/``array('B')``
-  may hold one (a case-exact substring; ``slice`` is a leaf).
-
-What no guard here holds: a value that cannot carry a marker (a prefix, a digest: a retention the
-sentinel sees only where it grows with the rows); state outside the Python heap; an object
-reachable only through the frames of a thread that is still running; a value a later call
-releases (the walk is not after every call); a marker in an ``array('u')``, a ``slice``, an
-``io.StringIO`` or a re-cased form; a call whose values do not all carry a marker. The known
-survivors are D438's: NB04d (a module-level ``SimpleNamespace`` holding the last read's first 128
-ids, reset at each read and cleared by the last two calls), NB06 (``array('u')``), NB16 (a
-``slice`` holding an id), NB05 (a title-cased name), NB01 (8-character prefixes), NB02 (sha256 of
-ids) and S12 (a call whose values do not all carry a marker).
+  a fresh interpreter, nine calls (two imports, two reads, an import and a read that are refused,
+  the validator, which accepts a release and refuses it with its ``type_of_cancer`` edited, the
+  facet and the proposer), each with a marker of its own in every value (``FIELDS``, which
+  ``test_every_value_of_a_call_carries_its_marker`` holds); **after each call** the heap is
+  walked from ``gc.get_objects()`` and ``sys.modules`` and no holder it reads may hold a marker of
+  a call made so far: a form's code points, contiguous and in order, in any case, reversed, in
+  UTF-8, UTF-16 or UTF-32, as hex or base64 of UTF-8, in a ``str``, the bytes of a buffer or an
+  ``int``, an ``array`` of any type code, an ``io.StringIO`` or ``io.BytesIO``, and the elements
+  of a ``list``, a ``tuple``, a ``deque`` or a dict's keys or values. Its own reads are pinned in
+  a child of their own (``retention_pins.py``: every holder in every encoding, each route, a
+  value kept by one call and dropped by the next, and objects that raise on any read but the base
+  type's own, which the walk must pass without running their code).
 """
 
 import ast
 import gc
 import importlib
+import importlib.util
 import inspect
+import json
 import os
 import pkgutil
 import subprocess
 import sys
 import tracemalloc
 import types
-from array import array
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping, MutableMapping, MutableSequence, MutableSet
 from pathlib import Path
 from types import ModuleType
@@ -61,6 +58,7 @@ from typing import Any
 
 import pytest
 
+import aibi
 from aibi.core.importers.confine import Confinement
 from aibi.core.schema.limits import ImportLimits
 from aibi.core.schema.pack_api import ImportOptions, Refused
@@ -601,19 +599,34 @@ def test_an_import_retains_nothing_that_grows_with_a_large_study(
     _grown(_imported(make_study, measure), measure, HEAVY[(measure, shape)])
 
 
-# --- The marker scan: what of a file is reachable once the calls have returned ---------------
+# --- The marker scan: what of a file is reachable after each call -----------------------------
 
 SCAN = Path(__file__).resolve().with_name("retention_scan.py")
-OUTCOMES = ["ok", "ok", "ok", "ok", "EXCEL_DATE", "MISSING_FORM"]
-"""The scan's six calls: two imports, two reads, an import refused at its last patient row, a read
-refused at its end."""
+SOURCE = Path(aibi.__file__).resolve().parents[1]
+"""The ``src`` of the ``aibi`` this process imported: the scan's child imports the same tree."""
+RUN = (
+    "import runpy, sys; sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[2:]; "
+    "runpy.run_path(sys.argv[0], run_name='__main__')"
+)
+"""A child's code that runs a script (``argv[2]``) with a tree's ``src`` (``argv[1]``) first on
+its path: under ``-I`` the editable install would otherwise give the child the installed tree,
+which a replay of D438's table, run against a copy, is not."""
+PINS = Path(__file__).resolve().with_name("retention_pins.py")
+TABLE = Path(__file__).resolve().parent / "retention_mutants" / "table.py"
+OUTCOMES = [
+    "ok", "ok", "ok", "ok", "EXCEL_DATE", "MISSING_FORM", "TYPE_OF_CANCER", "ok", "ok",
+]  # fmt: skip
+"""The scan's nine calls: two imports, two reads, an import refused at its last patient row, a
+read refused at its end, the validator (which refuses the dataset's edited ``type_of_cancer``),
+the facet and the proposer."""
 
 
-def test_nothing_of_a_file_is_reachable_after_the_calls(scan: ModuleType) -> None:
-    """The class: in a fresh interpreter, no ``str``, ``bytes``, ``bytearray`` or ``array`` in the
-    heap holds a value of any of six calls (the module's docstring has the design)."""
+def test_nothing_of_a_file_is_reachable_after_any_call(scan: ModuleType) -> None:
+    """The class: in a fresh interpreter, no holder the walk reads holds a value of any of nine
+    calls, after any of them (the module's docstring has the design): one walk after each call,
+    each seeing the canary, and the pack the one this process imported."""
     ran = subprocess.run(
-        [sys.executable, "-I", str(SCAN)],
+        [sys.executable, "-I", "-c", RUN, str(SOURCE), str(SCAN)],
         capture_output=True,
         text=True,
         timeout=300,
@@ -623,174 +636,155 @@ def test_nothing_of_a_file_is_reachable_after_the_calls(scan: ModuleType) -> Non
     report = scan.report_of(ran.stdout)
     assert report["pid"] != os.getpid()  # another process, whatever the test does
     assert report["fresh_start"] is True  # one that had not loaded the pack
+    assert Path(report["pack"]) == PACK  # the pack of this tree
     assert report["outcomes"] == OUTCOMES  # every call did what the scan means it to
-    assert report["canary_seen"] is True  # and its walk sees a str key of a dict in this heap
+    assert report["walks"] == len(OUTCOMES)  # a walk after each call
+    assert report["canary_seen"] is True  # and each walk sees a str key of a dict in this heap
     assert report["hits"] == []
 
 
-def _make_dict_key(text: str) -> object:
-    return {text + "k": 1}
+@pytest.fixture(scope="module")
+def pins() -> Mapping[str, Any]:
+    """``retention_pins.py``'s report, from a child of its own (a heap without the suite's)."""
+    ran = subprocess.run(
+        [sys.executable, "-I", str(PINS)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert ran.returncode == 0, ran.stderr[-2000:]
+    found = json.loads(ran.stdout.strip().splitlines()[-1])
+    assert isinstance(found, dict)
+    return found
 
 
-def _make_dict_value(text: str) -> object:
-    return {"k": text + "v"}
+KILLED_BY_THE_MATRIX = frozenset(
+    {"NB03", "NB05", "NB06", "NB16", "C11", "C11i", "C12", "C13", "C15", "C16", "C17", "C18"}
+    | {"C40", "C41", "C42", "C43", "C44", "C45", "C46", "C46b", "C47", "C48", "C49", "C50"}
+)
+"""The mutants of D438's table that keep a whole marker in one of the matrix's holders."""
 
 
-def _make_list(text: str) -> object:
-    return [1, [text]]
+def test_the_walk_reads_a_form_as_a_class_of_holders_and_encodings(pins: Mapping[str, Any]) -> None:
+    """``retention_pins.CELLS``: every holder the walk reads, each holding each form in each
+    encoding it can (text, UTF-8, UTF-16 and UTF-32 of either order, code points), and each
+    transform the walk undoes, is found by its own read; the mutants that keep a marker so are
+    each a cell of it, named."""
+    matrix = pins["matrix"]
+    assert matrix["missing"] == []
+    assert len(matrix["cells"]) >= 320
+    named = matrix["named"]
+    assert set(named) == KILLED_BY_THE_MATRIX
+    assert [name for name, cells in named.items() if len(cells) != 3] == []
 
 
-def _make_set(text: str) -> object:
-    return {(1, text + "s")}
+def test_the_walk_finds_each_route_and_nothing_once_it_is_released(
+    pins: Mapping[str, Any],
+) -> None:
+    """``retention_pins.ROUTES``, ``FOLLOWED``, ``PARTS`` and ``NAMES``: each way an object holds a
+    marker is found, with the chain that holds it, and so is a marker behind an instance of each
+    type the walk follows alone (its ``PLAIN`` and its three sequences: every one has such a
+    route, or is named in ``UNFOLLOWED`` with why none can be its alone), in each part of a code
+    object the walk reads (``CODE_READ``: every one has a route) alone, in a code object nested in
+    another, in a class's name alone and in its qualified name alone, and in the names of a class
+    a metaclass made; without the dict keys, which
+    ``gc.get_referents`` does not give for a dict of str keys, the routes that hold a marker as
+    such a key alone are missed, and the walk with them finds those; and once everything is
+    released, nothing is found."""
+    routes = pins["routes"]
+    assert routes["found"] == routes["routes"]
+    assert len(routes["routes"]) == 42
+    assert routes["followed without a route"] == 0
+    assert routes["code parts without a route"] == []
+    assert routes["default chained"] is True
+    assert routes["missed without keys"] == sorted(
+        {"a dict's key", "a default argument", "a closure cell", "a module's name"}
+        | {"a defaultdict's key"}
+    )
+    assert routes["after release"] == 0
 
 
-def _make_default(text: str) -> object:
-    def f(x: int, memo: dict[str, int] = {text + "d": 1}) -> int:  # noqa: B006
-        return x + len(memo)
-
-    return f
-
-
-def _make_kwdefault(text: str) -> object:
-    def f(x: int, *, memo: list[str] = [text]) -> int:  # noqa: B006
-        return x + len(memo)
-
-    return f
+def test_the_walk_s_leaves_are_the_atoms_alone(scan: ModuleType) -> None:
+    """``LEAVES``, the types whose objects the walk neither reads nor follows, are the five atoms
+    that hold nothing (a float, a bool, ``None``, a complex, ``Ellipsis``): no type it reads or
+    follows is one."""
+    atoms = (float, bool, type(None), complex, type(...))
+    assert frozenset(id(kind) for kind in atoms) == scan.LEAVES
+    followed = (tuple, list, dict, str, bytes, bytearray, int, memoryview, range, slice, deque)
+    assert not scan.LEAVES & ({id(kind) for kind in followed} | set(scan.PLAIN))
 
 
-def _make_closure(text: str) -> object:
-    held = {text + "c": 1}
-    return lambda: held
+def test_a_walk_after_each_call_finds_what_a_later_call_drops(pins: Mapping[str, Any]) -> None:
+    """NB04d's shape through the scan's own loop (``drive``): a value kept by one call and dropped
+    by the next is found by the walk after the first call, and by no walk after the last."""
+    assert pins["order"] == {"outcomes": ["ok", "ok", "ok"], "walk after each": [1], "one walk": 0}
 
 
-def _make_attribute(text: str) -> object:
-    class Holder:
-        pass
-
-    holder = Holder()
-    holder.kept = [text]  # type: ignore[attr-defined]
-    return holder
-
-
-def _make_class_attribute(text: str) -> object:
-    return type("Holder", (), {"kept": (text,)})
+@pytest.fixture(scope="module")
+def handed(scan: ModuleType, tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, Any]:
+    """``retention_scan.handed``: the scan's calls, every entry point of the pack recording what
+    it receives; the fields, and the entry points called."""
+    found: tuple[Any, Any] = scan.handed(tmp_path_factory.mktemp("handed"))
+    return found
 
 
-def _make_bytes(text: str) -> object:
-    return [b"xx" + text.encode() + b"yy"]
+def test_every_value_of_a_call_carries_its_marker(
+    scan: ModuleType, handed: tuple[Any, Any]
+) -> None:
+    """``FIELDS``: each value each of the nine calls hands the pack, as the pack's entry points
+    receive it (every argument but the operator's reader and limits: the study's files and every
+    option of an import, the bytes, names and roles of a read, every field of a release handed to
+    a hook and every leaf of a descriptor in it that differs from the import's own, a code handed
+    to an ontology system), carries the call's marker, but for the vocabulary, numbers and
+    absences the table names; a field added, a value that loses its marker, or a call site that
+    hands a value of its own (a fixed dataset id, a renamed descriptor), fails here."""
+    assert handed[0] == scan.FIELDS
 
 
-def _make_bytearray(text: str) -> object:
-    return [bytearray(text.encode())]
+def test_the_scan_drives_every_entry_point_of_the_pack(
+    scan: ModuleType, handed: tuple[Any, Any]
+) -> None:
+    """``retention_scan.entry_points``, derived from ``Pack``'s fields and the protocols they name
+    (not listed by hand): each entry point of the pack is driven by the scan's calls (``DRIVEN``)
+    or excluded with why (``EXCLUDED``), never both, and every one ``DRIVEN`` names is called."""
+    pack = importlib.import_module("aibi.packs.onco").PACK
+    points = set(scan.entry_points(pack))
+    assert points == scan.DRIVEN | set(scan.EXCLUDED)
+    assert not scan.DRIVEN & set(scan.EXCLUDED)
+    assert all(reason for reason in scan.EXCLUDED.values())
+    assert handed[1] - {"clinical.read"} == scan.DRIVEN
 
 
-def _make_array(text: str) -> object:
-    return [array("b", text.encode())]
-
-
-def _make_default_dict_key(text: str) -> object:
-    held: defaultdict[str, int] = defaultdict(int)
-    held[text + "k"] = 1
-    return held
-
-
-def _make_array_b(text: str) -> object:
-    return [array("B", text.encode())]
-
-
-def _make_module(text: str) -> object:
-    module = types.ModuleType("scratch_held")
-    module.__dict__[text + "n"] = 1
-    sys.modules["scratch_held"] = module
+def _load(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module
 
 
-HOLDERS: Mapping[str, tuple[Callable[[str], object], str]] = {
-    "a dict's key": (_make_dict_key, "lower"),
-    "a dict's value": (_make_dict_value, "lower"),
-    "a list in a list": (_make_list, "lower"),
-    "a set of tuples": (_make_set, "lower"),
-    "a default argument": (_make_default, "lower"),
-    "a keyword default": (_make_kwdefault, "lower"),
-    "a closure cell": (_make_closure, "lower"),
-    "an instance's attribute": (_make_attribute, "lower"),
-    "a class attribute": (_make_class_attribute, "lower"),
-    "bytes": (_make_bytes, "lower"),
-    "a bytearray": (_make_bytearray, "lower"),
-    "an array": (_make_array, "lower"),
-    "an array('B')": (_make_array_b, "lower"),
-    "a defaultdict's key": (_make_default_dict_key, "lower"),
-    "a module's name": (_make_module, "lower"),
-    "the upper case form": (_make_list, "upper"),
-    "the marks form": (_make_set, "marks"),
-}
-"""Each way an object holds a marker, with the form of the marker it holds."""
-KEYED = frozenset(
-    {
-        "a dict's key",
-        "a default argument",
-        "a closure cell",
-        "a module's name",
-        "a defaultdict's key",
+def test_the_marker_table_notices_a_value_that_lost_its_marker(tmp_path: Path) -> None:
+    """S12 of D438's table, a builder mutant: the study meta's ``name`` written without its marker
+    is the one field the check reports."""
+    [s12] = [m for m in _load(TABLE, "retention_table").MUTANTS if m.name == "S12"]
+    [edit] = s12.edits
+    source = SCAN.read_text(encoding="utf-8")
+    assert source.count(edit.anchor) == 1
+    mutated = tmp_path / "retention_scan.py"
+    mutated.write_text(source.replace(edit.anchor, edit.replacement), encoding="utf-8")
+    places = tmp_path / "places"
+    places.mkdir()
+    found = _load(mutated, "retention_scan_s12").unmarked(places)
+    clean = _load(SCAN, "retention_scan_clean").FIELDS
+    assert {k: v for k, v in found.items() if clean.get(k) != v} == {
+        "meta_study.txt: name": frozenset({"Name"})
     }
-)
-"""The holders in which a marker is the key of a dict of str keys, and nothing else."""
-KEPT: list[object] = []
-"""Where the walk's unit test holds what it hides: a heap object, which a frame's locals are not."""
-
-
-def test_the_walk_finds_each_way_of_holding_a_marker_and_nothing_once_it_is_released(
-    scan: ModuleType,
-) -> None:
-    """One walk for every holder (a walk reads the whole of the process's heap, and each is a
-    marker of its own): each is found, with the chain that holds it; without the dict keys, which
-    ``gc.get_referents`` does not give for a dict of str keys, the holders that hold a marker as
-    such a key are missed, and the walk with them finds those; and once everything is released,
-    nothing is found."""
-    names = list(HOLDERS)
-    markers = [scan.Marker.new() for _ in names]
-    try:
-        for marker, (make, form) in zip(markers, HOLDERS.values(), strict=True):
-            KEPT.append(make(scan.fresh(getattr(marker, form))))
-        found = scan.reachable(markers)
-        assert sorted({names[hit.call] for hit in found}) == sorted(names)
-        default = names.index("a default argument")
-        assert any(
-            "_make_default" in step for hit in found if hit.call == default for step in hit.chain
-        )
-        without = {names[hit.call] for hit in scan.reachable(markers, keys=False)}
-        assert set(names) - without == KEYED
-        KEPT.clear()
-        sys.modules.pop("scratch_held", None)
-        assert scan.reachable(markers) == []
-    finally:
-        KEPT.clear()
-        sys.modules.pop("scratch_held", None)
-
-
-class _Hostile(type):
-    """A metaclass whose hash, comparison and attribute lookup raise once armed: a walk that puts
-    one of its classes in a set, compares it or asks it for its name runs the pack's code."""
-
-    def __hash__(cls) -> int:
-        raise RuntimeError("the walk hashed a class")
-
-    def __eq__(cls, other: object) -> bool:
-        raise RuntimeError("the walk compared a class")
-
-    def __getattribute__(cls, name: str) -> object:
-        if ARMED:
-            raise RuntimeError("the walk asked a class for an attribute")
-        return super().__getattribute__(name)
-
-
-ARMED: list[bool] = []
-"""Non-empty while the hostile objects are armed (a list, so that it is read, not rebound)."""
 
 
 def _refusal(label: str) -> Any:
-    """A function that raises, naming the slot of the class that was called: a walk that regresses
-    fails with the read that ran code."""
+    """A function that raises, naming what the walk called."""
 
     def refuse(*_: object, **__: object) -> Any:
         raise RuntimeError(f"the walk called {label}")
@@ -798,160 +792,31 @@ def _refusal(label: str) -> Any:
     return refuse
 
 
-def _refusing(*slots: str) -> Callable[[type], type]:
-    """A class decorator that gives a class the slots, each raising, naming itself."""
-
-    def decorate(cls: type) -> type:
-        for slot in slots:
-            setattr(cls, slot, _refusal(f"{cls.__name__}.{slot}"))
-        return cls
-
-    return decorate
-
-
-@_refusing("__eq__", "__hash__", "__len__")
-class _HostileInstance(metaclass=_Hostile):
-    """An instance whose attribute lookup, hash, comparison and length raise once armed."""
-
-    def __getattribute__(self, name: str) -> object:
-        if ARMED:
-            raise RuntimeError("the walk asked an object for an attribute")
-        return super().__getattribute__(name)
-
-
-@_refusing("__eq__", "__hash__", "__contains__", "__len__", "__iter__", "__format__")
-class _HostileStr(str):
-    pass
-
-
-@_refusing("__eq__", "__hash__", "__contains__", "__len__", "__iter__")
-class _HostileBytes(bytes):
-    pass
-
-
-@_refusing("tobytes", "__contains__", "__len__", "__iter__")
-class _HostileArray(array):  # type: ignore[type-arg]
-    typecode = property(_refusal("_HostileArray.typecode"))  # type: ignore[assignment]
-
-
-@_refusing("__eq__", "__hash__", "__len__", "__iter__", "keys", "items", "values", "get")
-class _HostileDict(dict):  # type: ignore[type-arg]
-    pass
-
-
-class _Colliding:
-    """A key that hashes as ``__name__`` does and raises on a comparison once armed."""
-
-    def __hash__(self) -> int:
-        return hash("__name__")
-
-    def __eq__(self, other: object) -> bool:
-        if ARMED:
-            raise RuntimeError("the walk compared a key")
-        return self is other
-
-
-def _hostile_instance(text: str) -> object:
-    ARMED.clear()
-    holder = _HostileInstance()
-    holder.kept = [text]  # type: ignore[attr-defined]
-    return holder
-
-
-def _hostile_class(text: str) -> object:
-    ARMED.clear()
-    return _Hostile("Held", (), {"kept": (text,)})
-
-
-def _hostile_str(text: str) -> object:
-    return [_HostileStr("xx" + text + "yy")]
-
-
-def _hostile_bytes(text: str) -> object:
-    return [_HostileBytes(b"xx" + text.encode() + b"yy")]
-
-
-def _hostile_array(text: str) -> object:
-    return [_HostileArray("b", text.encode())]
-
-
-def _hostile_dict(text: str) -> object:
-    return _HostileDict({1: [text]})
-
-
-def _hostile_module_name(text: str) -> object:
-    """A module whose ``__name__`` is a ``str`` subclass that raises on a comparison."""
-    module = types.ModuleType("scratch_hostile")
-    module.__dict__["__name__"] = _HostileStr("scratch_hostile")
-    module.__dict__["kept"] = [text]
-    return module
-
-
-def _hostile_module_key(text: str) -> object:
-    """A module whose dict has, probed before ``__name__``, a key that collides with it."""
-    module = types.ModuleType("scratch_hostile")
-    module.__dict__.clear()
-    module.__dict__[_Colliding()] = 1  # type: ignore[index]
-    module.__dict__["__name__"] = "scratch_hostile"
-    module.__dict__["kept"] = [text]
-    return module
-
-
-def _hostile_type_name(text: str) -> object:
-    """An instance of a class named by a ``str`` subclass, whose format raises."""
-    ARMED.clear()
-    kind = type("Named", (), {})
-    kind.__name__ = _HostileStr("Named")
-    holder = kind()
-    holder.kept = [text]  # type: ignore[attr-defined]
-    return holder
-
-
-def _hostile_qualname(text: str) -> object:
-    """A class whose ``__qualname__`` is a ``str`` subclass: it is in the chain of the marker."""
-    kind = type("Named", (), {"kept": (text,)})
-    kind.__qualname__ = _HostileStr("Named")
-    return kind
-
-
-HOSTILE: Mapping[str, Callable[[str], object]] = {
-    "an instance of a class whose metaclass runs code": _hostile_instance,
-    "a class whose metaclass runs code": _hostile_class,
-    "a str subclass": _hostile_str,
-    "a bytes subclass": _hostile_bytes,
-    "an array subclass": _hostile_array,
-    "a dict subclass": _hostile_dict,
-    "a module named by a str subclass": _hostile_module_name,
-    "a module dict with a key that collides with __name__": _hostile_module_key,
-    "an instance of a class named by a str subclass": _hostile_type_name,
-    "a class qualified by a str subclass": _hostile_qualname,
-}
-"""Objects of types that run code on a hash, a comparison, a length, an iteration or an attribute
-lookup, each holding a marker: the walk must finish, and find each."""
-
-
-def test_the_walk_runs_no_code_of_an_object_it_walks(scan: ModuleType) -> None:
-    """The walk reads the whole heap of the process, the suite's own objects among them (issue
-    #140: ``tests/core/schema/test_guards.py`` keeps a class whose metaclass raises in ``__hash__``
-    and ``__eq__``, and a set lookup of its type ran that). It decides what an object is by its
-    type's identity, reads it through the base type's own methods and uses a name only when it is
-    an exact ``str``, so an object of a type that raises on a hash, a comparison, a length, an
-    iteration, a format or an attribute lookup is walked, a marker it holds is found, and every
-    step of a chain is a plain ``str``. What this does not hold: ``gc.collect()`` may run a
-    finalizer, and the interpreter's own traverse of an object is the interpreter's."""
-    names = list(HOSTILE)
-    markers = [scan.Marker.new() for _ in names]
-    try:
-        for marker, make in zip(markers, HOSTILE.values(), strict=True):
-            KEPT.append(make(scan.fresh(marker.lower)))
-        ARMED.append(True)
-        found = scan.reachable(markers)
-        ARMED.clear()
-        assert sorted({names[hit.call] for hit in found}) == sorted(names)
-        assert all(type(step) is str for hit in found for step in hit.chain)
-    finally:
-        ARMED.clear()
-        KEPT.clear()
+def test_the_walk_runs_no_code_of_an_object_it_walks(pins: Mapping[str, Any]) -> None:
+    """The walk runs no code of what it walks, in ``retention_pins.py``'s child. ``twins``: the
+    matrix again, every holder and every part of it a generated twin, a subclass of the walked
+    base type that overrides every callable or data descriptor of its base, under a metaclass
+    generated so from ``type`` (but what makes a class), and every holder under a twin module and
+    a twin dict, which a hit's chain names; armed for the walk, each records that it ran and
+    raises, so that a swallowed raise is still seen: every cell is found, by its own read, and
+    nothing ran. The generator checks itself first: every slot of each base overridden, one slot
+    of each twin recording and raising, every part of every cell a twin. ``HOSTILE``: objects
+    that raise on what a walk could reach besides (a metaclass's attribute lookup, a module named
+    by a ``str`` subclass, a key that collides with ``__name__``, a class named by one), each
+    found, every step of each chain a plain ``str``; and holders whose read raises
+    ``ValueError`` (closed, released, never initialised) are passed by. Issue #140 found such an
+    object in the suite's own heap (``tests/core/schema/test_guards.py``'s ``_Owned``, whose
+    metaclass raises in ``__hash__``), which these hold the class of. What this does not hold:
+    ``gc.collect()`` may run a finalizer, and the interpreter's own traverse of an object is the
+    interpreter's."""
+    twins = pins["twins"]
+    assert (twins["bare slots"], twins["silent twins"], twins["untwinned"]) == ([], [], [])
+    assert (twins["error"], twins["ran"], twins["missing"], twins["armed"]) == (None, [], [], True)
+    assert twins["cells"] == len(pins["matrix"]["cells"])
+    hostile = pins["hostile"]
+    assert hostile["found"] == hostile["held"]
+    assert len(hostile["held"]) == 21
+    assert hostile["plain chains"] is True
 
 
 def test_the_walk_refuses_a_sys_modules_that_is_not_a_dict(
