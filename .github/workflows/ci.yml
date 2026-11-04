@@ -129,6 +129,44 @@ jobs:
           OUTCOMES: "Determinism tests=${{ steps.million.outcome }}"
         run: python3 ../.github/scripts/annotations.py
 
+  mutation:
+    name: The retention guards' mutants
+    # D438's mutation table (tests/packs/onco/retention_mutants/table.py), replayed against a copy
+    # of the tree on a runner of its own beside the server checks: each mutant's marker scan (a
+    # fresh interpreter, about 10 s), its source guard and the tests it names, one mutant a
+    # processor at a time (about 11 minutes on four).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: The retention guards' mutation table (SPEC D438)
+        id: mutation
+        timeout-minutes: 20
+        run: >-
+          uv run pytest tests/packs/onco/test_retention_mutants.py -m mutation --durations=0
+          --tb=short -o junit_family=xunit1 --junitxml=reports/mutation.xml
+      - name: Every mutant was replayed
+        run: python3 ../.github/scripts/mutation_report.py reports/mutation.xml
+      - name: Failed tests as annotations
+        if: failure()
+        env:
+          OUTCOMES: "Mutation tests=${{ steps.mutation.outcome }}"
+        run: python3 ../.github/scripts/annotations.py
+
   web:
     name: Web checks
     # The web package (D418, D419): its licences and advisories, the generated API types against
