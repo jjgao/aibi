@@ -1416,3 +1416,106 @@ def test_the_person_s_repr_names_their_table_and_releases_and_never_their_key(
 ) -> None:
     shown = repr(_Person("members", {imported: store.load(imported)}, [KEY]))
     assert shown == f"_Person(table='members', releases={[imported]!r})"
+
+
+NOTE: JsonValue = {"about": "\xad", "also": "\u200b", "who": "m-1", "text": "call \xad at 3"}
+"""An audit note that names the person whose key is a soft hyphen, as a whole and in text."""
+ERASED_NOTE: JsonValue = {"about": MARK, "also": MARK, "who": "m-1", "text": "call  at 3"}
+
+
+@pytest.mark.parametrize("mode", ["fresh", "again while it waits", "redact_only"])
+def test_a_key_of_format_characters_alone_is_erased_whole_and_from_text(
+    store: Store, library: Library, mode: str
+) -> None:
+    """A soft hyphen is a key (#156): nothing once ``normal``, it has no token, so the erasure is
+    neither refused nor crashed, whichever way it builds the person's terms: a fresh erasure
+    (``_Person.terms``); one whose redaction a pin keeps waiting, read back (``Terms.loads``)
+    and finished by erasing the key again (``_waiting``) rather than refused; and, once it has
+    run, ``redact_only`` (``_redact_only``) for what names them later. Every value that is
+    nothing once ``normal`` is erased, and free text loses every format character, while other
+    values stay."""
+    key = "\xad"
+    members = library.members.replace(KEY.encode(), key.encode())
+    loans = tuple(tuple(key if v == KEY else v for v in loan) for loan in library.loans)
+    with store.pin() as pin:
+        built = store.import_release(
+            pin, "lib", library.descriptors(), library.sources(members, loans), library.layouts
+        )
+        store.publish("lib", built.manifest.hash, "operator:ada")
+    _note(store, NOTE)
+    with store.pin() as pin:
+        rest = store.import_release(
+            pin,
+            "lib",
+            library.descriptors(),
+            library.sources(
+                b"\n".join(line for line in members.split(b"\n") if key.encode() not in line),
+                tuple(loan for loan in loans if key not in loan),
+            ),
+            library.layouts,
+        )
+        store.publish("lib", rest.manifest.hash, "operator:ada")
+    if mode == "again while it waits":
+        query = store.pin()
+        query.manifest(built.manifest.hash)
+        try:  # a failed erasure must not leave its pin to hold off the store's teardown
+            erased = erase(store, "lib", "members", [key], "operator:ada")
+            assert not erased.redacted
+            [waiting] = store.pending_redactions("lib").values()
+            assert waiting.person == {""}
+            again = erase(store, "lib", "members", [key], "operator:ada")
+            assert (again.withdrawn, again.redacted) == ((), False)
+            assert len(store.pending_redactions("lib")) == 1
+        finally:
+            query.release()
+    else:
+        erased = erase(store, "lib", "members", [key], "operator:ada")
+        assert (erased.withdrawn, erased.redacted) == ((1,), True)
+    assert store.pending_redactions("lib") == {}
+    assert _details(store, "note") == [ERASED_NOTE]
+    if mode == "redact_only":
+        _note(store, NOTE)
+        later = erase(store, "lib", "members", [key], "operator:ada", redact_only=True)
+        assert (later.withdrawn, later.redacted) == ((), True)
+        assert _details(store, "note") == [ERASED_NOTE, ERASED_NOTE]
+
+
+def test_an_identifier_of_format_characters_alone_below_the_person_is_a_term(
+    store: Store, library: Library
+) -> None:
+    """A stray zero-width space in an identifier column of a row below the person (#156) makes
+    the term that ``normal`` empties one of theirs: empty and format-only values are erased,
+    and free text loses its format characters, while the other rows' identifiers stay."""
+    descriptors = library.descriptors(extra=[build.column("loans.code", "string", identifier=True)])
+    layouts = {
+        **library.layouts,
+        "loans": Layout("loans", (*library.layouts["loans"].columns, ("code", "Code"))),
+    }
+    codes = {1: "c-1", 2.0: "\u200b", 3: "c-3", 4: "c-4"}
+    loans = tuple((*loan, codes[loan[0]]) for loan in library.loans)
+
+    def sources(members: bytes, kept: tuple[tuple[Any, ...], ...]) -> dict[str, Any]:
+        found = library.sources(members=members)
+        header = ("Loan", "Member", "Book", "Borrowed", "Days", "Code")
+        return {**found, "loans": TypedSource(header, kept)}
+
+    with store.pin() as pin:
+        built = store.import_release(
+            pin, "lib", descriptors, sources(library.members, loans), layouts
+        )
+        store.publish("lib", built.manifest.hash, "operator:ada")
+    _note(store, {"empty": "", "bom": "\ufeff", "text": "a\u200bb c-1", "keep": "c-1", "c-3": 1})
+    members = b"\n".join(line for line in library.members.split(b"\n") if KEY.encode() not in line)
+    with store.pin() as pin:
+        rest = store.import_release(
+            pin,
+            "lib",
+            descriptors,
+            sources(members, tuple(loan for loan in loans if KEY not in loan)),
+            layouts,
+        )
+        store.publish("lib", rest.manifest.hash, "operator:ada")
+    assert erase(store, "lib", "members", [KEY], "operator:ada").redacted
+    assert _details(store, "note") == [
+        {"empty": MARK, "bom": MARK, "text": "ab c-1", "keep": "c-1", MARK: 1}
+    ]

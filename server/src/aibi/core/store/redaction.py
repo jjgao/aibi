@@ -46,7 +46,11 @@ identifying texts; anything else stays. Where it sits says which rows it could n
 A number in other ``units`` than its column's is read only as evaluation reads it, converted by
 one multiplication of doubles by the factor rounded to a double (§6.4, ``Where.scales``). Text
 is compared ``normal``: in Unicode normalisation form C, without format characters; text that
-holds no term is kept as it is written.
+holds no term is kept as it is written. A term that is nothing once ``normal`` (a value of format
+characters alone, such as a soft hyphen) has no token: a constant or JSON string that is nothing
+once ``normal`` is it where its place holds it, and text that holds a format character holds
+it there, and is kept ``normal``, without every format character, so that none of its spellings
+stays.
 
 A token of a term, in a string matched by every reading (``Terms.text``), is:
 
@@ -525,6 +529,13 @@ class Naming:
         )
 
 
+def _normal_terms(given: Collection[str], stored: bool) -> frozenset[str]:
+    """Terms as ``Terms`` compares them (``normal``): every non-empty canonical string given,
+    and, as ``Terms.dumps`` wrote them (``stored``), every one, so that a term of format
+    characters alone, which ``normal`` makes empty, is read back as the term it was."""
+    return frozenset(normal(term) for term in given if stored or term)
+
+
 class Terms:
     """The values to erase: the person's and those below them, each matched as its place says
     (``Where``, D290), and what the releases say of the places that may name the person's rows
@@ -532,7 +543,10 @@ class Terms:
     and unit names every term's rows). Terms are compared as ``normal`` makes text. A term is
     found in text by splitting the text into tokens (``_runs``) and looking up the runs of them
     that may be one in sets, so that no pattern is compiled of the terms, however many there
-    are."""
+    are. A term that ``normal`` makes empty (a value of format characters alone) has no token:
+    it is a constant or JSON string that is empty once ``normal``, and text loses every format
+    character where it is held.
+    ``stored`` reads terms as ``dumps`` wrote them (``loads``), that empty term among them."""
 
     def __init__(
         self,
@@ -541,9 +555,10 @@ class Terms:
         *,
         numbers: Collection[str] = (),
         naming: Naming | None = None,
+        stored: bool = False,
     ) -> None:
-        self.person = frozenset(normal(term) for term in person if term)
-        self.below = frozenset(normal(term) for term in below if term) - self.person
+        self.person = _normal_terms(person, stored)
+        self.below = _normal_terms(below, stored) - self.person
         self.terms = self.person | self.below
         self.numeric = frozenset(normal(term) for term in numbers) & self.terms
         """The terms, the person's or below them, that are numbers by their columns'
@@ -576,11 +591,14 @@ class Terms:
         starts: dict[str, set[int]] = {}
         for term in self.exact:
             tokens = list(_runs().finditer(term))
-            starts.setdefault(tokens[0].group(), set()).add(len(tokens))
+            if tokens:
+                starts.setdefault(tokens[0].group(), set()).add(len(tokens))
         self.starts = {first: sorted(counts, reverse=True) for first, counts in starts.items()}
         """The first token of each term that is a token of text, and how many tokens the
         terms that start with it have, the most first, so that the longest term written at a
-        place is the one found there."""
+        place is the one found there. A term that ``normal`` makes empty (one of format
+        characters alone, such as a soft hyphen) has no token: it is matched as a whole
+        (``whole``, ``string``), and in text by its format characters (``text``)."""
 
     def __bool__(self) -> bool:
         return bool(self.terms)
@@ -620,6 +638,7 @@ class Terms:
             stored["below"] or (),
             numbers=stored.get("numbers") or (),
             naming=None if naming is None else Naming.loads(naming),
+            stored=True,
         )
 
     def place(self, column: JsonValue, units: JsonValue = None) -> Where:
@@ -688,7 +707,9 @@ class Terms:
         number whose value is one of the person's terms'; on ``Place.OTHER``, and for the terms a
         place quotes, a term as it is written only, and no part of a longer number, date or
         time; on a naming place, every reading of its terms only. Text that holds no term is
-        returned as it is; text that holds one, ``normal``."""
+        returned as it is; text that holds one, ``normal``. The term that ``normal`` makes
+        empty (a value of format characters alone) is held by every text that holds a format
+        character, where its place holds it: such text is returned ``normal``, without them."""
         where = Where.of(place)
         if where.naming == frozenset() and where.rest is None and not where.quoted:
             return value
@@ -699,7 +720,16 @@ class Terms:
                 redacted = _instants().sub(lambda at: self._instant(at, where), redacted)
             if self.values:
                 redacted = _numbers().sub(lambda at: self._number(at, where), redacted)
-        return value if redacted == found else redacted
+        if redacted == found and not self._holds_empty(value, where):
+            return value
+        return redacted
+
+    def _holds_empty(self, value: str, where: Where) -> bool:
+        """Whether text holds the term that ``normal`` makes empty: it is one, held where the
+        text is, by every reading or by its text, and the text has a format character, which
+        it then loses, with every other, so that no spelling of the term stays."""
+        held = "" in self.exact and (self._every("", where) or self._textual("", where))
+        return held and not value.isascii() and value.translate(_formats()) != value
 
     def _tokens(self, value: str, where: Where) -> str:
         """Text with every term that is a token of it, as it is written, erased: at each token
