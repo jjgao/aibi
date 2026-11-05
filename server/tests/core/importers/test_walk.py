@@ -15,7 +15,6 @@ import itertools
 import os
 import shutil
 import tempfile
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -23,6 +22,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from tests.core.importers.racing import Flipper
 
 from aibi.core.importers import walk as walk_module
 
@@ -235,60 +235,74 @@ def test_a_component_toggled_at_any_calls_never_leads_outside(
 
 
 RACE_WALKS = 3000
-"""At least this many walks race the flipper."""
+"""At least this many walks race the flipper, deadline allowing."""
 RACE_OBSERVED = 5
-"""And the race runs on until this many walks were given the directory, and this many refused:
-progress that does not depend on how a loaded machine hands the GIL over."""
+"""And the race runs on until this many walks were given the directory, this many refused and the
+flipper made this many cycles. Each cycle holds each state for a whole walk (``racing.Flipper``),
+so these are reached in a bounded number of walks however the machine schedules the two
+threads."""
+RACE_STRADDLED = 200
+"""And until this many walks had a flip injected during them (``racing.INJECT_EVERY``):
+a flip inside a walk, on any machine. Those that raced the free flips are counted and reported
+(the ``raced`` property), not required: how many there are is the scheduler's."""
 RACE_DEADLINE = 120.0
-"""Seconds, a generous bound that only a machine that starves a thread for minutes passes."""
+"""Seconds: the race ends there, and fails, naming its counts, short of any of them."""
 
 
 def test_a_thread_flipping_a_component_never_leads_a_walk_outside(
-    walking: ModuleType, tmp_path: Path
+    walking: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, object], None],
 ) -> None:
-    """A race of 3,000 walks at least, run on until the walks have seen the flipper both ways (at
-    least ``RACE_OBSERVED`` given the directory and as many refused), within a deadline, while
-    another thread flips ``c2`` between the directory and a symlink out; each walk refuses or
-    gives the directory inside, and the counts seen are asserted, so that the check below always
-    checked something."""
+    """Walks while another thread flips ``c2`` between the directory and a symlink out, in bursts
+    of free flips and phases that hold each state, with a flip injected before an open of every
+    few walks of a burst (``racing``): each walk refuses or gives the directory inside. The race
+    runs on until the walks have seen the flipper both ways (``RACE_OBSERVED`` given the
+    directory and as many refused) and straddled ``RACE_STRADDLED`` injected flips, which the
+    flipper guarantees on any machine, and 3,000 walks were made, deadline allowing; a deadline
+    that comes before the counts fails, naming them. The walks that raced the free flips depend
+    on how the machine schedules the two threads (none, on one busy processor): they are
+    reported, not required."""
     tree = _Tree(tmp_path)
     inside = _of(tree.target)
-    stop = threading.Event()
-
-    def flip() -> None:
-        while not stop.is_set():
-            try:
-                tree.swap(1)
-                tree.unswap()
-            except OSError:
-                pass
-
-    flipper = threading.Thread(target=flip, daemon=True)
     outside = given = refused = walks = 0
     before = _descriptors()
     deadline = time.monotonic() + RACE_DEADLINE
-    flipper.start()
-    try:
-        while (walks < RACE_WALKS or min(given, refused) < RACE_OBSERVED) and (
-            time.monotonic() < deadline
-        ):
+
+    def enough(flipper: Flipper) -> bool:
+        return (
+            min(given, refused, flipper.cycles) >= RACE_OBSERVED
+            and flipper.straddled >= RACE_STRADDLED
+        )
+
+    with Flipper(lambda: tree.swap(1), tree.unswap, deadline) as flipper:
+        flipper.inject_at_opens(monkeypatch)
+        while flipper.running and time.monotonic() < deadline:
+            if walks >= RACE_WALKS and enough(flipper):
+                break
             walks += 1
+            begun = flipper.generation
             try:
                 descriptor = walking.walk(tree.target, walking.LIST)
             except walking.Unwalked:
                 refused += 1
-                continue
-            given += 1
-            try:
-                outside += _identity(descriptor) != inside
-            finally:
-                os.close(descriptor)
-    finally:
-        stop.set()
-        flipper.join()
-    assert outside == 0
-    assert given >= RACE_OBSERVED, (given, refused, walks)
-    assert refused >= RACE_OBSERVED, (given, refused, walks)
+            else:
+                given += 1
+                try:
+                    outside += _identity(descriptor) != inside
+                finally:
+                    os.close(descriptor)
+            flipper.walked(begun)
+    record_property("raced", flipper.raced)
+    record_property("straddled", flipper.straddled)
+    assert outside == 0, f"{outside} of {walks} walks gave a directory outside"
+    if not enough(flipper):
+        pytest.fail(
+            f"the race reached its {RACE_DEADLINE:g} s deadline after {walks} walks: {given} "
+            f"were given the directory and {refused} were refused ({flipper.counts()}), short "
+            f"of {RACE_OBSERVED} of each and of cycles, or of {RACE_STRADDLED} straddled"
+        )
     assert _descriptors() == before
 
 
