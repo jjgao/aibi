@@ -1,7 +1,7 @@
 """D438's mutation table for the retention guards (``retention_mutants/table.py``, issue #136): its
 anchors still name the code they change, every mutant has a stated outcome, and, under ``-m
-mutation`` (CI's ``mutation`` job, about 11 minutes), every mutant replayed against a copy of the
-tree has that outcome (``retention_mutants/replay.py``)."""
+mutation`` (CI's ``mutation`` job, between 20 and 30 minutes: D438's figure), every mutant replayed
+against a copy of the tree has that outcome (``retention_mutants/replay.py``)."""
 
 import importlib.util
 import re
@@ -31,7 +31,7 @@ replay = _load(HERE / "retention_mutants" / "replay.py", "retention_replay")
 MUTANTS: tuple[Any, ...] = table.MUTANTS
 FILES = frozenset(
     {table.CLINICAL, table.IMPORTER, table.FACETS, table.ENDPOINTS, table.VALIDATORS, table.BUILD}
-    | {table.SCAN, table.TEST, table.PINS, table.REPORT}
+    | {table.SCAN, table.TEST, table.PINS, table.STATE, table.STATE_PINS, table.REPORT}
 )
 REQUIRED = frozenset(
     {f"NB{n:02}" for n in range(1, 18)} | {"NB04b", "NB04c", "NB04d", "NB11b"}
@@ -43,12 +43,27 @@ REQUIRED = frozenset(
     | {f"T{n}" for n in range(1, 11)} | {f"F{n}" for n in range(1, 17)}
     | {"MR2", "MR2b", "MR6", "MR8"}
     | {f"X{n}" for n in range(1, 7)} | {"Y4", "Y5", "V1"}
+    | {f"N{n:02}" for n in range(1, 19)} | {"P1", "P2", "P3"}
+    | {f"A{n}" for n in range(1, 11)} | {f"D{n}" for n in range(1, 14)}
+    | {f"RV{n}" for n in range(1, 7)} | {f"RX{n}" for n in range(1, 7)}
+    | {f"RG{n}" for n in (*range(1, 14), 17, 18, *range(21, 35))}
+    | {f"GX{n}" for n in (4, 6, 7, 10, 16, 17, 19, 20, *range(21, 28))}
+    | {"Z1", "Z2", "Z17", "Z21", "Z22", "ZP3"}
 )  # fmt: skip
 """The mutants the table must keep: round 4's of #134 (NB01 to NB17, S1 to S13), the ones of #136's
 plan reviews that the plan names (a kill to assert, or a survivor D438 names), and those of its
-code review's rounds 1 to 3 (C58, C59, G, R, F, H, W, T, MR, X, Y and V rows)."""
+code review's rounds 1 to 3 (C58, C59, G, R, F, H, W, T, MR, X, Y and V rows), and PR B's: its
+plan reviews' new routes (N01 to N18, P1, P2), a mutant of each rule and leg of the state guards
+(A1 to A10, the allow-list's; D1 to D13, the snapshot's), and its code reviews' rows (round 1's
+RV1 to RV6, P3 and the RG rows; round 2's RX1 to RX6 and the GX rows; round 3's Z rows and
+ZP3)."""
 SPAN = r"\d+(-\d+)?"
-VERDICT = re.compile(rf"(clean|outcomes|walks|canary|crash|hits after {SPAN}(, {SPAN})*)")
+SPANS = rf"{SPAN}(, {SPAN})*"
+FOUND = (
+    rf"(allow at import)?((; )?allow after {SPANS})?((; )?snapshot after {SPANS})?"
+    rf"((; )?hits after {SPANS})?"
+)
+VERDICT = re.compile(rf"(clean|outcomes|walks|canary|stores|crash|(?!; )(?=.){FOUND})")
 
 
 def test_every_anchor_of_the_table_is_found_exactly_once() -> None:
@@ -129,13 +144,28 @@ def test_the_table_states_an_outcome_for_every_mutant() -> None:
 
 
 def test_the_replay_reads_a_scan_s_report_as_the_table_does() -> None:
-    """``replay.verdict``: how a report fails, in the order the table reads it, or the calls after
-    which a walk found a marker."""
+    """``replay.verdict``: how a report fails, in the order the table reads it, or which guard
+    found the mutant after which calls, each named, in turn (``VERDICT`` reads every verdict)."""
     outcomes = ["ok", "EXCEL_DATE"]
-    clean = {"outcomes": outcomes, "walks": 2, "canary_seen": True, "hits": []}
+    clean = {
+        "outcomes": outcomes, "walks": 2, "canary_seen": True, "hits": [],
+        "stores_ignored": True, "rejects": [], "differences": [],
+    }  # fmt: skip
     assert replay.verdict(clean, outcomes) == "clean"
     hits = [{"after": after} for after in (1, 2, 4, 2, 7, 8, 9)]
     assert replay.verdict({**clean, "hits": hits}, outcomes) == "hits after 1-2, 4, 7-9"
+    rejects = [{"after": after} for after in (0, 0, 3, 4)]
+    changed = [{"after": after} for after in (1, 2, 9)]
+    every = {**clean, "hits": hits, "rejects": rejects, "differences": changed}
+    found = "allow at import; allow after 3-4; snapshot after 1-2, 9; hits after 1-2, 4, 7-9"
+    assert replay.verdict(every, outcomes) == found
+    assert replay.verdict({**clean, "rejects": rejects[:2]}, outcomes) == "allow at import"
+    assert replay.verdict({**clean, "differences": changed}, outcomes) == "snapshot after 1-2, 9"
+    for verdict in (found, "allow after 3", "snapshot after 9; hits after 1", "stores"):
+        assert VERDICT.fullmatch(verdict), verdict
+    for verdict in ("", "; hits after 1", "allow at import; ", "hits after 1; allow at import"):
+        assert not VERDICT.fullmatch(verdict), verdict
+    assert replay.verdict({**clean, "stores_ignored": False}, outcomes) == "stores"
     assert replay.verdict({**clean, "canary_seen": False}, outcomes) == "canary"
     assert replay.verdict({**clean, "walks": 1, "canary_seen": False}, outcomes) == "walks"
     assert replay.verdict({**clean, "outcomes": ["ok"], "walks": 1}, outcomes) == "outcomes"
@@ -143,15 +173,16 @@ def test_the_replay_reads_a_scan_s_report_as_the_table_does() -> None:
 
 
 OUTCOMES = {
-    "killed by the scan": lambda m: m.scan != "clean",
+    "killed by the allow-list": lambda m: "allow " in m.scan,
+    "killed by the snapshot": lambda m: "snapshot after" in m.scan,
+    "killed by the walk": lambda m: (
+        "hits after" in m.scan or m.scan in ("outcomes", "walks", "canary", "stores", "crash")
+    ),
     "killed by the source guard": lambda m: m.banned,
     "killed by a test of the guards": lambda m: m.tests != (),
     "equivalents": lambda m: m.survives.startswith("equivalent"),
-    "survivors PR B of #136 is to close": lambda m: "PR B of #136" in m.survives,
     "survivors no scan holds": lambda m: (
-        bool(m.survives)
-        and not m.survives.startswith("equivalent")
-        and "PR B of #136" not in m.survives
+        bool(m.survives) and not m.survives.startswith("equivalent")
     ),
 }
 """D438's lists of the table's outcomes, each by what makes a mutant one of it."""
@@ -167,7 +198,7 @@ def outcomes_of_d438() -> dict[str, tuple[int, list[str]]]:
     start = row.index("**The table's outcomes**")
     text = row[start + len("**The table's outcomes**") : row.index("**", start + 30)]
     found = {}
-    for label, count, names in re.findall(r"([A-Za-z#0-9 ]+): (\d+) \(([^)]*)\)", text):
+    for label, count, names in re.findall(r"([A-Za-z#0-9 -]+): (\d+) \(([^)]*)\)", text):
         found[label.strip()] = (int(count), [name.strip() for name in names.split(",")])
     return found
 

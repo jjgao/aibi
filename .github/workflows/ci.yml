@@ -134,9 +134,10 @@ jobs:
     # D438's mutation table (tests/packs/onco/retention_mutants/table.py), replayed against a copy
     # of the tree on a runner of its own beside the server checks: each mutant's marker scan (a
     # fresh interpreter, about 10 s), its source guard and the tests it names, one mutant a
-    # processor at a time (about 11 minutes on four).
+    # processor at a time (between 20 and 30 minutes on four runners' processors, which vary:
+    # D438's figure; its step has 40 minutes, beside the server job's 55).
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: server
@@ -155,7 +156,7 @@ jobs:
         run: uv sync --locked
       - name: The retention guards' mutation table (SPEC D438)
         id: mutation
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: >-
           uv run pytest tests/packs/onco/test_retention_mutants.py -m mutation --durations=0
           --tb=short -o junit_family=xunit1 --junitxml=reports/mutation.xml

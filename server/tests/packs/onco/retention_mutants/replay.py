@@ -4,7 +4,8 @@ For each mutant: ``src/aibi``, ``tests/packs/onco`` and ``pyproject.toml`` are c
 directory of its own, its edits applied there, and three things read of the copy:
 
 - the source guard (``test_retention.banned``) over every module of the pack it edits;
-- the marker scan, in a fresh interpreter (``python -I``) whose path has the copy's ``src`` first
+- the marker scan and the state guards (``retention_state.Guard``), in a fresh interpreter
+  (``python -I``) whose path has the copy's ``src`` first
   (the editable install is a path entry, which ``-I`` keeps: without it the child would import
   the installed tree), its report checked to come from a fresh start and from the copy's pack,
   and reduced to a verdict (``verdict``);
@@ -42,7 +43,7 @@ PYTEST = (
     "import pytest; raise SystemExit(pytest.main(sys.argv[2:]))"
 )
 """pytest with a tree's ``src`` (``argv[1]``) first, checked to be the ``aibi`` it imports."""
-VERDICTS = ("clean", "outcomes", "walks", "canary", "crash")
+VERDICTS = ("clean", "outcomes", "walks", "canary", "stores", "crash")
 
 
 class Replayed(NamedTuple):
@@ -70,16 +71,30 @@ def spans(numbers: Iterable[int]) -> str:
 
 
 def verdict(report: Mapping[str, Any], outcomes: Sequence[str]) -> str:
-    """The scan's report reduced to what the table records: how it fails, or the calls after
-    which a walk found a marker, or ``clean``."""
+    """The scan's report reduced to what the table records: how it fails, or which guard of the
+    scan's child found the mutant, and when, each in turn (``; ``): the allow-list at import
+    (before the first call), the allow-list after the calls that left a reject it did not have
+    before them, the snapshot after the calls whose snapshot differs from the first, the walk
+    after the calls after which it found a marker; or ``clean``."""
     if report["outcomes"] != list(outcomes):
         return "outcomes"
     if report["walks"] != len(outcomes):
         return "walks"
     if report["canary_seen"] is not True:
         return "canary"
-    after = [hit["after"] for hit in report["hits"]]
-    return f"hits after {spans(after)}" if after else "clean"
+    if report["stores_ignored"] is not True:
+        return "stores"
+    found = []
+    allowed = [reject["after"] for reject in report["rejects"]]
+    if 0 in allowed:
+        found.append("allow at import")
+    if later := [after for after in allowed if after]:
+        found.append(f"allow after {spans(later)}")
+    if changed := [difference["after"] for difference in report["differences"]]:
+        found.append(f"snapshot after {spans(changed)}")
+    if after := [hit["after"] for hit in report["hits"]]:
+        found.append(f"hits after {spans(after)}")
+    return "; ".join(found) or "clean"
 
 
 def copy(into: Path) -> Path:
@@ -234,7 +249,10 @@ def replay_all(
     base: Path,
     workers: int | None = None,
 ) -> dict[str, Replayed]:
-    """Every mutant, ``workers`` at a time (one a processor by default)."""
+    """Every mutant, ``workers`` at a time (one a processor by default), the longest first: a
+    mutant that names tests runs a pytest (and the children its tests start) after its scan,
+    so those start first, and the short rows fill in after them."""
+    ordered = sorted(mutants, key=lambda mutant: -len(mutant.tests))
     with ThreadPoolExecutor(max_workers=workers or os.cpu_count() or 2) as pool:
-        done = pool.map(lambda m: replay(m, banned, outcomes, report_of, base), mutants)
+        done = pool.map(lambda m: replay(m, banned, outcomes, report_of, base), ordered)
         return {replayed.name: replayed for replayed in done}

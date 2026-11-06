@@ -87,6 +87,7 @@ no scan holds, and the mutants that live, are D438's.
 import dataclasses
 import gc
 import importlib
+import importlib.util
 import inspect
 import io
 import json
@@ -1245,17 +1246,39 @@ def unmarked(root: Path) -> dict[str, frozenset[str]]:
 # --- The report ----------------------------------------------------------------------------------
 
 
+STATE = Path(__file__).resolve().with_name("retention_state.py")
+
+
+def state_guards() -> Any:
+    """``retention_state.py``, loaded by its path (no module of the pack is imported by it)."""
+    spec = importlib.util.spec_from_file_location("retention_state", STATE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def main() -> None:
     fresh_start = "aibi.packs.onco" not in sys.modules
+    state = state_guards()
+    guard = state.Guard(state.pack_modules())  # before the first call: its rejects and snapshot
     markers = [Marker.new() for _ in CALLS]
     canary = Marker.new()
     CANARY.append({fresh(canary.lower) + "k": 1})  # a str-keyed dict holding the canary as a key
     hits: list[dict[str, object]] = []
     walks: list[bool] = []
+    stores = guard.own()
+    ignored: list[bool] = []
 
     def after(done: int) -> None:
-        """The walk after call ``done``: the markers of the calls made so far, and the canary."""
-        seen = reachable([*markers[:done], canary], ignore=(hits, walks))
+        """The state guards after call ``done`` (the allow-list, and the snapshot against the
+        first), then the walk: the markers of the calls made so far, and the canary; the walk
+        skips the guards' stores (``ignore``), which it would otherwise read whole."""
+        guard.after(done)
+        ignore = (hits, walks, ignored, *stores)
+        ignored.append(all(any(s is i for i in ignore) for s in stores))
+        seen = reachable([*markers[:done], canary], ignore=ignore)
         walks.append(any(hit.call == done for hit in seen))
         hits.extend(
             {"call": hit.call + 1, "after": done, "kind": hit.kind, "chain": list(hit.chain)}
@@ -1275,6 +1298,8 @@ def main() -> None:
         "walks": len(walks),
         "canary_seen": walks != [] and all(walks),
         "hits": hits,
+        "stores_ignored": ignored != [] and all(ignored),
+        **guard.report(),
     }
     print(json.dumps(report))
 
