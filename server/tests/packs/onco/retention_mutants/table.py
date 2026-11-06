@@ -5,9 +5,12 @@ careless hand could make, as exact text: each ``Edit``, in turn, replaces its ``
 exactly once in its file (a path from ``server/``) as the edits before it left it, by its
 ``replacement``. Its outcome is recorded beside it:
 
-- ``scan``: what the marker scan (``retention_scan.py``) reports with the mutant applied:
-  ``clean``, ``hits after <calls>`` (the walks, after which of the nine calls, that found a marker),
-  or how its report fails otherwise (``outcomes``, ``walks``, ``canary``, ``crash``);
+- ``scan``: what the marker scan's child (``retention_scan.py``) reports with the mutant applied:
+  ``clean``, or which of its guards found the mutant and when, in turn (``; ``): ``allow at
+  import`` (the allow-list before the first call), ``allow after <calls>`` (a reject it did not
+  have before them), ``snapshot after <calls>`` (a snapshot that differs from the first) and
+  ``hits after <calls>`` (a walk that found a marker), each after which of the nine calls; or how
+  its report fails otherwise (``outcomes``, ``walks``, ``canary``, ``stores``, ``crash``);
 - ``banned``: whether the source guard (``test_retention.banned``) refuses the mutated pack;
 - ``tests``: the tests of ``test_retention.py`` that fail with it (the guards' own pins);
 - ``survives``: for a mutant nothing here kills, why, and who is to hold it.
@@ -35,6 +38,8 @@ BUILD = "src/aibi/packs/onco/build.py"
 SCAN = "tests/packs/onco/retention_scan.py"
 TEST = "tests/packs/onco/test_retention.py"
 PINS = "tests/packs/onco/retention_pins.py"
+STATE = "tests/packs/onco/retention_state.py"
+STATE_PINS = "tests/packs/onco/retention_state_pins.py"
 REPORT = "../.github/scripts/mutation_report.py"
 
 ROW = "        identifier = fields[self.patient_id]\n"
@@ -44,6 +49,31 @@ READ_START = "    reading = _Reading(name, role, limits, cells_before, patient)\
 READ_END = "    return reading.finished(data)\n\n\n__all__"
 IMPORT_START = "        reader = options.reader\n        study = discover("
 BY = 'BY = f"importer:{PACK_ID}@{VERSION}"\n'
+SYS = HEAD + "\nimport sys as _sys\n"
+NEXT = '        if self.role == "patient":'
+ACC = (
+    "\nclass _Acc:\n    def __init__(self):\n        self.h = hashlib.sha256()\n"
+    "    def add(self, x):\n        self.h.update(x)\n        return x\n"
+)
+STATE_TESTS = (
+    "test_nothing_of_a_file_is_reachable_after_any_call",
+    "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+    "test_the_allow_list_refuses_each_way_a_module_holds_state",
+    "test_the_snapshot_reads_content_not_representation",
+    "test_the_state_guards_after_every_call_compare_with_the_first",
+    "test_the_snapshot_sees_a_change_through_each_holder",
+    "test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder",
+    "test_the_state_guards_run_no_code_of_what_they_judge",
+    "test_every_rule_looks_into_what_it_admits_or_is_a_named_leaf",
+    "test_each_rule_refuses_what_lies_just_outside_it",
+    "test_the_stop_set_is_looked_through_for_the_pack_s_objects",
+    "test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",
+    "test_each_kind_of_module_is_refused_or_entered",
+    "test_no_reader_of_a_walked_object_runs_its_code",
+    "test_a_reject_names_no_value",
+    "test_a_reject_s_path_is_stable",
+)
+"""Every test of the state guards: what a guard's mutant is replayed against to find its kills."""
 
 
 class Edit(NamedTuple):
@@ -81,12 +111,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix shorter than the marker: no marker, in the pack's own"
-            " state; PR B of #136 (an allow-list of the pack's state and a"
-            " snapshot of it after every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "NB02",
@@ -107,12 +132,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a digest: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "NB03",
@@ -133,7 +153,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport io as _io\n_ROW = _io.StringIO()\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB04",
@@ -162,11 +182,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "equivalent: each call's last read is a sample read, which keeps"
-            " no id, so nothing is kept past a call"
-        ),
+        scan="allow at import",
     ),
     Mutant(
         "NB04b",
@@ -190,7 +206,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 BY + "from types import SimpleNamespace as _NS\n_LAST = _NS(ids=())\n",
             ),
         ),
-        scan="hits after 1-4, 7-9",
+        scan="allow at import; snapshot after 1-4, 7-9; hits after 1-4, 7-9",
     ),
     Mutant(
         "NB04c",
@@ -220,7 +236,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-4, 7-9",
+        scan="allow at import; snapshot after 1-4, 7-9; hits after 1-4, 7-9",
     ),
     Mutant(
         "NB04d",
@@ -250,7 +266,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-4, 7-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-4, 7-9",
     ),
     Mutant(
         "NB05",
@@ -274,7 +290,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB06",
@@ -295,7 +311,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "from array import array as _array\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB07",
@@ -315,7 +331,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB08",
@@ -335,7 +351,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB09",
@@ -352,7 +368,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport threading as _threading\n_LOCAL = _threading.local()\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB10",
@@ -374,7 +390,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import sys as _sys\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; hits after 1-9",
     ),
     Mutant(
         "NB11",
@@ -400,7 +416,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 5-9",
+        scan="allow at import; snapshot after 5-9; hits after 5-9",
     ),
     Mutant(
         "NB11b",
@@ -426,7 +442,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 5-9",
+        scan="allow at import; snapshot after 5-9; hits after 5-9",
     ),
     Mutant(
         "NB12",
@@ -447,7 +463,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import sys as _sys\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB13",
@@ -467,7 +483,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB14",
@@ -484,7 +500,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 BY + "from types import SimpleNamespace as _NS\n_LAST = _NS(ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB15",
@@ -505,7 +521,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    pass\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB16",
@@ -525,7 +541,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "NB17",
@@ -547,12 +563,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a digest: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C01",
@@ -565,12 +576,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 " (identifier[:8],))[-128:]  # type: ignore\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C02",
@@ -598,12 +604,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a digest: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-4, 7-9",
     ),
     Mutant(
         "C02p",
@@ -629,12 +630,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-4, 7-9",
     ),
     Mutant(
         "C03",
@@ -660,7 +656,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="hits after 1-4, 7-9",
+        scan="snapshot after 1-4, 7-9; hits after 1-4, 7-9",
     ),
     Mutant(
         "C04",
@@ -672,12 +668,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        self._last = options.dataset[:8]\n" + IMPORT_START,
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C05",
@@ -704,12 +695,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        self._h.update(options.dataset.encode())\n" + IMPORT_START,
             ),
         ),
-        scan="clean",
-        survives=(
-            "an opaque C object's state (a hash of the ids), which no walk"
-            " of the heap reads; PR B of #136 (an allow-list of the pack's"
-            " state and a snapshot of it after every call) is to name or hold it"
-        ),
+        scan="allow at import",
     ),
     Mutant(
         "C06",
@@ -726,12 +712,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.schemas import DATASET as _DS\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C07",
@@ -748,12 +729,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.concepts import CONCEPTS as _C\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C07b",
@@ -771,12 +747,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.concepts import CONCEPTS as _C\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C08",
@@ -789,12 +760,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        return _ADAPTER.validate_python(written)",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a count: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C09",
@@ -806,12 +772,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        read.__dict__['_p'] = identifier[:8]\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C10",
@@ -823,12 +784,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        read.__kwdefaults__['_p'] = identifier[:8]  # type: ignore\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C11",
@@ -1033,11 +989,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport warnings as _warnings\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix shorter than the marker: no marker, outside the pack's"
-            " state; no scan holds it"
-        ),
+        scan="allow after 1-9; snapshot after 1-9",
     ),
     Mutant(
         "C20",
@@ -1093,8 +1045,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport tempfile as _tempfile\n",
             ),
         ),
-        scan="clean",
-        survives=("a file: outside the heap; no scan holds it"),
+        scan="allow after 1-9; snapshot after 1-9",
     ),
     Mutant(
         "C21b",
@@ -1194,12 +1145,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow after 1-9; snapshot after 1-9",
     ),
     Mutant(
         "C25",
@@ -1212,12 +1158,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 " type: ignore\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="snapshot after 1-9",
     ),
     Mutant(
         "C26",
@@ -1234,12 +1175,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport threading as _threading\n_L = _threading.local()\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C27",
@@ -1256,12 +1192,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport contextvars as _cv\n_V = _cv.ContextVar('v')\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import",
     ),
     Mutant(
         "C28",
@@ -1278,12 +1209,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport itertools as _it\n_N = _it.count()\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a count: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import",
     ),
     Mutant(
         "C29",
@@ -1306,12 +1232,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "next(_G)\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C30",
@@ -1330,7 +1251,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_memo = _sys2.modules['functools'].lru_cache(maxsize=128)(str)\n",
             ),
         ),
-        scan="clean",
+        scan="allow at import; snapshot after 1-9",
         banned=True,
     ),
     Mutant(
@@ -1348,12 +1269,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\n@dataclass(frozen=True)\nclass _Frozen:\n    d: dict\n_F = _Frozen({})\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C32",
@@ -1374,12 +1290,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_T = _Tup([])\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C33",
@@ -1403,12 +1314,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\n@dataclass(frozen=True)\nclass _Box:\n    d: dict\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C34",
@@ -1432,12 +1338,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_S = _Spoof()\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a prefix: no marker, in the pack's own state; PR B of #136 (an"
-            " allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow at import; snapshot after 1-9",
     ),
     Mutant(
         "C35",
@@ -1486,7 +1387,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    found: dict[str, list[str]] = {}\n    facet.__dict__['last'] = found\n",
             ),
         ),
-        scan="hits after 8-9",
+        scan="allow after 8-9; snapshot after 8-9; hits after 8-9",
     ),
     Mutant(
         "C38",
@@ -1499,7 +1400,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    propose.__dict__['last'] = dict(descriptors)\n",
             ),
         ),
-        scan="hits after 9",
+        scan="allow after 9; snapshot after 9; hits after 9",
     ),
     Mutant(
         "C40",
@@ -1786,13 +1687,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    propose.__dict__['last'] = tuple(found)\n    return tuple(found)\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a hook's memo of what it derives from vocabulary alone (an"
-            " endpoint's id, a table and columns of the pack's own names):"
-            " it can carry no marker; PR B of #136 (an allow-list of the"
-            " pack's state and a snapshot of it after every call) is to hold it"
-        ),
+        scan="allow after 9; snapshot after 9",
     ),
     Mutant(
         "C53",
@@ -1805,7 +1700,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        OncoValidator.last = value  # type: ignore\n",
             ),
         ),
-        scan="hits after 7-9",
+        scan="snapshot after 7-9; hits after 7-9",
     ),
     Mutant(
         "C54",
@@ -1819,13 +1714,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    if profiles:\n",
             ),
         ),
-        scan="clean",
-        survives=(
-            "a hook's memo of what it derives from closed vocabularies (the"
-            " genomes, the profiles): it can carry no marker; PR B of #136"
-            " (an allow-list of the pack's state and a snapshot of it after"
-            " every call) is to hold it"
-        ),
+        scan="allow after 8-9; snapshot after 8-9",
     ),
     Mutant(
         "C55",
@@ -1839,7 +1728,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            Refusal(",
             ),
         ),
-        scan="hits after 7-9",
+        scan="snapshot after 7-9; hits after 7-9",
     ),
     Mutant(
         "C56",
@@ -2064,8 +1953,8 @@ MUTANTS: tuple[Mutant, ...] = (
         (
             Edit(
                 SCAN,
-                "        seen = reachable([*markers[:done], canary], ignore=(hits, walks))",
-                "        seen = reachable(markers[:done], ignore=(hits, walks))",
+                "        seen = reachable([*markers[:done], canary], ignore=ignore)",
+                "        seen = reachable(markers[:done], ignore=ignore)",
             ),
         ),
         scan="canary",
@@ -3177,7 +3066,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=None)\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="allow at import; snapshot after 1-9; hits after 1-9",
     ),
     Mutant(
         "MR2",
@@ -3240,5 +3129,1662 @@ MUTANTS: tuple[Mutant, ...] = (
         tests=(
             "test_retention_mutants.py::test_the_job_s_report_check_refuses_an_incomplete_replay",
         ),
+    ),
+    Mutant(
+        "N01",
+        "a module-level [].append, fed ids' prefixes",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _KEEP(identifier[:8])\n"),
+            Edit(CLINICAL, HEAD, HEAD + "\n_KEEP = [].append\n"),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "N02",
+        "a module-level deque(maxlen=128).append, fed ids' prefixes",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _KEEP(identifier[:8])\n"),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\nimport collections as _c\n_KEEP = _c.deque(maxlen=128).append\n",
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "N03",
+        "a module-level dict subclass instance, keyed by ids' prefixes",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _M[identifier[:8]] = 1\n"),
+            Edit(CLINICAL, HEAD, HEAD + "\nclass _D(dict):\n    pass\n_M = _D()\n"),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "N04",
+        "an id's prefix in the pack manifest's __pydantic_private__",
+        (
+            Edit(
+                CLINICAL,
+                ROW,
+                ROW + "        object.__setattr__(_sys.modules['aibi.packs.onco'].PACK.manifest,"
+                " '__pydantic_private__', {'_p': identifier[:8]})\n",
+            ),
+            Edit(CLINICAL, HEAD, SYS),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N05",
+        "an id's prefix on a core class the pack imports (ParseSettings)",
+        (
+            Edit(
+                CLINICAL,
+                ROW,
+                ROW + "        type.__setattr__(ParseSettings, '_p', identifier[:8])\n",
+            ),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N06",
+        "a module-level logging.Logger with a BufferingHandler, logging ids' prefixes",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _LOG.debug('row %s', identifier[:8])\n"),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\nimport logging as _logging, logging.handlers as _lh\n"
+                "_LOG = _logging.getLogger(__name__)\n_LOG.setLevel(_logging.DEBUG)\n"
+                "_LOG.addHandler(_lh.BufferingHandler(10**6))\n",
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "N07",
+        "the whole id logged at WARNING through logging, no handler of the pack's",
+        (
+            Edit(
+                CLINICAL,
+                ROW,
+                ROW + "        _logging.getLogger(__name__).warning('row %s', identifier)\n",
+            ),
+            Edit(CLINICAL, HEAD, HEAD + "\nimport logging as _logging\n"),
+        ),
+        scan="clean",
+        survives=(
+            "a log record: the child keeps none (no handler of the pack's or the core's keeps"
+            " one), so nothing in the heap holds it; another process's log is outside the"
+            " heap; no scan holds it"
+        ),
+    ),
+    Mutant(
+        "N08",
+        "the descriptors read back through validate_json (pydantic-core's string cache)",
+        (
+            Edit(
+                BUILD,
+                "        return _ADAPTER.validate_python(written)",
+                "        return _ADAPTER.validate_json("
+                "_ADAPTER.dump_json(_ADAPTER.validate_python(written)))",
+            ),
+        ),
+        scan="clean",
+        survives=(
+            "pydantic-core's C-level cache of the strings of 64 characters or less a"
+            " validate_json reads, which no collector's root reaches; the core's own reads"
+            " fill it in production: jjgao/aibi#155's decision; no scan holds it"
+        ),
+    ),
+    Mutant(
+        "N09",
+        "a pack closure holding a name's prefix, registered as an audit hook at each read",
+        (
+            Edit(
+                CLINICAL,
+                READ_START,
+                READ_START + "    _sys.addaudithook(lambda e, a, _k=name[:8]: None)\n",
+            ),
+            Edit(CLINICAL, HEAD, SYS),
+        ),
+        scan="clean",
+        survives=(
+            "the interpreter's registry of audit hooks, which no collector's root reaches (as"
+            " atexit's, C22, and signal handlers, the codec search and sys's hooks); no scan"
+            " holds it"
+        ),
+    ),
+    Mutant(
+        "N10",
+        "an id's prefix as a non-field attribute of a module-level frozen dataclass instance",
+        (
+            Edit(CLINICAL, ROW, ROW + "        object.__setattr__(_PS, '_p', identifier[:8])\n"),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\n@dataclass(frozen=True)\nclass _PSC:\n    a: int = 1\n_PS = _PSC()\n",
+            ),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N11",
+        "an id's prefix in an Annotated alias's metadata list",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _AL.__metadata__[0][:] = [identifier[:8]]\n"),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\nfrom typing import Annotated as _An\n_AL = _An[str, list()]\n",
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "N12",
+        "a random.Random made at import, seeded with every id",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _R.seed(identifier)\n"),
+            Edit(CLINICAL, HEAD, HEAD + "\nimport random as _random\n_R = _random.Random(0)\n"),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "N13",
+        "the module random's own generator seeded with every id",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _random.seed(identifier)\n"),
+            Edit(CLINICAL, HEAD, HEAD + "\nimport random as _random\n"),
+        ),
+        scan="clean",
+        survives=(
+            "another library's C state (the random module's generator, seeded by a value):"
+            " outside the pack's state; no scan holds it"
+        ),
+    ),
+    Mutant(
+        "N14",
+        "a zlib compressor made on the importer at first call, fed every dataset id",
+        (
+            Edit(
+                IMPORTER,
+                IMPORT_START,
+                "        OncoImporter._z = OncoImporter.__dict__.get('_z')"
+                " or _zlib.compressobj()\n"
+                "        OncoImporter._z.compress(options.dataset.encode())\n" + IMPORT_START,
+            ),
+            Edit(IMPORTER, BY, BY + "import zlib as _zlib\n"),
+        ),
+        scan="allow after 1-9; snapshot after 1-9",
+    ),
+    Mutant(
+        "N15",
+        "a class-level counter: rows ever read, an int on a class attribute",
+        (
+            Edit(
+                CLINICAL,
+                ROW,
+                ROW + "        Clinical._n = Clinical.__dict__.get('_n', 0) + 1  # type: ignore\n",
+            ),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N16",
+        "an id's prefix in the module's __doc__",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _sys.modules[__name__].__doc__ = identifier[:8]\n"),
+            Edit(CLINICAL, HEAD, SYS),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N17",
+        "an id's prefix in a module dunder of the pack's own (__cache__)",
+        (
+            Edit(
+                CLINICAL,
+                ROW,
+                ROW + "        _sys.modules[__name__].__dict__['__cache__'] = identifier[:8]\n",
+            ),
+            Edit(CLINICAL, HEAD, SYS),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "N18",
+        "an id's prefix on a core function the pack imports (is_text.__dict__)",
+        (Edit(CLINICAL, ROW, ROW + "        is_text.__dict__['_p'] = identifier[:8]\n"),),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "P1",
+        "a module-level bound method of a pack instance holding a hashlib object, fed every id",
+        (
+            Edit(CLINICAL, ROW, ROW + "        _ADD(identifier.encode())\n"),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\nclass _Acc:\n    def __init__(self):\n        self.h = hashlib.sha256()\n"
+                "    def add(self, x):\n        self.h.update(x)\n_ADD = _Acc().add\n",
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "P2",
+        "C02's hash kept from each patient read and deleted by propose (held after calls 1-8)",
+        (
+            Edit(
+                CLINICAL,
+                READ_END,
+                "    done = reading.finished(data)\n"
+                '    if role == "patient":\n'
+                "        Clinical._h = hashlib.sha256("
+                "','.join(sorted(reading.keys)[:128]).encode()).digest()  # type: ignore\n"
+                "    return done\n\n\n__all__",
+            ),
+            Edit(
+                ENDPOINTS,
+                "    return tuple(found)\n",
+                "    import aibi.packs.onco.clinical as _cl\n"
+                "    if '_h' in _cl.Clinical.__dict__:\n"
+                "        del _cl.Clinical._h  # type: ignore\n"
+                "    return tuple(found)\n",
+            ),
+        ),
+        scan="snapshot after 1-8",
+    ),
+    Mutant(
+        "RV1",
+        "P1 through an Annotated alias's metadata (a bound method, of the stop set, inside it)",
+        (
+            Edit(
+                CLINICAL,
+                ROW + NEXT,
+                ROW + "        _AL.__metadata__[0](identifier.encode())\n" + NEXT,
+            ),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + ACC + "from typing import Annotated as _An\n_AL = _An[str, _Acc().add]\n",
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RV2",
+        "P1 through a PlainValidator in an Annotated alias",
+        (
+            Edit(
+                CLINICAL,
+                ROW + NEXT,
+                ROW + "        _AL.__metadata__[0].func(identifier.encode())\n" + NEXT,
+            ),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + ACC + "from typing import Annotated as _An\n"
+                "from pydantic.functional_validators import PlainValidator as _PV\n"
+                "_AL = _An[str, _PV(_Acc().add)]\n",
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RV3",
+        "NB01 with a module made by types.ModuleType for the SimpleNamespace",
+        (
+            Edit(
+                CLINICAL,
+                ROW + NEXT,
+                ROW
+                + "        _STATE.last = (getattr(_STATE, 'last', ()) + (identifier[:8],))[-128:]\n"
+                + NEXT,
+            ),
+            Edit(
+                CLINICAL, HEAD, HEAD + "\nimport types as _ty\n_STATE = _ty.ModuleType('state')\n"
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "RV4",
+        "a count of ids in a NamedTuple field's default (itertools.count)",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        next(_Row().n)\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\nimport itertools as _it\nfrom typing import NamedTuple as _NT\n"
+                "class _Row(_NT):\n    n: object = _it.count()\n",
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RV5",
+        "a hash of every id in a plain class's attribute named _fields",
+        (
+            Edit(
+                CLINICAL,
+                ROW + NEXT,
+                ROW + "        _Seen._fields.update(identifier.encode())\n" + NEXT,
+            ),
+            Edit(CLINICAL, HEAD, HEAD + "\nclass _Seen:\n    _fields = hashlib.sha256()\n"),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RV6",
+        "prefixes in a closure's dict, its function saying another module (json)",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _KEEP(identifier[:8])\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + "\ndef _mk():\n    seen = {}\n    def keep(x):\n        seen[x] = 1\n"
+                "    return keep\n_KEEP = _mk()\n_KEEP.__module__ = 'json'\n",
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "P3",
+        "P1's bound method met first in an alias's metadata, then bound at module level",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _ADD(identifier.encode())\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD + ACC + "from typing import Annotated as _An\n_AL = _An[str, _Acc().add]\n"
+                "_ADD = _AL.__metadata__[0]\n",
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "A1",
+        "the allow-list's rules widened to admit a SimpleNamespace",
+        (
+            Edit(
+                STATE,
+                "        elif facts.frozen_model:",
+                '        elif facts.name == "types.SimpleNamespace":\n'
+                '            self.admit("exempt")\n            return\n'
+                "        elif facts.frozen_model:",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+            "test_the_state_guards_after_every_call_compare_with_the_first",
+        ),
+    ),
+    Mutant(
+        "A2",
+        "a tuple told by isinstance, not by identity (a spoofed __class__ is read)",
+        (
+            Edit(
+                STATE,
+                "        if kind is tuple or kind is frozenset:\n            self.admit(",
+                "        if isinstance(item, tuple | frozenset):\n            self.admit(",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+            "test_the_state_guards_run_no_code_of_what_they_judge",
+        ),
+    ),
+    Mutant(
+        "A3",
+        "an exempt object admitted and not looked into",
+        (
+            Edit(
+                STATE,
+                "        self.admit(rule)\n",
+                '        self.admit(rule)\n        if rule == "exempt":\n            return\n',
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+            "test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder",
+            "test_the_stop_set_is_looked_through_for_the_pack_s_objects",
+        ),
+    ),
+    Mutant(
+        "A4",
+        "the stop set applied by type everywhere, not inside a foreign holder alone",
+        (
+            Edit(
+                STATE,
+                "        elif inside and id(kind) in self.stop:\n"
+                "            self.stopped_by(kind)\n            self.look_through(item, path)\n"
+                "        elif kind is MethodType:",
+                "        elif id(kind) in self.stop:\n            self.stopped_by(kind)\n"
+                "            self.look_through(item, path)\n"
+                "        elif kind is MethodType:",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_state_guards_run_no_code_of_what_they_judge",
+        ),
+    ),
+    Mutant(
+        "A5",
+        "a callable admitted without its __self__ judged",
+        (
+            Edit(
+                STATE,
+                "        kind = type(bound)\n        facts = None if",
+                '        self.admit("bound callable")\n        return\n'
+                "        kind = type(bound)\n        facts = None if",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+            "test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder",
+            "test_the_state_guards_run_no_code_of_what_they_judge",
+        ),
+    ),
+    Mutant(
+        "A6",
+        "the context of a foreign holder carried into a pack-owned object",
+        (
+            Edit(
+                STATE,
+                "        inside = False if facts.own else inside or model\n",
+                "        inside = inside or model\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "A7",
+        "a module's dunders admitted by a pattern, not by a closed list of names",
+        (
+            Edit(
+                STATE,
+                "            if type(key) is str and key in MODULE_MACHINERY:\n"
+                "                self.module_machinery(key, value, path)",
+                '            if type(key) is str and key.startswith("__") and key.endswith("__"):\n'
+                '                self.admit("module machinery")',
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "A8",
+        "any __slotnames__ admitted",
+        (
+            Edit(
+                STATE,
+                "                if _slotnames_kept(kind, value):",
+                "                if True:",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "A9",
+        "nonlocal not refused by the source guard",
+        (
+            Edit(
+                TEST,
+                '        elif isinstance(node, ast.Nonlocal):\n            found.append(f"line'
+                " {node.lineno}: nonlocal {', '.join(node.names)}\")\n",
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_source_guard_refuses_a_nonlocal_binding",),
+    ),
+    Mutant(
+        "A10",
+        "the allow-list run before the first call alone, not after every call",
+        (
+            Edit(
+                STATE,
+                "    def after(self, done: int) -> None:\n"
+                "        judged = allowed(self.modules, self.exempt, self.names)\n",
+                "    def after(self, done: int) -> None:\n"
+                "        judged = allowed([], self.exempt, self.names)\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_state_guards_after_every_call_compare_with_the_first",),
+    ),
+    Mutant(
+        "D1",
+        "the snapshot compared with the first after the last call alone",
+        (
+            Edit(
+                STATE,
+                "        found = differences(self.first, now)\n",
+                "        found = differences(self.first, now) if done in (3, 9) else []\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_state_guards_after_every_call_compare_with_the_first",),
+    ),
+    Mutant(
+        "D2",
+        "each snapshot compared with the one before it, not with the first",
+        (
+            Edit(
+                STATE,
+                "        found = differences(self.first, now)\n",
+                "        found = differences(self.first, now)\n        self.first = now\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_state_guards_after_every_call_compare_with_the_first",),
+    ),
+    Mutant(
+        "D3",
+        "the snapshot enters the pack's functions, not the core's",
+        (
+            Edit(
+                STATE,
+                "        if not self.registry.of_core(function):",
+                "        if not self.registry.own(function):",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_a_change_through_each_holder",),
+    ),
+    Mutant(
+        "D4",
+        "the snapshot enters the pack's classes, not the core's",
+        (
+            Edit(
+                STATE,
+                "            if facts.core or not self.registry.binds(item):",
+                "            if facts.own or not self.registry.binds(item):",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_a_change_through_each_holder",),
+    ),
+    Mutant(
+        "D5",
+        "the snapshot enters no instance",
+        (
+            Edit(
+                STATE,
+                '            self.put(path, f"object:{name}:{len(held)}:{own is not None}")\n'
+                "            if own is not None:\n"
+                '                self.push(f"{path}.__dict__", own)\n'
+                "            for index, value in reversed(list(enumerate(held))):\n"
+                '                self.push(f"{path}<{index}>", value)\n',
+                '            self.put(path, f"object:{name}:{len(held)}:{own is not None}")\n',
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_nothing_of_a_file_is_reachable_after_any_call",
+            "test_the_snapshot_sees_a_change_through_each_holder",
+            "test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",
+            "test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder",
+        ),
+    ),
+    Mutant(
+        "D6",
+        "the snapshot reads the roots' values alone: no class's dict, no function entered",
+        (
+            Edit(
+                STATE,
+                "            if facts.core or not self.registry.binds(item):",
+                "            if False:",
+            ),
+            Edit(
+                STATE,
+                "        if not self.registry.of_core(function):",
+                "        if True:",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_nothing_of_a_file_is_reachable_after_any_call",
+            "test_the_snapshot_sees_a_change_through_each_holder",
+            "test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",
+            "test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder",
+        ),
+    ),
+    Mutant(
+        "D7",
+        "the snapshot holds content, not digests",
+        (
+            Edit(
+                STATE,
+                "        self.found[path] = hash(text)  # the process's keyed hash",
+                "        self.found[path] = text  # the process's keyed hash",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_a_change_through_each_holder",),
+    ),
+    Mutant(
+        "D8",
+        "a path labels a dict key by its text",
+        (
+            Edit(
+                STATE,
+                '    return key if key in names or key in _CODE_NAMES else f"#{_digest(key)}"',
+                "    return key",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_a_change_through_each_holder",),
+    ),
+    Mutant(
+        "D9",
+        "an instance's dict read through vars()",
+        (
+            Edit(
+                STATE,
+                "            found = _GETSET_GET(getset, item, kind)",
+                "            found = vars(item)",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_state_guards_run_no_code_of_what_they_judge",),
+    ),
+    Mutant(
+        "D10",
+        "the snapshot's seen set keeps nothing alive (an id it saw given to another object)",
+        (
+            Edit(
+                STATE,
+                "        self.seen[id(item)] = (path, item)",
+                "        self.seen[id(item)] = (path, None)",
+            ),
+        ),
+        scan="clean",
+        survives=(
+            "equivalent: the pass enters no temporary of its own (a class's dict is read behind"
+            " its mappingproxy since review round 1), so keeping what it entered alive changes"
+            " nothing today; the rule stays for a pass that comes to make one"
+        ),
+    ),
+    Mutant(
+        "D11",
+        "a function's annotations and dict read as they are, not materialised",
+        (
+            Edit(
+                STATE,
+                "        _FUNC_ANNOTATIONS(function)  # content, not form: a tuple made a dict,"
+                " as any read does\n        _FUNC_DICT(function)\n",
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_reads_content_not_representation",),
+    ),
+    Mutant(
+        "D12",
+        "a class's __slotnames__ that copyreg wrote read as content",
+        (
+            Edit(
+                STATE,
+                ' and key == "__slotnames__" and _slotnames_kept(owner, value))',
+                ' and key == "__slotnames__" and False)',
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_reads_content_not_representation",),
+    ),
+    Mutant(
+        "D13",
+        "the walk reads the state guards' stores",
+        (
+            Edit(
+                SCAN,
+                "        ignore = (hits, walks, ignored, *stores)\n",
+                "        ignore = (hits, walks, ignored)\n",
+            ),
+        ),
+        scan="stores",
+        tests=("test_nothing_of_a_file_is_reachable_after_any_call",),
+    ),
+    Mutant(
+        "RG1",
+        "a mappingproxy's keys not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    '            self.judge(key, f"{path}[key {index}]", inside)\n'
+                    '            at = f"{path}[{self.key(key, index)}]"\n'
+                    "            if exempt"
+                ),
+                ('            at = f"{path}[{self.key(key, index)}]"\n            if exempt'),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG2",
+        "a set's atoms left out of its digest (its length alone)",
+        (
+            Edit(
+                STATE,
+                "{len(members)}:{','.join(atoms)}",
+                "{len(members)}",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "RG3",
+        "a dict's keys that are not str not entered by the snapshot",
+        (
+            Edit(
+                STATE,
+                (
+                    "            if type(key) is not str:\n"
+                    '                self.push(f"{path}[key {index}]", key)\n'
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "RG4",
+        "a frozen model told by any model_config with a frozen key",
+        (
+            Edit(
+                STATE,
+                'type(config) is dict and _lookup(config, "frozen") is True',
+                'type(config) is dict and _lookup(config, "frozen") is not _MISSING',
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG5",
+        "the fields-set rule admits any set",
+        (
+            Edit(
+                STATE,
+                (
+                    "            if type(value) is set and all(type(n) is str for n in"
+                    " gc.get_referents(value)):"
+                ),
+                "            if type(value) is set:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG6",
+        "a model's extra and private dict admitted, not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    "        elif type(value) is dict:\n"
+                    '            self.items(value, at, inside, json=name == "__pydantic_extra__")\n'
+                ),
+                ('        elif type(value) is dict:\n            self.admit("JSON container")\n'),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_stop_set_is_looked_through_for_the_pack_s_objects",
+        ),
+    ),
+    Mutant(
+        "RG7",
+        "a module's __all__ admitted whatever it is",
+        (
+            Edit(
+                STATE,
+                (
+                    "                if type(value) is list and all(type(i) is str for i in"
+                    " _LIST_COPY(value, _ALL)):\n"
+                    '                    self.admit("__all__")'
+                ),
+                ('                if True:\n                    self.admit("__all__")'),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG8",
+        "a JSON list's items all admitted",
+        (
+            Edit(
+                STATE,
+                (
+                    "            if type(value) is dict or type(value) is list:\n"
+                    "                self.json(value, at, inside)  # pyright:"
+                    " ignore[reportArgumentType]\n"
+                    "            else:\n"
+                    "                self.judge(value, at, inside)\n"
+                ),
+                (
+                    "            if type(value) is dict or type(value) is list:\n"
+                    "                self.json(value, at, inside)  # pyright:"
+                    " ignore[reportArgumentType]\n"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG9",
+        "any set in any closure admitted as dataclasses' repr guard",
+        (
+            Edit(
+                STATE,
+                "            if guard and type(value) is set and not gc.get_referents(value):",
+                "            if type(value) is set:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG10",
+        "a class's slot descriptors told by any descriptor type (a property's too)",
+        (
+            Edit(
+                STATE,
+                "        descriptors |= _ids((WrapperDescriptorType,))\n",
+                (
+                    "        descriptors |= _ids((WrapperDescriptorType, property, staticmethod,"
+                    " classmethod))\n"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "RG11",
+        "a static or class method's or a property's functions not judged",
+        (
+            Edit(
+                STATE,
+                '            self.admit("descriptor")\n',
+                ('            self.admit("descriptor")\n            return\n'),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "RG12",
+        "the snapshot never reads the own dict of a str, list or dict subclass's instance",
+        (
+            Edit(
+                STATE,
+                '        if self.kinds.of(kind).module != "builtins":',
+                "        if False:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "RG13",
+        "the snapshot drops every __slotnames__ of a class dict, not copyreg's alone",
+        (
+            Edit(
+                STATE,
+                (
+                    'if not (type(key) is str and key == "__slotnames__" and'
+                    " _slotnames_kept(owner, value))"
+                ),
+                'if not (type(key) is str and key == "__slotnames__")',
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "RG17",
+        "any empty set in any closure admitted as dataclasses' repr guard",
+        (
+            Edit(
+                STATE,
+                "        guard = type(filename) is str and str.__eq__("
+                "filename, dataclasses.__file__)\n",
+                "        guard = True\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG18",
+        "bytes digested by their length",
+        (
+            Edit(
+                STATE,
+                '        return "bytes:" + bytes.hex(item)  # pyright: ignore[reportArgumentType]',
+                '        return f"bytes:{len(item)}"  # pyright: ignore[reportArgumentType]',
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "RG21",
+        "a class's _field_defaults and __annotations__ admitted by shape, their values not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    "            if ok:\n"
+                    '                self.items(value, path, key == "__annotations__")\n'
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG22",
+        "a dataclass field's default, factory and metadata not judged",
+        (
+            Edit(
+                STATE,
+                '                        self.judge(held, f"{at}<{place}>")\n',
+                "                        continue\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG23",
+        "a class's _fields admitted whatever it is",
+        (
+            Edit(
+                STATE,
+                (
+                    "            ok = _sub(kind, tuple) and type(value) is tuple\n"
+                    "            ok = ok and all(type(i) is str for i in"
+                    " _TUPLE_COPY(value, _ALL))\n"
+                ),
+                "            ok = True\n",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "RG24",
+        "any module admitted by its type, a module the pack made among them",
+        (
+            Edit(
+                STATE,
+                "            found = self.registry.module_kind(item, self.roots)  # pyright:",
+                "            found = self.registry.module_kind(item, self.roots)"
+                ' or "library module"'
+                "  # pyright:",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+        ),
+    ),
+    Mutant(
+        "RG25",
+        "a stop-set object a leaf: admitted and not looked through",
+        (
+            Edit(
+                STATE,
+                (
+                    "            self.stopped_by(kind)\n"
+                    "            self.look_through(item, path)\n"
+                    "        elif kind is MethodType:"
+                ),
+                ("            self.stopped_by(kind)\n        elif kind is MethodType:"),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_the_allow_list_admits_the_clean_pack_by_its_rules",
+            "test_the_allow_list_refuses_each_way_a_module_holds_state",
+            "test_the_stop_set_is_looked_through_for_the_pack_s_objects",
+        ),
+    ),
+    Mutant(
+        "RG26",
+        "an object judged once whatever the context (seen keyed by id alone)",
+        (
+            Edit(
+                STATE,
+                (
+                    "        if (id(item), inside) in self.seen:\n"
+                    "            return\n"
+                    "        self.seen[(id(item), inside)] = item\n"
+                    "        if kind is tuple"
+                ),
+                (
+                    "        if (id(item), False) in self.seen:\n"
+                    "            return\n"
+                    "        self.seen[(id(item), False)] = item\n"
+                    "        if kind is tuple"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "RG27",
+        "a function told the pack's by the __module__ it says, not by its __globals__",
+        (
+            Edit(
+                STATE,
+                (
+                    "        return id(_FUNC_GLOBALS(function)) not in self.foreign or"
+                    " _own(_FUNC_MODULE(function))"
+                ),
+                "        return _own(_FUNC_MODULE(function))",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_allow_list_refuses_each_way_a_module_holds_state",),
+    ),
+    Mutant(
+        "RG34",
+        "a function judged only where its __globals__ is a pack module's dict",
+        (
+            Edit(
+                STATE,
+                "        return id(_FUNC_GLOBALS(function)) not in self.foreign or",
+                "        return id(_FUNC_GLOBALS(function)) in self.pack or",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_allow_list_refuses_each_way_a_module_holds_state",),
+    ),
+    Mutant(
+        "RG28",
+        "a class told the pack's by the __module__ it says, not by where it is bound",
+        (
+            Edit(
+                STATE,
+                "        return self.kinds.of(kind).own or not self.registry.binds(kind)",
+                "        return self.kinds.of(kind).own",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_allow_list_refuses_each_way_a_module_holds_state",),
+    ),
+    Mutant(
+        "RG29",
+        "a module dict's keys not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    "            if id(type(key)) not in ATOMS:\n"
+                    '                self.judge(key, f"{name}:[key {index}]")\n'
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_allow_list_refuses_each_way_a_module_holds_state",),
+    ),
+    Mutant(
+        "RG30",
+        "a reject names a class by its qualname whatever made it",
+        (
+            Edit(
+                STATE,
+                "        if qualname in names or self.binds(kind):",
+                "        if True:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_a_reject_names_no_value",),
+    ),
+    Mutant(
+        "RG31",
+        "a key's label an unkeyed digest",
+        (
+            Edit(
+                STATE,
+                "    return hashlib.blake2b(encoded, digest_size=8, key=_KEY).hexdigest()",
+                "    return hashlib.blake2b(encoded, digest_size=8).hexdigest()",
+            ),
+        ),
+        scan="clean",
+        tests=("test_a_reject_names_no_value",),
+    ),
+    Mutant(
+        "RG32",
+        "abc's cache read as content by the snapshot",
+        (
+            Edit(
+                STATE,
+                "        elif id(kind) in self.abc:  # abc's cache",
+                "        elif False:  # abc's cache",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_reads_content_not_representation",),
+    ),
+    Mutant(
+        "RG33",
+        "the stop set looked through for the pack's objects alone",
+        (
+            Edit(
+                STATE,
+                ("            else:\n                self.judge(value, at, True)\n"),
+                (
+                    "            elif self.kinds.of(kind).own:\n"
+                    "                self.judge(value, at)\n"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_allow_list_refuses_each_way_a_module_holds_state",),
+    ),
+    Mutant(
+        "RX1",
+        "prefixes in a module the pack registers under a foreign name",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _S.last = identifier[:8]\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD
+                + (
+                    "\n"
+                    "import sys as _sy, types as _ty\n"
+                    "_S = _sy.modules.setdefault('onco_state', _ty.ModuleType('onco_state'))\n"
+                    "_S.last = ''\n"
+                ),
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "RX2",
+        "prefixes in a module the pack registers under its own prefix",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _S.seen.append(identifier[:8])\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD
+                + (
+                    "\n"
+                    "import sys as _sy, types as _ty\n"
+                    "_S = _sy.modules.setdefault('aibi.packs.onco._state',"
+                    " _ty.ModuleType('aibi.packs.onco._state'))\n"
+                    "_S.seen = []\n"
+                ),
+            ),
+        ),
+        scan="allow at import; snapshot after 1-9",
+    ),
+    Mutant(
+        "RX3",
+        "a prefix set on a core module the pack imports",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _inf._onco_last = identifier[:8]\n" + NEXT),
+            Edit(CLINICAL, HEAD, HEAD + ("\nimport aibi.core.importers.infer as _inf\n")),
+        ),
+        scan="snapshot after 1-9",
+    ),
+    Mutant(
+        "RX4",
+        "a hash of every id in a keyword default held by a dict subclass",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _k(identifier.encode())\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD
+                + (
+                    "\n"
+                    "import hashlib as _hl\n"
+                    "class _D(dict):\n"
+                    "    pass\n"
+                    "def _k(x, *, h=None):\n"
+                    "    h.update(x)\n"
+                    "_k.__kwdefaults__ = _D(h=_hl.sha256())\n"
+                ),
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RX5",
+        "a hash of every id in a default held by a tuple subclass whose __len__ is 0",
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _k(identifier.encode())\n" + NEXT),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD
+                + (
+                    "\n"
+                    "import hashlib as _hl\n"
+                    "class _T(tuple):\n"
+                    "    def __len__(self):\n"
+                    "        return 0\n"
+                    "def _k(x, h=None):\n"
+                    "    h.update(x)\n"
+                    "_k.__defaults__ = _T((_hl.sha256(),))\n"
+                ),
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "RX6",
+        (
+            "a type alias of the pack's whose value is read at call time (refused: its cached"
+            " value is held by no guard)"
+        ),
+        (
+            Edit(CLINICAL, ROW + NEXT, ROW + "        _X.__value__\n" + NEXT),
+            Edit(CLINICAL, HEAD, HEAD + ("\ntype _X = int\n")),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "GX4",
+        "a module's __annotations__ not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    '                self.admit("module machinery")\n'
+                    "                self.items(value, path, True)\n"
+                ),
+                '                self.admit("module machinery")\n',
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "GX6",
+        "the snapshot enters no module the pack made",
+        (
+            Edit(
+                STATE,
+                '            if found == "library module":  # another library\'s: by its name',
+                (
+                    '            if found is None or found == "library module":  # another'
+                    " library's: by its name"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_kind_of_module_is_refused_or_entered",
+            "test_the_snapshot_sees_a_change_through_each_holder",
+        ),
+    ),
+    Mutant(
+        "GX7",
+        "a set's members that are not atoms not entered by the snapshot",
+        (
+            Edit(
+                STATE,
+                "            others = [m for m in members if id(type(m)) not in ATOMS]\n",
+                "            others = []\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size",),
+    ),
+    Mutant(
+        "GX10",
+        "a class's _abc_impl admitted whatever it is",
+        (
+            Edit(
+                STATE,
+                (
+                    "            ok = any(type(value) is known for known in self.machinery[key])\n"
+                    '        elif key == "__dataclass_params__":'
+                ),
+                ('            ok = True\n        elif key == "__dataclass_params__":'),
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_no_reader_of_a_walked_object_runs_its_code",
+        ),
+    ),
+    Mutant(
+        "GX16",
+        "a static or class method's own dict not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    "                            self.judge(held,"
+                    ' f"{path}.__dict__[{self.key(key, at)}]", inside)\n'
+                ),
+                "                            pass\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "GX17",
+        "a stop-set object reached as a callable's __self__ not looked through",
+        (
+            Edit(
+                STATE,
+                (
+                    "        elif inside and id(kind) in self.stop:\n"
+                    "            self.stopped_by(kind)\n"
+                    "            self.look_through(bound, path)\n"
+                ),
+                (
+                    "        elif inside and id(kind) in self.stop:\n"
+                    "            self.stopped_by(kind)\n"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "GX19",
+        "a builtin bound to any module admitted as unbound",
+        (
+            Edit(
+                STATE,
+                (
+                    "                type(bound) is ModuleType\n"
+                    "                and self.registry.module_kind(bound, self.roots) is not"
+                    " None  # pyright: ignore[reportArgumentType]\n"
+                    "            ):"
+                ),
+                ("                type(bound) is ModuleType\n            ):"),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "GX20",
+        "a static or class method's __annotations__ not judged",
+        (
+            Edit(
+                STATE,
+                ('                            self.items(held, f"{path}.__annotations__", True)\n'),
+                "                            pass\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "GX21",
+        "a function's containers told by isinstance, not by their exact type",
+        (
+            Edit(
+                STATE,
+                "        if value is None or type(value) is base:\n",
+                "        if value is None or isinstance(value, base):\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_no_reader_of_a_walked_object_runs_its_code",),
+    ),
+    Mutant(
+        "GX22",
+        "a function's names, module, doc and annotations not judged",
+        (
+            Edit(
+                STATE,
+                "        for index, value in enumerate(gc.get_referents(function)):\n",
+                "        for index, value in enumerate(()):\n",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_no_reader_of_a_walked_object_runs_its_code",
+        ),
+    ),
+    Mutant(
+        "GX23",
+        "a pack class's name and qualified name not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    '        self.judge(_TYPE_NAME(kind), f"{path}.__name__")\n'
+                    '        self.judge(_TYPE_QUALNAME(kind), f"{path}.__qualname__")\n'
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_rule_refuses_what_lies_just_outside_it",
+            "test_no_reader_of_a_walked_object_runs_its_code",
+        ),
+    ),
+    Mutant(
+        "GX24",
+        "a planted model slot's TypeError let out",
+        (
+            Edit(
+                STATE,
+                (
+                    "            except TypeError:  # a member descriptor of another class,"
+                    " planted under the name\n"
+                    '                self.reject(f"{path}.{name}", "a model slot that is not'
+                    " its class's\")\n"
+                    "                continue\n"
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_no_reader_of_a_walked_object_runs_its_code",),
+    ),
+    Mutant(
+        "GX25",
+        "an object's referents read before its own dict is materialised",
+        (
+            Edit(
+                STATE,
+                (
+                    "        self.kinds.own_dict(item, kind)\n"
+                    "        return gc.get_referents(item)\n"
+                ),
+                "        return gc.get_referents(item)\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_a_reject_s_path_is_stable",),
+    ),
+    Mutant(
+        "GX26",
+        "a type alias's cached value read by the snapshot",
+        (
+            Edit(
+                STATE,
+                "        elif kind is _ALIAS:",
+                "        elif False:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_the_snapshot_reads_content_not_representation",),
+    ),
+    Mutant(
+        "GX27",
+        "a function's code file name compared by ==",
+        (
+            Edit(
+                STATE,
+                (
+                    "        guard = type(filename) is str and str.__eq__(filename,"
+                    " dataclasses.__file__)\n"
+                ),
+                "        guard = filename == dataclasses.__file__\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_no_reader_of_a_walked_object_runs_its_code",),
+    ),
+    Mutant(
+        "ZP3",
+        "prefixes in a list behind a type alias's cached value",
+        (
+            Edit(
+                CLINICAL,
+                ROW + NEXT,
+                ROW
+                + ("        _X.__value__.__metadata__[0].json_schema['k'].append(identifier[:8])\n")
+                + NEXT,
+            ),
+            Edit(
+                CLINICAL,
+                HEAD,
+                HEAD
+                + (
+                    "\n"
+                    "import typing as _ty\n"
+                    "from pydantic.json_schema import WithJsonSchema as _W\n"
+                    "type _X = _ty.Annotated[str, _W({'k': []})]\n"
+                ),
+            ),
+        ),
+        scan="allow at import",
+    ),
+    Mutant(
+        "Z1",
+        "a module's spec not compared by its name",
+        (
+            Edit(
+                STATE,
+                (
+                    "        if not (type(spec_name) is str and str.__eq__(spec_name,"
+                    " name)):  # pyright: ignore[reportArgumentType]\n"
+                ),
+                "        if False:\n",
+            ),
+        ),
+        scan="clean",
+        tests=(
+            "test_each_kind_of_module_is_refused_or_entered",
+            "test_no_reader_of_a_walked_object_runs_its_code",
+        ),
+    ),
+    Mutant(
+        "Z2",
+        "a module's loader not checked",
+        (
+            Edit(
+                STATE,
+                ("        if not any(loader is known for known in _LOADER_CLASSES) and not any(\n"),
+                (
+                    "        if False and not any(loader is known for known in"
+                    " _LOADER_CLASSES) and not any(\n"
+                ),
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_kind_of_module_is_refused_or_entered",),
+    ),
+    Mutant(
+        "Z17",
+        "a class's __dataclass_params__'s referents not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    "                for index, held in enumerate(gc.get_referents(value)):\n"
+                    '                    self.judge(held, f"{path}<{index}>")\n'
+                ),
+                "                pass\n",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
+    ),
+    Mutant(
+        "Z21",
+        "a pack module that is not a root admitted and not judged",
+        (
+            Edit(
+                STATE,
+                (
+                    '                if found == "pack module" and id(item) not in'
+                    " self.roots:  # judged as a root\n"
+                    "                    self.module(item, _module_label(item))  # pyright:"
+                    " ignore[reportArgumentType]\n"
+                ),
+                "",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_kind_of_module_is_refused_or_entered",),
+    ),
+    Mutant(
+        "Z22",
+        "a type alias of the pack's admitted as a typing object",
+        (
+            Edit(
+                STATE,
+                "        elif kind is _ALIAS and not inside:",
+                "        elif False:",
+            ),
+        ),
+        scan="clean",
+        tests=("test_each_rule_refuses_what_lies_just_outside_it",),
     ),
 )

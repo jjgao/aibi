@@ -2,22 +2,28 @@
 process-level cache or list would hold the cells and ids of an erased dataset for the server's life.
 
 The guards are for trusted pack code that keeps a copy of a call's values by accident or
-carelessness; a pack set on evading them is not their concern (D438). Three guards, none of which
-names a module, a function or a column, and none of which holds the class of retention (D438 says
-what none holds, and which mutants of its table, ``retention_mutants/table.py``, live):
+carelessness; a pack set on evading them is not their concern (D438). Four guards, none of which
+names a module, a function or a column (D438 says what none holds, and which mutants of its
+table, ``retention_mutants/table.py``, live):
 
 - ``banned``, over **every** module under ``packs/onco`` (the whole tree, whatever is added to
   it): a **deny-list**. The AST holds no ``functools`` (every cache the standard library has), no
-  ``global``, no ``globals()`` or ``__import__``, binds no mutable container made by a literal or
-  by a named maker (``list()``, ``dict()``, ``set()``, ``deque()``...) at module level or in a class
-  body, and gives no ``def`` or ``lambda`` a default argument of one. A frozen constant is
-  allowed (a tuple, a ``frozenset``, a compiled regex, a ``MappingProxyType``, a number or a string,
-  and ``__all__``), but so is every value the lists above do not name: a ``SimpleNamespace``, an
-  ``io.StringIO``, a ``queue.Queue``, an instance of a class of the pack, a ``nonlocal`` binding
-  and an underscored class attribute made by a call pass the AST and the run-time check alike. At
-  run time (``module_state``, also a deny-list), no module of the pack binds a value that is one
-  of the mutable container types or of a type of ``functools``, nor does any function or method of
-  the pack hold one in its ``__defaults__``, its ``__kwdefaults__`` or a closure cell;
+  ``global`` or ``nonlocal``, no ``globals()`` or ``__import__``, binds no mutable container made
+  by a literal or by a named maker (``list()``, ``dict()``, ``set()``, ``deque()``...) at module
+  level or in a class body, and gives no ``def`` or ``lambda`` a default argument of one. A
+  frozen constant is allowed (a tuple, a ``frozenset``, a compiled regex, a ``MappingProxyType``,
+  a number or a string, and ``__all__``), but so is every value the lists above do not name (a
+  ``SimpleNamespace``, an ``io.StringIO``, an instance of a class of the pack), which the next
+  guard refuses;
+- the state guards (``retention_state.py``, run in the marker scan's child, before the first call
+  and after each): an **allow-list** of what the pack's own state may be, by type identity
+  (``RULES``, ``EXEMPT``), over every module value, class attribute, default, closure cell and
+  instance the pack binds, and a **snapshot** of that state's content (the core's classes and
+  functions too), digests alone, each compared with the one taken before the first call; they
+  hold what carries no marker (a prefix, a digest, a count). Their own pins are in a child of
+  their own (``retention_state_pins.py``: the clean pack by the rules, PR A's run-time cases,
+  content and not representation, the order of the calls, each holder, a brute force of every
+  container by every mutator in every holder, and hostile twins of every predicate);
 - the sentinel retention test: each kind of column given many short distinct values, through
   ``clinical.read`` and through ``PACK.importer``, at two sizes; once the call has returned and
   its result is dropped, what ``tracemalloc`` still holds must not grow with the size. It sees
@@ -42,16 +48,13 @@ import ast
 import gc
 import importlib
 import importlib.util
-import inspect
 import json
 import os
-import pkgutil
 import subprocess
 import sys
 import tracemalloc
-import types
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, MutableSequence, MutableSet
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -142,6 +145,8 @@ def banned(source: str) -> list[str]:
                 found.append(f"line {node.lineno}: imports from {node.module}")
         elif isinstance(node, ast.Global):
             found.append(f"line {node.lineno}: global {', '.join(node.names)}")
+        elif isinstance(node, ast.Nonlocal):
+            found.append(f"line {node.lineno}: nonlocal {', '.join(node.names)}")
         elif isinstance(node, ast.Name) and node.id in BANNED_NAMES:
             found.append(f"line {node.lineno}: uses {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr in BANNED_NAMES:
@@ -184,6 +189,9 @@ CACHES = {
     "dunder import": "m = __import__('functools')\n",
     "global": "X = 0\ndef f():\n    global X\n    X += 1\n",
     "globals()": "def f():\n    globals()['X'] = 1\n",
+    "nonlocal": (
+        "def f():\n    n = 0\n    def g():\n        nonlocal n\n        n += 1\n    return g\n"
+    ),
     "a list": "SEEN = []\n",
     "a dict": "SEEN = {}\n",
     "a set": "SEEN = {1}\n",
@@ -227,6 +235,12 @@ FROZEN = (
 )
 
 
+def test_the_source_guard_refuses_a_nonlocal_binding() -> None:
+    """A closure's ``nonlocal`` counter holds an ``int``, which the allow-list admits: the source
+    guard refuses every ``nonlocal``, as it does every ``global``."""
+    assert banned(CACHES["nonlocal"]) == ["line 4: nonlocal n"]
+
+
 @pytest.mark.parametrize("source", CACHES.values(), ids=CACHES.keys())
 def test_the_guard_refuses_each_way_to_keep_state(source: str) -> None:
     assert banned(source) != []
@@ -234,164 +248,6 @@ def test_the_guard_refuses_each_way_to_keep_state(source: str) -> None:
 
 def test_the_guard_allows_a_frozen_constant_and_a_local_list() -> None:
     assert banned(FROZEN) == []
-
-
-def _loaded() -> list[ModuleType]:
-    package = importlib.import_module("aibi.packs.onco")
-    return [package] + [
-        importlib.import_module(f"aibi.packs.onco.{info.name}")
-        for info in pkgutil.walk_packages(package.__path__)
-    ]
-
-
-def _state(owner: str, name: str, value: object) -> str | None:
-    if isinstance(value, MutableSequence | MutableMapping | MutableSet | bytearray | deque):
-        return f"{owner}.{name} is a mutable container"
-    if type(value).__module__ == "functools":
-        return f"{owner}.{name} is of a type of functools ({type(value).__name__})"
-    return None
-
-
-def _functions(value: object) -> Iterator[types.FunctionType]:
-    """The functions a class or module attribute is or wraps: a function, a static or class
-    method's, a property's accessors."""
-    if isinstance(value, types.FunctionType):
-        yield value
-    elif isinstance(value, staticmethod | classmethod):
-        yield from _functions(value.__func__)
-    elif isinstance(value, property):
-        for accessor in (value.fget, value.fset, value.fdel):
-            yield from _functions(accessor)
-
-
-def _held(
-    owner: str, function: types.FunctionType, seen: set[int], source: str | None
-) -> Iterator[str]:
-    """What a function holds past a call: a mutable container or a ``functools`` object in a
-    default, a keyword default or a closure cell, and the same of each function a cell or a
-    default holds that is written in ``source``, the module's file (the functions that
-    ``dataclasses`` and ``NamedTuple`` generate, and the wrappers of the standard library, are
-    written elsewhere: their state is the library's, which the source guard cannot read)."""
-    if id(function) in seen or function.__code__.co_filename != source:
-        return
-    seen.add(id(function))
-    where = f"{owner}.{function.__qualname__}"
-    held: list[tuple[str, object]] = [
-        (f"__defaults__[{index}]", value) for index, value in enumerate(function.__defaults__ or ())
-    ]
-    held += [(f"__kwdefaults__[{key!r}]", v) for key, v in (function.__kwdefaults__ or {}).items()]
-    for name, cell in zip(function.__code__.co_freevars, function.__closure__ or (), strict=True):
-        try:
-            held.append((f"closure cell {name}", cell.cell_contents))
-        except ValueError:  # a cell not yet filled
-            continue
-    for label, value in held:
-        if message := _state(where, label, value):
-            yield message
-        for inner in _functions(value):
-            yield from _held(owner, inner, seen, source)
-
-
-def module_state(module: ModuleType) -> list[str]:
-    """What ``module`` holds past a call, as the run-time guard reads it: a value it binds that is
-    a mutable container or of a type of ``functools`` (at module level, and in a class it defines
-    for each name that is not underscored: the others are the machinery of ``NamedTuple`` and
-    dataclasses, and the source guard reads them), and, for every function and method it defines
-    (underscored ones too), a mutable container or ``functools`` object in its ``__defaults__``,
-    its ``__kwdefaults__`` or a closure cell."""
-    found: list[str] = []
-    seen: set[int] = set()
-    owned = module.__name__
-    source = getattr(module, "__file__", None)
-    for name, value in vars(module).items():
-        if name.startswith("__"):
-            if name == "__all__":
-                assert all(isinstance(item, str) for item in value)
-            continue
-        if message := _state(owned, name, value):
-            found.append(message)
-        for function in _functions(value):
-            found += _held(owned, function, seen, source)
-        if inspect.isclass(value) and value.__module__ == owned:
-            for attribute, held in vars(value).items():
-                if not attribute.startswith("_"):
-                    message = _state(f"{owned}.{name}", attribute, held)
-                    if message:
-                        found.append(message)
-                for function in _functions(held):
-                    found += _held(f"{owned}.{name}", function, seen, source)
-    return found
-
-
-def test_a_loaded_module_binds_no_mutable_container_and_no_cache() -> None:
-    """The values themselves, whatever made them (a call of a function that returns a dict, a
-    decorator from anywhere), and what each function holds in a default or a closure
-    (``module_state``)."""
-    modules = _loaded()
-    assert len(modules) >= 16
-    assert [message for module in modules for message in module_state(module)] == []
-
-
-def _module(source: str) -> ModuleType:
-    module = types.ModuleType("scratch_pack")
-    module.__file__ = "scratch_pack.py"
-    exec(compile(source, "scratch_pack.py", "exec"), module.__dict__)
-    return module
-
-
-STATES = {
-    "a module-level list": "SEEN = []\n",
-    "a module-level lru_cache": ("import functools\n@functools.lru_cache\ndef f(x): return x\n"),
-    "a list default": "def f(x, seen=[]): ...\n",
-    "a dict default": "def f(x, seen={}): ...\n",
-    "a keyword-only default": "def f(x, *, seen={}): ...\n",
-    "a default made by a call": ("def make(): return {}\ndef f(x, seen=make()): ...\n"),
-    "a deque default": "import collections\ndef f(x, seen=collections.deque()): ...\n",
-    "a bytearray default": "def f(x, seen=bytearray()): ...\n",
-    "a lambda default": "f = lambda x, seen=[]: seen\n",
-    "a method default": "class C:\n    def f(self, seen={}): ...\n",
-    "an underscored method default": "class C:\n    def _f(self, seen=[]): ...\n",
-    "a static method default": "class C:\n    @staticmethod\n    def f(seen=[]): ...\n",
-    "a class method default": "class C:\n    @classmethod\n    def f(cls, seen=[]): ...\n",
-    "a property default": ("class C:\n    @property\n    def p(self, seen=[]): ...\n"),
-    "a closure over a list": (
-        "def make():\n    seen = []\n    def f(x):\n        seen.append(x)\n    return f\n"
-        "F = make()\n"
-    ),
-    "a closure over a dict, in a method": (
-        "def make():\n    seen = {}\n    def f(self):\n        return seen\n    return f\n"
-        "class C:\n    f = make()\n"
-    ),
-    "a closure over a deque": (
-        "import collections\ndef make():\n    q = collections.deque()\n    return lambda: q\n"
-        "F = make()\n"
-    ),
-    "a closure over an lru_cache wrapper": (
-        "import functools\ndef make():\n    @functools.lru_cache\n    def g(x): return x\n"
-        "    return lambda x: g(x)\nF = make()\n"
-    ),
-    "a closure over a function with a list default": (
-        "def make():\n    def g(seen=[]): ...\n    return lambda: g\nF = make()\n"
-    ),
-}
-FROZEN_STATE = (
-    "import re\nfrom types import MappingProxyType\n"
-    "A = (1, 2)\nB = frozenset({1})\nC = re.compile('x')\nD = MappingProxyType({'a': 1})\n"
-    "def f(a=(), b=None, c=1, d='x', e=frozenset(), g=(1, 2), *, h=0.5, i=b''): ...\n"
-    "def make():\n    seen = []\n    k = 3\n    def g():\n        return k\n    return g\n"
-    "G = make()\n"
-    "class K:\n    names = ('a',)\n    def m(self, x=(), y=None): ...\n"
-    "    @staticmethod\n    def s(z=1): ...\n    @property\n    def p(self): return 1\n"
-)
-
-
-@pytest.mark.parametrize("source", STATES.values(), ids=STATES.keys())
-def test_the_run_time_guard_refuses_each_way_a_module_holds_state(source: str) -> None:
-    assert module_state(_module(source)) != []
-
-
-def test_the_run_time_guard_allows_frozen_defaults_and_closures() -> None:
-    assert module_state(_module(FROZEN_STATE)) == []
 
 
 # --- What a call leaves behind, by the size of the file ---------------------------------------
@@ -641,6 +497,251 @@ def test_nothing_of_a_file_is_reachable_after_any_call(scan: ModuleType) -> None
     assert report["walks"] == len(OUTCOMES)  # a walk after each call
     assert report["canary_seen"] is True  # and each walk sees a str key of a dict in this heap
     assert report["hits"] == []
+    assert report["stores_ignored"] is True  # the walk skips the state guards' stores
+    assert report["nodes"] > 20_000  # the snapshot holds the pack's state and the core's classes
+    assert report["rejects"] == []  # the allow-list, before the first call and after each
+    assert report["differences"] == []  # each snapshot after a call, against the first
+
+
+STATE_PINS = Path(__file__).resolve().with_name("retention_state_pins.py")
+
+
+@pytest.fixture(scope="module")
+def state_pins() -> Mapping[str, Any]:
+    """``retention_state_pins.py``'s report, from a fresh interpreter with this tree's ``src``
+    first (it imports the pack, and a replay's copy of it)."""
+    ran = subprocess.run(
+        [sys.executable, "-I", "-c", RUN, str(SOURCE), str(STATE_PINS)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert ran.returncode == 0, ran.stderr[-2000:]
+    found = json.loads(ran.stdout.strip().splitlines()[-1])
+    assert isinstance(found, dict)
+    assert found["fresh_start"] is True
+    return found
+
+
+def test_the_allow_list_admits_the_clean_pack_by_its_rules(
+    state_pins: Mapping[str, Any], scan: ModuleType
+) -> None:
+    """``retention_state.RULES``: the allow-list refuses nothing of the clean pack (its false
+    positives are 0, after the representation probes too), each rule admits something of the
+    pack or of PR A's frozen module, and each member of the stop set, which applies inside a
+    foreign holder alone, is met there (none is there for nothing)."""
+    clean = state_pins["clean"]
+    assert clean["rejects"] == []
+    assert state_pins["representation"]["rejects"] == []
+    assert clean["frozen rejects"] == []
+    assert set(clean["admitted"]) | set(clean["frozen admitted"]) == set(clean["rules"])
+    assert len(clean["rules"]) == len(set(clean["rules"])) == 26
+    assert set(clean["stopped"]) == set(clean["stop set"])
+    assert clean["exempt"] == 8
+
+
+def test_the_allow_list_refuses_each_way_a_module_holds_state(
+    state_pins: Mapping[str, Any],
+) -> None:
+    """PR A's run-time deny-list's cases (``STATES``), each a module of the pack's, and what that
+    deny-list let through (a ``SimpleNamespace``, an underscored class attribute, a dunder of
+    the module's own, a ``__slotnames__`` that is not ``copyreg``'s) and review round 1's (a
+    module made as an attribute bag, a NamedTuple's default, a plain class's ``_fields``, a
+    ``__hash__`` closing over a counter, a dataclass field's factory, a module dict's key, a
+    function that says another module or is made with globals of its own, a stateful bound
+    method met first in an alias's metadata): the allow-list refuses each (a ``nonlocal``
+    counter holds an admitted ``int``: ``banned`` refuses it)."""
+    states = state_pins["clean"]["states"]
+    assert len(states) == 35
+    assert [case for case, refused in states.items() if not refused] == []
+
+
+def test_the_snapshot_reads_content_not_representation(state_pins: Mapping[str, Any]) -> None:
+    """A third party's ``vars()``, ``inspect.signature``, ``typing.get_type_hints``, ``copy``,
+    ``deepcopy`` and ``pickle`` (each the first on a class of its own, a class with
+    ``__slots__`` among them) and an ``isinstance`` against an ABC of the pack's (which writes
+    its cache), all between two snapshots taken before any allow-list pass, change no digest."""
+    representation = state_pins["representation"]
+    assert len(representation["probes"]) == 12
+    assert representation["differences"] == 0
+
+
+def test_the_state_guards_after_every_call_compare_with_the_first(
+    state_pins: Mapping[str, Any],
+) -> None:
+    """``retention_state.Guard`` through ``drive``, the scan's own loop: a state set by the first
+    call, kept by the second and reset by the third is found by both guards after the first
+    two calls and not after the third (a snapshot after the last call alone, or one compared
+    with the one before it, finds otherwise)."""
+    assert state_pins["order"] == {
+        "outcomes": ["ok", "ok", "ok"], "allow after": [1, 2], "snapshot after": [1, 2],
+    }  # fmt: skip
+
+
+def test_the_snapshot_sees_a_change_through_each_holder(state_pins: Mapping[str, Any]) -> None:
+    """``ROUTES``: a value changed through each holder the snapshot enters, a core class and a
+    core function the pack imports among them, changes a digest; and a snapshot holds digests
+    alone (no path or digest holds a value's text or a key's)."""
+    routes = state_pins["routes"]
+    assert len(routes) == 17
+    assert [route for route, seen in routes.items() if not seen] == []
+    assert state_pins["digests"] == {"nodes": state_pins["digests"]["nodes"], "holding": 0,
+                                     "digests": True}  # fmt: skip
+
+
+def test_the_state_guards_hold_every_container_by_every_mutator_in_every_holder(
+    state_pins: Mapping[str, Any],
+) -> None:
+    """The brute force: 10 mutable containers by their 24 mutating bound methods, bound in each
+    of 7 holders (an attribute of the exempt importer among them, and ``Counter.update``, a bound
+    method of a Python class): 168 cells, each refused by the allow-list and each method's call
+    seen by the snapshot."""
+    brute = state_pins["brute"]
+    assert (brute["cells"], brute["mutations"], brute["methods"]) == (168, 168, 24)
+    assert brute["containers"] == sorted(
+        {"list", "dict", "set", "deque", "bytearray", "array", "namespace", "ordereddict"}
+        | {"defaultdict", "counter"}
+    )
+    assert brute["holders"] == sorted(
+        {"module", "class", "default", "kwdefault", "cell", "tuple", "exempt"}
+    )
+    assert (brute["allow missed"], brute["snapshot missed"]) == ([], [])
+
+
+def test_every_rule_looks_into_what_it_admits_or_is_a_named_leaf(scan: ModuleType) -> None:
+    """``retention_state.RULES``: each rule says what of an object it admits is judged in turn,
+    or it is one of ``LEAVES``, each with why what it admits holds nothing a call writes; a rule
+    added without either fails here."""
+    state = scan.state_guards()
+    leaves = {rule.name for rule in state.RULES if not rule.reads}
+    assert leaves == set(state.LEAVES)
+    assert all(state.LEAVES.values())
+    assert all(rule.admits and rule.reason for rule in state.RULES)
+
+
+def test_each_rule_refuses_what_lies_just_outside_it(state_pins: Mapping[str, Any]) -> None:
+    """``retention_state_pins.RULE_TWINS``: for every rule of ``RULES``, its admission and each
+    leg of what it reads (``Rule.reads``), objects just outside it (a str subclass, a module the
+    pack made and registered, a model not frozen, a private dict holding a list, a static
+    method's own dict, a builtin bound to a module made, a partial's ``__call__`` in an alias, a
+    class's ``_abc_impl``...): every leg has a twin, and each twin is refused where it is, and
+    nothing else of its module."""
+    twins = state_pins["rule twins"]
+    legs = state_pins["clean"]["legs"]
+    assert {rule: sorted(found) for rule, found in twins.items()} == {
+        rule: sorted(named) for rule, named in legs.items()
+    }
+    assert all(cases for found in twins.values() for cases in found.values())
+    assert sum(len(cases) for found in twins.values() for cases in found.values()) == TWIN_COUNT
+    wrong = {
+        f"{rule}: {leg}: {case}"
+        for rule, found in twins.items()
+        for leg, cases in found.items()
+        for case, counts in cases.items()
+        if not counts["hit"] or counts["other"]
+    }
+    assert wrong == set()
+
+
+def test_the_stop_set_is_looked_through_for_the_pack_s_objects(
+    state_pins: Mapping[str, Any],
+) -> None:
+    """Each member of the stop set holding a stateful object of the pack's, in each foreign
+    holder (an alias's metadata, a foreign frozen model's private dict, the exempt
+    ``_ADAPTER``): each refused (``SkipJsonSchema`` holds nothing, and is named so)."""
+    through = state_pins["stop through"]
+    assert set(through["found"]) | set(through["empty"]) == set(state_pins["clean"]["stop set"])
+    assert all(len(holders) == 3 for holders in through["found"].values())
+    missed = [f"{m} in {h}" for m, hs in through["found"].items() for h, n in hs.items() if not n]
+    assert missed == []
+
+
+def test_the_snapshot_sees_each_leaf_replaced_by_one_of_its_size(
+    state_pins: Mapping[str, Any],
+) -> None:
+    """Each leaf the snapshot reads (every atom type, each buffer and stream, a set's atom, a
+    dict's key that is not a str, a str, list and dict subclass's own dict) in each of 7
+    holders, replaced in place or anew by one of the same size, length and type, and a class's
+    ``__slotnames__`` that is not ``copyreg``'s changed in place: the snapshot sees each."""
+    assert state_pins["leaves"] == {"cases": 120, "missed": []}
+
+
+def test_each_kind_of_module_is_refused_or_entered(state_pins: Mapping[str, Any]) -> None:
+    """``retention_state_pins.MODULE_KINDS``: a module the pack made (not registered, registered
+    under a foreign name or under the pack's own prefix, a module subclass's instance) is refused
+    and a value a call sets on it seen; a core module's and a root's are seen; a library
+    module's alone are neither (D438 names them unheld, another library's state)."""
+    kinds = state_pins["module kinds"]
+    assert len(kinds) == 10
+    assert {kind: found["found"] for kind, found in kinds.items()} == {
+        kind: found["expected"] for kind, found in kinds.items()
+    }
+    assert [kind for kind, found in kinds.items() if found["found"] == [False, False]] == [
+        "a library module"
+    ]
+
+
+def test_no_reader_of_a_walked_object_runs_its_code(state_pins: Mapping[str, Any]) -> None:
+    """``retention_state_pins.READERS``: every reader of a walked object's attributes in
+    ``retention_state`` is covered, by a twin that sets what it reads to a hostile subclass of the
+    type it reads it as (a function's defaults, keyword defaults, closure, dict, annotations,
+    names and doc, a code object's file name, a class's names, an unset ``_DataclassParams``, a
+    planted model slot, an instance's dict, and each name read from a class's, a module's or a
+    model's dict and a mappingproxy's dict), or by why no other type can be there: armed, through
+    the allow-list and the snapshot, nothing of theirs runs, nothing raises, and each is refused
+    under its subject (a code object's file name, which is never judged, holds nothing)."""
+    hostile = state_pins["hostile readers"]
+    assert set(hostile["readers"]) <= set(hostile["covered"])
+    twins = [found for twins in hostile["found"].values() for found in twins.values()]
+    assert len(twins) == 34
+    assert [t for t in twins if t["ran"] or t["error"] or t["refused"] != t["subject"]] == []
+    assert sum(not t["subject"] for t in twins) == 1
+
+
+def test_a_reject_s_path_is_stable(state_pins: Mapping[str, Any]) -> None:
+    """Typing objects and an instance whose attributes 3.12 keeps inline, each holding something
+    refused: their rejects' paths are the same before and after a third party's ``vars()`` (an
+    object's dict is materialised before its referents are read), so that the guard, which
+    compares each pass's rejects with the ones it had before the first call, never reports one of
+    those again after a call."""
+    assert state_pins["stable"] == {"rejects": 3, "same": True}
+
+
+def test_a_reject_names_no_value(state_pins: Mapping[str, Any]) -> None:
+    """A reject of an instance of a class made at call time and named by random text, held under
+    a key of random text: neither text is in its path or its kind (a class is named only where
+    its name is the pack's source's or binds it in its module, else by a digest), and a key's
+    label is a digest under the process's own key, never the bare digest a short key is
+    brute-forced from."""
+    assert state_pins["disclosure"] == {"rejects": 1, "holding": 0, "keyed": True}
+
+
+TWIN_COUNT = 81
+"""How many rule twins ``RULE_TWINS`` holds."""
+
+
+TWINS_REFUSED = frozenset(
+    {"ARMED", "RAN", "TFakeModel.model_config", "TFakeModel2.model_config", "T_CONTAINERS[0]"}
+    | {"T_CONTAINERS[1]", "T_DC_HOSTILE.a", "T_DICT_PROP", "T_FAKE_DC", "T_FAKE_MODEL"}
+    | {"T_FAKE_MODEL2", "T_META_INSTANCE", "T_METHOD.__self__", "T_SPOOF", "T_STR", "_K1"}
+    | {"t_defaults.__kwdefaults__.b", "TFakeDataclass.__dataclass_params__"}
+)
+"""What of the twins no rule admits: every one but the classes, the functions, the fake
+NamedTuple (harmless: its items are judged) and the frozen dataclass (whose hostile field is
+refused); a fake ``__dataclass_params__`` is refused as class machinery not of its shape."""
+
+
+def test_the_state_guards_run_no_code_of_what_they_judge(state_pins: Mapping[str, Any]) -> None:
+    """One hostile twin for each predicate of the rules (``retention_state_pins.TWINS``), armed,
+    through the allow-list and the snapshot: no twin's code runs, nothing raises, and each twin no
+    rule admits is refused by its type (a spoofed ``__class__`` among them, which ``isinstance``
+    would read)."""
+    twins = state_pins["twins"]
+    assert (twins["ran"], twins["error"]) == ([], None)
+    assert twins["nodes"] > 0
+    prefix = "aibi.packs.onco._pins_twins:"
+    assert {path.removeprefix(prefix) for path in twins["rejects"]} == TWINS_REFUSED
 
 
 @pytest.fixture(scope="module")
