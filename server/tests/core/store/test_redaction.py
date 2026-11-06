@@ -3,12 +3,14 @@ of a value shares a reading with it, and a constant is matched as its place says
 reading where it may name the person and by its text alone where it names no one."""
 
 import re
+import sys
 import time
+import unicodedata
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from pydantic import JsonValue
 
@@ -66,6 +68,8 @@ def _spellings() -> st.SearchStrategy[tuple[str, str]]:
 
 
 @given(_spellings())
+@example(("string", "\xad"))  # a soft hyphen: nothing once ``normal`` (#156)
+@settings(deadline=None)  # the first text not ASCII builds ``normal``'s table of format characters
 def test_every_string_the_engine_accepts_as_a_constant_shares_a_reading_with_its_value(
     spelling: tuple[str, str],
 ) -> None:
@@ -76,6 +80,138 @@ def test_every_string_the_engine_accepts_as_a_constant_shares_a_reading_with_its
     assert term is not None
     assert Terms([term]).whole(written, Place.NAMING)
     assert Terms([term]).whole(written, Place.UNKNOWN)
+
+
+FORMAT_ONLY = ("\xad", "\u200b", "\u200d\u2060", "\ufeff", "\U000e0001", "\u061c\u202e")
+"""Values of format characters alone, which ``normal`` makes empty (#156)."""
+
+
+@pytest.mark.parametrize("value", FORMAT_ONLY)
+def test_a_term_of_format_characters_alone_is_matched_whole_and_takes_them_all_from_text(
+    value: str,
+) -> None:
+    terms = Terms([value, "m-17"], ["\u200c"])
+    assert terms.person == {"", "m-17"}
+    assert terms.below == frozenset()  # nothing once ``normal``, as the person's term is
+    for place in Place:
+        assert terms.whole(value, place)
+        assert terms.whole("\u2063", place)  # the same term once ``normal``
+        assert terms.constant(value, place) == MARK
+    assert terms.string(value) == MARK
+    assert terms.json({value: [value, "x"]}) == {MARK: [MARK, "x"]}
+    # It has no token: text loses every format character, every spelling of it, and the
+    # other terms as tokens; text without a format character stays as it is written.
+    assert terms.text(f"a{value}b {value}") == "ab "
+    assert terms.text(f"call \u200d{value} at 3", Place.OTHER) == "call  at 3"
+    assert terms.text(f"member m-17{value} left") == f"member {MARK} left"
+    assert terms.text("a\u0301 b") == "a\u0301 b"
+    assert not terms.whole("x", Place.UNKNOWN)
+    # A place that does not hold it keeps them.
+    assert terms.text(f"a{value}b", Where(frozenset({"m-17"}))) == f"a{value}b"
+    # With no term that is nothing once ``normal``, such a value and text are no one's.
+    plain = Terms(["m-17"], ["b-2"])
+    for place in Place:
+        assert not plain.whole(value, place)
+        assert not plain.whole("", place)
+        assert plain.constant(value, place) == value
+        assert plain.text(f"a{value}b", place) == f"a{value}b"
+    assert plain.string(value) == value
+    assert plain.json({value: ""}) == {value: ""}
+
+
+def _empty_terms(kind: str) -> Terms:
+    """Terms that hold the one ``normal`` makes empty: the person's, below them, or the
+    person's key with what the releases say of the places that name their rows."""
+    if kind == "below":
+        return Terms(["m-17"], ["\u200b", "b-2"])
+    if kind == "keyed":
+        naming = Naming.of(
+            keys={"members": [["\u200b"]], "loans": [["2"]]},
+            key_columns={"members": [["member_id"]], "loans": [["loan_id"]]},
+            names={"members.member_id": ["members"], "loans.member_id": ["members"]},
+            identifiers={"members.code": ["\u200b"]},
+            identifying=["\u200b"],
+            units={},
+        )
+        return Terms(["\u200b"], ["2"], numbers=["2"], naming=naming)
+    return Terms(["\xad", "m-17"])
+
+
+@pytest.mark.parametrize("kind", ["person", "below", "keyed"])
+def test_text_loses_its_format_characters_exactly_where_a_value_of_them_alone_is_a_term(
+    kind: str,
+) -> None:
+    """Every shape of place (#156): a naming place's terms (every term, none, the empty term or
+    another), how it holds the rest (not at all, by text, by every reading) and what it quotes
+    (nothing, the empty term, another): text with a format character is kept ``normal``,
+    without them, exactly where a value of them alone is erased whole; and the places a column
+    or a unit key gives agree."""
+    terms = _empty_terms(kind)
+    shapes: list[Where] = [
+        Where(naming, rest, quoted=quoted)
+        for naming in (None, frozenset(), frozenset({""}), frozenset({"m-17"}))
+        for rest in (None, Place.OTHER, Place.UNKNOWN)
+        for quoted in (frozenset(), frozenset({""}), frozenset({"m-17"}))
+    ]
+    shapes += [Where.of(place) for place in Place]
+    columns = ("members.member_id", "loans.member_id", "members.code", "members.name", "$p")
+    shapes += [terms.place(column) for column in columns]
+    shapes += terms.part_places("members", 1) + terms.part_places("loans", 1)
+    for where in shapes:
+        whole = terms.whole("\u200b", where)
+        assert terms.text("a\u200bb", where) == ("ab" if whole else "a\u200bb"), where
+        assert terms.text("a\u200bb\ufeff c", where) == ("ab c" if whole else "a\u200bb\ufeff c")
+        assert terms.text("a b", where) == "a b", where
+
+
+def test_a_term_of_format_characters_alone_is_read_back_as_the_term_it_was() -> None:
+    """A waiting redaction's terms keep it (``stored``), so that one run later erases it too."""
+    terms = Terms(["\xad"], ["b-2", "\u200b"], numbers=["\u200b"], naming=NAMING)
+    again = Terms.loads(terms.dumps())
+    assert (again.person, again.below, again.numeric) == (terms.person, terms.below, {""})
+    assert again.whole("\xad", Place.OTHER)
+    assert again.string("\u200b") == MARK
+    assert again.naming == terms.naming
+    assert Terms([""], [""]).terms == frozenset()  # an empty canonical string is no term
+
+
+def _sampled_code_points() -> list[str]:
+    """Every format character and every 241st other code point but the surrogates."""
+    return [
+        chr(c)
+        for c in range(sys.maxunicode + 1)
+        if not 0xD800 <= c <= 0xDFFF and (c % 241 == 0 or unicodedata.category(chr(c)) == "Cf")
+    ]
+
+
+def test_no_code_point_as_a_term_fails_to_be_built_read_back_or_matched_as_itself() -> None:
+    """A brute force (#156): each code point, alone and between letters, as the person's term
+    and as one below them, builds, survives ``dumps`` and ``loads``, and is matched as a whole
+    wherever it is written; and as a token of free text unless it is nothing once ``normal``,
+    when free text loses every format character instead. With no such term, a value of format
+    characters alone is no one's, as a whole and in text."""
+    plain = Terms(["m-17"], ["b-2"])
+    for point in _sampled_code_points():
+        for term in (point, f"a{point}", f"{point}a", f"a{point}a"):
+            person = Terms([term])
+            below = Terms(["x"], [term], numbers=[term])
+            for built in (person, below):
+                again = Terms.loads(built.dumps())
+                assert (again.person, again.below) == (built.person, built.below), repr(term)
+            for place in Place:
+                assert person.whole(term, place), (repr(term), place)
+            assert person.string(term) == MARK, repr(term)
+            written = f"x {term} y"
+            found = person.text(written)
+            empty = redaction.normal(term) == ""
+            if empty:
+                assert found == "x  y", repr(term)
+                for place in Place:
+                    assert not plain.whole(term, place), (repr(term), place)
+                    assert plain.text(written, place) == written, (repr(term), place)
+                assert plain.string(term) == term, repr(term)
+            else:
+                assert MARK in found, repr(term)
 
 
 @given(

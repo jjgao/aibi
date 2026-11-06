@@ -736,6 +736,39 @@ def test_erasure_redacts_the_issuances_that_name_the_dataset_and_their_sql(
     ]
 
 
+def test_a_term_of_format_characters_alone_takes_empty_notes_and_sql_parameters(
+    store: Store, imported: str
+) -> None:
+    """The term that ``normal`` empties (#156): an issuance's empty ``notes`` and its SQL's empty
+    and format-only parameter strings are erased whole, and its other strings lose their format
+    characters, while the SQL text and the other parameters stay; with no such term, all stay."""
+    cohort, written = _cohort(store, imported, [AGE], notes="")
+    sql: JsonValue = [
+        {
+            "sql": "SELECT count(*) FROM members WHERE id != ?",
+            "parameters": ["", "\u200b", "a\xadb", "m-1"],
+        }
+    ]
+    issued = _issue(store, cohort, written, sql=sql)
+    with store.db.transaction() as db:
+        redact(db, "lib", Terms(["m-17"]))
+    record = store.derivations.issuance(issued)
+    assert record is not None
+    assert (record.written, record.sql) == (written, sql)
+    with store.db.transaction() as db:
+        redact(db, "lib", Terms(["\xad"]))
+    record = store.derivations.issuance(issued)
+    assert record is not None
+    assert record.written["notes"] == MARK  # type: ignore[index, call-overload]
+    assert record.sql == [
+        {
+            "sql": "SELECT count(*) FROM members WHERE id != ?",
+            "parameters": [MARK, MARK, "ab", "m-1"],
+        }
+    ]
+    assert store.explain(cohort.id).status == "issued"
+
+
 def _without_the_member(store: Store, library: Library) -> str:
     members = b"\n".join(line for line in library.members.split(b"\n") if KEY.encode() not in line)
     loans = [loan for loan in library.loans if KEY not in loan]
