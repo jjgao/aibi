@@ -18,13 +18,13 @@ import resource
 import shutil
 import sqlite3
 import tempfile
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.core.importers.racing import Flipper
 
 from aibi.core.importers import snapshot
 from aibi.core.importers.confine import Confinement
@@ -274,41 +274,55 @@ def test_a_middle_directory_swapped_at_any_call_leaks_nothing(
     assert _descriptors() == before
 
 
-RACE_CONFINEMENTS = 3000
-"""At least this many confinements race the flipper."""
+RACE_CONFINEMENTS = 6000
+"""At least this many confinements race the flipper, deadline allowing."""
 RACE_OBSERVED = 5
-"""And the race runs on until this many got through and this many were refused: progress that
-does not depend on how a loaded machine hands the GIL over."""
+"""And the race runs on until this many got through, this many were refused and the flipper made
+this many cycles. Each cycle holds each state for a whole confinement (``racing.Flipper``), so
+these are reached in a bounded number of confinements however the machine schedules the two
+threads."""
+RACE_STRADDLED = 200
+"""And until this many confinements had a flip injected during them (``racing.INJECT_EVERY``):
+a flip inside a walk, on any machine. Those that raced the free flips are counted and reported
+(the ``raced`` property), not required: how many there are is the scheduler's."""
 RACE_DEADLINE = 120.0
-"""Seconds, a generous bound that only a machine that starves a thread for minutes passes."""
+"""Seconds: the race ends there, and fails, naming its counts, short of any of them."""
 
 
-def test_a_thread_racing_a_middle_directory_leaks_nothing(tmp_path: Path) -> None:
-    """A race of 3,000 confinements, identities and reads (of the operator's path and of a
-    pack's) at least, run on until they have seen the flipper both ways (at least
-    ``RACE_OBSERVED`` got through and as many were refused), within a deadline, while another
-    thread flips ``l2`` between the directory and a symlink out; the counts seen are asserted."""
+def test_a_thread_racing_a_middle_directory_leaks_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Confinements, identities and reads (of the operator's path and of a pack's) while another
+    thread flips ``l2`` between the directory and a symlink out, in bursts of free flips and
+    phases that hold each state, with a flip injected before an open of every few confinements
+    of a burst (``racing``): none leaks, at any count. The race runs on until it has seen the
+    flipper both ways (``RACE_OBSERVED`` got through and as many refused) and straddled
+    ``RACE_STRADDLED`` injected flips, which the flipper guarantees on any machine, and 6,000
+    confinements were made, deadline allowing; a deadline that comes before the counts fails,
+    naming them. The confinements that raced the free flips depend on how the machine schedules
+    the two threads (none, on one busy processor): they are reported, not required; and an
+    injected flip lands only before an open, never between ``realpath`` and a ``stat``, which
+    the swaps at every call above cover."""
     tree = _Tree(tmp_path)
     outside = tree.outside_identity(1)
-    stop = threading.Event()
-
-    def flip() -> None:
-        while not stop.is_set():
-            try:
-                tree.swap(1)
-                tree.unswap()
-            except OSError:
-                pass
-
-    flipper = threading.Thread(target=flip, daemon=True)
     leaks = done = refusals = index = 0
     deadline = time.monotonic() + RACE_DEADLINE
-    flipper.start()
-    try:
-        while (index < RACE_CONFINEMENTS or min(done, refusals) < RACE_OBSERVED) and (
-            time.monotonic() < deadline
-        ):
+
+    def enough(flipper: Flipper) -> bool:
+        return (
+            min(done, refusals, flipper.cycles) >= RACE_OBSERVED
+            and flipper.straddled >= RACE_STRADDLED
+        )
+
+    with Flipper(lambda: tree.swap(1), tree.unswap, deadline) as flipper:
+        flipper.inject_at_opens(monkeypatch)
+        while flipper.running and time.monotonic() < deadline:
+            if index >= RACE_CONFINEMENTS and enough(flipper):
+                break
             index += 1
+            begun = flipper.generation
             confinement = Confinement.of(tree.inside)
             try:
                 if index % 2:
@@ -321,13 +335,16 @@ def test_a_thread_racing_a_middle_directory_leaks_nothing(tmp_path: Path) -> Non
                 done += 1
             except ImportRefused:
                 refusals += 1
-    finally:
-        stop.set()
-        flipper.join()
-        tree.swapped = None
-    assert leaks == 0
-    assert done >= RACE_OBSERVED, (done, refusals, index)
-    assert refusals >= RACE_OBSERVED, (done, refusals, index)
+            flipper.walked(begun)
+    record_property("raced", flipper.raced)
+    record_property("straddled", flipper.straddled)
+    assert leaks == 0, f"{leaks} of {index} confinements gave the outside file"
+    if not enough(flipper):
+        pytest.fail(
+            f"the race reached its {RACE_DEADLINE:g} s deadline after {index} confinements: "
+            f"{done} got through and {refusals} were refused ({flipper.counts()}), short of "
+            f"{RACE_OBSERVED} of each and of cycles, or of {RACE_STRADDLED} straddled"
+        )
 
 
 def test_a_swapped_ancestor_of_a_root_is_not_followed(
