@@ -43,12 +43,24 @@ from aibi.core.schema.ids import normalise_names
 from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import ImportNote, Previous
 from aibi.core.store.build import Layout
-from aibi.core.store.sources import RawSource, TextSource
+from aibi.core.store.sources import RawSource, SourceValue, TextSource, TypedSource
 from aibi.packs.onco.attributes import MONTHS_UNITS, PATIENT_ID, SAMPLE_ID, TIME_OFFSETS
+from aibi.packs.onco.caselists import CaseList
 from aibi.packs.onco.clinical import SETTINGS, Clinical, Column
 from aibi.packs.onco.facets import PACK_ID
 from aibi.packs.onco.meta import PATIENT, SAMPLE, StudyFields
 from aibi.packs.onco.missing import FIXED
+from aibi.packs.onco.mutation import (
+    AMINO_ACID,
+    BARCODE,
+    COUNTS,
+    ENTREZ,
+    HUGO,
+    IDENTIFIERS,
+    POSITIONS,
+    Maf,
+    MafColumn,
+)
 
 Status = Literal["imported", "imported_default", "proposed"]
 Entry = tuple[JsonValue, Status, str | None]
@@ -57,6 +69,9 @@ _ADAPTER: TypeAdapter[Descriptor] = TypeAdapter(Descriptor)
 
 PATIENTS = "patients"
 SAMPLES = "samples"
+MUTATIONS = "mutations"
+CASE_LISTS = "case_lists"
+MEMBERS = "case_list_members"
 TABLES: Mapping[str, tuple[str, str, str, str]] = MappingProxyType(
     {
         PATIENTS: ("Patients", "One row per patient", "onco:patient", f"CLINICAL:{PATIENT}"),
@@ -234,6 +249,219 @@ def _padded(subject: str, column: Column) -> ImportNote:
     )
 
 
+MAF_FORMAT = "cBioPortal's mutation file format (MAF): tab-separated, a line of column names"
+MAF_INTEGER = "cBioPortal's validator reads this column as an integer"
+MAF_MISSING = "The spellings cBioPortal's validator reads as no value in this column"
+MAF_CATEGORY = "A MAF column whose values the format lists, with few distinct values (D228)"
+MAF_TEXT = "A MAF column the pack has no rule for, read as text"
+MAF_GENE = "cBioPortal's mutation file format: the gene's symbol, as written"
+MAF_SAMPLE = "cBioPortal's mutation file format: a sample's id"
+MUTATION_RELATIONSHIP = "A MAF's Tumor_Sample_Barcode names the sample (D444: every barcode is one)"
+CASE_LIST_FORMAT = "cBioPortal's case list format: one file a list, read as keys and values"
+MEMBER_RELATIONSHIP = "A case list's case_list_ids name samples of the sample file"
+LIST_RELATIONSHIP = "A member row belongs to the case list it was read from"
+MAF_MISSING_CODES: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        ENTREZ: MappingProxyType({"0": "UNKNOWN", "NA": "UNKNOWN"}),
+        **{column: MappingProxyType({"NA": "UNKNOWN"}) for column in POSITIONS},
+        **{column: MappingProxyType({".": "UNKNOWN"}) for column in COUNTS},
+    }
+)
+"""The spellings the reference reads as no value in an integer column: ``0`` and ``NA`` as an
+Entrez id (V:1813-1816), ``NA`` as a position (V:1876, V:2388), ``.`` as a count (V:2244)."""
+MAF_TEXT_MISSING_CODES: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        HUGO: MappingProxyType({"NA": "UNKNOWN", "Unknown": "UNKNOWN"}),
+        **{column: MappingProxyType({"NA": "UNKNOWN", "NULL": "UNKNOWN"}) for column in AMINO_ACID},
+    }
+)
+"""The spellings the reference reads as no value in a text column, exactly as written: ``NA`` and
+``Unknown`` as a gene symbol (V:1806-1810), ``NULL`` and ``NA`` as an amino-acid change
+(V:1637). A padded ``NA`` or ``Unknown`` symbol, which the reference strips first, is refused on
+a validated row (``PADDED_VALUE``, D444)."""
+
+
+def _maf_column(curation: "_Curation", id: str, column: MafColumn) -> Descriptor:
+    fields: dict[str, Entry] = {}
+    codes = MAF_MISSING_CODES.get(column.name)
+    text_codes = MAF_TEXT_MISSING_CODES.get(column.name)
+    if codes is not None:
+        fields["datatype"] = ("integer", "imported", MAF_INTEGER)
+        written: dict[str, JsonValue] = dict(sorted(codes.items()))
+        fields["missing_codes"] = (written, "imported", MAF_MISSING)
+    elif column.category:
+        fields["datatype"] = ("category", "proposed", MAF_CATEGORY)
+    else:
+        fields["datatype"] = ("string", "imported", MAF_TEXT)
+    if text_codes is not None:
+        found: dict[str, JsonValue] = dict(sorted(text_codes.items()))
+        fields["missing_codes"] = (found, "imported", MAF_MISSING)
+    if column.name in IDENTIFIERS:
+        fields["identifier"] = (True, "imported", MAF_SAMPLE)
+    if column.name == HUGO:
+        fields["maps_to"] = ({"concept": "onco:gene_symbol"}, "imported", MAF_GENE)
+    fields["source"] = ({"original_name": column.name}, "imported", None)
+    return curation.descriptor(
+        "column", f"{MUTATIONS}.{id}", (column.name, "imported_default"), fields
+    )
+
+
+def _relationship(
+    curation: "_Curation", child: str, column: str, parent: str, key: str, evidence: str
+) -> Descriptor:
+    return curation.descriptor(
+        "relationship",
+        f"rel:{child}.{column}",
+        (f"{child}.{column} to {parent}", "imported_default"),
+        {
+            "child_table": (child, "imported", evidence),
+            "child_columns": ([column], "imported", evidence),
+            "parent_table": (parent, "imported", evidence),
+            "parent_columns": ([key], "imported", evidence),
+            "cardinality": ("many-to-one", "imported", evidence),
+        },
+    )
+
+
+def _plain_table(
+    curation: "_Curation",
+    table: str,
+    label_grain: tuple[str, str],
+    role: str,
+    key: list[JsonValue] | None,
+    concept: str,
+    source: dict[str, JsonValue],
+    evidence: str,
+    extensions: Mapping[str, Entry] | None = None,
+) -> Descriptor:
+    label, grain = label_grain
+    fields: dict[str, Entry] = {
+        "grain": (grain, "imported", evidence),
+        "role": (role, "imported", evidence),
+    }
+    if key is not None:
+        fields["primary_key"] = (key, "imported", evidence)
+    fields["maps_to"] = ({"concept": concept}, "imported", evidence)
+    fields["source"] = (source, "imported_default", evidence)
+    return curation.descriptor(
+        "table", table, (label, "imported_default"), fields, extensions=extensions
+    )
+
+
+def _text_column(
+    curation: "_Curation", table: str, id: str, label: str, identifier: bool = False
+) -> Descriptor:
+    fields: dict[str, Entry] = {"datatype": ("string", "imported", CASE_LIST_FORMAT)}
+    if identifier:
+        fields["identifier"] = (True, "imported", CASE_LIST_FORMAT)
+    fields["source"] = ({"original_name": id}, "imported", None)
+    return curation.descriptor("column", f"{table}.{id}", (label, "imported"), fields)
+
+
+def _mutations(
+    curation: "_Curation", maf: Maf, previous: Previous | None, sample_key: str
+) -> tuple[list[Descriptor], RawSource, Layout, list[ImportNote]]:
+    before = previous.columns.get(MUTATIONS) if previous is not None else None
+    names = [column.name for column in maf.columns]
+    ids = normalise_names(names, "column", before)
+    source: dict[str, JsonValue] = {
+        "kind": "file",
+        "name": MUTATIONS,
+        "original_name": maf.name,
+        "parse": maf.settings.model_dump(mode="json"),
+    }
+    descriptors = [
+        _plain_table(
+            curation,
+            MUTATIONS,
+            ("Mutations", "One row per mutation call of the MAF"),
+            "measurement",
+            None,
+            "onco:mutation",
+            source,
+            MAF_FORMAT,
+            {"meta": ("MUTATION_EXTENDED:MAF", "imported", None)},
+        )
+    ]
+    notes: list[ImportNote] = []
+    for id, column in zip(ids, maf.columns, strict=True):
+        descriptors.append(_maf_column(curation, id, column))
+        if id != column.name.lower():
+            notes.append(_renamed(f"{MUTATIONS}.{id}", column.name))
+    barcode = ids[names.index(BARCODE)]
+    descriptors.append(
+        _relationship(curation, MUTATIONS, barcode, SAMPLES, sample_key, MUTATION_RELATIONSHIP)
+    )
+    layout = Layout(MUTATIONS, tuple(zip(ids, names, strict=True)))
+    return descriptors, TextSource(maf.data), layout, notes
+
+
+LIST_COLUMNS = ("stable_id", "name", "description", "category")
+MEMBER_COLUMNS = ("case_list", "sample_id")
+
+
+def _case_lists(
+    curation: "_Curation", lists: Sequence[CaseList], sample_key: str
+) -> tuple[list[Descriptor], dict[str, RawSource], dict[str, Layout]]:
+    def source(table: str) -> dict[str, JsonValue]:
+        return {"kind": "pack", "name": table, "original_name": "case_lists"}
+
+    descriptors = [
+        _plain_table(
+            curation,
+            CASE_LISTS,
+            ("Case lists", "One row per case list of the study"),
+            "entity",
+            ["stable_id"],
+            "onco:case_list",
+            source(CASE_LISTS),
+            CASE_LIST_FORMAT,
+        ),
+        _text_column(curation, CASE_LISTS, "stable_id", "Stable id"),
+        _text_column(curation, CASE_LISTS, "name", "Name"),
+        _text_column(curation, CASE_LISTS, "description", "Description"),
+        _text_column(curation, CASE_LISTS, "category", "Category"),
+        _plain_table(
+            curation,
+            MEMBERS,
+            ("Case list members", "One row per sample id a case list names, repeats kept"),
+            "link",
+            None,
+            "onco:case_list_member",
+            source(MEMBERS),
+            CASE_LIST_FORMAT,
+        ),
+        _text_column(curation, MEMBERS, "case_list", "Case list"),
+        _text_column(curation, MEMBERS, "sample_id", "Sample id", identifier=True),
+        _relationship(curation, MEMBERS, "case_list", CASE_LISTS, "stable_id", LIST_RELATIONSHIP),
+        _relationship(curation, MEMBERS, "sample_id", SAMPLES, sample_key, MEMBER_RELATIONSHIP),
+    ]
+    rows: list[tuple[SourceValue, ...]] = [
+        (found.stable_id, found.name, found.description, found.category) for found in lists
+    ]
+    members: list[tuple[SourceValue, ...]] = [
+        (found.stable_id, sample) for found in lists for sample in found.ids
+    ]
+    sources: dict[str, RawSource] = {
+        CASE_LISTS: TypedSource(LIST_COLUMNS, tuple(rows)),
+        MEMBERS: TypedSource(MEMBER_COLUMNS, tuple(members)),
+    }
+    layouts = {
+        CASE_LISTS: Layout(CASE_LISTS, tuple((name, name) for name in LIST_COLUMNS)),
+        MEMBERS: Layout(MEMBERS, tuple((name, name) for name in MEMBER_COLUMNS)),
+    }
+    return descriptors, sources, layouts
+
+
+def list_cells(lists: Sequence[CaseList]) -> int:
+    """The cells the core counts for the two case-list tables (columns times rows, at least one
+    row each), when the study has any list."""
+    if not lists:
+        return 0
+    members = sum(len(found.ids) for found in lists)
+    return len(LIST_COLUMNS) * max(1, len(lists)) + len(MEMBER_COLUMNS) * max(1, members)
+
+
 @dataclass(frozen=True)
 class Described:
     """What ``describe`` gives: the importer's result's parts, and the notes, in order."""
@@ -253,9 +481,12 @@ def describe(
     location: str | None,
     name: str | None = None,
     previous: Previous | None = None,
+    maf: Maf | None = None,
+    lists: Sequence[CaseList] = (),
 ) -> Described:
     """The study's descriptors, snapshots, layouts and notes: ``files`` are the clinical files,
-    the patient file first where there is one."""
+    the patient file first where there is one; ``maf`` the study's MAF, read, and ``lists`` its
+    case lists (D444)."""
     curation = _Curation(by, at)
     descriptors: list[Descriptor] = [_dataset(curation, fields, name, location)]
     sources: dict[str, RawSource] = {}
@@ -313,7 +544,28 @@ def describe(
             )
     else:
         notes.append(ImportNote("not_proposed", None, [text(NO_PATIENTS)]))
+    sample_key = ids_of[SAMPLES][[column.name for column in sample.columns].index(SAMPLE_ID)]
+    if maf is not None:
+        found, raw, layout, renamed = _mutations(curation, maf, previous, sample_key)
+        descriptors.extend(found)
+        sources[MUTATIONS] = raw
+        layouts[MUTATIONS] = layout
+        notes.extend(renamed)
+    if lists:
+        more, raws, laid = _case_lists(curation, lists, sample_key)
+        descriptors.extend(more)
+        sources.update(raws)
+        layouts.update(laid)
     return Described(descriptors, sources, layouts, notes)
 
 
-__all__ = ["PATIENTS", "SAMPLES", "Described", "describe"]
+__all__ = [
+    "CASE_LISTS",
+    "MEMBERS",
+    "MUTATIONS",
+    "PATIENTS",
+    "SAMPLES",
+    "Described",
+    "describe",
+    "list_cells",
+]

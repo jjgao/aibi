@@ -3,7 +3,8 @@
 Their ids are a stable contract (D405): a concept is added, never renamed or removed, and a
 concept's ``version`` is bumped when its fields change, each with a pack version bump.
 
-- **Tables:** ``onco:patient``, ``onco:sample``, ``onco:gene``.
+- **Tables:** ``onco:patient``, ``onco:sample``, ``onco:gene``, and from 0.4.0 (D444)
+  ``onco:mutation``, ``onco:case_list`` and ``onco:case_list_member``.
 - **Values:**
   - ``onco:gene_symbol``, with neither units nor permissible values;
   - ``onco:sample_type``, cBioPortal's seven ``Sample.Type`` constants, labelled with its display
@@ -190,6 +191,24 @@ CONCEPTS: tuple[ConceptDescriptor, ...] = (
         "table",
     ),
     _concept("onco:gene", "Gene", "Rows are genes.", "table"),
+    _concept(
+        "onco:mutation",
+        "Mutation call",
+        "Rows are mutation calls: one variant called in one sample, as a MAF file gives it.",
+        "table",
+    ),
+    _concept(
+        "onco:case_list",
+        "Case list",
+        "Rows are case lists: named sets of samples a study declares.",
+        "table",
+    ),
+    _concept(
+        "onco:case_list_member",
+        "Case list member",
+        "Rows are the samples a case list names, one row per sample a list names.",
+        "table",
+    ),
     _concept("onco:gene_symbol", "Gene symbol", "A gene's approved symbol.", "value"),
     _concept(
         "onco:sample_type",
@@ -261,4 +280,4 @@ CONCEPTS: tuple[ConceptDescriptor, ...] = (
         "time_origin",
     ),
 )
-"""The pack's 15 concepts."""
+"""The pack's 18 concepts."""

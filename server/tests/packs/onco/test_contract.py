@@ -24,12 +24,21 @@ from typing import Any
 from aibi.core.schema.descriptors import ConceptDescriptor
 from aibi.core.schema.pack_api import PackRegistry
 
-MANIFEST = {"id": "onco", "version": "0.3.0", "results_version": 1, "requires_core": ">=0.0.1"}
+MANIFEST = {"id": "onco", "version": "0.4.0", "results_version": 1, "requires_core": ">=0.0.1"}
 
 TEXTS = {
     "onco:patient": ("Patient", "Rows are patients: the people a study follows."),
     "onco:sample": ("Sample", "Rows are samples: specimens taken from patients and profiled."),
     "onco:gene": ("Gene", "Rows are genes."),
+    "onco:mutation": (
+        "Mutation call",
+        "Rows are mutation calls: one variant called in one sample, as a MAF file gives it.",
+    ),
+    "onco:case_list": ("Case list", "Rows are case lists: named sets of samples a study declares."),
+    "onco:case_list_member": (
+        "Case list member",
+        "Rows are the samples a case list names, one row per sample a list names.",
+    ),
     "onco:gene_symbol": ("Gene symbol", "A gene's approved symbol."),
     "onco:sample_type": (
         "Sample type",
@@ -64,6 +73,9 @@ SORTS = {
     "onco:patient": "table",
     "onco:sample": "table",
     "onco:gene": "table",
+    "onco:mutation": "table",
+    "onco:case_list": "table",
+    "onco:case_list_member": "table",
     "onco:gene_symbol": "value",
     "onco:sample_type": "value",
     "onco:mutation_class": "value",

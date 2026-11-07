@@ -37,12 +37,14 @@ LISTING = "listing"
 """A declared role: the listing of the study's directory, which Meta(S) is taken from.
 ``discover`` lists the directory itself (once, through the reader), not from this row."""
 CASE_LISTS = "case lists"
-"""A declared role: what the reference lists and reads of ``case_lists/`` (V:4900-4909) and its
-test that ``case_lists`` is a directory (V:5566-5567). ``discover`` neither lists nor reads
-``case_lists/`` (exit 3 (19)): the reference's listing alone, never read by the pack. M4.2b-1b
-makes it a read role, which changes this role's entry in ``study.PATH_SITES`` and the statements
-of the guard that name it (``caselists``, ``roles`` and ``closure``'s handling of a declared row),
-each of which must stay pinned by a self-check."""
+"""A declared role for ``discover``: what the reference lists and reads of ``case_lists/``
+(V:4900-4909) and its test that ``case_lists`` is a directory (V:5566-5567). From M4.2b-1b
+(D444) the pack reads them, but not in ``discover``: ``discover`` checks the entry
+``case_lists`` alone (a symlink is refused, phase 11) and never consults these rows, and the
+importer's case-list reader (``caselists.read``) lists ``case_lists/`` and reads every entry the
+``listing:case_lists`` row describes. So the rows stay declared for the guard: a ``case_lists``
+directory is accepted by ``discover``, and deleting either row changes no outcome; what the
+reader reads is held by ``test_mutation_corpus.py``'s ``list`` cells against the live reference."""
 CHECKED = (DATA, TAGS)
 """The roles whose values ``discover`` resolves (phases 9 and 10); the others are declared:
 ``discover`` does not consult their rows."""
@@ -71,7 +73,6 @@ DATA_TYPES = frozenset(
         "CNA_LOG2",
         "CNA_CONTINUOUS",
         "SEG",
-        "MUTATION",
         "MUTATION_UNCALLED",
         "EXPRESSION",
         "METHYLATION",
@@ -92,8 +93,8 @@ DATA_TYPES = frozenset(
         "RESOURCES_DEFINITION",
     }
 )
-"""Every type whose meta file names a data file M4.2a never imports (all but the study meta and
-the two clinical types), written by hand."""
+"""Every type whose meta file names a data file the pack never imports (all but the study meta, the
+two clinical types and, from M4.2b-1b, the MAF's type ``MUTATION``, D444), written by hand."""
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,11 @@ ROWS = (
     Row("data_filename", DATA, DATA_TYPES),
     Row("pd_annotations_filename", DATA, frozenset({"CNA_DISCRETE"})),
     Row("tags_file", TAGS, frozenset({STUDY})),
-    Row("listing:meta", LISTING, DATA_TYPES | {STUDY, "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES"}),
+    Row(
+        "listing:meta",
+        LISTING,
+        DATA_TYPES | {STUDY, "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION"},
+    ),
     Row("listing:case_lists", CASE_LISTS, frozenset()),
     Row("isdir:case_lists", CASE_LISTS, frozenset()),
 )
@@ -134,7 +139,6 @@ PAIRS = (
     ("MRNA_EXPRESSION", "CONTINUOUS", "EXPRESSION"),
     ("MRNA_EXPRESSION", "Z-SCORE", "EXPRESSION"),
     ("MRNA_EXPRESSION", "DISCRETE", "EXPRESSION"),
-    ("MUTATION_EXTENDED", "MAF", "MUTATION"),
     ("MUTATION_UNCALLED", "MAF", "MUTATION_UNCALLED"),
     ("METHYLATION", "CONTINUOUS", "METHYLATION"),
     ("GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX"),
@@ -148,7 +152,8 @@ PAIRS = (
     ("GENERIC_ASSAY", "BINARY", "GENERIC_ASSAY_BINARY"),
     ("GENERIC_ASSAY", "CATEGORICAL", "GENERIC_ASSAY_CATEGORICAL"),
 )
-"""Every pair of a non-clinical type (C:651-689), written by hand, with the type it is."""
+"""Every pair of a type the pack never imports (C:651-689), written by hand, with the type it is:
+the clinical pairs and, from M4.2b-1b, ``MUTATION_EXTENDED:MAF`` (D444) are left out."""
 RESOURCES = {
     "PATIENT": "PATIENT_RESOURCES",
     "SAMPLE": "SAMPLE_RESOURCES",

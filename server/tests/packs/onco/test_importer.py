@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.3.0"
+BY = "importer:onco@0.4.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:
@@ -98,6 +98,9 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
     assert {d.id for d in found.values() if isinstance(d, TableDescriptor)} == {
         "patients",
         "samples",
+        "mutations",
+        "case_lists",
+        "case_list_members",
     }
     patients = found["patients"]
     assert isinstance(patients, TableDescriptor)
@@ -124,6 +127,50 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "samples.cancer_type": "category",
         "samples.oncotree_code": "string",
         "samples.tmb_nonsynonymous": "number",
+        "mutations.hugo_symbol": "string",
+        "mutations.entrez_gene_id": "integer",
+        "mutations.tumor_sample_barcode": "string",
+        "mutations.variant_classification": "string",
+        "mutations.hgvsp_short": "string",
+        "case_lists.stable_id": "string",
+        "case_lists.name": "string",
+        "case_lists.description": "string",
+        "case_lists.category": "string",
+        "case_list_members.case_list": "string",
+        "case_list_members.sample_id": "string",
+    }
+    mutations = found["mutations"]
+    assert isinstance(mutations, TableDescriptor)
+    assert (mutations.fields.role, mutations.fields.primary_key) == ("measurement", None)
+    assert mutations.fields.maps_to is not None
+    assert mutations.fields.maps_to.concept == "onco:mutation"
+    assert mutations.extensions["onco"] == {"meta": "MUTATION_EXTENDED:MAF"}
+    assert mutations.fields.source is not None
+    assert mutations.fields.source.original_name == "data_mutations.txt"
+    barcode = found["mutations.tumor_sample_barcode"]
+    assert isinstance(barcode, ColumnDescriptor)
+    assert barcode.fields.identifier is True
+    hugo = found["mutations.hugo_symbol"]
+    assert isinstance(hugo, ColumnDescriptor)
+    assert hugo.fields.maps_to is not None
+    assert hugo.fields.maps_to.concept == "onco:gene_symbol"
+    classification = found["mutations.variant_classification"]
+    assert isinstance(classification, ColumnDescriptor)
+    assert classification.fields.maps_to is None
+    entrez = found["mutations.entrez_gene_id"]
+    assert isinstance(entrez, ColumnDescriptor)
+    assert entrez.fields.missing_codes == {"0": "UNKNOWN", "NA": "UNKNOWN"}
+    for child, column, parent in (
+        ("mutations", "tumor_sample_barcode", "samples"),
+        ("case_list_members", "sample_id", "samples"),
+        ("case_list_members", "case_list", "case_lists"),
+    ):
+        found_relationship = found[f"rel:{child}.{column}"]
+        assert isinstance(found_relationship, RelationshipDescriptor)
+        assert found_relationship.fields.parent_table == parent
+        assert found_relationship.curation["/fields/child_columns"].status == "imported"
+    assert "coverage" not in {
+        d.fields.role for d in found.values() if isinstance(d, TableDescriptor)
     }
     os_months = found["patients.os_months"]
     assert isinstance(os_months, ColumnDescriptor)
@@ -142,10 +189,7 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
     assert all(entry.by == BY for d in found.values() for entry in d.curation.values()
                if d.kind != "concept")  # fmt: skip
     said = notes_said(published.notes)
-    assert (
-        "skipped_source None: a meta file of a type M4.2a does not import: "
-        "\u00abmeta_mutations.txt\u00bb" in said
-    )
+    assert not any("mutations" in s and s.startswith("skipped_source") for s in said)
     assert any(
         s.startswith("not_proposed patients.sex: The column \u00abSEX\u00bb has cells")
         for s in said
@@ -156,11 +200,6 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
 DEMO_NOTES = [
     "not_proposed patients.sex: The column \u00abSEX\u00bb has cells with spaces around them, "
     "read as written; cBioPortal trims them, and trimming is not proposed (1; rows [7])",
-    "skipped_source None: a data file of a meta file M4.2a does not import: "
-    "\u00abdata_mutations.txt\u00bb",
-    "skipped_source None: a meta file of a type M4.2a does not import: "
-    "\u00abmeta_mutations.txt\u00bb",
-    "skipped_source None: a subdirectory (case lists are M4.2b's): \u00abcase_lists\u00bb",
     "unparsed samples.tmb_nonsynonymous: Cells whose value does not parse as the column's "
     "datatype, which are UNKNOWN (1; rows [5])",
 ]
@@ -559,7 +598,11 @@ def test_the_facet_serves_the_study_s_own_spelling(world: Any, registry: PackReg
         packs = ("onco",)
         descriptors = descriptors(world, published.manifest)
 
-    assert facets.facet(View()) == {"type_of_cancer": ["mixed"], "reference_genome": ["hg19"]}
+    assert facets.facet(View()) == {
+        "type_of_cancer": ["mixed"],
+        "reference_genome": ["hg19"],
+        "profiles": ["MUTATION_EXTENDED:MAF"],
+    }
 
 
 # --- Rows only, determinism -----------------------------------------------------------------------

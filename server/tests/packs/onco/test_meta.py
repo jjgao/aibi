@@ -509,7 +509,10 @@ def test_a_repeated_stable_id_is_refused(make_study: Any, discovery: Any, base: 
     outcome = discovery.outcome(make_study(base))
     assert outcome[:2] == ("onco.DUPLICATE_STABLE_ID", "meta_mutations2.txt")
     base["meta_mutations2.txt"] = MAF_META.replace(b"stable_id: mutations", b"stable_id: other")
-    assert discovery.outcome(make_study(base))[0] == "ok"
+    assert discovery.outcome(make_study(base))[:2] == (
+        "onco.DUPLICATE_PROFILE_META",
+        "meta_mutations2.txt",
+    )
 
 
 def test_a_clinical_stable_id_is_checked_too(make_study: Any, discovery: Any, base: Any) -> None:

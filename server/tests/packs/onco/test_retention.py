@@ -455,6 +455,125 @@ def test_an_import_retains_nothing_that_grows_with_a_large_study(
     _grown(_imported(make_study, measure), measure, HEAVY[(measure, shape)])
 
 
+# --- The MAF and the case lists (M4.2b-1b, D444) -------------------------------------------------
+
+MAF_COLUMNS = [
+    "Hugo_Symbol", "Entrez_Gene_Id", "Tumor_Sample_Barcode", "Variant_Classification",
+    "HGVSp_Short", "Start_Position", "End_Position", "t_alt_count", "Chromosome", "NOTE",
+]  # fmt: skip
+
+
+def maf_file(rows: int, extra: int = 0, kind: str = "valid", samples: int = 100) -> bytes:
+    """A MAF of ``rows`` rows over ``samples`` samples, a short distinct value in every column
+    (``extra`` more of their own names): every row validated (``valid``), every row a skip row
+    (``silent``), or every count a token the core cannot parse (``unparsed``, ``1_<i>``)."""
+    names = [*MAF_COLUMNS, *(f"X_{k}" for k in range(extra))]
+    out = ["#version 2.4\n", "\t".join(names) + "\n"]
+    classification = "Silent" if kind == "silent" else "Missense_Mutation"
+    for i in range(rows):
+        count = f"1_{i}" if kind == "unparsed" else str(i)
+        row = [
+            f"G{i}", str(i + 1), f"S{i % samples}", classification, f"p.R{i}H", str(i + 1),
+            str(i + 1), count, str(i % 22 + 1), f"n{i}", *(f"x{i}" for _ in range(extra)),
+        ]  # fmt: skip
+        out.append("\t".join(row) + "\n")
+    return "".join(out).encode()
+
+
+def case_list_file(ids: int, suffix: str = "sequenced", study: str = "m") -> bytes:
+    head = f"cancer_study_identifier: {study}\nstable_id: {study}_{suffix}\n"
+    head += f"case_list_name: List {suffix}\ncase_list_description: Ids {suffix}\n"
+    return (head + "case_list_ids: " + "\t".join(f"S{i}" for i in range(ids)) + "\n").encode()
+
+
+MUTATION_META = (
+    b"cancer_study_identifier: m\ngenetic_alteration_type: MUTATION_EXTENDED\ndatatype: MAF\n"
+    b"stable_id: mutations\nshow_profile_in_analysis_tab: true\nprofile_name: p\n"
+    b"profile_description: p\ndata_filename: data_mutations.txt\n"
+)
+MafShape = tuple[int, int, str]
+MAF_SIZES: dict[tuple[str, str], list[MafShape]] = {
+    ("blocks", "tall"): [(2_000, 0, "valid"), (20_000, 0, "valid")],
+    ("blocks", "wide"): [(20, 100, "valid"), (20, 1_000, "valid")],
+    ("blocks", "silent"): [(2_000, 0, "silent"), (20_000, 0, "silent")],
+    ("blocks", "unparsed"): [(2_000, 0, "unparsed"), (20_000, 0, "unparsed")],
+    ("bytes", "tall"): [(200, 0, "valid"), (2_000, 0, "valid")],
+}
+"""The MAF reader's shapes (review r2, M7): rows, columns, skip rows and unparseable cells."""
+StudyShape = tuple[int, int, int]
+"""A study's clinical samples, the ids of its one ``_sequenced`` list, and its further lists."""
+STUDY_SIZES: dict[tuple[str, str], list[StudyShape]] = {
+    ("blocks", "samples"): [(300, 100, 0), (3_000, 100, 0)],
+    ("blocks", "ids"): [(25_000, 1_000, 0), (25_000, 25_000, 0)],
+    ("bytes", "lists"): [(300, 100, 5), (300, 100, 200)],
+    ("bytes", "ids"): [(2_000, 200, 0), (2_000, 2_000, 0)],
+}
+"""An import's shapes: the sample-id set behind a fixed MAF, one list's ids, and many lists."""
+
+
+def _maf_read(measure: str) -> Callable[[Shape], int]:
+    def held(shape: Shape) -> int:
+        from aibi.packs.onco import meta, mutation
+
+        rows, extra, kind = shape  # pyright: ignore[reportAssignmentType]
+        data = maf_file(rows, extra, str(kind))
+        samples = frozenset(f"S{i}" for i in range(100))
+        fields = meta.MutationFields(None, None, (), "GRCh37")
+        limits = ImportLimits()
+        return MEASURES[measure](lambda: mutation.read(data, "m.txt", samples, fields, limits))
+
+    return held
+
+
+def _maf_imported(make_study: MakeStudy, measure: str) -> Callable[[Shape], int]:
+    def held(shape: Shape) -> int:
+        clinical, ids, lists = shape  # pyright: ignore[reportAssignmentType]
+        files: dict[str | bytes, object] = {
+            **META,
+            "data_clinical_patient.txt": patients(int(clinical)),
+            "data_clinical_sample.txt": samples(int(clinical)),
+            "meta_mutations.txt": MUTATION_META,
+            "data_mutations.txt": maf_file(200),
+            "case_lists": {
+                "cases_sequenced.txt": case_list_file(int(ids)),
+                **{f"cases_{k}.txt": case_list_file(50, f"l{k}") for k in range(int(lists))},
+            },
+        }
+        study = make_study(files)
+        importer: Any = importlib.import_module("aibi.packs.onco").PACK.importer
+
+        def call() -> object:
+            # The core's reader is made inside the call: it registers each entry it lists (its
+            # identity check), which is the core's and is dropped with the reader, not the pack's.
+            reader = Confinement.of(study.parent)
+            options = ImportOptions(
+                dataset="m", reader=reader, limits=ImportLimits(), at="2026-01-01T00:00:00Z"
+            )
+            return importer.import_source(reader.confine(study), options)
+
+        return MEASURES[measure](call)
+
+    return held
+
+
+def _grown_from(held: Callable[[Shape], int], measure: str, shapes: list[Any]) -> None:
+    held(shapes[0])  # a first call makes what the interpreter caches
+    small, large = held(shapes[0]), held(shapes[1])
+    assert large - small < GROWTH[measure], (measure, small, large)
+
+
+@pytest.mark.parametrize(("measure", "shape"), MAF_SIZES, ids=lambda key: key)
+def test_a_maf_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
+    _grown_from(_maf_read(measure), measure, MAF_SIZES[(measure, shape)])
+
+
+@pytest.mark.parametrize(("measure", "shape"), STUDY_SIZES, ids=lambda key: key)
+def test_an_import_with_a_maf_and_case_lists_retains_nothing_that_grows(
+    make_study: MakeStudy, measure: str, shape: str
+) -> None:
+    _grown_from(_maf_imported(make_study, measure), measure, STUDY_SIZES[(measure, shape)])
+
+
 # --- The marker scan: what of a file is reachable after each call -----------------------------
 
 SCAN = Path(__file__).resolve().with_name("retention_scan.py")
@@ -471,10 +590,12 @@ PINS = Path(__file__).resolve().with_name("retention_pins.py")
 TABLE = Path(__file__).resolve().parent / "retention_mutants" / "table.py"
 OUTCOMES = [
     "ok", "ok", "ok", "ok", "EXCEL_DATE", "MISSING_FORM", "TYPE_OF_CANCER", "ok", "ok",
+    "UNKNOWN_SAMPLE", "UNKNOWN_SAMPLE",
 ]  # fmt: skip
-"""The scan's nine calls: two imports, two reads, an import refused at its last patient row, a
+"""The scan's eleven calls: two imports, two reads, an import refused at its last patient row, a
 read refused at its end, the validator (which refuses the dataset's edited ``type_of_cancer``),
-the facet and the proposer."""
+the facet and the proposer, and from M4.2b-1b (D444) an import refused at its MAF's last row and
+one refused at its case list's last id (each study has a MAF and a case list)."""
 
 
 def test_nothing_of_a_file_is_reachable_after_any_call(scan: ModuleType) -> None:

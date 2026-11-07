@@ -11,13 +11,14 @@ only when ``closure(study)`` finds nothing wrong, by these legs, each a failure 
   ``(key, role)`` pairs, in order, and each row's meta types; so the whole rows.
 - **codomain**: ``meta.classify``, run over the guard's own metas, one for each pair of
   ``meta.PAIR_TYPES`` and each resource type of ``meta.RESOURCE_TYPES`` (``derived_heads``: every
-  type the pack's key tables name, never the oracle's lists; the clinical types of
-  ``meta.CLINICAL`` stay out, which would enter it), with the study meta, has exactly the types of
+  type the pack's key tables name, never the oracle's lists; the imported types of
+  ``meta.IMPORTED``, the clinical types and from M4.2b-1b the MAF's (D444), stay out, which
+  would enter it), with the study meta, has exactly the types of
   those tables and ``STUDY`` for its codomain. The cases are generated over that codomain.
 - **anchor**: the type facts are held to a derivation outside ``paths_oracle.py``, and the roles and
   keys to a structure, by statements of their own (``STATEMENTS``, each pinned by self-checks, one
   for each direction of an equality): ``pairs`` and ``resources``, the oracle's ``PAIRS`` and
-  ``RESOURCES`` are exactly the key tables' (clinical pairs left out); ``datatypes``, its
+  ``RESOURCES`` are exactly the key tables' (imported pairs left out); ``datatypes``, its
   ``DATA_TYPES`` are those tables' types without the clinical ones; ``holds``, the types whose
   ``meta.MANDATORY`` keys hold ``data_filename`` are the codomain without ``STUDY``; ``data``, the
   ``data_filename`` row's types are those; ``listing``, the ``listing:meta`` row's are exactly the
@@ -85,7 +86,7 @@ must add its own end-to-end test that an import through ``PACK.importer`` refuse
 Reads(S) at a ``data_filename``, and keeps ``discover``'s ``(reader, source, limits)`` signature
 and its refusal wording, so that ``paths_oracle.py`` stays as it is. The anchor's independence
 is the pack's own: it holds each type fact to ``meta.PAIR_TYPES``, ``RESOURCE_TYPES``,
-``MANDATORY`` and ``CLINICAL``, so a bug those tables share with ``discover`` is not caught
+``MANDATORY`` and ``IMPORTED``, so a bug those tables share with ``discover`` is not caught
 here (the paths corpus and its live reference cells are the anchor for that).
 """
 
@@ -175,11 +176,12 @@ the case lists role's rows name after their ``:``."""
 
 
 def derived_heads(meta: Any) -> dict[str, str]:
-    """A meta file's head for each non-clinical pair of ``meta.PAIR_TYPES`` and each resource type
+    """A meta file's head for each pair of ``meta.PAIR_TYPES`` whose type is not imported
+    (``meta.IMPORTED``) and each resource type
     of ``meta.RESOURCE_TYPES``, by the label of its entry in the table."""
     heads = {}
     for label, kind in meta.PAIR_TYPES.items():
-        if kind not in meta.CLINICAL:
+        if kind not in meta.IMPORTED:
             alteration, datatype = label.split(":", 1)
             heads[label] = f"genetic_alteration_type: {alteration}\ndatatype: {datatype}\n"
     for resource in meta.RESOURCE_TYPES:
@@ -188,9 +190,9 @@ def derived_heads(meta: Any) -> dict[str, str]:
 
 
 def tabled_types(meta: Any) -> set[str]:
-    """The non-clinical types the pack's key tables name, with ``STUDY``."""
+    """The types the pack's key tables name that it never imports, with ``STUDY``."""
     named = {*meta.PAIR_TYPES.values(), *meta.RESOURCE_TYPES.values()}
-    return named - meta.CLINICAL | {meta.STUDY}
+    return named - meta.IMPORTED | {meta.STUDY}
 
 
 def anchored(
@@ -219,7 +221,7 @@ def anchored(
     pairs = sorted(
         (*label.split(":", 1), kind)
         for label, kind in meta.PAIR_TYPES.items()
-        if kind not in meta.CLINICAL
+        if kind not in meta.IMPORTED
     )
     found = {
         "pairs": (sorted(oracle.PAIRS) == pairs, "the oracle's pairs are not the key table's"),
@@ -240,8 +242,8 @@ def anchored(
             "the data_filename row's types are not the codomain without STUDY",
         ),
         "listing": (
-            types.get("listing:meta") == codomain | meta.CLINICAL,
-            "the listing:meta row's types are not the codomain and the clinical types",
+            types.get("listing:meta") == codomain | meta.IMPORTED,
+            "the listing:meta row's types are not the codomain and the imported types",
         ),
         "pd": (
             types.get("pd_annotations_filename") == {labelled.get(DISCRETE_CNA)},
@@ -385,19 +387,20 @@ def test_discover_not_reachable_before_paths(onco: ModuleType) -> None:
 
 
 def test_the_real_table_is_closed() -> None:
-    """The pack's ``study``, under a wired importer, is closed: 26 types (25 data types and the
-    study meta) for each of the 3 checked rows, 27 of them refuse cases (25, 1 and 1), and a case
-    for each of the 3 declared rows."""
+    """The pack's ``study``, under a wired importer, is closed: 25 types (24 data types and the
+    study meta: from M4.2b-1b the MAF's type is imported, D444) for each of the 3 checked rows, 26
+    of them refuse cases (24, 1 and 1), and a case for each of the 3 declared rows."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(study) == Verdict(None, 81, 27)
+    assert closure(study) == Verdict(None, 78, 26)
     assert closed(WIRED, study)
 
 
 def test_the_never_imported_type_is_not_imported() -> None:
     """The type the corpus builds its cells from (``paths_oracle.NEVER_IMPORTED``) is one the pack
     does not import: its pair is in the oracle's ``PAIRS`` and classifies to its type, which is
-    not a clinical type (the roles the importer reads) and is among ``NON_CLINICAL_DATA``. It fails
-    if the type becomes a clinical type or leaves ``NON_CLINICAL_DATA``, that is, when the pack's
+    not an imported type (``meta.IMPORTED``: the roles the importer reads) and is among
+    ``NON_CLINICAL_DATA``. It fails if the type becomes imported or leaves ``NON_CLINICAL_DATA``,
+    that is, when the pack's
     own tables say it is read, not on any other import of it. Then the cells that use it, which
     would otherwise pass without testing a never-imported type, move to another type: choose one
     whose profile needs no case list (V:5034-5048), change the constant in ``paths_oracle.py`` and
@@ -409,7 +412,7 @@ def test_the_never_imported_type_is_not_imported() -> None:
     study = importlib.import_module(MODULE + ".study")
     found = {"genetic_alteration_type": alteration, "datatype": datatype}
     assert meta.classify(found, "meta_x.txt") == kind
-    assert kind not in meta.CLINICAL
+    assert kind not in meta.IMPORTED
     assert kind in study.NON_CLINICAL_DATA
 
 
@@ -906,7 +909,7 @@ STATEMENT_CASES = [
 def test_the_stand_in_is_the_pack_s_own_behaviour() -> None:
     """The control of the self-checks: ``Consulting`` with no change is closed."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(Consulting(study)) == Verdict(None, 81, 27)
+    assert closure(Consulting(study)) == Verdict(None, 78, 26)
 
 
 @pytest.mark.parametrize("name", list(MUTANTS))
@@ -957,13 +960,13 @@ def test_each_anchor_statement_is_needed(
 def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """For each of the 25 data types in turn: dropped from every row of the table and from the
+    """For each of the 24 data types in turn: dropped from every row of the table and from the
     oracle's rows, pairs, resource types and data types alike (the pack's key tables still name
     it), the guard is red at the anchor leg, whatever another row still covers."""
     study = importlib.import_module(MODULE + ".study")
     oracle = helper("paths_oracle")
     kinds = sorted(oracle.DATA_TYPES)
-    assert len(kinds) == 25
+    assert len(kinds) == 24
     for kind in kinds:
         with monkeypatch.context() as patch:
             subject, given = dropped_in_both(kind)(study, patch)
@@ -976,7 +979,7 @@ def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
 def test_a_row_swapped_to_one_type_in_both_is_red(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The PD row and the tags row, each swapped to every one type (the 25 data types and
+    """The PD row and the tags row, each swapped to every one type (the 24 data types and
     ``STUDY``) in the table and the hand rows alike: red at the anchor leg for all but the type the
     row reads (the control, which is closed)."""
     study = importlib.import_module(MODULE + ".study")
@@ -988,11 +991,11 @@ def test_a_row_swapped_to_one_type_in_both_is_red(
             subject, given = swapped_in_both(key, kind)(study, patch)
             verdict = closure(subject, **given)
         if real == {kind}:
-            assert verdict == Verdict(None, 81, 27), kind
+            assert verdict == Verdict(None, 78, 26), kind
         else:
             assert (verdict.failure or "").split(":")[0] == "anchor", (kind, verdict)
             red += 1
-    assert red == 25
+    assert red == 24
 
 
 def test_the_table_is_restored_when_discover_raises() -> None:
