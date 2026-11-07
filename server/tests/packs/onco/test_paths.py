@@ -297,7 +297,8 @@ NFC_SAMPLE = unicodedata.normalize("NFC", "data_clinical_samplé.txt")
 NFD_SAMPLE = unicodedata.normalize("NFD", NFC_SAMPLE)
 NFC_TAGS = unicodedata.normalize("NFC", "tagé.yml")
 NFD_TAGS = unicodedata.normalize("NFD", NFC_TAGS)
-CASES_SUBDIR = "a subdirectory (case lists are M4.2b's)"
+CASES_READ = None
+"""A ``case_lists`` directory has no skip note: from M4.2b-1b the importer reads it (D444)."""
 BACKUP = "an editor or OncoKB backup"
 HIDDEN = "a hidden file"
 
@@ -366,7 +367,7 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "18": (cell(("tags.yml", YAML), study="tags.yml"), Accept({"tags.yml": TAGS_NOTE})),
     "19": (
         cell(("case_lists/cases_x.txt", (SYM, "../data_clinical_sample.txt"))),
-        Accept({"case_lists": CASES_SUBDIR}),
+        Accept({"case_lists": CASES_READ}),
     ),
     "20": (
         cell(
@@ -471,7 +472,7 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
     "61": (cell(("meta_meth.txt", meth_meta(""))), data("meta_meth.txt", P0)),
     "62": (
         cell(("meta_meth.txt", meth_meta("case_lists")), ("case_lists", {})),
-        Accept({"case_lists": CASES_SUBDIR}),
+        Accept({"case_lists": CASES_READ}),
     ),
     "63": (cell(("meta_meth.txt", meth_meta("nofile.txt"))), Accept()),
     "64": (

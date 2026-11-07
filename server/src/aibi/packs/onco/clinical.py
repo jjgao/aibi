@@ -186,6 +186,9 @@ class Clinical:
     keys: frozenset[str] = frozenset()
     dangling: int = 0
     dangling_rows: tuple[int, ...] = ()
+    samples: frozenset[str] = frozenset()
+    """For a sample file: its ``SAMPLE_ID`` values, which the MAF's and the case lists'
+    sample ids are checked against (D444)."""
 
     @property
     def cells(self) -> int:
@@ -268,6 +271,7 @@ class _Reading:
         self.rows = 0
         self.columns: list[Column] = []
         self.keys: set[str] = set()
+        self.samples: set[str] = set()
         self.dangling = 0
         self.dangling_rows: list[int] = []
 
@@ -460,6 +464,7 @@ class _Reading:
         self.is_key = [name in keys for name in self.names]
         self.sample_id = [name == SAMPLE_ID for name in self.names]
         self.patient_id = self.names.index(PATIENT_ID)
+        self.sample_index = self.names.index(SAMPLE_ID) if self.role == "sample" else -1
         self.excel = [not dated_column(name) for name in self.names]
         self.boolean = [
             kind == "BOOLEAN" and not key for kind, key in zip(declared, self.is_key, strict=True)
@@ -573,6 +578,8 @@ class _Reading:
             self.dangling += 1
             if len(self.dangling_rows) < ROWS_SHOWN:
                 self.dangling_rows.append(row)
+        if self.role == "sample":
+            self.samples.add(fields[self.sample_index])
         for index, cell in enumerate(fields):
             if cell == "" or self.is_key[index]:
                 continue
@@ -655,6 +662,7 @@ class _Reading:
             keys=frozenset(self.keys),
             dangling=self.dangling,
             dangling_rows=tuple(self.dangling_rows),
+            samples=frozenset(self.samples),
         )
 
 
