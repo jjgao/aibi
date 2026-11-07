@@ -42,7 +42,14 @@ by name:
 8. the study meta's values;
 9. each meta file's data and PD values, the metas in the order of their names, and within one
    its ``data_filename`` before its ``pd_annotations_filename`` (the order of ``PATH_SITES``);
-10. the study meta's ``tags_file``.
+10. the study meta's ``tags_file``;
+11. the entry ``case_lists``: a symlink is ``CASE_LISTS`` (stricter: the reference follows it,
+    V:5566); a directory is read by the importer's case-list reader (``caselists``, D444).
+
+From M4.2b-1b (D444) the mutation meta's data file is an imported role, as a clinical meta's is
+(phase 7, ``meta.IMPORTED``): a second mutation meta is ``DUPLICATE_PROFILE_META`` (phase 6),
+and the mutation meta's values (``meta.mutation_fields``) are checked after the study meta's
+(phase 8); the MAF is a member of Reads(S), so phase 9 refuses another meta naming it.
 
 **What it says.** A refusal or a note names an entry as ``data`` only (``refusals.shown``), and
 never a value a file holds. Every entry discover does not import gets one ``skipped_source``
@@ -66,11 +73,14 @@ from aibi.core.schema.pack_api import (
 from aibi.core.schema.refusals import RefusalCode
 from aibi.packs.onco.meta import (
     CLINICAL,
+    IMPORTED,
     MANDATORY,
     META_MOST,
+    MUTATION,
     PATIENT,
     SAMPLE,
     STUDY,
+    MutationFields,
     StudyFields,
     check_mandatory,
     classify,
@@ -78,6 +88,7 @@ from aibi.packs.onco.meta import (
     file_name,
     fold,
     meta_named,
+    mutation_fields,
     one_name,
     parse,
     stable_id,
@@ -108,8 +119,11 @@ TAGS = "tags"
 LISTING = "listing"
 """A ``PATH_SITES`` role: the listing of the study's directory that Meta(S) is taken from."""
 CASE_LISTS = "case lists"
-"""A ``PATH_SITES`` role: what the reference reads of ``case_lists/``, which ``discover`` does
-not list (exit 3 (19); the contents are M4.2b's)."""
+"""A ``PATH_SITES`` role: what the reference lists and reads of ``case_lists/``. ``discover``
+checks the entry ``case_lists`` alone (phase 11: a directory, never a symlink) and does not list
+it; the importer's case-list reader (``caselists.read``) lists it and reads every entry but the
+dot and ``~`` names, as the reference does (V:4900-4901, D444)."""
+CASE_LISTS_ENTRY = "case_lists"
 
 
 @dataclass(frozen=True)
@@ -127,10 +141,11 @@ class PathSite:
 
 
 NON_CLINICAL_DATA = (
-    frozenset(kind for kind, keys in MANDATORY.items() if "data_filename" in keys) - CLINICAL
+    frozenset(kind for kind, keys in MANDATORY.items() if "data_filename" in keys) - IMPORTED
 )
-"""The types whose meta files name a data file M4.2a never imports: every type whose mandatory
-keys hold ``data_filename`` (C:95-370; all but the study meta), but the clinical ones."""
+"""The types whose meta files name a data file the pack never imports: every type whose
+mandatory keys hold ``data_filename`` (C:95-370; all but the study meta), but the imported ones
+(``meta.IMPORTED``: the clinical types and, from M4.2b-1b, the MAF's, D444)."""
 
 PATH_SITES: tuple[PathSite, ...] = (
     PathSite(
@@ -200,7 +215,8 @@ PATH_SITES: tuple[PathSite, ...] = (
 cbioportal-core 47890bb (no tool reading its source is part of the repository; a moved pin is
 surveyed again by hand, D409). ``discover`` resolves the rows of the roles ``DATA`` (phase 9, in
 this order within a meta file) and ``TAGS`` (phase 10), for the meta types each names; the
-listing is its own; the case lists are not listed (exit 3 (19))."""
+listing is its own; the case lists rows are the importer's case-list reader's (``caselists``),
+which reads every entry the ``listing:case_lists`` row describes (D444)."""
 
 _DATA_FILE_NOTE = "a data file of a meta file M4.2a does not import"
 _TAGS_NOTE = "the study's tags file"
@@ -215,13 +231,26 @@ class ClinicalMeta:
 
 
 @dataclass(frozen=True)
+class MutationMeta:
+    """The mutation meta file, by its entry's name, its MAF, a listed regular file, and the
+    meta's values the MAF reader needs."""
+
+    meta: str
+    data: DirectoryEntry
+    fields: MutationFields
+
+
+@dataclass(frozen=True)
 class Study:
-    """What ``discover`` found: the study meta's values, the clinical metas and the notes."""
+    """What ``discover`` found: the study meta's values, the clinical metas, the mutation meta,
+    the ``case_lists`` directory's entry when the study has one, and the notes."""
 
     fields: StudyFields
     patient: ClinicalMeta | None
     sample: ClinicalMeta
     notes: tuple[ImportNote, ...]
+    mutation: MutationMeta | None = None
+    case_lists: bool = False
 
 
 def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> dict[str, str]:
@@ -246,9 +275,10 @@ def _clinical_data(
     listed: Mapping[str, DirectoryEntry],
     metas: frozenset[str],
 ) -> DirectoryEntry:
-    """The data file the clinical meta ``name`` names: its ``data_filename``, through P0
-    (``meta.file_name``), must be exactly the name of a listed regular file outside Meta(S).
-    There is no case or normalisation fold, and nothing is followed."""
+    """The data file the imported meta ``name`` (a clinical meta, or the mutation meta)
+    names: its ``data_filename``, through P0 (``meta.file_name``), must be exactly the name of a
+    listed regular file outside Meta(S). There is no case or normalisation fold, and nothing is
+    followed."""
     normal = file_name(found["data_filename"])
     if normal is None:
         raise entry_refused(
@@ -311,8 +341,6 @@ def _skip_reason(entry: DirectoryEntry, why: Mapping[str, str]) -> str:
     if entry.name in why:
         return why[entry.name]
     if entry.kind == "directory":
-        if entry.name == "case_lists":
-            return "a subdirectory (case lists are M4.2b's)"
         return "a subdirectory"
     if entry.kind == "symlink":
         return "a symlink"
@@ -391,8 +419,12 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
 
     clinical: dict[str, str] = {}
     for name, (kind, _) in metas.items():
-        if kind in CLINICAL:
+        if kind in IMPORTED:
             if kind in clinical:
+                if kind == MUTATION:
+                    raise entry_refused(
+                        "DUPLICATE_PROFILE_META", name, "is a second mutation meta file"
+                    )
                 raise entry_refused(
                     "DUPLICATE_CLINICAL_META", name, "is a second clinical meta file of its kind"
                 )
@@ -410,8 +442,21 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             clinical[PATIENT],
             "has a data_filename that names the other clinical meta file's data file",
         )
+    if MUTATION in data and data[MUTATION].name in {
+        data[kind].name for kind in CLINICAL if kind in data
+    }:
+        raise entry_refused(
+            "DATA_FILE",
+            clinical[MUTATION],
+            "has a data_filename that names a clinical meta file's data file",
+        )
 
     fields = study_fields(study, study_name)
+    mutation: MutationMeta | None = None
+    if MUTATION in clinical:
+        name = clinical[MUTATION]
+        found = mutation_fields(metas[name][1], name, fields.reference_genome)
+        mutation = MutationMeta(name, data[MUTATION], found)
 
     reads = frozenset({*in_meta, *(entry.name for entry in data.values())})
     folded: dict[str, list[DirectoryEntry]] = {}
@@ -426,7 +471,19 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
                 if named is not None:
                     why.setdefault(named.name, note)
 
-    used = frozenset({study_name, *clinical.values(), *(entry.name for entry in data.values())})
+    lists = listed.get(CASE_LISTS_ENTRY)
+    if lists is not None and lists.kind == "symlink":
+        raise entry_refused("CASE_LISTS", lists.name, "is a symlink, which the pack never follows")
+    has_lists = lists is not None and lists.kind == "directory"
+
+    used = frozenset(
+        {
+            study_name,
+            *clinical.values(),
+            *(entry.name for entry in data.values()),
+            *((CASE_LISTS_ENTRY,) if has_lists else ()),
+        }
+    )
     for name in metas:
         why.setdefault(name, "a meta file of a type M4.2a does not import")
     notes = _notes(entries, used, why)
@@ -434,11 +491,19 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         message = [text("the study's tags file is not read by M4.2a")]
         notes.append(ImportNote("not_proposed", None, message))
     patient = ClinicalMeta(clinical[PATIENT], data[PATIENT]) if PATIENT in data else None
-    return Study(fields, patient, ClinicalMeta(clinical[SAMPLE], data[SAMPLE]), tuple(notes))
+    return Study(
+        fields,
+        patient,
+        ClinicalMeta(clinical[SAMPLE], data[SAMPLE]),
+        tuple(notes),
+        mutation=mutation,
+        case_lists=has_lists,
+    )
 
 
 __all__ = [
     "CASE_LISTS",
+    "CASE_LISTS_ENTRY",
     "DATA",
     "LISTING",
     "META_FILES_MOST",
@@ -447,6 +512,7 @@ __all__ = [
     "PATH_SITES",
     "TAGS",
     "ClinicalMeta",
+    "MutationMeta",
     "PathSite",
     "Study",
     "discover",

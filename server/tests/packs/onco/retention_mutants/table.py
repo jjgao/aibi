@@ -111,7 +111,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "NB02",
@@ -132,7 +132,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "NB03",
@@ -153,7 +153,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport io as _io\n_ROW = _io.StringIO()\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB04",
@@ -236,7 +236,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-4, 7-9; hits after 1-4, 7-9",
+        scan="allow at import; snapshot after 1-4, 7-11; hits after 1-4, 7-11",
     ),
     Mutant(
         "NB04d",
@@ -266,7 +266,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-4, 7-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-4, 7-11",
     ),
     Mutant(
         "NB05",
@@ -290,7 +290,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB06",
@@ -311,7 +311,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "from array import array as _array\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB07",
@@ -331,7 +331,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB08",
@@ -351,7 +351,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB09",
@@ -368,7 +368,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport threading as _threading\n_LOCAL = _threading.local()\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB10",
@@ -390,7 +390,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import sys as _sys\n",
             ),
         ),
-        scan="allow at import; hits after 1-9",
+        scan="allow at import; hits after 1-11",
     ),
     Mutant(
         "NB11",
@@ -416,7 +416,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 5-9; hits after 5-9",
+        scan="allow at import; snapshot after 5-11; hits after 5-11",
     ),
     Mutant(
         "NB11b",
@@ -442,7 +442,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 5-9; hits after 5-9",
+        scan="allow at import; snapshot after 5-11; hits after 5-11",
     ),
     Mutant(
         "NB12",
@@ -463,7 +463,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import sys as _sys\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB13",
@@ -483,7 +483,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB14",
@@ -500,7 +500,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 BY + "from types import SimpleNamespace as _NS\n_LAST = _NS(ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB15",
@@ -521,7 +521,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    pass\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB16",
@@ -541,7 +541,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "NB17",
@@ -563,7 +563,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=(), ids=())\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C01",
@@ -576,7 +576,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 " (identifier[:8],))[-128:]  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C02",
@@ -604,7 +604,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-4, 7-9",
+        scan="snapshot after 1-4, 7-11",
     ),
     Mutant(
         "C02p",
@@ -630,7 +630,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-4, 7-9",
+        scan="snapshot after 1-4, 7-11",
     ),
     Mutant(
         "C03",
@@ -656,7 +656,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            del Clinical._h  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-4, 7-9; hits after 1-4, 7-9",
+        scan="snapshot after 1-4, 7-11; hits after 1-4, 7-11",
     ),
     Mutant(
         "C04",
@@ -668,7 +668,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        self._last = options.dataset[:8]\n" + IMPORT_START,
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C05",
@@ -712,7 +712,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.schemas import DATASET as _DS\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C07",
@@ -729,7 +729,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.concepts import CONCEPTS as _C\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C07b",
@@ -747,7 +747,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom aibi.packs.onco.concepts import CONCEPTS as _C\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C08",
@@ -760,7 +760,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        return _ADAPTER.validate_python(written)",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C09",
@@ -772,7 +772,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        read.__dict__['_p'] = identifier[:8]\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C10",
@@ -784,7 +784,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        read.__kwdefaults__['_p'] = identifier[:8]  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C11",
@@ -805,7 +805,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C11i",
@@ -826,7 +826,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C12",
@@ -846,7 +846,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C13",
@@ -867,7 +867,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C14",
@@ -911,7 +911,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C16",
@@ -931,7 +931,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C17",
@@ -952,7 +952,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C18",
@@ -972,7 +972,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C19",
@@ -989,7 +989,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport warnings as _warnings\n",
             ),
         ),
-        scan="allow after 1-9; snapshot after 1-9",
+        scan="allow after 1-11; snapshot after 1-11",
     ),
     Mutant(
         "C20",
@@ -1027,7 +1027,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport os as _os\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C21",
@@ -1045,7 +1045,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport tempfile as _tempfile\n",
             ),
         ),
-        scan="allow after 1-9; snapshot after 1-9",
+        scan="allow after 1-11; snapshot after 1-11",
     ),
     Mutant(
         "C21b",
@@ -1103,7 +1103,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport re as _re\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C23p",
@@ -1145,7 +1145,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import io as _io\n",
             ),
         ),
-        scan="allow after 1-9; snapshot after 1-9",
+        scan="allow after 1-11; snapshot after 1-11",
     ),
     Mutant(
         "C25",
@@ -1158,7 +1158,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 " type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "C26",
@@ -1175,7 +1175,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport threading as _threading\n_L = _threading.local()\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C27",
@@ -1232,7 +1232,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "next(_G)\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C30",
@@ -1251,7 +1251,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_memo = _sys2.modules['functools'].lru_cache(maxsize=128)(str)\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
         banned=True,
     ),
     Mutant(
@@ -1269,7 +1269,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\n@dataclass(frozen=True)\nclass _Frozen:\n    d: dict\n_F = _Frozen({})\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C32",
@@ -1290,7 +1290,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_T = _Tup([])\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C33",
@@ -1314,7 +1314,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\n@dataclass(frozen=True)\nclass _Box:\n    d: dict\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C34",
@@ -1338,7 +1338,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_S = _Spoof()\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "C35",
@@ -1356,7 +1356,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport signal as _signal\nimport functools as _ft\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
         banned=True,
     ),
     Mutant(
@@ -1375,7 +1375,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport sys as _sys3\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C37",
@@ -1387,7 +1387,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    found: dict[str, list[str]] = {}\n    facet.__dict__['last'] = found\n",
             ),
         ),
-        scan="allow after 8-9; snapshot after 8-9; hits after 8-9",
+        scan="allow after 8-11; snapshot after 8-11; hits after 8-11",
     ),
     Mutant(
         "C38",
@@ -1400,7 +1400,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    propose.__dict__['last'] = dict(descriptors)\n",
             ),
         ),
-        scan="allow after 9; snapshot after 9; hits after 9",
+        scan="allow after 9-11; snapshot after 9-11; hits after 9-11",
     ),
     Mutant(
         "C40",
@@ -1423,7 +1423,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C41",
@@ -1446,7 +1446,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C42",
@@ -1469,7 +1469,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C43",
@@ -1492,7 +1492,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C44",
@@ -1514,7 +1514,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C45",
@@ -1537,7 +1537,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C46",
@@ -1560,7 +1560,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C46b",
@@ -1583,7 +1583,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C47",
@@ -1606,7 +1606,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C48",
@@ -1629,7 +1629,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C49",
@@ -1652,7 +1652,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C50",
@@ -1675,7 +1675,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C52",
@@ -1687,7 +1687,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    propose.__dict__['last'] = tuple(found)\n    return tuple(found)\n",
             ),
         ),
-        scan="allow after 9; snapshot after 9",
+        scan="allow after 9-11; snapshot after 9-11",
     ),
     Mutant(
         "C53",
@@ -1700,7 +1700,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "        OncoValidator.last = value  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 7-9; hits after 7-9",
+        scan="snapshot after 7-11; hits after 7-11",
     ),
     Mutant(
         "C54",
@@ -1714,7 +1714,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    if profiles:\n",
             ),
         ),
-        scan="allow after 8-9; snapshot after 8-9",
+        scan="allow after 8-11; snapshot after 8-11",
     ),
     Mutant(
         "C55",
@@ -1728,7 +1728,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "            Refusal(",
             ),
         ),
-        scan="snapshot after 7-9; hits after 7-9",
+        scan="snapshot after 7-11; hits after 7-11",
     ),
     Mutant(
         "C56",
@@ -1799,7 +1799,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "C59",
@@ -1822,7 +1822,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "import base64 as _b64\n",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
     ),
     Mutant(
         "S1",
@@ -2242,7 +2242,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
         tests=("test_nothing_of_a_file_is_reachable_after_any_call",),
     ),
     Mutant(
@@ -2341,7 +2341,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    return find.in_text(_units(elements))",
             ),
         ),
-        scan="hits after 1-9",
+        scan="hits after 1-11",
         tests=("test_nothing_of_a_file_is_reachable_after_any_call",),
     ),
     Mutant(
@@ -3066,7 +3066,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_STATE = _NS(last=None)\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9; hits after 1-9",
+        scan="allow at import; snapshot after 1-11; hits after 1-11",
     ),
     Mutant(
         "MR2",
@@ -3137,7 +3137,7 @@ MUTANTS: tuple[Mutant, ...] = (
             Edit(CLINICAL, ROW, ROW + "        _KEEP(identifier[:8])\n"),
             Edit(CLINICAL, HEAD, HEAD + "\n_KEEP = [].append\n"),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "N02",
@@ -3150,7 +3150,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nimport collections as _c\n_KEEP = _c.deque(maxlen=128).append\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "N03",
@@ -3159,7 +3159,7 @@ MUTANTS: tuple[Mutant, ...] = (
             Edit(CLINICAL, ROW, ROW + "        _M[identifier[:8]] = 1\n"),
             Edit(CLINICAL, HEAD, HEAD + "\nclass _D(dict):\n    pass\n_M = _D()\n"),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "N04",
@@ -3173,7 +3173,7 @@ MUTANTS: tuple[Mutant, ...] = (
             ),
             Edit(CLINICAL, HEAD, SYS),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N05",
@@ -3185,7 +3185,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        type.__setattr__(ParseSettings, '_p', identifier[:8])\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N06",
@@ -3200,7 +3200,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "_LOG.addHandler(_lh.BufferingHandler(10**6))\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "N07",
@@ -3267,7 +3267,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\n@dataclass(frozen=True)\nclass _PSC:\n    a: int = 1\n_PS = _PSC()\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N11",
@@ -3280,7 +3280,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 HEAD + "\nfrom typing import Annotated as _An\n_AL = _An[str, list()]\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "N12",
@@ -3317,7 +3317,7 @@ MUTANTS: tuple[Mutant, ...] = (
             ),
             Edit(IMPORTER, BY, BY + "import zlib as _zlib\n"),
         ),
-        scan="allow after 1-9; snapshot after 1-9",
+        scan="allow after 1-11; snapshot after 1-11",
     ),
     Mutant(
         "N15",
@@ -3329,7 +3329,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ROW + "        Clinical._n = Clinical.__dict__.get('_n', 0) + 1  # type: ignore\n",
             ),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N16",
@@ -3338,7 +3338,7 @@ MUTANTS: tuple[Mutant, ...] = (
             Edit(CLINICAL, ROW, ROW + "        _sys.modules[__name__].__doc__ = identifier[:8]\n"),
             Edit(CLINICAL, HEAD, SYS),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N17",
@@ -3351,13 +3351,13 @@ MUTANTS: tuple[Mutant, ...] = (
             ),
             Edit(CLINICAL, HEAD, SYS),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "N18",
         "an id's prefix on a core function the pack imports (is_text.__dict__)",
         (Edit(CLINICAL, ROW, ROW + "        is_text.__dict__['_p'] = identifier[:8]\n"),),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "P1",
@@ -3395,7 +3395,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    return tuple(found)\n",
             ),
         ),
-        scan="snapshot after 1-8",
+        scan="snapshot after 1-8, 10-11",
     ),
     Mutant(
         "RV1",
@@ -3448,7 +3448,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 CLINICAL, HEAD, HEAD + "\nimport types as _ty\n_STATE = _ty.ModuleType('state')\n"
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "RV4",
@@ -3489,7 +3489,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 "    return keep\n_KEEP = _mk()\n_KEEP.__module__ = 'json'\n",
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "P3",
@@ -4346,7 +4346,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ),
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "RX2",
@@ -4366,7 +4366,7 @@ MUTANTS: tuple[Mutant, ...] = (
                 ),
             ),
         ),
-        scan="allow at import; snapshot after 1-9",
+        scan="allow at import; snapshot after 1-11",
     ),
     Mutant(
         "RX3",
@@ -4375,7 +4375,7 @@ MUTANTS: tuple[Mutant, ...] = (
             Edit(CLINICAL, ROW + NEXT, ROW + "        _inf._onco_last = identifier[:8]\n" + NEXT),
             Edit(CLINICAL, HEAD, HEAD + ("\nimport aibi.core.importers.infer as _inf\n")),
         ),
-        scan="snapshot after 1-9",
+        scan="snapshot after 1-11",
     ),
     Mutant(
         "RX4",

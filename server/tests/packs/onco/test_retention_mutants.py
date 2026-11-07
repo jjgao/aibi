@@ -1,6 +1,6 @@
 """D438's mutation table for the retention guards (``retention_mutants/table.py``, issue #136): its
 anchors still name the code they change, every mutant has a stated outcome, and, under ``-m
-mutation`` (CI's ``mutation`` job, about 18 to 22 minutes: D438's figure), every mutant replayed
+mutation`` (CI's ``mutation`` job, about 18 to 27 minutes: D438's figure), every mutant replayed
 against a copy of the tree has that outcome (``retention_mutants/replay.py``)."""
 
 import importlib.util

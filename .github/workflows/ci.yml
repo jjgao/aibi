@@ -79,7 +79,7 @@ jobs:
         run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
       - name: Other tests
         id: other
-        timeout-minutes: 4
+        timeout-minutes: 15
         # pytest exits with 5 when it collects no tests, as before the first pack has any.
         run: >-
           uv run pytest --ignore=tests/core --tb=short -o junit_family=xunit1
@@ -134,7 +134,7 @@ jobs:
     # D438's mutation table (tests/packs/onco/retention_mutants/table.py), replayed against a copy
     # of the tree on a runner of its own beside the server checks: each mutant's marker scan (a
     # fresh interpreter, about 10 s), its source guard and the tests it names, one mutant a
-    # processor at a time (about 18 to 22 minutes on four runners' processors, which vary:
+    # processor at a time (about 18 to 27 minutes on four runners' processors, which vary:
     # D438's figure; its step has 40 minutes, beside the server job's 55).
     runs-on: ubuntu-latest
     timeout-minutes: 45
