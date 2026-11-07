@@ -574,18 +574,6 @@ EXIT_3: dict[str, tuple[dict[str, Any], list[str]]] = {
             "a data file of a meta file M4.2a does not import: «resource.txt»",
         ],
     ),
-    "a Latin-1 case list": (
-        {"case_lists": {"cases_all.txt": CASE_LIST + b"x: caf\xe9\n"}},
-        ["a subdirectory (case lists are M4.2b's): «case_lists»"],
-    ),
-    "a directory in case_lists": (
-        {"case_lists": {"cases_all.txt": {}}},
-        ["a subdirectory (case lists are M4.2b's): «case_lists»"],
-    ),
-    "a case list naming another study": (
-        {"case_lists": {"cases_all.txt": CASE_LIST.replace(b"demo_study", b"other")}},
-        ["a subdirectory (case lists are M4.2b's): «case_lists»"],
-    ),
     "a methylation file missing its columns": (
         {
             "meta_methylation.txt": METH_META,
@@ -618,19 +606,6 @@ EXIT_3: dict[str, tuple[dict[str, Any], list[str]]] = {
             "a meta file of a type M4.2a does not import: «meta_cancer_type.txt»",
         ],
     ),
-    # D409's (24) for the mutation type itself (M4.2b-1b, which imports it, states it again).
-    "a mutation meta without _sequenced": (
-        {
-            "meta_mutations.txt": MAF_META,
-            "data_mutations.txt": b"Hugo_Symbol\tTumor_Sample_Barcode\nTP53\tS1\n",
-            "case_lists": {"cases_all.txt": CASE_LIST},
-        },
-        [
-            "a subdirectory (case lists are M4.2b's): «case_lists»",
-            "a data file of a meta file M4.2a does not import: «data_mutations.txt»",
-            "a meta file of a type M4.2a does not import: «meta_mutations.txt»",
-        ],
-    ),
 }
 
 
@@ -643,11 +618,49 @@ def test_exit_3_imports_with_its_notes(
     assert notes_of(found) == [f"skipped_source: {note}" for note in notes]
 
 
-def test_a_symlinked_case_lists_imports(
-    make_study: Any, discovery: Any, base: Any, kinds: Any, notes_of: Any
+READ_BY_THE_IMPORTER: dict[str, dict[str, Any]] = {
+    "a Latin-1 case list": {"case_lists": {"cases_all.txt": CASE_LIST + b"x: caf\xe9\n"}},
+    "a directory in case_lists": {"case_lists": {"cases_all.txt": {}}},
+    "a case list naming another study": {
+        "case_lists": {"cases_all.txt": CASE_LIST.replace(b"demo_study", b"other")}
+    },
+}
+"""Studies that were exit 3 (19) until M4.2b-1b: ``discover`` accepts each with no note of
+``case_lists``, which the importer's case-list reader now reads and refuses (D444; the
+``list`` cells of ``test_mutation_corpus.py`` hold what it refuses against the reference)."""
+
+
+@pytest.mark.parametrize("case", list(READ_BY_THE_IMPORTER))
+def test_case_lists_are_the_importer_s_to_read(
+    make_study: Any, discovery: Any, base: Any, notes_of: Any, case: str
 ) -> None:
-    found = discovery.run(make_study({**base, "case_lists": kinds.symlink(".")}))
-    assert notes_of(found) == ["skipped_source: a symlink: «case_lists»"]
+    found = discovery.run(make_study({**base, **READ_BY_THE_IMPORTER[case]}))
+    assert found.case_lists is True
+    assert notes_of(found) == []
+
+
+def test_a_mutation_meta_is_discovered_with_its_maf(
+    make_study: Any, discovery: Any, base: Any, notes_of: Any
+) -> None:
+    """The mutation meta's MAF is an imported role (D444): discovered as its listing entry, with
+    no skip note for either file."""
+    base["meta_mutations.txt"] = MAF_META
+    base["data_mutations.txt"] = b"Hugo_Symbol\tTumor_Sample_Barcode\nTP53\tS1\n"
+    found = discovery.run(make_study(base))
+    assert found.mutation is not None
+    assert (found.mutation.meta, found.mutation.data.name) == (
+        "meta_mutations.txt",
+        "data_mutations.txt",
+    )
+    assert notes_of(found) == []
+
+
+def test_a_symlinked_case_lists_is_refused(
+    make_study: Any, discovery: Any, base: Any, kinds: Any
+) -> None:
+    """Stricter than the reference, which follows it (V:5566; D444)."""
+    refusal = discovery.refusal(make_study({**base, "case_lists": kinds.symlink(".")}))
+    assert str(refusal.code) == "onco.CASE_LISTS"
 
 
 def test_exit_1_a_study_without_an_all_list_imports(
@@ -687,7 +700,6 @@ def test_every_skip_reason(
     ]
     assert notes_of(found) == [
         "skipped_source: a hidden file: «.hidden»",
-        "skipped_source: a subdirectory (case lists are M4.2b's): «case_lists»",
         f"skipped_source: {DATA_NOTE}: «data_methylation.txt»",
         "skipped_source: not a regular file: «fifo»",
         "skipped_source: a symlink: «link»",
@@ -697,7 +709,7 @@ def test_every_skip_reason(
         "skipped_source: an editor or OncoKB backup: «x~»",
         "not_proposed: the study's tags file is not read by M4.2a",
     ]
-    assert [note.subject for note in found.notes] == [None] * 10
+    assert [note.subject for note in found.notes] == [None] * 9
     assert not any("named" in note for note in notes_of(found))
 
 
@@ -1607,8 +1619,27 @@ def test_the_refusal_codes_are_pinned() -> None:
         "BOOLEAN_VALUE",
         "MISSING_FORM",
         "TYPE_OF_CANCER",
+        "DUPLICATE_PROFILE_META",
+        "CASE_LISTS",
+        "CASE_LIST",
+        "NO_SEQUENCED_LIST",
+        "MISSING_COLUMN",
+        "COLUMN_NAME",
+        "DUPLICATE_COLUMN",
+        "NO_HEADER",
+        "UNKNOWN_SAMPLE",
+        "REQUIRED_VALUE",
+        "NO_GENE",
+        "ENTREZ_VALUE",
+        "COUNT_VALUE",
+        "POSITION_VALUE",
+        "AMINO_ACID_CHANGE",
+        "NCBI_BUILD",
+        "NORMAL_SAMPLE",
+        "DRIVER_VALUE",
+        "PADDED_VALUE",
     )
-    assert len(importlib.import_module(REFUSALS).CODES) == 42
+    assert len(importlib.import_module(REFUSALS).CODES) == 61
 
 
 # --- Sentinel: no value a file holds is shown -----------------------------------------------------

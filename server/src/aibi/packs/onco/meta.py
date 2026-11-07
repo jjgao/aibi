@@ -135,6 +135,11 @@ SAMPLE = "SAMPLE_ATTRIBUTES"
 PATIENT = "PATIENT_ATTRIBUTES"
 CLINICAL = frozenset({PATIENT, SAMPLE})
 """The clinical types, whose data files M4.2a imports."""
+MUTATION = "MUTATION"
+"""The type of a ``MUTATION_EXTENDED:MAF`` meta file, whose data file (a MAF) M4.2b-1b imports."""
+IMPORTED = CLINICAL | {MUTATION}
+"""The types whose data files the pack imports: the clinical types and the MAF's (D444). A meta
+file of any other type names a data file the pack never reads (D409's exit 3 (20))."""
 
 UNKNOWN_TYPE = "has no meta file type cBioPortal defines"
 
@@ -333,6 +338,10 @@ class StudyFields:
     groups: Checked | None = None
     short_name: Checked | None = None
     reference_genome: Checked | None = None
+    add_global_case_list: bool = False
+    """Whether the study meta's ``add_global_case_list``, lower-cased by ``str.lower``, is
+    ``true`` (V:4806-4808): the reference then defines the list ``<study>_all`` itself, and a
+    case list with that ``stable_id`` repeats it (D444)."""
 
 
 def _value_refused(name: str, key: str) -> Refused:
@@ -385,7 +394,155 @@ def study_fields(found: Mapping[str, str], name: str) -> StudyFields:
         groups=checked.get("groups"),
         short_name=checked.get("short_name"),
         reference_genome=genome,
+        add_global_case_list=found.get("add_global_case_list", "").lower() == "true",
     )
+
+
+# --- The mutation meta's values (C:178-206, C:731-791, C:980-990; V:1704-1735, V:2272) ---------
+
+MUTATION_STABLE_ID = "mutations"
+"""The one ``stable_id`` a ``MUTATION_EXTENDED:MAF`` meta may hold (C:747, the allowed
+combinations of ``validate_types_and_id``); another is the reference's error (cell r24)."""
+SWISSPROT_IDENTIFIERS = frozenset({"name", "accession"})
+"""The values a mutation meta's ``swissprot_identifier`` may hold (C:981-990)."""
+GENOME_BUILDS: Mapping[str, str] = MappingProxyType(
+    {"hg19": "GRCh37", "hg38": "GRCh38", "mm10": "GRCm38"}
+)
+"""The NCBI build of each ``reference_genome`` (V:4732-4736); a study that declares none is
+``GRCh37``'s (V:318-321)."""
+DEFAULT_BUILD = "GRCh37"
+
+
+@dataclass(frozen=True)
+class MutationFields:
+    """What the MAF reader needs of the mutation meta: the skip filter (``None`` for the
+    reference's default), the normal samples (``None`` when the key is absent or empty), the
+    namespaces, each stripped and lower-cased, and the study's NCBI build (V:2193-2208)."""
+
+    filter: tuple[str, ...] | None
+    normals: frozenset[str] | None
+    namespaces: tuple[str, ...]
+    build: str
+
+
+def mutation_fields(found: Mapping[str, str], name: str, genome: str | None) -> MutationFields:
+    """The mutation meta ``name``'s values the MAF reader needs, checked: ``stable_id`` must be
+    ``MUTATION_STABLE_ID`` (C:747) and ``swissprot_identifier``, where present, one of
+    ``SWISSPROT_IDENTIFIERS`` (C:981), else ``META_VALUE`` naming the key. The filter
+    *replaces* the default skip list (V:2272: cells v01-v03); the normal samples are the
+    comma-separated values, each stripped (V:2213); a namespace is a comma-separated value,
+    stripped and lower-cased (V:1414, V:1724)."""
+    if stable_id(found["stable_id"]) != MUTATION_STABLE_ID:
+        raise entry_refused("META_VALUE", name, "holds a stable_id that a mutation meta may not")
+    if "swissprot_identifier" in found and found["swissprot_identifier"] not in (
+        SWISSPROT_IDENTIFIERS
+    ):
+        raise entry_refused(
+            "META_VALUE", name, "holds a swissprot_identifier that is neither name nor accession"
+        )
+    filter_ = found.get("variant_classification_filter")
+    normals = found.get("normal_samples_list", "")
+    spaces = found.get("namespaces")
+    return MutationFields(
+        filter=None if filter_ is None else tuple(item.strip() for item in filter_.split(",")),
+        normals=None if normals == "" else frozenset(item.strip() for item in normals.split(",")),
+        namespaces=()
+        if spaces is None
+        else tuple(item.strip().lower() for item in spaces.split(",")),
+        build=DEFAULT_BUILD if genome is None else GENOME_BUILDS[genome],
+    )
+
+
+# --- A meta file's types and stable_id (C:731-805) ---------------------------------------------
+
+TYPES_AND_IDS: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("COPY_NUMBER_ALTERATION", "CONTINUOUS", "linear_CNA"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE", "cna"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE", "cna_consensus"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE", "cna_rae"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE", "gistic"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE_LONG", "cna"),
+        ("COPY_NUMBER_ALTERATION", "DISCRETE_LONG", "gistic"),
+        ("COPY_NUMBER_ALTERATION", "LOG2-VALUE", "log2CNA"),
+        ("GENERIC_ASSAY", "BINARY", "*"),
+        ("GENERIC_ASSAY", "CATEGORICAL", "*"),
+        ("GENERIC_ASSAY", "LIMIT-VALUE", "*"),
+        ("GENESET_SCORE", "GSVA-SCORE", "gsva_scores"),
+        ("GENESET_SCORE", "P-VALUE", "gsva_pvalues"),
+        ("METHYLATION", "CONTINUOUS", "methylation_epic"),
+        ("METHYLATION", "CONTINUOUS", "methylation_hm27"),
+        ("METHYLATION", "CONTINUOUS", "methylation_hm450"),
+        ("METHYLATION", "CONTINUOUS", "methylation_promoters_rrbs"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mirna"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_U133"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_seq_cpm"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_seq_fpkm"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_seq_fpkm_capture"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_seq_fpkm_polya"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "mrna_seq_tpm"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "rna_seq_mrna"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "rna_seq_mrna_capture"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "rna_seq_v2_mrna"),
+        ("MRNA_EXPRESSION", "CONTINUOUS", "rna_seq_v2_mrna_median_normals"),
+        ("MRNA_EXPRESSION", "DISCRETE", "mrna_outliers"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mirna_median_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_U133_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_U133_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_median_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_median_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_merged_median_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_cpm_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_cpm_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_capture_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_capture_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_polya_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_fpkm_polya_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_read_counts_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_tpm_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_seq_tpm_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "mrna_zbynorm"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_mrna_capture_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_mrna_capture_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_mrna_median_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_mrna_median_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_v2_mrna_median_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_v2_mrna_median_all_sample_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_v2_mrna_median_all_sample_ref_normal_Zscores"),
+        ("MRNA_EXPRESSION", "Z-SCORE", "rna_seq_v2_mrna_median_normals_Zscores"),
+        ("MUTATION_EXTENDED", "MAF", "mutations"),
+        ("MUTATION_UNCALLED", "MAF", "mutations_uncalled"),
+        ("PROTEIN_LEVEL", "CONTINUOUS", "protein_quantification"),
+        ("PROTEIN_LEVEL", "LOG2-VALUE", "protein_quantification"),
+        ("PROTEIN_LEVEL", "LOG2-VALUE", "rppa"),
+        ("PROTEIN_LEVEL", "Z-SCORE", "protein_quantification_zscores"),
+        ("PROTEIN_LEVEL", "Z-SCORE", "rppa_Zscores"),
+        ("STRUCTURAL_VARIANT", "SV", "structural_variants"),
+    }
+)
+"""The ``(genetic_alteration_type, datatype, stable_id)`` combinations the reference accepts
+(C:738-791, a fact re-expressed as data; ``*`` is any ``stable_id``). It checks them for any
+meta file that holds all three keys and whose type requires a ``stable_id``, a case list among
+them (C:896-903): a case list holding a ``genetic_alteration_type`` and a ``datatype`` is the
+reference's error unless the three make a combination here (D444)."""
+
+
+def types_and_id(found: Mapping[str, str]) -> bool:
+    """Whether the reference's combination check (C:805-818) passes ``found``: it does when one
+    of the three keys is absent."""
+    keys = ("genetic_alteration_type", "datatype", "stable_id")
+    if not all(key in found for key in keys):
+        return True
+    alteration, datatype, stable = (found[key] for key in keys)
+    return (alteration, datatype, stable) in TYPES_AND_IDS or (
+        alteration,
+        datatype,
+        "*",
+    ) in TYPES_AND_IDS
 
 
 # --- The clinical role's file names (D409, P0) ---------------------------------------------------
@@ -439,13 +596,17 @@ def fold(name: str) -> str:
 
 __all__ = [
     "CLINICAL",
+    "GENOME_BUILDS",
+    "IMPORTED",
     "MANDATORY",
     "META_MOST",
+    "MUTATION",
     "PAIR_TYPES",
     "PATIENT",
     "RESOURCE_TYPES",
     "SAMPLE",
     "STUDY",
+    "MutationFields",
     "StudyFields",
     "check_mandatory",
     "classify",
@@ -453,8 +614,10 @@ __all__ = [
     "file_name",
     "fold",
     "meta_named",
+    "mutation_fields",
     "one_name",
     "parse",
     "stable_id",
     "study_fields",
+    "types_and_id",
 ]

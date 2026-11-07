@@ -690,10 +690,52 @@ def sample_file(marker: Marker) -> bytes:
     return "".join(out).encode()
 
 
-def study(root: Path, marker: Marker, patient: bytes) -> Path:
+MAF_NAMES = (
+    "Hugo_Symbol",
+    "Entrez_Gene_Id",
+    "Tumor_Sample_Barcode",
+    "Variant_Classification",
+    "HGVSp_Short",
+)
+
+
+def maf_file(marker: Marker, *, late: bool = False) -> bytes:
+    """A MAF of ``ROWS`` rows (M4.2b-1b, D444), a value of the marker in every value-bearing
+    position: its top line, a column of its own, every row class (validated, ``Silent``, and
+    ``Unknown`` with Entrez ``0``), the barcodes (the sample file's ids) and the amino-acid
+    changes. With ``late`` the last row's barcode is no sample's, which the reader refuses there."""
+    lo, up, _ = marker
+    names = [*MAF_NAMES, f"M_{up}"]
+    out = [f"#version {lo}\n", "\t".join(names) + "\n"]
+    for i in range(ROWS):
+        if i % 7 == 0:
+            hugo, entrez, kind = "Unknown", "0", "IGR"
+        else:
+            hugo, entrez, kind = f"G{i}{up}", str(i + 1), ("Silent", "Missense_Mutation")[i % 2]
+        barcode = f"X{up}" if late and i == ROWS - 1 else f"S{i}{up}"
+        out.append("\t".join([hugo, entrez, barcode, kind, f"p.R{i}{up}", f"c{i}{lo}"]) + "\n")
+    return "".join(out).encode()
+
+
+def case_list_file(marker: Marker, *, late: bool = False) -> bytes:
+    """The ``_sequenced`` case list: its study id, name and description carry the marker, its
+    ids are the sample file's; with ``late`` its last id is no sample's."""
+    lo, up, _ = marker
+    ids = [f"S{i}{up}" for i in range(ROWS)] + ([f"Z{up}"] if late else [])
+    return (
+        f"cancer_study_identifier: m_{lo}\nstable_id: m_{lo}_sequenced\n"
+        f"case_list_name: List {up}\ncase_list_description: Ids {lo}\n"
+        "case_list_category: all_cases_with_mutation_data\n"
+        "case_list_ids: " + "\t".join(ids) + "\n"
+    ).encode()
+
+
+def study(
+    root: Path, marker: Marker, patient: bytes, *, maf_late: bool = False, list_late: bool = False
+) -> Path:
     """A study directory whose every meta value, file name and directory name carries the marker,
     but for cBioPortal's vocabulary (``FIELDS``): its ``type_of_cancer`` is an OncoTree code by
-    its form, as the validator reads it."""
+    its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444)."""
     lo, up, _ = marker
     directory = root / f"s{lo}"
     directory.mkdir()
@@ -711,11 +753,22 @@ def study(root: Path, marker: Marker, patient: bytes) -> Path:
             f"cancer_study_identifier: m_{lo}\ngenetic_alteration_type: CLINICAL\n"
             f"datatype: SAMPLE_ATTRIBUTES\ndata_filename: sample_{lo}.txt\n"
         ),
+        "meta_mutations.txt": (
+            f"cancer_study_identifier: m_{lo}\ngenetic_alteration_type: MUTATION_EXTENDED\n"
+            "datatype: MAF\nstable_id: mutations\nshow_profile_in_analysis_tab: true\n"
+            f"profile_name: Profile {up}\nprofile_description: Calls {lo}\n"
+            f"data_filename: maf_{lo}.txt\n"
+        ),
     }
     for name, text in meta.items():
         (directory / name).write_text(text, encoding="utf-8")
     (directory / f"patient_{lo}.txt").write_bytes(patient)
     (directory / f"sample_{lo}.txt").write_bytes(sample_file(marker))
+    (directory / f"maf_{lo}.txt").write_bytes(maf_file(marker, late=maf_late))
+    (directory / "case_lists").mkdir()
+    (directory / "case_lists" / f"cases_{lo}.txt").write_bytes(
+        case_list_file(marker, late=list_late)
+    )
     return directory
 
 
@@ -733,6 +786,8 @@ class Call(NamedTuple):
     named: bool = False
     late: str | None = None
     overflow: bool = False
+    maf_late: bool = False
+    list_late: bool = False
 
 
 CALLS = (
@@ -745,6 +800,8 @@ CALLS = (
     Call("validate", named=True),
     Call("facet", named=True),
     Call("propose", named=True),
+    Call("import", maf_late=True),
+    Call("import", list_late=True),
 )
 
 
@@ -813,7 +870,13 @@ def run(
     limits = ImportLimits()
 
     def imported(marker: Marker, call: Call) -> Any:
-        directory = study(root, marker, patient_of(marker, call))
+        directory = study(
+            root,
+            marker,
+            patient_of(marker, call),
+            maf_late=call.maf_late,
+            list_late=call.list_late,
+        )
         reader = Confinement.of(directory.parent)
         options = ImportOptions(
             dataset=fresh(marker.lower),
@@ -943,8 +1006,37 @@ FIELDS: Mapping[str, frozenset[str]] = {
     "sample: TMB": frozenset({"#.#"}),
     "sample: S_{up}": frozenset(),
     "a study's file name": frozenset(
-        {"meta_study.txt", "meta_clinical_patient.txt", "meta_clinical_sample.txt"}
+        {
+            "meta_study.txt",
+            "meta_clinical_patient.txt",
+            "meta_clinical_sample.txt",
+            "meta_mutations.txt",
+            "case_lists",
+        }
     ),
+    "meta_mutations.txt: cancer_study_identifier": frozenset(),
+    "meta_mutations.txt: genetic_alteration_type": frozenset({"MUTATION_EXTENDED"}),
+    "meta_mutations.txt: datatype": frozenset({"MAF"}),
+    "meta_mutations.txt: stable_id": frozenset({"mutations"}),
+    "meta_mutations.txt: show_profile_in_analysis_tab": frozenset({"true"}),
+    "meta_mutations.txt: profile_name": frozenset(),
+    "meta_mutations.txt: profile_description": frozenset(),
+    "meta_mutations.txt: data_filename": frozenset(),
+    "maf: top line": frozenset(),
+    "maf: column name": frozenset(MAF_NAMES),
+    "maf: Hugo_Symbol": frozenset({"Unknown"}),
+    "maf: Entrez_Gene_Id": frozenset({"#"}),
+    "maf: Tumor_Sample_Barcode": frozenset(),
+    "maf: Variant_Classification": frozenset({"Silent", "Missense_Mutation", "IGR"}),
+    "maf: HGVSp_Short": frozenset(),
+    "maf: M_{up}": frozenset(),
+    "a case list's file name": frozenset(),
+    "case list: cancer_study_identifier": frozenset(),
+    "case list: stable_id": frozenset(),
+    "case list: case_list_name": frozenset(),
+    "case list: case_list_description": frozenset(),
+    "case list: case_list_category": frozenset({"all_cases_with_mutation_data"}),
+    "case list: case_list_ids": frozenset(),
     "a study's directory name": frozenset(),
     "importer.import_source's options.dataset": frozenset(),
     "importer.import_source's options.name": frozenset({"None"}),
@@ -1010,7 +1102,21 @@ def _study(directory: Path, out: dict[str, list[str]]) -> None:
     out.setdefault("a study's directory name", []).append(directory.name)
     for path in sorted(directory.iterdir()):
         out.setdefault("a study's file name", []).append(path.name)
-        if path.name.startswith("meta_"):
+        if path.is_dir():
+            for inner in sorted(path.iterdir()):
+                out.setdefault("a case list's file name", []).append(inner.name)
+                for line in inner.read_text(encoding="utf-8").splitlines():
+                    key, _, value = line.partition(": ")
+                    out.setdefault(f"case list: {key}", []).append(value)
+        elif path.name.startswith("maf_"):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            out.setdefault("maf: top line", []).append(lines[0])
+            names = lines[1].split("\t")
+            out.setdefault("maf: column name", []).extend(names)
+            for line in lines[2:]:
+                for name, value in zip(names, line.split("\t"), strict=True):
+                    out.setdefault(f"maf: {name}", []).append(value)
+        elif path.name.startswith("meta_"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 key, _, value = line.partition(": ")
                 out.setdefault(f"{path.name}: {key}", []).append(value)

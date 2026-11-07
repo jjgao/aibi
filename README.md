@@ -75,7 +75,15 @@ scripts/testsite.sh import-study demo_onco fixtures/onco/demo_study   # a cBioPo
 
 The site's server installs the oncology pack, and `import-study <name> <dir>` imports a cBioPortal
 study directory with it (copied whole into the site; the clinical files become the `patients` and
-`samples` tables), restarting the server first if it is running. `fixtures/onco/demo_study` is a
+`samples` tables, a `MUTATION_EXTENDED` profile's MAF the `mutations` table and the case lists the
+`case_lists` and `case_list_members` tables, SPEC D444), restarting the server first if it is running.
+An import's peak memory grows with its cells (rows times columns, summed over every table it imports),
+about 80 to 200 bytes a cell above the server's baseline (about 193 for a case list's members, D444), and
+`import_cells` (default 20M) refuses more: a synthetic MAF of 129 columns and 54,000 rows (7.0M cells)
+published at a peak of about 1.1 GiB, and one of 160,000 rows (20.6M cells) is refused at the
+default. The real `msk_chord_2024` MAF's size is unmeasured here; if its rows times columns are over
+about 18.5M (the public database holds about 208,000 of its mutation rows, which at 129 columns
+would be 26.8M cells), raise `import_cells` in `[limits]` and give the server the RAM D444 states. `fixtures/onco/demo_study` is a
 synthetic study; a real one (such as `msk_chord_2024`, whose licence keeps it out of the repository)
 is imported from wherever it was downloaded. The pack proposes the study's survival endpoints
 (`ep:os` and the like, SPEC D439): run `aibi proposers <dataset>` once for a study imported before
