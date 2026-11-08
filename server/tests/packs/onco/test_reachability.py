@@ -12,7 +12,8 @@ only when ``closure(study)`` finds nothing wrong, by these legs, each a failure 
 - **codomain**: ``meta.classify``, run over the guard's own metas, one for each pair of
   ``meta.PAIR_TYPES`` and each resource type of ``meta.RESOURCE_TYPES`` (``derived_heads``: every
   type the pack's key tables name, never the oracle's lists; the imported types of
-  ``meta.IMPORTED``, the clinical types and from M4.2b-1b the MAF's (D444), stay out, which
+  ``meta.IMPORTED``, the clinical types, from M4.2b-1b the MAF's (D444) and from M4.2b-4 the
+  structural variants' (D445), stay out, which
   would enter it), with the study meta, has exactly the types of
   those tables and ``STUDY`` for its codomain. The cases are generated over that codomain.
 - **anchor**: the type facts are held to a derivation outside ``paths_oracle.py``, and the roles and
@@ -387,11 +388,12 @@ def test_discover_not_reachable_before_paths(onco: ModuleType) -> None:
 
 
 def test_the_real_table_is_closed() -> None:
-    """The pack's ``study``, under a wired importer, is closed: 25 types (24 data types and the
-    study meta: from M4.2b-1b the MAF's type is imported, D444) for each of the 3 checked rows, 26
-    of them refuse cases (24, 1 and 1), and a case for each of the 3 declared rows."""
+    """The pack's ``study``, under a wired importer, is closed: 24 types (23 data types and the
+    study meta: from M4.2b-1b the MAF's type is imported, D444, and from M4.2b-4 the structural
+    variants', D445) for each of the 3 checked rows, 25 of them refuse cases (23, 1 and 1), and a
+    case for each of the 3 declared rows: 75 cases."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(study) == Verdict(None, 78, 26)
+    assert closure(study) == Verdict(None, 75, 25)
     assert closed(WIRED, study)
 
 
@@ -909,7 +911,7 @@ STATEMENT_CASES = [
 def test_the_stand_in_is_the_pack_s_own_behaviour() -> None:
     """The control of the self-checks: ``Consulting`` with no change is closed."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(Consulting(study)) == Verdict(None, 78, 26)
+    assert closure(Consulting(study)) == Verdict(None, 75, 25)
 
 
 @pytest.mark.parametrize("name", list(MUTANTS))
@@ -960,13 +962,13 @@ def test_each_anchor_statement_is_needed(
 def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """For each of the 24 data types in turn: dropped from every row of the table and from the
+    """For each of the 23 data types in turn: dropped from every row of the table and from the
     oracle's rows, pairs, resource types and data types alike (the pack's key tables still name
     it), the guard is red at the anchor leg, whatever another row still covers."""
     study = importlib.import_module(MODULE + ".study")
     oracle = helper("paths_oracle")
     kinds = sorted(oracle.DATA_TYPES)
-    assert len(kinds) == 24
+    assert len(kinds) == 23
     for kind in kinds:
         with monkeypatch.context() as patch:
             subject, given = dropped_in_both(kind)(study, patch)
@@ -979,7 +981,7 @@ def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
 def test_a_row_swapped_to_one_type_in_both_is_red(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The PD row and the tags row, each swapped to every one type (the 24 data types and
+    """The PD row and the tags row, each swapped to every one type (the 23 data types and
     ``STUDY``) in the table and the hand rows alike: red at the anchor leg for all but the type the
     row reads (the control, which is closed)."""
     study = importlib.import_module(MODULE + ".study")
@@ -991,11 +993,11 @@ def test_a_row_swapped_to_one_type_in_both_is_red(
             subject, given = swapped_in_both(key, kind)(study, patch)
             verdict = closure(subject, **given)
         if real == {kind}:
-            assert verdict == Verdict(None, 78, 26), kind
+            assert verdict == Verdict(None, 75, 25), kind
         else:
             assert (verdict.failure or "").split(":")[0] == "anchor", (kind, verdict)
             red += 1
-    assert red == 24
+    assert red == 23
 
 
 def test_the_table_is_restored_when_discover_raises() -> None:

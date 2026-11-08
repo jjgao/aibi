@@ -310,10 +310,14 @@ def _generic(index: int, target: str) -> tuple[str, Node]:
 
 GENERIC = [
     ("COPY_NUMBER_ALTERATION", "DISCRETE", "gistic"),
-    ("STRUCTURAL_VARIANT", "SV", "structural_variants"),
+    ("CLINICAL", "TIMELINE", "timeline"),
     ("MRNA_EXPRESSION", "CONTINUOUS", "mrna"),
     ("PROTEIN_LEVEL", "LOG2-VALUE", "rppa"),
 ]
+"""Four types never imported, each a meta naming the study meta, a clinical meta or the patient
+file (cells 30-33). Cells 31m, 31s and 31p were STRUCTURAL_VARIANT's until M4.2b-4 imports that
+type (D445, D436's moved pin): they are TIMELINE's now, run again live on the pinned reference,
+each outcome as before per error (the scratch harness)."""
 GENERIC_TARGETS = {
     "m": "meta_study.txt",
     "s": "meta_clinical_sample.txt",
@@ -2050,9 +2054,19 @@ def test_every_non_clinical_type_naming_reads_is_refused(
 ) -> None:
     """A meta file of every type in the ``data_filename`` row, naming the study meta, itself or a
     clinical data file, is refused (cells 09-13, 26, 30-33 and 40 for a few types; stricter, for
-    a meta file, than the reference, which is clean)."""
+    a meta file, than the reference, which is clean). From M4.2b-4 the structural variants' type is
+    imported and out of the row, and stays in this loop (review r4 MJ-D): its meta naming a member
+    of Reads(S) is refused by the same rule (``study.STRUCTURAL_DATA``, D445)."""
     seen = set()
-    for kind, content in every_type_meta(oracle, target):
+    imported = (
+        "STRUCTURAL_VARIANT",
+        (
+            f"cancer_study_identifier: {SID}\ngenetic_alteration_type: STRUCTURAL_VARIANT\n"
+            "datatype: SV\nstable_id: structural_variants\nshow_profile_in_analysis_tab: true\n"
+            f"profile_name: p\nprofile_description: p\ndata_filename: {target}\n"
+        ).encode(),
+    )
+    for kind, content in (*every_type_meta(oracle, target), imported):
         seen.add(kind)
         directory = make_study({**base, "meta_x.txt": content})
         assert discovery.outcome(directory) == (
@@ -2060,7 +2074,7 @@ def test_every_non_clinical_type_naming_reads_is_refused(
             "meta_x.txt",
             f"«meta_x.txt» has a data_filename that {READS}",
         ), kind
-    assert seen == oracle.DATA_TYPES
+    assert seen == oracle.DATA_TYPES | {"STRUCTURAL_VARIANT"}
 
 
 def test_every_non_clinical_type_naming_a_plain_file_is_noted(

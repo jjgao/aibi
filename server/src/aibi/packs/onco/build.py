@@ -44,6 +44,7 @@ from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import ImportNote, Previous
 from aibi.core.store.build import Layout
 from aibi.core.store.sources import RawSource, SourceValue, TextSource, TypedSource
+from aibi.packs.onco import structural
 from aibi.packs.onco.attributes import MONTHS_UNITS, PATIENT_ID, SAMPLE_ID, TIME_OFFSETS
 from aibi.packs.onco.caselists import CaseList
 from aibi.packs.onco.clinical import SETTINGS, Clinical, Column
@@ -72,6 +73,7 @@ SAMPLES = "samples"
 MUTATIONS = "mutations"
 CASE_LISTS = "case_lists"
 MEMBERS = "case_list_members"
+STRUCTURAL_VARIANTS = "structural_variants"
 TABLES: Mapping[str, tuple[str, str, str, str]] = MappingProxyType(
     {
         PATIENTS: ("Patients", "One row per patient", "onco:patient", f"CLINICAL:{PATIENT}"),
@@ -396,6 +398,87 @@ def _mutations(
     return descriptors, TextSource(maf.data), layout, notes
 
 
+SV_FORMAT = (
+    "cBioPortal's structural variant file format: tab-separated, a line of column names, one row "
+    "per event as the file holds it (D445)"
+)
+SV_INTEGER = "cBioPortal's structural variant format writes this column as an integer"
+SV_MISSING = "The spellings cBioPortal's validator reads as no value in this column (D445)"
+SV_CATEGORY = (
+    "A column cBioPortal's validator checks against a list, with few distinct values (D228)"
+)
+SV_TEXT = "A structural variant column the pack has no rule for, read as text"
+SV_GENE = "cBioPortal's structural variant format: a site's gene symbol, as written"
+SV_SAMPLE_ID = "cBioPortal's structural variant format: a sample's id"
+SV_RELATIONSHIP = "A structural variant file's Sample_Id names the sample (D445: every one is one)"
+SV_MISSING_CODES: Mapping[str, str] = MappingProxyType(
+    dict.fromkeys(sorted(structural.NULL), "UNKNOWN")
+)
+"""The spellings the reference reads as no value in its seven columns, after ``str.strip()``
+(V:3220): ``''``, ``NA``, ``Unknown`` and ``0``, declared for the status, the build and each
+site's symbol and Entrez id (``structural.NULL_COLUMNS``), so that none is published as a value.
+A spelling with whitespace around it is refused (``PADDED_VALUE``, D445)."""
+
+
+def _sv_column(curation: "_Curation", id: str, column: structural.SvColumn) -> Descriptor:
+    fields: dict[str, Entry] = {}
+    if column.name in structural.INTEGERS:
+        fields["datatype"] = ("integer", "imported", SV_INTEGER)
+    elif column.category:
+        fields["datatype"] = ("category", "proposed", SV_CATEGORY)
+    else:
+        fields["datatype"] = ("string", "imported", SV_TEXT)
+    if column.name in structural.NULL_COLUMNS:
+        codes: dict[str, JsonValue] = dict(SV_MISSING_CODES)
+        fields["missing_codes"] = (codes, "imported", SV_MISSING)
+    if column.name == structural.SAMPLE:
+        fields["identifier"] = (True, "imported", SV_SAMPLE_ID)
+    if column.name in structural.HUGO:
+        fields["maps_to"] = ({"concept": "onco:gene_symbol"}, "imported", SV_GENE)
+    fields["source"] = ({"original_name": column.name}, "imported", None)
+    return curation.descriptor(
+        "column", f"{STRUCTURAL_VARIANTS}.{id}", (column.name, "imported_default"), fields
+    )
+
+
+def _structural_variants(
+    curation: "_Curation", sv: structural.Structural, previous: Previous | None, sample_key: str
+) -> tuple[list[Descriptor], RawSource, Layout, list[ImportNote]]:
+    before = previous.columns.get(STRUCTURAL_VARIANTS) if previous is not None else None
+    names = [column.name for column in sv.columns]
+    ids = normalise_names(names, "column", before)
+    source: dict[str, JsonValue] = {
+        "kind": "file",
+        "name": STRUCTURAL_VARIANTS,
+        "original_name": sv.name,
+        "parse": sv.settings.model_dump(mode="json"),
+    }
+    descriptors = [
+        _plain_table(
+            curation,
+            STRUCTURAL_VARIANTS,
+            ("Structural variants", "One row per structural variant event, as the file holds it"),
+            "measurement",
+            None,
+            "onco:structural_variant",
+            source,
+            SV_FORMAT,
+            {"meta": ("STRUCTURAL_VARIANT:SV", "imported", None)},
+        )
+    ]
+    notes: list[ImportNote] = []
+    for id, column in zip(ids, sv.columns, strict=True):
+        descriptors.append(_sv_column(curation, id, column))
+        if id != column.name.lower():
+            notes.append(_renamed(f"{STRUCTURAL_VARIANTS}.{id}", column.name))
+    sample = ids[names.index(structural.SAMPLE)]
+    descriptors.append(
+        _relationship(curation, STRUCTURAL_VARIANTS, sample, SAMPLES, sample_key, SV_RELATIONSHIP)
+    )
+    layout = Layout(STRUCTURAL_VARIANTS, tuple(zip(ids, names, strict=True)))
+    return descriptors, TextSource(sv.data), layout, notes
+
+
 LIST_COLUMNS = ("stable_id", "name", "description", "category")
 MEMBER_COLUMNS = ("case_list", "sample_id")
 
@@ -483,10 +566,11 @@ def describe(
     previous: Previous | None = None,
     maf: Maf | None = None,
     lists: Sequence[CaseList] = (),
+    sv: structural.Structural | None = None,
 ) -> Described:
     """The study's descriptors, snapshots, layouts and notes: ``files`` are the clinical files,
     the patient file first where there is one; ``maf`` the study's MAF, read, and ``lists`` its
-    case lists (D444)."""
+    case lists (D444); ``sv`` its structural variant file, read (D445)."""
     curation = _Curation(by, at)
     descriptors: list[Descriptor] = [_dataset(curation, fields, name, location)]
     sources: dict[str, RawSource] = {}
@@ -556,6 +640,12 @@ def describe(
         descriptors.extend(more)
         sources.update(raws)
         layouts.update(laid)
+    if sv is not None:
+        found, raw, layout, renamed = _structural_variants(curation, sv, previous, sample_key)
+        descriptors.extend(found)
+        sources[STRUCTURAL_VARIANTS] = raw
+        layouts[STRUCTURAL_VARIANTS] = layout
+        notes.extend(renamed)
     return Described(descriptors, sources, layouts, notes)
 
 
@@ -565,6 +655,7 @@ __all__ = [
     "MUTATIONS",
     "PATIENTS",
     "SAMPLES",
+    "STRUCTURAL_VARIANTS",
     "Described",
     "describe",
     "list_cells",

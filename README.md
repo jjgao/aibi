@@ -75,8 +75,10 @@ scripts/testsite.sh import-study demo_onco fixtures/onco/demo_study   # a cBioPo
 
 The site's server installs the oncology pack, and `import-study <name> <dir>` imports a cBioPortal
 study directory with it (copied whole into the site; the clinical files become the `patients` and
-`samples` tables, a `MUTATION_EXTENDED` profile's MAF the `mutations` table and the case lists the
-`case_lists` and `case_list_members` tables, SPEC D444), restarting the server first if it is running.
+`samples` tables, a `MUTATION_EXTENDED` profile's MAF the `mutations` table, the case lists the
+`case_lists` and `case_list_members` tables, SPEC D444, and a `STRUCTURAL_VARIANT` profile's file the
+`structural_variants` table, one row per event as the file holds it, SPEC D445), restarting the server
+first if it is running.
 An import's peak memory grows with its cells (rows times columns, summed over every table it imports),
 about 80 to 200 bytes a cell above the server's baseline (about 193 for a case list's members, D444), and
 `import_cells` (default 20M) refuses more: a synthetic MAF of 129 columns and 54,000 rows (7.0M cells)

@@ -1638,8 +1638,9 @@ def test_the_refusal_codes_are_pinned() -> None:
         "NORMAL_SAMPLE",
         "DRIVER_VALUE",
         "PADDED_VALUE",
+        "SV_STATUS",
     )
-    assert len(importlib.import_module(REFUSALS).CODES) == 61
+    assert len(importlib.import_module(REFUSALS).CODES) == 62
 
 
 # --- Sentinel: no value a file holds is shown -----------------------------------------------------

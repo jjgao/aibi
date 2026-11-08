@@ -39,7 +39,7 @@ from aibi.core.store.proposals import reject_proposal, run_proposers
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
 MODULE = "aibi.packs.onco.endpoints"
-BY = "importer:onco@0.4.0"
+BY = "importer:onco@0.5.0"
 ADA = "operator:Ada"
 AT = "2026-01-01T00:00:00Z"
 _ADAPTER: TypeAdapter[Descriptor] = TypeAdapter(Descriptor)
@@ -294,7 +294,7 @@ def test_the_four_pairs_are_proposed_and_pass_every_check(
     world: Any, registry: PackRegistry
 ) -> None:
     """OS and DFS whole, PFS and DSS without an event coding, each by equality, recorded by the
-    pack at 0.4.0 and none skipped by the core's checks."""
+    pack at 0.5.0 and none skipped by the core's checks."""
     columns = [PATIENT_ID, SEX, *pair("OS"), *pair("DFS"), *pair("PFS"), *pair("DSS")]
     published = imported(world, registry, "four", study(columns))
     assert published.proposers.skipped == ()

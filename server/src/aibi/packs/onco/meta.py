@@ -137,9 +137,16 @@ CLINICAL = frozenset({PATIENT, SAMPLE})
 """The clinical types, whose data files M4.2a imports."""
 MUTATION = "MUTATION"
 """The type of a ``MUTATION_EXTENDED:MAF`` meta file, whose data file (a MAF) M4.2b-1b imports."""
-IMPORTED = CLINICAL | {MUTATION}
-"""The types whose data files the pack imports: the clinical types and the MAF's (D444). A meta
-file of any other type names a data file the pack never reads (D409's exit 3 (20))."""
+STRUCTURAL_VARIANT = "STRUCTURAL_VARIANT"
+"""The type of a ``STRUCTURAL_VARIANT:SV`` meta file, whose data file M4.2b-4 imports (D445)."""
+DISCOVERED = CLINICAL | {MUTATION}
+"""The imported types whose metas discovery's phases 6 and 7 take and whose data files phase 7
+resolves (D409, D444): the clinical types and the MAF's."""
+IMPORTED = DISCOVERED | {STRUCTURAL_VARIANT}
+"""The types whose data files the pack imports: the clinical types, the MAF's (D444) and the
+structural variants' (D445), whose meta ``structural.discovered`` takes and whose data file is
+resolved by phase 9's rule. A meta file of any other type names a data file the pack never reads
+(D409's exit 3 (20))."""
 
 UNKNOWN_TYPE = "has no meta file type cBioPortal defines"
 
@@ -596,6 +603,7 @@ def fold(name: str) -> str:
 
 __all__ = [
     "CLINICAL",
+    "DISCOVERED",
     "GENOME_BUILDS",
     "IMPORTED",
     "MANDATORY",
@@ -605,6 +613,7 @@ __all__ = [
     "PATIENT",
     "RESOURCE_TYPES",
     "SAMPLE",
+    "STRUCTURAL_VARIANT",
     "STUDY",
     "MutationFields",
     "StudyFields",

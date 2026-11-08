@@ -1,0 +1,7680 @@
+{
+"bom:blank_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:build": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:comment_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:long_field": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:no_gene": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:nonpositive": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:not_integer": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:null_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:padded_null": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:padded_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:padded_zero": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:repeated_header": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:row_width": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:second_build": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:status": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bom:undefined_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:first_free": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:first_free_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_after_hash_top_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_after_hash_top_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_after_hash_top_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_after_hash_top_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_after_hash_top_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_after_hash_top_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_data_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_data_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_data_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_field_data_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_data_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_field_data_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_header_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_header_control": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_field_header_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n1_field_header_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_control": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_none": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_data_structure": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_line2_header_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_header_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n1_start_top_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_after_hash_top_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_after_hash_top_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_after_hash_top_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n2_after_hash_top_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_after_hash_top_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n2_after_hash_top_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_data_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_data_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_data_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n2_field_data_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_data_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n2_field_data_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_header_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_header_control": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_field_header_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"boms:n2_field_header_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_control": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_none": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_data_structure": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_line2_header_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_header_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_cell": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_control": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_none": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"boms:n2_start_top_structure": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bound:both_sites_nonpositive": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bound:multibyte_name_4096": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"bound:multibyte_name_4097": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"bound:name_4095": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"bound:name_4096": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"bound:repeated_header_tab_field": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"bound:repeated_header_tab_field_short": {
+"crash": false,
+"errors": [
+[
+"repeated-header",
+"data_sv.txt"
+],
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:37_38": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:case": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:empty_then_37": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:genome_hg19": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:genome_hg19_mouse": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:genome_hg38": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:genome_hg38_mouse": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:genome_mm10": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:genome_mm10_mouse": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:invalid_then_valid": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"build:lower_only": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:na_then_38": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"build:same": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:blank_first_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:blank_tabs": {
+"crash": false,
+"errors": [
+[
+"blank-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:bom": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:bom_alone_first_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:bom_at_row": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:bom_with_top": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:control_del": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_del_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:control_esc": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_esc_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:control_nul": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_nul_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:control_u0001": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_u0001_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:control_u001f": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_u001f_sample": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_vt": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:control_vt_sample": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:cr": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:crlf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:empty": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:extra_field": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:field_131072": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:field_131073": {
+"crash": true,
+"errors": [],
+"rc": 1
+},
+"byte:hash_after_header": {
+"crash": false,
+"errors": [
+[
+"comment-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:hash_after_space": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:hash_line": {
+"crash": false,
+"errors": [
+[
+"comment-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:header_no_line_end": {
+"crash": false,
+"errors": [
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:header_no_line_end_top": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:header_only": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:missing_file": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:mixed": {
+"crash": false,
+"errors": [
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:no_tab": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:no_tab_seven_lines": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:not_utf8": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:one_column_tab_later": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:quote_cell": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:repeated_header": {
+"crash": false,
+"errors": [
+[
+"repeated-header",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:repeated_header_last_name_longer": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:short_row": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:sv_is_directory": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:sv_name_noncharacter": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:sv_symlink": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:top_lines": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"byte:top_only": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:trailing_blank": {
+"crash": false,
+"errors": [
+[
+"blank-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"byte:valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_11_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_12_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_13_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_1_gene": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:build_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_3_gene": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:build_4_gene": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:build_5_gene": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:build_6_gene": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:build_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:build_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_0_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_10_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_11_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_11_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_12_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_12_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_13_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_13_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_14_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_14_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_15_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_15_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_16_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_16_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_17_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_17_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_18_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_18_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_19_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_19_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_1_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_20_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_20_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_21_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_21_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_22_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_22_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_23_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_23_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_24_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_24_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_25_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_25_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_26_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_26_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_27_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_27_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_28_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_28_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_29_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_29_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_2_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_30_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_30_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_31_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_31_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_32_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_32_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_33_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_33_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_3_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_4_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_5_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_6_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_7_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_8_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez1_9_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez1_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_0_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_10_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_11_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_11_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_12_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_12_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_13_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_13_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_14_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_14_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_15_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_15_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_16_alone": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_16_gene": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_17_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_17_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_18_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_18_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_19_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_19_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_1_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_20_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_20_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_21_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_21_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_22_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_22_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_23_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_23_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_24_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_24_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_25_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_25_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_26_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_26_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_27_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_27_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_28_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_28_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_29_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_29_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_2_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_30_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_30_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_31_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_31_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_32_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_32_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_33_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_33_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_3_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_4_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_5_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_6_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_7_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_8_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:entrez2_9_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:entrez2_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:gene_all_null": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:gene_none": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_0_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_10_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_11_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_11_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_12_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_12_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_13_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_13_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_14_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_14_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_1_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_2_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_3_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_4_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_5_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_6_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_7_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_8_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo1_9_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo1_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_0_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_10_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_11_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_11_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_12_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_12_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_13_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_13_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_14_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_14_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_1_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_2_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_3_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_4_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_5_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_6_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_7_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_8_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:hugo2_9_alone": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:hugo2_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:position_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_10_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_11_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_12_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_13_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_14_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:sample_5_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_6_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_7_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_8_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_9_gene": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_defined_0": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_defined_0_padded": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_defined_Unknown": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:sample_defined_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_0_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_10_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_11_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_12_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_13_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_14_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_15_gene": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:status_16_gene": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:status_17_gene": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:status_18_gene": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"cell:status_1_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_2_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_3_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_4_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_5_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_6_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_7_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_8_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"cell:status_9_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:build_differs_case": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:class_differs": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:crlf_vs_lf": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+],
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:crlf_vs_lf_key_last": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+],
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:event_trailing_space": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:identical": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:last_trailing_space": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:lone_cr": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+],
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:lone_cr_key_last": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+],
+[
+"line-ends",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:na_vs_empty_event": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:padded_sample": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:position_differs": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"dup:status_differs": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"dup:subset_columns": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Class_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Class_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Event_Info_dup_key": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Event_Info_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Event_Info_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:NCBI_Build_bad": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:NCBI_Build_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:NCBI_Build_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:NCBI_Build_second": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:NCBI_Build_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:SV_Status_bad": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:SV_Status_padded": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:SV_Status_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:SV_Status_valid": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Sample_Id_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Sample_Id_undefined": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Sample_Id_valid": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site1_Chromosome_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Chromosome_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Entrez_Gene_Id_float": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Entrez_Gene_Id_nonpositive": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Entrez_Gene_Id_only_gene": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site1_Entrez_Gene_Id_padded_zero": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Entrez_Gene_Id_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Entrez_Gene_Id_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Hugo_Symbol_dup_key": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site1_Hugo_Symbol_only_gene": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site1_Hugo_Symbol_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Hugo_Symbol_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Hugo_Symbol_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Position_dup_key": {
+"crash": false,
+"errors": [
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site1_Position_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site1_Position_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Chromosome_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Chromosome_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Entrez_Gene_Id_nonpositive": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Entrez_Gene_Id_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Entrez_Gene_Id_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Hugo_Symbol_only_gene": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:Site2_Hugo_Symbol_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Hugo_Symbol_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Position_repeated": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:Site2_Position_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:namespace_column": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:one_column_no_tab": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"first:sample_first_empty_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"first:sample_first_long_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:columns_4097": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:custom": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:empty_name_at_0": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:empty_name_at_12": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:empty_name_at_4": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:empty_name_at_8": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:lower_required": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:lower_site_pair": {
+"crash": false,
+"errors": [
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:minimal_entrez": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:minimal_hugo": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:name_4097": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:name_nonchar": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:padded_required": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:repeated_name": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:trailing_tab_rows_too": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Class": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Event_Info": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_NCBI_Build": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_SV_Status": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:without_Sample_Id": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:without_Site1_Chromosome": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site1_Entrez_Gene_Id": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site1_Hugo_Symbol": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site1_Position": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site1_pair": {
+"crash": false,
+"errors": [
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"header:without_Site2_Chromosome": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site2_Entrez_Gene_Id": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site2_Hugo_Symbol": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site2_Position": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"header:without_Site2_pair": {
+"crash": false,
+"errors": [
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"headerless:blank_lines": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:bom": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:bom_comment": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:bom_crlf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:bom_lf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:comment": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"headerless:crlf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:empty": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"headerless:lf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:spaces_line": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:tab_on_seventh": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"headerless:tab_on_sixth": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"headerless:top_no_header": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_alone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"markhash:no_tab_then_empty_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_then_header": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_then_namespace_bad_row": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_then_no_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_then_repeated_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:no_tab_then_repeats_build": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_alone": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_crlf": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_empty_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_header": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_namespace": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_no_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_repeated_name": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_then_repeats_build": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:tab_within_five": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"markhash:two_lines_tab_second": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:datatype_fusion": {
+"crash": false,
+"errors": [
+[
+"meta-type",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:gene_panel": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:maf_names_sv": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-amino-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:names_absolute": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"../../../../../../../../data_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:names_dot_slash": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:names_empty": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"."
+]
+],
+"rc": 1
+},
+"meta:names_maf": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_mutations.txt"
+],
+[
+"missing-column",
+"data_mutations.txt"
+],
+[
+"sv-content",
+"data_mutations.txt"
+],
+[
+"sv-content",
+"data_mutations.txt"
+],
+[
+"header-cascade",
+"data_mutations.txt"
+]
+],
+"rc": 1
+},
+"meta:names_own_meta": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:names_patient": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_clinical_patient.txt"
+],
+[
+"missing-column",
+"data_clinical_patient.txt"
+],
+[
+"sv-content",
+"data_clinical_patient.txt"
+],
+[
+"sv-content",
+"data_clinical_patient.txt"
+],
+[
+"header-cascade",
+"data_clinical_patient.txt"
+]
+],
+"rc": 1
+},
+"meta:names_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_clinical_sample.txt"
+],
+[
+"missing-column",
+"data_clinical_sample.txt"
+],
+[
+"sv-content",
+"data_clinical_sample.txt"
+],
+[
+"sv-content",
+"data_clinical_sample.txt"
+],
+[
+"header-cascade",
+"data_clinical_sample.txt"
+]
+],
+"rc": 1
+},
+"meta:names_sample_case": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"DATA_CLINICAL_SAMPLE.txt"
+]
+],
+"rc": 1
+},
+"meta:names_study_meta": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:names_subdirectory": {
+"crash": false,
+"errors": [
+[
+"open-fail",
+"sub/data_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:no_show_profile": {
+"crash": false,
+"errors": [
+[
+"meta-key",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:no_sv_meta": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:one_row": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:other_study": {
+"crash": false,
+"errors": [
+[
+"study-mismatch",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:reference_genome": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:sample_names_sv": {
+"crash": false,
+"errors": [
+[
+"top-lines",
+"data_sv.txt"
+],
+[
+"sample-file",
+"-"
+]
+],
+"rc": 1
+},
+"meta:second_other_id": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv2.txt"
+]
+],
+"rc": 1
+},
+"meta:second_same_id": {
+"crash": false,
+"errors": [
+[
+"duplicate-stable-id",
+"meta_sv2.txt"
+]
+],
+"rc": 1
+},
+"meta:show_maybe": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:stable_id_fusion": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:stable_id_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:stable_id_sv": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:sv_file_without_meta": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"meta:timeline_names_sv": {
+"crash": false,
+"errors": [
+[
+"header-order",
+"data_sv.txt"
+],
+[
+"header-order",
+"data_sv.txt"
+],
+[
+"header-order",
+"data_sv.txt"
+],
+[
+"header-order",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"meta:with_maf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"metapair:generic_repeats_stable_id": {
+"crash": true,
+"errors": [
+[
+"duplicate-stable-id",
+"meta_zz.txt"
+]
+],
+"rc": 1
+},
+"metapair:other_study_datatype": {
+"crash": false,
+"errors": [
+[
+"meta-type",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:other_study_duplicate_stable_id": {
+"crash": false,
+"errors": [
+[
+"study-mismatch",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:other_study_missing_key": {
+"crash": false,
+"errors": [
+[
+"meta-key",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:other_study_stable_id_mutations": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:other_study_stable_id_sv": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:stable_id_sv_no_file": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"metapair:study_case": {
+"crash": false,
+"errors": [
+[
+"study-mismatch",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:after_every_column": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:ascn": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:ascn_two": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:ascn_upper": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:ascn_without_column": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:before_every_column": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:between_columns": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:column_case": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:empty": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:exact_prefix_column": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:kelvin": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:no_dot": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:second_missing": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:second_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:trailing_comma": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"namespace:upper": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:with_column": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"namespace:without_column": {
+"crash": false,
+"errors": [
+[
+"namespace",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_cell_earlier_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_cell_later_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_control_earlier_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_control_later_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_structure_earlier_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:bytes_structure_later_first": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:control_cell_earlier_first": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:control_cell_later_first": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:control_structure_earlier_first": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:control_structure_later_first": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:meta_bytes": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:meta_cell": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:meta_control": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:meta_structure": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:structure_cell_earlier_first": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"pair:structure_cell_later_first": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:bom_hash_line2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_bom_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:data_bom_start": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_control_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:data_control_start": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_hash_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:data_hash_start": {
+"crash": false,
+"errors": [
+[
+"comment-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_ideographic_line": {
+"crash": false,
+"errors": [
+[
+"blank-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_nbsp_field_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:data_nbsp_field_start": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:data_nbsp_line": {
+"crash": false,
+"errors": [
+[
+"blank-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_trailing_tab_end": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:data_trailing_tab_start": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_bom_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_after_top_bom_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_control_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_after_top_control_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_hash_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_after_top_hash_start": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_nbsp_field_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_after_top_nbsp_field_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_trailing_tab_end": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_after_top_trailing_tab_start": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_bom_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_bom_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_control_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_control_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_hash_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_hash_start": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_nbsp_field_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:header_nbsp_field_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_trailing_tab_end": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:header_trailing_tab_start": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:top_bom_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_bom_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:top_control_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_control_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:top_hash_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_hash_start": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_nbsp_field_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_nbsp_field_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"role:top_trailing_tab_end": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"role:top_trailing_tab_start": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines1_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines1_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines2_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines2_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines2_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines3_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines3_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines3_tab2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines3_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines4_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines4_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines4_tab2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines4_tab3": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines4_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines5_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines5_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines5_tab2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines5_tab3": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines5_tab4": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines5_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines6_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tab2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tab3": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tab4": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tab5": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines6_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines7_tab0": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab1": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab2": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab3": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab4": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab5": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"sniff:lines7_tab6": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:lines7_tabnone": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"sniff:tab_on_unterminated_last_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:blank_line": {
+"crash": false,
+"errors": [
+[
+"blank-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:build": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:comment_line": {
+"crash": false,
+"errors": [
+[
+"comment-line",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:long_field": {
+"crash": true,
+"errors": [],
+"rc": 1
+},
+"twin:bom:no_gene": {
+"crash": false,
+"errors": [
+[
+"sv-no-gene",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:nonpositive": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:not_integer": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:bom:null_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:padded_null": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:bom:padded_sample": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:bom:padded_zero": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:bom:repeated_header": {
+"crash": false,
+"errors": [
+[
+"repeated-header",
+"data_sv.txt"
+],
+[
+"sv-status",
+"data_sv.txt"
+],
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+],
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:row_width": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:second_build": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:status": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:bom:undefined_sample": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:first_free": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:first_free_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:n1_start_header_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_header_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_header_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:n1_start_header_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_header_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:n1_start_header_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_top_bytes": {
+"crash": false,
+"errors": [
+[
+"not-utf8",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_top_cell": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_top_control": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:n1_start_top_meta": {
+"crash": false,
+"errors": [
+[
+"type-meta",
+"meta_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:boms:n1_start_top_none": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:boms:n1_start_top_structure": {
+"crash": false,
+"errors": [
+[
+"row-width",
+"data_sv.txt"
+],
+[
+"sv-duplicate",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:byte:bom": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:byte:bom_alone_first_line": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"sv-content",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:byte:bom_with_top": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Class_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Class_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Event_Info_dup_key": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Event_Info_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Event_Info_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:NCBI_Build_bad": {
+"crash": false,
+"errors": [
+[
+"sv-build",
+"data_sv.txt"
+],
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:NCBI_Build_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:NCBI_Build_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:NCBI_Build_second": {
+"crash": false,
+"errors": [
+[
+"sv-build-multi",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:NCBI_Build_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:SV_Status_bad": {
+"crash": false,
+"errors": [
+[
+"sv-status",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:SV_Status_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:SV_Status_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:SV_Status_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Sample_Id_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Sample_Id_undefined": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Sample_Id_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Chromosome_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site1_Chromosome_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Entrez_Gene_Id_float": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Entrez_Gene_Id_nonpositive": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site1_Entrez_Gene_Id_only_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Entrez_Gene_Id_padded_zero": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Entrez_Gene_Id_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site1_Entrez_Gene_Id_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Hugo_Symbol_dup_key": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Hugo_Symbol_only_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Hugo_Symbol_padded": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Hugo_Symbol_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site1_Hugo_Symbol_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Position_dup_key": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site1_Position_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site1_Position_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site2_Chromosome_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site2_Chromosome_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site2_Entrez_Gene_Id_nonpositive": {
+"crash": false,
+"errors": [
+[
+"entrez-nonpositive",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site2_Entrez_Gene_Id_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site2_Entrez_Gene_Id_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site2_Hugo_Symbol_only_gene": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site2_Hugo_Symbol_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site2_Hugo_Symbol_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:Site2_Position_repeated": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:first:Site2_Position_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:namespace_column": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:one_column_no_tab": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:sample_first_empty_name": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:first:sample_first_long_name": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:headerless:bom": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:headerless:bom_comment": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:headerless:bom_crlf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:headerless:bom_lf": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:no_tab_alone": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:no_tab_then_empty_name": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:no_tab_then_header": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:no_tab_then_namespace_bad_row": {
+"crash": false,
+"errors": [
+[
+"sample-undefined",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:no_tab_then_no_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:no_tab_then_repeated_name": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:no_tab_then_repeats_build": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_alone": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_crlf": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_then_empty_name": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:tab_then_header": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:tab_then_namespace": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:markhash:tab_then_no_sample": {
+"crash": false,
+"errors": [
+[
+"missing-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_then_repeated_name": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_then_repeats_build": {
+"crash": false,
+"errors": [
+[
+"duplicate-column",
+"data_sv.txt"
+],
+[
+"header-cascade",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:tab_within_five": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:markhash:two_lines_tab_second": {
+"crash": false,
+"errors": [
+[
+"no-header",
+"data_sv.txt"
+]
+],
+"rc": 1
+},
+"twin:role:header_bom_start": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"twin:role:top_bom_start": {
+"crash": false,
+"errors": [],
+"rc": 3
+}
+}
