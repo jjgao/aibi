@@ -47,9 +47,13 @@ by name:
     V:5566); a directory is read by the importer's case-list reader (``caselists``, D444).
 
 From M4.2b-1b (D444) the mutation meta's data file is an imported role, as a clinical meta's is
-(phase 7, ``meta.IMPORTED``): a second mutation meta is ``DUPLICATE_PROFILE_META`` (phase 6),
-and the mutation meta's values (``meta.mutation_fields``) are checked after the study meta's
-(phase 8); the MAF is a member of Reads(S), so phase 9 refuses another meta naming it.
+(phases 6 and 7, ``meta.DISCOVERED``): a second mutation meta is ``DUPLICATE_PROFILE_META``
+(phase 6), and the mutation meta's values (``meta.mutation_fields``) are checked after the study
+meta's (phase 8); the MAF is a member of Reads(S), so phase 9 refuses another meta naming it.
+From M4.2b-4 (D445) the SV meta's data file is an imported role too (``meta.IMPORTED``), taken
+after phase 8 by ``structural.discovered``, which holds every check of it: its value is resolved by
+phase 9's rule over Reads(S) (``STRUCTURAL_DATA``, so that a value naming the MAF or a clinical
+file is refused as phase 9 refuses it), and its file then joins Reads(S) for phase 9.
 
 **What it says.** A refusal or a note names an entry as ``data`` only (``refusals.shown``), and
 never a value a file holds. Every entry discover does not import gets one ``skipped_source``
@@ -71,14 +75,17 @@ from aibi.core.schema.pack_api import (
     SourceReader,
 )
 from aibi.core.schema.refusals import RefusalCode
+from aibi.packs.onco import structural
 from aibi.packs.onco.meta import (
     CLINICAL,
+    DISCOVERED,
     IMPORTED,
     MANDATORY,
     META_MOST,
     MUTATION,
     PATIENT,
     SAMPLE,
+    STRUCTURAL_VARIANT,
     STUDY,
     MutationFields,
     StudyFields,
@@ -95,6 +102,7 @@ from aibi.packs.onco.meta import (
     study_fields,
 )
 from aibi.packs.onco.refusals import Code, entry_refused, refused, shown
+from aibi.packs.onco.structural import StructuralMeta
 
 META_FILES_MOST = 256
 """The most meta-named entries a study may hold. Stricter: cBioPortal reads any number (D409)."""
@@ -218,6 +226,18 @@ this order within a meta file) and ``TAGS`` (phase 10), for the meta types each 
 listing is its own; the case lists rows are the importer's case-list reader's (``caselists``),
 which reads every entry the ``listing:case_lists`` row describes (D444)."""
 
+STRUCTURAL_DATA = PathSite(
+    "data_filename",
+    frozenset({STRUCTURAL_VARIANT}),
+    DATA,
+    (
+        "V:4854-4856, V:398, V:437, V:445, V:453: as the data_filename row; the SV meta's data "
+        "file is imported (D445), so its value is checked by this row's rule outside PATH_SITES",
+    ),
+)
+"""The SV meta's ``data_filename`` (D445): ``structural.discovered`` checks it by phase 9's rule
+(``_path_value``) against Reads(S) before the SV file joins it."""
+
 _DATA_FILE_NOTE = "a data file of a meta file M4.2a does not import"
 _TAGS_NOTE = "the study's tags file"
 
@@ -243,7 +263,7 @@ class MutationMeta:
 @dataclass(frozen=True)
 class Study:
     """What ``discover`` found: the study meta's values, the clinical metas, the mutation meta,
-    the ``case_lists`` directory's entry when the study has one, and the notes."""
+    the ``case_lists`` directory's entry when the study has one, the SV meta, and the notes."""
 
     fields: StudyFields
     patient: ClinicalMeta | None
@@ -251,6 +271,7 @@ class Study:
     notes: tuple[ImportNote, ...]
     mutation: MutationMeta | None = None
     case_lists: bool = False
+    structural: StructuralMeta | None = None
 
 
 def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> dict[str, str]:
@@ -419,7 +440,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
 
     clinical: dict[str, str] = {}
     for name, (kind, _) in metas.items():
-        if kind in IMPORTED:
+        if kind in DISCOVERED:
             if kind in clinical:
                 if kind == MUTATION:
                     raise entry_refused(
@@ -462,6 +483,11 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
     folded: dict[str, list[DirectoryEntry]] = {}
     for entry in entries:
         folded.setdefault(fold(entry.name), []).append(entry)
+    sv = structural.discovered(
+        metas,
+        lambda name, value: _path_value(STRUCTURAL_DATA, name, value, listed, folded, reads),
+    )
+    reads = reads | frozenset(structural.used(sv))
     for role, note in ((DATA, _DATA_FILE_NOTE), (TAGS, _TAGS_NOTE)):
         for name, (kind, found) in metas.items():
             for site in PATH_SITES:
@@ -482,6 +508,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             *clinical.values(),
             *(entry.name for entry in data.values()),
             *((CASE_LISTS_ENTRY,) if has_lists else ()),
+            *structural.used(sv),
         }
     )
     for name in metas:
@@ -498,6 +525,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         tuple(notes),
         mutation=mutation,
         case_lists=has_lists,
+        structural=sv,
     )
 
 
@@ -510,6 +538,7 @@ __all__ = [
     "NON_CLINICAL_DATA",
     "NOTES_MOST",
     "PATH_SITES",
+    "STRUCTURAL_DATA",
     "TAGS",
     "ClinicalMeta",
     "MutationMeta",

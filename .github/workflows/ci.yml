@@ -21,8 +21,9 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
-    # The core tests take about 30 to 41 minutes (43.8 for the whole job at M5.3-server-b2's head),
-    # within their step's 55; the job's limit leaves them and every other step room,
+    # The core tests take about 49.5 to 52 minutes (49.5 on main at 7a99a62, whose whole job took
+    # 55.8; run 42395886015), within their step's 55; the job's limit leaves them and every other
+    # step room,
     # and each test step's own limit leaves the annotations' step time to run when one is reached
     # (D340).
     timeout-minutes: 70
@@ -133,9 +134,10 @@ jobs:
     name: The retention guards' mutants
     # D438's mutation table (tests/packs/onco/retention_mutants/table.py), replayed against a copy
     # of the tree on a runner of its own beside the server checks: each mutant's marker scan (a
-    # fresh interpreter, about 10 s), its source guard and the tests it names, one mutant a
-    # processor at a time (about 18 to 27 minutes on four runners' processors, which vary:
-    # D438's figure; its step has 40 minutes, beside the server job's 55).
+    # fresh interpreter, about 13 s), its source guard and the tests it names, one mutant a
+    # processor at a time (about 17.8 to 36.5 minutes on four runners' processors, which vary:
+    # 17.8 and 26.6 on main's pushes, 36.5 on a pull request's runner; D438's figure; its step has
+    # 40 minutes, beside the server job's 55).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:

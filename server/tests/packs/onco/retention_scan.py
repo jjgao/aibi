@@ -717,6 +717,33 @@ def maf_file(marker: Marker, *, late: bool = False) -> bytes:
     return "".join(out).encode()
 
 
+SV_NAMES = (
+    "Sample_Id",
+    "SV_Status",
+    "Site1_Hugo_Symbol",
+    "Site1_Entrez_Gene_Id",
+    "Site2_Hugo_Symbol",
+    "Site2_Entrez_Gene_Id",
+    "NCBI_Build",
+    "Event_Info",
+)
+
+
+def sv_file(marker: Marker) -> bytes:
+    """An SV file of ``ROWS`` rows (M4.2b-4, D445), a value of the marker in every value-bearing
+    position: a column of its own, the sample ids (the sample file's), both sites' symbols and the
+    event's text; the status, the build and the Entrez ids are the format's and numbers."""
+    lo, up, _ = marker
+    names = [*SV_NAMES, f"V_{up}"]
+    out = ["\t".join(names) + "\n"]
+    for i in range(ROWS):
+        status = ("SOMATIC", "GERMLINE")[i % 2]
+        row = [f"S{i}{up}", status, f"A{i}{up}", str(i + 1), f"B{i}{up}", str(i + 2), "GRCh37"]
+        row += [f"e{i}{lo}", f"v{i}{lo}"]
+        out.append("\t".join(row) + "\n")
+    return "".join(out).encode()
+
+
 def case_list_file(marker: Marker, *, late: bool = False) -> bytes:
     """The ``_sequenced`` case list: its study id, name and description carry the marker, its
     ids are the sample file's; with ``late`` its last id is no sample's."""
@@ -735,7 +762,8 @@ def study(
 ) -> Path:
     """A study directory whose every meta value, file name and directory name carries the marker,
     but for cBioPortal's vocabulary (``FIELDS``): its ``type_of_cancer`` is an OncoTree code by
-    its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444)."""
+    its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444) and an
+    SV file (D445)."""
     lo, up, _ = marker
     directory = root / f"s{lo}"
     directory.mkdir()
@@ -759,12 +787,19 @@ def study(
             f"profile_name: Profile {up}\nprofile_description: Calls {lo}\n"
             f"data_filename: maf_{lo}.txt\n"
         ),
+        "meta_sv.txt": (
+            f"cancer_study_identifier: m_{lo}\ngenetic_alteration_type: STRUCTURAL_VARIANT\n"
+            "datatype: SV\nstable_id: structural_variants\nshow_profile_in_analysis_tab: true\n"
+            f"profile_name: Events {up}\nprofile_description: Fusions {lo}\n"
+            f"data_filename: sv_{lo}.txt\n"
+        ),
     }
     for name, text in meta.items():
         (directory / name).write_text(text, encoding="utf-8")
     (directory / f"patient_{lo}.txt").write_bytes(patient)
     (directory / f"sample_{lo}.txt").write_bytes(sample_file(marker))
     (directory / f"maf_{lo}.txt").write_bytes(maf_file(marker, late=maf_late))
+    (directory / f"sv_{lo}.txt").write_bytes(sv_file(marker))
     (directory / "case_lists").mkdir()
     (directory / "case_lists" / f"cases_{lo}.txt").write_bytes(
         case_list_file(marker, late=list_late)
@@ -1011,6 +1046,7 @@ FIELDS: Mapping[str, frozenset[str]] = {
             "meta_clinical_patient.txt",
             "meta_clinical_sample.txt",
             "meta_mutations.txt",
+            "meta_sv.txt",
             "case_lists",
         }
     ),
@@ -1030,6 +1066,25 @@ FIELDS: Mapping[str, frozenset[str]] = {
     "maf: Variant_Classification": frozenset({"Silent", "Missense_Mutation", "IGR"}),
     "maf: HGVSp_Short": frozenset(),
     "maf: M_{up}": frozenset(),
+    "meta_sv.txt: cancer_study_identifier": frozenset(),
+    "meta_sv.txt: genetic_alteration_type": frozenset({"STRUCTURAL_VARIANT"}),
+    "meta_sv.txt: datatype": frozenset({"SV"}),
+    "meta_sv.txt: stable_id": frozenset({"structural_variants"}),
+    "meta_sv.txt: show_profile_in_analysis_tab": frozenset({"true"}),
+    "meta_sv.txt: profile_name": frozenset(),
+    "meta_sv.txt: profile_description": frozenset(),
+    "meta_sv.txt: data_filename": frozenset(),
+    "sv: column name": frozenset(
+        {"Sample_Id", "SV_Status", "Site#_Hugo_Symbol", "Site#_Entrez_Gene_Id", "NCBI_Build"}
+        | {"Event_Info"}
+    ),
+    "sv: Sample_Id": frozenset(),
+    "sv: SV_Status": frozenset({"SOMATIC", "GERMLINE"}),
+    "sv: Site#_Hugo_Symbol": frozenset(),
+    "sv: Site#_Entrez_Gene_Id": frozenset({"#"}),
+    "sv: NCBI_Build": frozenset({"GRCh#"}),
+    "sv: Event_Info": frozenset(),
+    "sv: V_{up}": frozenset(),
     "a case list's file name": frozenset(),
     "case list: cancer_study_identifier": frozenset(),
     "case list: stable_id": frozenset(),
@@ -1116,6 +1171,13 @@ def _study(directory: Path, out: dict[str, list[str]]) -> None:
             for line in lines[2:]:
                 for name, value in zip(names, line.split("\t"), strict=True):
                     out.setdefault(f"maf: {name}", []).append(value)
+        elif path.name.startswith("sv_"):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            names = lines[0].split("\t")
+            out.setdefault("sv: column name", []).extend(names)
+            for line in lines[1:]:
+                for name, value in zip(names, line.split("\t"), strict=True):
+                    out.setdefault(f"sv: {name}", []).append(value)
         elif path.name.startswith("meta_"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 key, _, value = line.partition(": ")

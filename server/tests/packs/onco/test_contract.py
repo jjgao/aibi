@@ -24,7 +24,7 @@ from typing import Any
 from aibi.core.schema.descriptors import ConceptDescriptor
 from aibi.core.schema.pack_api import PackRegistry
 
-MANIFEST = {"id": "onco", "version": "0.4.0", "results_version": 1, "requires_core": ">=0.0.1"}
+MANIFEST = {"id": "onco", "version": "0.5.0", "results_version": 1, "requires_core": ">=0.0.1"}
 
 TEXTS = {
     "onco:patient": ("Patient", "Rows are patients: the people a study follows."),
@@ -38,6 +38,11 @@ TEXTS = {
     "onco:case_list_member": (
         "Case list member",
         "Rows are the samples a case list names, one row per sample a list names.",
+    ),
+    "onco:structural_variant": (
+        "Structural variant",
+        "Rows are structural variant events: one event called in one sample, with its two sites, "
+        "as a structural variant file gives it.",
     ),
     "onco:gene_symbol": ("Gene symbol", "A gene's approved symbol."),
     "onco:sample_type": (
@@ -76,6 +81,7 @@ SORTS = {
     "onco:mutation": "table",
     "onco:case_list": "table",
     "onco:case_list_member": "table",
+    "onco:structural_variant": "table",
     "onco:gene_symbol": "value",
     "onco:sample_type": "value",
     "onco:mutation_class": "value",

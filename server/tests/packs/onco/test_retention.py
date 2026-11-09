@@ -508,7 +508,61 @@ STUDY_SIZES: dict[tuple[str, str], list[StudyShape]] = {
     ("bytes", "lists"): [(300, 100, 5), (300, 100, 200)],
     ("bytes", "ids"): [(2_000, 200, 0), (2_000, 2_000, 0)],
 }
-"""An import's shapes: the sample-id set behind a fixed MAF, one list's ids, and many lists."""
+"""An import's shapes: the sample-id set behind a fixed MAF and SV file (D445), one list's ids, and
+many lists."""
+
+
+SV_COLUMNS = [
+    "Sample_Id", "SV_Status", "Site1_Hugo_Symbol", "Site1_Entrez_Gene_Id", "Site1_Position",
+    "Site2_Hugo_Symbol", "Site2_Entrez_Gene_Id", "Site2_Position", "NCBI_Build", "Event_Info",
+]  # fmt: skip
+SV_META = (
+    b"cancer_study_identifier: m\ngenetic_alteration_type: STRUCTURAL_VARIANT\ndatatype: SV\n"
+    b"stable_id: structural_variants\nshow_profile_in_analysis_tab: true\nprofile_name: p\n"
+    b"profile_description: p\ndata_filename: data_sv.txt\n"
+)
+
+
+def sv_file(rows: int, extra: int = 0, kind: str = "valid", samples: int = 100) -> bytes:
+    """An SV file of ``rows`` rows over ``samples`` samples (M4.2b-4, D445), a short distinct value
+    in every column (``extra`` more of their own names): every row valid (``valid``), or every
+    position and Entrez id a token the core cannot parse (``unparsed``, ``1_<i>``), every row
+    repeating the first's key (``repeated``: the reference's duplicate, kept)."""
+    names = [*SV_COLUMNS, *(f"X_{k}" for k in range(extra))]
+    out = ["\t".join(names) + "\n"]
+    for i in range(rows):
+        n = 0 if kind == "repeated" else i
+        number = f"1_{n}" if kind == "unparsed" else str(n + 1)
+        row = [
+            f"S{n % samples}", ("SOMATIC", "GERMLINE")[n % 2], f"A{n}", number, number,
+            f"B{n}", number, number, "GRCh37", f"e{n}", *(f"x{n}" for _ in range(extra)),
+        ]  # fmt: skip
+        out.append("\t".join(row) + "\n")
+    return "".join(out).encode()
+
+
+SV_SIZES: dict[tuple[str, str], list[MafShape]] = {
+    ("blocks", "tall"): [(2_000, 0, "valid"), (20_000, 0, "valid")],
+    ("blocks", "wide"): [(20, 100, "valid"), (20, 1_000, "valid")],
+    ("blocks", "unparsed"): [(2_000, 0, "unparsed"), (20_000, 0, "unparsed")],
+    ("blocks", "repeated"): [(2_000, 0, "repeated"), (20_000, 0, "repeated")],
+    ("bytes", "tall"): [(200, 0, "valid"), (2_000, 0, "valid")],
+}
+"""The SV reader's shapes (D445): rows, columns, unparseable cells and repeated keys."""
+
+
+def _sv_read(measure: str) -> Callable[[Shape], int]:
+    def held(shape: Shape) -> int:
+        from aibi.packs.onco import structural
+
+        rows, extra, kind = shape  # pyright: ignore[reportAssignmentType]
+        data = sv_file(rows, extra, str(kind))
+        samples = frozenset(f"S{i}" for i in range(100))
+        fields = structural.StructuralFields(())
+        limits = ImportLimits()
+        return MEASURES[measure](lambda: structural.read(data, "v.txt", samples, fields, limits))
+
+    return held
 
 
 def _maf_read(measure: str) -> Callable[[Shape], int]:
@@ -534,6 +588,8 @@ def _maf_imported(make_study: MakeStudy, measure: str) -> Callable[[Shape], int]
             "data_clinical_sample.txt": samples(int(clinical)),
             "meta_mutations.txt": MUTATION_META,
             "data_mutations.txt": maf_file(200),
+            "meta_sv.txt": SV_META,
+            "data_sv.txt": sv_file(200),
             "case_lists": {
                 "cases_sequenced.txt": case_list_file(int(ids)),
                 **{f"cases_{k}.txt": case_list_file(50, f"l{k}") for k in range(int(lists))},
@@ -565,6 +621,11 @@ def _grown_from(held: Callable[[Shape], int], measure: str, shapes: list[Any]) -
 @pytest.mark.parametrize(("measure", "shape"), MAF_SIZES, ids=lambda key: key)
 def test_a_maf_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
     _grown_from(_maf_read(measure), measure, MAF_SIZES[(measure, shape)])
+
+
+@pytest.mark.parametrize(("measure", "shape"), SV_SIZES, ids=lambda key: key)
+def test_an_sv_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
+    _grown_from(_sv_read(measure), measure, SV_SIZES[(measure, shape)])
 
 
 @pytest.mark.parametrize(("measure", "shape"), STUDY_SIZES, ids=lambda key: key)

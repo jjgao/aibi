@@ -1,12 +1,14 @@
-"""The oncology pack's importer of a cBioPortal study directory (SPEC §10.1, §13.1, D409, D444;
-M4.2a-1b, M4.2b-1b).
+"""The oncology pack's importer of a cBioPortal study directory (SPEC §10.1, §13.1, D409, D444,
+D445; M4.2a-1b, M4.2b-1b, M4.2b-4).
 
 ``OncoImporter.import_source`` is ``PACK.importer``'s: it discovers the study (``study.discover``,
 D409's phases, which refuse or let the reader's refusal out), reads the patient file, when the
 study has one, then the sample file, each once through the import's reader at the operator's
 ``import_bytes`` and by its listing entry (``clinical.read``), then the case lists when the study
 has a ``case_lists`` directory (``caselists.read``), then the MAF when it has a mutation meta
-(``mutation.read``, at ``import_bytes``), and describes them (``build.describe``). A study with a
+(``mutation.read``, at ``import_bytes``), then the SV file when it has an SV meta
+(``structural.imported``, which holds every check of it, D445), and describes them
+(``build.describe``). A study with a
 MAF must have the case list ``<study>_sequenced`` (V:5034-5040), found by its exact
 ``stable_id``, else ``NO_SEQUENCED_LIST``; no coverage is declared from it (D444). Every note,
 discovery's first, goes through one ``notes.Budget``. It returns the importer's result, which
@@ -32,7 +34,7 @@ from aibi.core.schema.pack_api import (
     ImportResult,
     SourceReader,
 )
-from aibi.packs.onco import caselists, mutation
+from aibi.packs.onco import caselists, mutation, structural
 from aibi.packs.onco.build import describe, list_cells
 from aibi.packs.onco.clinical import Clinical, Role, read
 from aibi.packs.onco.facets import PACK_ID
@@ -40,7 +42,7 @@ from aibi.packs.onco.notes import Budget
 from aibi.packs.onco.refusals import entry_refused
 from aibi.packs.onco.study import ClinicalMeta, MutationMeta, discover
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 """The pack's version, which its manifest states and its curation entries name."""
 BY = f"importer:{PACK_ID}@{VERSION}"
 NO_LOCATION = (
@@ -128,6 +130,9 @@ class OncoImporter:
                     "followed by _sequenced",
                 )
             maf = _maf(reader, study.mutation, sample.samples, options, cells)
+        sv = structural.imported(
+            reader, study.structural, sample.samples, options.limits, cells, maf
+        )
         location = reader.location(source)
         if location == ".":
             location = os.path.basename(source)
@@ -142,6 +147,7 @@ class OncoImporter:
             previous=options.previous,
             maf=maf,
             lists=lists,
+            sv=sv,
         )
         budget = Budget()
         budget.add(study.notes)

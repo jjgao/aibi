@@ -86,7 +86,6 @@ DATA_TYPES = frozenset(
         "GENERIC_ASSAY_CONTINUOUS",
         "GENERIC_ASSAY_BINARY",
         "GENERIC_ASSAY_CATEGORICAL",
-        "STRUCTURAL_VARIANT",
         "SAMPLE_RESOURCES",
         "PATIENT_RESOURCES",
         "STUDY_RESOURCES",
@@ -94,7 +93,8 @@ DATA_TYPES = frozenset(
     }
 )
 """Every type whose meta file names a data file the pack never imports (all but the study meta, the
-two clinical types and, from M4.2b-1b, the MAF's type ``MUTATION``, D444), written by hand."""
+two clinical types, from M4.2b-1b the MAF's type ``MUTATION``, D444, and from M4.2b-4 the
+structural variants' type ``STRUCTURAL_VARIANT``, D445), written by hand."""
 
 
 @dataclass(frozen=True)
@@ -113,7 +113,8 @@ ROWS = (
     Row(
         "listing:meta",
         LISTING,
-        DATA_TYPES | {STUDY, "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION"},
+        DATA_TYPES
+        | {STUDY, "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION", "STRUCTURAL_VARIANT"},
     ),
     Row("listing:case_lists", CASE_LISTS, frozenset()),
     Row("isdir:case_lists", CASE_LISTS, frozenset()),
@@ -142,7 +143,6 @@ PAIRS = (
     ("MUTATION_UNCALLED", "MAF", "MUTATION_UNCALLED"),
     ("METHYLATION", "CONTINUOUS", "METHYLATION"),
     ("GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX"),
-    ("STRUCTURAL_VARIANT", "SV", "STRUCTURAL_VARIANT"),
     ("GISTIC_GENES_AMP", "Q-VALUE", "GISTIC_GENES"),
     ("GISTIC_GENES_DEL", "Q-VALUE", "GISTIC_GENES"),
     ("MUTSIG", "Q-VALUE", "MUTATION_SIGNIFICANCE"),
@@ -153,7 +153,8 @@ PAIRS = (
     ("GENERIC_ASSAY", "CATEGORICAL", "GENERIC_ASSAY_CATEGORICAL"),
 )
 """Every pair of a type the pack never imports (C:651-689), written by hand, with the type it is:
-the clinical pairs and, from M4.2b-1b, ``MUTATION_EXTENDED:MAF`` (D444) are left out."""
+the clinical pairs, from M4.2b-1b ``MUTATION_EXTENDED:MAF`` (D444) and from M4.2b-4
+``STRUCTURAL_VARIANT:SV`` (D445) are left out."""
 RESOURCES = {
     "PATIENT": "PATIENT_RESOURCES",
     "SAMPLE": "SAMPLE_RESOURCES",

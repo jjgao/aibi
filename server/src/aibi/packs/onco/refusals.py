@@ -83,13 +83,15 @@ Code = Literal[
     "NORMAL_SAMPLE",
     "DRIVER_VALUE",
     "PADDED_VALUE",
+    "SV_STATUS",
 ]
 CODES: tuple[Code, ...] = get_args(Code)
 """Every code the pack refuses with, without its ``onco.`` prefix: discovery's eleven (M4.2a-1a),
 then the clinical files' thirty (``clinical``) and the validator's ``TYPE_OF_CANCER``
 (``validators``), M4.2a-1b's; then M4.2b-1b's (D444): discovery's ``DUPLICATE_PROFILE_META``
 and ``CASE_LISTS``, the case lists' ``CASE_LIST`` and ``NO_SEQUENCED_LIST`` (``caselists``), and
-the MAF's fifteen (``mutation``). ``UNREADABLE_ROWS`` is the settled list's code for a clinical file
+the MAF's fifteen (``mutation``); then M4.2b-4's (D445): the structural variants' ``SV_STATUS``
+(``structural``). ``UNREADABLE_ROWS`` is the settled list's code for a clinical file
 the core's parse would read otherwise than the pack's reader; no input reaches it (the parse
 differential of the pack's tests holds the two readers to one reading), so nothing raises it."""
 

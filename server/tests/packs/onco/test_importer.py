@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.4.0"
+BY = "importer:onco@0.5.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:
@@ -101,6 +101,7 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "mutations",
         "case_lists",
         "case_list_members",
+        "structural_variants",
     }
     patients = found["patients"]
     assert isinstance(patients, TableDescriptor)
@@ -138,6 +139,19 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "case_lists.category": "string",
         "case_list_members.case_list": "string",
         "case_list_members.sample_id": "string",
+        "structural_variants.sample_id": "string",
+        "structural_variants.site1_hugo_symbol": "string",
+        "structural_variants.site1_entrez_gene_id": "integer",
+        "structural_variants.site1_chromosome": "string",
+        "structural_variants.site1_position": "integer",
+        "structural_variants.site2_hugo_symbol": "string",
+        "structural_variants.site2_entrez_gene_id": "integer",
+        "structural_variants.site2_chromosome": "string",
+        "structural_variants.site2_position": "integer",
+        "structural_variants.ncbi_build": "category",
+        "structural_variants.sv_status": "category",
+        "structural_variants.event_info": "string",
+        "structural_variants.class": "string",
     }
     mutations = found["mutations"]
     assert isinstance(mutations, TableDescriptor)
@@ -601,7 +615,7 @@ def test_the_facet_serves_the_study_s_own_spelling(world: Any, registry: PackReg
     assert facets.facet(View()) == {
         "type_of_cancer": ["mixed"],
         "reference_genome": ["hg19"],
-        "profiles": ["MUTATION_EXTENDED:MAF"],
+        "profiles": ["MUTATION_EXTENDED:MAF", "STRUCTURAL_VARIANT:SV"],
     }
 
 
