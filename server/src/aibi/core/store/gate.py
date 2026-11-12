@@ -35,6 +35,7 @@ outside ``event_coding``, whose time is negative or whose entry is at or after t
 """
 
 import hashlib
+import heapq
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, cast
@@ -55,7 +56,7 @@ from aibi.core.schema.descriptors import (
 )
 from aibi.core.schema.jsonio import canonical, pointer
 from aibi.core.schema.output import Message, text
-from aibi.core.schema.pack_api import cell_digest
+from aibi.core.schema.pack_api import CellDigest, cell_digest
 from aibi.core.schema.refusals import Refusal, RefusalCode, finish_refusals
 from aibi.core.schema.release import check_release
 from aibi.core.schema.semantics import ObservationState
@@ -195,11 +196,12 @@ def needed(descriptors: Iterable[Descriptor]) -> dict[str, set[str]]:
     return found
 
 
-CHECK_VERSION = "aibi.reshaped-coverage/1"
+CHECK_VERSION = "aibi.reshaped-coverage/2"
 """The version of the coverage's check against a declaration (``_Checks.declarations``), digested
 with its inputs: bumped whenever that check's logic changes, or a helper it shares with the gate
-(``tuples``, ``_part``, ``key_part``, ``cell_digest``, ``decode_cells``), so that a release checked
-by an earlier version is checked again at its next change (D401)."""
+(``tuples``, ``_part``, ``key_part``, ``cell_digest``, ``CellDigest``, ``decode_cells``), so that
+a release checked by an earlier version is checked again at its next change (D401). Version 2
+streams a grouped listing (``_Streamed``) where version 1 built it, with the same outcomes."""
 
 
 def declaration_inputs(
@@ -477,6 +479,173 @@ def _json_key(value: object) -> tuple[str, object] | None:
     if isinstance(value, str):
         return ("string", value)
     return None
+
+
+class _Listing(Protocol):
+    """The cells a coverage lists, as keys of the reshaped table in its key's order (D401)."""
+
+    def __contains__(self, cell: Tuple) -> bool: ...
+
+    def without(self, held: set[Tuple]) -> tuple[int, str]:
+        """How many listed cells are not in ``held``, and their ``cell_digest``."""
+        ...
+
+
+@dataclass(frozen=True)
+class _Built:
+    """A listing held as its cells: a direct coverage's (as many as its table's rows), and a
+    grouped coverage's that the stream does not take (a key interleaving parent and scope
+    columns, or a value that is not text), whose size ``listed_cells`` bounds before building it.
+    """
+
+    cells: set[Tuple]
+
+    def __contains__(self, cell: Tuple) -> bool:
+        return cell in self.cells
+
+    def without(self, held: set[Tuple]) -> tuple[int, str]:
+        missing = self.cells - held
+        return len(missing), cell_digest([str(part[1]) for part in cell] for cell in missing)
+
+
+def _texts(parts: Tuple) -> bool:
+    """Whether each of a key's values is a text the digest can encode."""
+    for flag, value in parts:
+        if flag or not isinstance(value, str):
+            return False
+        try:
+            value.encode()
+        except UnicodeEncodeError:
+            return False
+    return True
+
+
+def _encoded(parts: Tuple) -> bytes:
+    """A key's place in the digest's order (``CellDigest``): its encoding, each value's UTF-8
+    length (8 bytes, big-endian) and then its UTF-8, so that keys of one width compare as their
+    values do in turn, each by its length and then its bytes, never as Python compares texts."""
+    return b"".join(
+        len(raw).to_bytes(8, "big") + raw for raw in (str(part[1]).encode() for part in parts)
+    )
+
+
+def _values(parts: Tuple) -> tuple[str, ...]:
+    return tuple(str(part[1]) for part in parts)
+
+
+@dataclass(frozen=True)
+class _Streamed:
+    """A grouped listing never built: each parent's group and each group's distinct scopes,
+    whose product it streams in the digest's order without holding it (D401). The key lists the
+    parent columns first (``scope_first`` false) or the scope columns first, each side in any
+    order of its own; ``groups`` maps each assigned parent to its group and ``scopes`` each group
+    to its scopes, parents and scopes in the key's order, ``width`` parts to a parent; every value
+    is a text (``_texts``). Its memory is in the assignment's, the groups' and the reshaped
+    table's rows, the cells without a row being counted and hashed as they come."""
+
+    scope_first: bool
+    width: int
+    groups: dict[Tuple, Tuple]
+    scopes: dict[Tuple, set[Tuple]]
+
+    def __contains__(self, cell: Tuple) -> bool:
+        if self.scope_first:
+            cut = len(cell) - self.width
+            parent, scope = cell[cut:], cell[:cut]
+        else:
+            parent, scope = cell[: self.width], cell[self.width :]
+        group = self.groups.get(parent)
+        return group is not None and scope in self.scopes.get(group, ())
+
+    def without(self, held: set[Tuple]) -> tuple[int, str]:
+        digest = CellDigest()
+        if self.scope_first:
+            self._scope_first(held, digest)
+        else:
+            self._parent_first(held, digest)
+        return digest.count, digest.digest()
+
+    def _parent_first(self, held: set[Tuple], digest: CellDigest) -> None:
+        """The parents sorted once, and each group's scopes sorted once and kept only while a
+        parent of the group is still to come."""
+        left: dict[Tuple, int] = {}
+        for group in self.groups.values():
+            left[group] = left.get(group, 0) + 1
+        kept: dict[Tuple, list[tuple[Tuple, tuple[str, ...]]]] = {}
+        for parent in sorted(self.groups, key=_encoded):
+            group = self.groups[parent]
+            scopes = kept.get(group)
+            if scopes is None:
+                ordered = sorted(self.scopes.get(group, ()), key=_encoded)
+                scopes = [(scope, _values(scope)) for scope in ordered]
+                kept[group] = scopes
+            left[group] -= 1
+            if not left[group]:
+                del kept[group]
+            texts = _values(parent)
+            for scope, values in scopes:
+                if (*parent, *scope) not in held:
+                    digest.add((*texts, *values))
+
+    def _scope_first(self, held: set[Tuple], digest: CellDigest) -> None:
+        """The distinct scopes sorted once, each with the parents of the groups that list it:
+        each group's parents sorted once, and those of the groups listing a scope merged
+        (``heapq.merge``), in time the listed cells times the log of the groups, never the
+        scopes times the parents."""
+        members: dict[Tuple, list[tuple[bytes, Tuple, tuple[str, ...]]]] = {}
+        for parent, group in self.groups.items():
+            if self.scopes.get(group):
+                members.setdefault(group, []).append((_encoded(parent), parent, _values(parent)))
+        for found in members.values():
+            found.sort(key=_first)
+        listing: dict[Tuple, list[Tuple]] = {}
+        for group, scopes in self.scopes.items():
+            if group in members:
+                for scope in scopes:
+                    listing.setdefault(scope, []).append(group)
+        for scope in sorted(listing, key=_encoded):
+            values = _values(scope)
+            merged = heapq.merge(*(members[group] for group in listing[scope]), key=_first)
+            for _, parent, texts in merged:
+                if (*scope, *parent) not in held:
+                    digest.add((*values, *texts))
+
+
+def _first(item: tuple[bytes, Tuple, tuple[str, ...]]) -> bytes:
+    return item[0]
+
+
+def _stream(
+    members: Mapping[Tuple, Tuple],
+    listed: Mapping[Tuple, set[Tuple]],
+    own: Sequence[int],
+    its: Sequence[int],
+    *,
+    scope_first: bool,
+) -> _Streamed | None:
+    """A grouped listing to stream: each parent that lists a cell, with its group, and those
+    groups' scopes, each taken to the key's order (the parent's values at ``own``, the scope's at
+    ``its``; a part already in that order is kept, not copied); ``None`` if a value is not a text
+    the digest encodes, whose listing is built instead: a key of another datatype, which
+    ``check_release`` refuses (rule 4(e)) after this check, or a text UTF-8 cannot encode (a lone
+    surrogate), which no build's raw snapshot holds (``build``)."""
+    groups: dict[Tuple, Tuple] = {}
+    scopes: dict[Tuple, set[Tuple]] = {}
+    as_is = list(own) == list(range(len(own))), list(its) == list(range(len(its)))
+    for owner, group in members.items():
+        found = listed.get(group)
+        if not found:
+            continue
+        parent = owner if as_is[0] else tuple(owner[i] for i in own)
+        if not _texts(parent):
+            return None
+        if group not in scopes:
+            scoped = found if as_is[1] else {tuple(scope[i] for i in its) for scope in found}
+            if not all(_texts(scope) for scope in scoped):
+                return None
+            scopes[group] = scoped
+        groups[parent] = group
+    return _Streamed(scope_first, len(own), groups, scopes)
 
 
 class _Checks:
@@ -855,13 +1024,12 @@ class _Checks:
                     RefusalCode.INVALID_VALUE, at, ("fields", "parents"), message, outside, None
                 )
                 continue
-            missing = listed - held
-            digest = cell_digest([str(part[1]) for part in cell] for cell in missing)
-            if len(missing) != declaration.dropped or digest != declaration.digest:
+            missing, digest = listed.without(held)
+            if missing != declaration.dropped or digest != declaration.digest:
                 counted = (
-                    f"{len(missing)} listed, {declaration.dropped} dropped"
-                    if len(missing) != declaration.dropped
-                    else f"as many, {len(missing)}, but other cells"
+                    f"{missing} listed, {declaration.dropped} dropped"
+                    if missing != declaration.dropped
+                    else f"as many, {missing}, but other cells"
                 )
                 message = (
                     "The coverage lists cells without a row that are not the cells the importer "
@@ -877,12 +1045,17 @@ class _Checks:
         parents: DirectCoverage | GroupedCoverage,
         key: Sequence[str],
         most: int,
-    ) -> set[Tuple] | str:
+    ) -> _Listing | str:
         """The distinct cells the coverage lists, as keys of the child table in ``key``'s order
         (its parent columns and scope columns, which ``check_release`` pins to the key), or why
         they can't be read. A grouped coverage lists the product of each parent and its group's
-        scopes, which is counted before it is built: a listing of more than ``most`` cells (the
-        table's rows and the cells dropped as absent) cannot pass, so it is refused unbuilt."""
+        scopes, which is counted before anything is built: a listing of more than ``most`` cells
+        (the table's rows and the cells dropped as absent) cannot pass, so it is refused unbuilt.
+        A grouped listing whose key holds the parent columns first or the scope columns first,
+        every value a text, is never built but streamed (``_Streamed``), in memory of the
+        coverage tables' rows; a direct coverage's (as many as its table's rows) and any other
+        grouped listing (a key interleaving parent and scope columns) is built as its cells
+        (``_Built``), within ``most``."""
         fields = relationship.fields
         stands = dict(zip(fields.parent_columns, fields.child_columns, strict=True))
         if isinstance(parents, DirectCoverage):
@@ -915,7 +1088,7 @@ class _Checks:
             for owner, scope in zip(owners, scoped, strict=True):
                 if owner is not None and scope is not None:
                     add(owner, scope)
-            return cells
+            return _Built(cells)
         assignment, groups = parents.assignment, parents.groups
         named = self.tuples(assignment.table, [assignment.group_column])
         group_names = self.tuples(groups.table, [groups.group_column])
@@ -939,10 +1112,18 @@ class _Checks:
                 f"The coverage lists {size} cells, more than the table's rows and the cells "
                 f"dropped as absent ({most}) (D401)"
             )
+        width = len(fields.parent_columns)
+        own = [i for i in place if i < width]
+        its = [i - width for i in place if i >= width]
+        parent_first = [*own, *(i + width for i in its)]
+        if place in (parent_first, [*(i + width for i in its), *own]):
+            streamed = _stream(members, listed, own, its, scope_first=place != parent_first)
+            if streamed is not None:
+                return streamed
         for owner, group in members.items():
             for scope in listed.get(group, ()):
                 add(owner, scope)
-        return cells
+        return _Built(cells)
 
     # --- Semantic gaps -------------------------------------------------------------------------
 

@@ -288,7 +288,8 @@ class Reshaped:
     D401): a cell whose value is in ``absent`` (assessed, nothing there) or that is empty (not
     assessed) gives no row. ``column`` is the value column; ``dropped`` counts the absent cells
     and ``digest`` is ``cell_digest`` of their keys (the table's primary-key values, in the
-    key's order); ``empty`` counts the empty cells, which the coverage does not list."""
+    key's order), which ``CellDigest`` gives without holding them; ``empty`` counts the empty
+    cells, which the coverage does not list."""
 
     column: str
     absent: Sequence[str]
@@ -333,6 +334,64 @@ def cell_digest(cells: Iterable[Sequence[str]]) -> str:
         hashed.update(len(item).to_bytes(8, "big"))
         hashed.update(item)
     return hashed.hexdigest()
+
+
+class CellDigest:
+    """``cell_digest`` streamed, in memory that does not grow with the cells: the same digest of
+    a set of cells, given one at a time by ``add`` in the order that digest sorts their
+    encodings (D401). Since each value's encoding starts with its length, no value's encoding is
+    a proper prefix of another's, so that order is the cells' values compared in the key's
+    order, each by its UTF-8 length (shorter first) and then by its UTF-8 as bytes; it is never
+    Python's order of the texts (``"b"`` sorts before ``"ab"`` here). A cell is a sequence of
+    texts, never one text; a cell out of that order, or one given again, is refused with a
+    ``ValueError`` whose message names no value, never digested, so a digest is ``cell_digest``'s
+    of the cells added or no digest at all. ``count`` is the cells added, and ``digest`` may be
+    read at any time."""
+
+    __slots__ = ("_count", "_hashed", "_last")
+
+    def __init__(self) -> None:
+        self._hashed = hashlib.sha256()
+        self._last: bytes | None = None
+        self._count = 0
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    def add(self, cell: Sequence[str]) -> None:
+        if type(cell) is not tuple and (  # a tuple, the usual cell, skips the abstract check
+            isinstance(cell, str) or not isinstance(cast(object, cell), Sequence)
+        ):
+            raise ValueError("A cell is a sequence of its key's values, not one text (D401)")
+        encoded: list[bytes] = []
+        for value in cast(Sequence[object], cell):
+            if not isinstance(value, str):
+                raise ValueError("A cell's values are texts (D401)")
+            raw = b""
+            unencodable = False
+            try:
+                raw = value.encode()
+            except UnicodeEncodeError:
+                unencodable = True
+            if unencodable:  # raised here, so the error carries no context naming the value
+                raise ValueError("A cell's value is not encodable as UTF-8 (D401)")
+            encoded.append(len(raw).to_bytes(8, "big"))
+            encoded.append(raw)
+        item = b"".join(encoded)
+        if self._last is not None and item <= self._last:
+            raise ValueError(
+                "A cell was given out of the digest's order or twice (D401): give each cell "
+                "once, its values compared by UTF-8 length and then UTF-8 bytes"
+            )
+        self._last = item
+        self._hashed.update(len(item).to_bytes(8, "big"))
+        self._hashed.update(item)
+        self._count += 1
+
+    def digest(self) -> str:
+        """The digest of the cells added so far, as ``cell_digest`` gives it for them."""
+        return self._hashed.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -1997,6 +2056,7 @@ __all__ = [
     "AnalysisInputs",
     "CaveatRule",
     "Cell",
+    "CellDigest",
     "Clauses",
     "Codes",
     "ConfinedPath",
