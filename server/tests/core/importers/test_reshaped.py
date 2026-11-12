@@ -1434,7 +1434,7 @@ def test_the_digest_holds_the_check_s_version(
     next change, whatever it changes."""
     from aibi.core.store import gate
 
-    monkeypatch.setattr(gate, "CHECK_VERSION", "aibi.reshaped-coverage/2")
+    monkeypatch.setattr(gate, "CHECK_VERSION", "aibi.reshaped-coverage/next")
     seen = _declarations_checked(monkeypatch)
     _change(store, orchard, _setting("yields", "/label", "Harvests"))
     assert seen == [{"yields"}]
@@ -1689,7 +1689,7 @@ def test_a_reimport_after_the_check_s_version_changes_is_no_change(
 
     path = _orchard(grid)
     lifecycle.import_(path, registry=grid.registry, pack="grid")
-    monkeypatch.setattr(gate, "CHECK_VERSION", "aibi.reshaped-coverage/2")
+    monkeypatch.setattr(gate, "CHECK_VERSION", "aibi.reshaped-coverage/next")
     with pytest.raises(ImportRefused) as refused:
         lifecycle.reimport(path, registry=grid.registry, pack="grid")
     assert [r.code for r in refused.value.refusals] == ["NO_CHANGE"]
