@@ -147,7 +147,7 @@ schemas/                  # generated JSON Schemas, checked in
 
 ## Tooling (from M0)
 
-Python ≥ 3.12 with uv. Before pushing, run from `server/`:
+Python ≥ 3.12.6 with uv. Before pushing, run from `server/`:
 
 ```bash
 uv run ruff check . && uv run ruff format --check .
