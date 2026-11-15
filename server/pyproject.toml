@@ -2,7 +2,7 @@
 name = "aibi"
 version = "0.0.1"
 description = "AI-native cohort exploration over related tables"
-requires-python = ">=3.12"
+requires-python = ">=3.12.6"
 license = "Apache-2.0"
 dependencies = [
     "attrs>=22.2",  # jsonschemas.py reads the attrs fields of jsonschema's validators (Attribute.alias)

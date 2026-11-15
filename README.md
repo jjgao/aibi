@@ -14,7 +14,7 @@ are in its §15.
 ## Development
 
 The server is a Python package in `server/`, managed with [uv](https://docs.astral.sh/uv/).
-It needs Python 3.12 or later.
+It needs Python 3.12.6 or later (CPython 3.12.3 to 3.12.5 has a free-list bug in `_asyncio` that the pack's retention scan trips, and `uv` refuses an earlier interpreter).
 
 ```bash
 cd server
