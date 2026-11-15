@@ -756,6 +756,235 @@ def test_a_reimport_that_changes_only_empty_cells_is_no_change(
     assert [r.code for r in refused.value.refusals] == ["NO_CHANGE"]
 
 
+def test_a_reimport_of_the_same_bytes_later_is_no_change(
+    roots: Roots, lifecycle: Lifecycle, grid: Grid
+) -> None:
+    """The importer's fields (the table's ``source`` and ``primary_key``, the column's ``absent``)
+    keep their earlier entries where the new import gives the same value and entry but for its
+    time: a re-import of the same bytes at another time is ``NO_CHANGE``, as for any other table
+    (D241)."""
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.registry, pack="grid")
+    with pytest.raises(ImportRefused) as refused:
+        lifecycle.reimport(path, registry=grid.registry, pack="grid", at="2026-02-01T00:00:00Z")
+    assert [r.code for r in refused.value.refusals] == ["NO_CHANGE"]
+
+
+FIRST = "2026-01-01T00:00:00Z"
+LATER = "2026-02-01T00:00:00Z"
+_TABLE_FIELDS = [("yields", "/fields/source"), ("yields", "/fields/primary_key")]
+
+
+def _entries(update: Callable[[str, str, dict[str, Any]], None]) -> Callable[..., Any]:
+    """A change of the pack's result that edits every curation entry of every descriptor, as
+    ``update(descriptor id, pointer, entry)``."""
+
+    def change(result: ImportResult) -> ImportResult:
+        descriptors = []
+        for descriptor in result.descriptors:
+            dumped = descriptor.model_dump(mode="json")
+            for pointer, entry in dumped["curation"].items():
+                update(descriptor.id, pointer, entry)
+            descriptors.append(_DESCRIPTOR.validate_python(dumped))
+        return replace(result, descriptors=descriptors)
+
+    return change
+
+
+def _stamped(at: str) -> Callable[..., Any]:
+    """The pack stamps every entry it writes with the time it ran, as a real pack's does."""
+    return _entries(lambda id_, pointer, entry: entry.update(at=at))
+
+
+def _entry_of(store: Store, manifest: str, id_: str, pointer: str) -> Any:
+    return {d.id: d for d in store.descriptors(manifest)}[id_].curation[pointer]
+
+
+def test_a_pack_that_stamps_every_entry_later_is_no_change(
+    roots: Roots, lifecycle: Lifecycle, grid: Grid
+) -> None:
+    """The class, not the grid pack's fixed time: every entry of every field the importer gives
+    is the earlier release's but for its time (D241)."""
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.registry, pack="grid")
+    with pytest.raises(ImportRefused) as refused:
+        lifecycle.reimport(path, registry=grid.with_change(_stamped(LATER)), pack="grid", at=LATER)
+    assert [r.code for r in refused.value.refusals] == ["NO_CHANGE"]
+
+
+_MEMBERS = [
+    ("status", {}, {"status": "proposed"}),
+    ("by", {}, {"by": "importer:grid@1.0.1"}),
+    ("evidence added", {}, {"evidence": "a rule"}),
+    ("evidence dropped", {"evidence": "a rule"}, {}),
+]
+
+
+@pytest.mark.parametrize(("id_", "pointer"), _TABLE_FIELDS, ids=["source", "key"])
+@pytest.mark.parametrize(
+    ("earlier", "later"), [m[1:] for m in _MEMBERS], ids=[m[0] for m in _MEMBERS]
+)
+def test_a_change_of_an_entry_of_the_importer_s_field_but_its_time_publishes(
+    lifecycle: Lifecycle,
+    grid: Grid,
+    store: Store,
+    id_: str,
+    pointer: str,
+    earlier: dict[str, Any],
+    later: dict[str, Any],
+) -> None:
+    """Skipping the field is for an entry that is the earlier one's but for its time: another
+    status, author or evidence is the importer's to say, so the new entry is published. (The
+    column's ``absent`` entry is the core's, written by ``declared``: it changes with the value.)"""
+
+    def given(at: str, extra: dict[str, Any]) -> Callable[..., Any]:
+        def update(entry_id: str, entry_pointer: str, entry: dict[str, Any]) -> None:
+            entry["at"] = at
+            if (entry_id, entry_pointer) == (id_, pointer):
+                entry.pop("evidence", None)
+                entry.update(extra)
+
+        return _entries(update)
+
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.with_change(given(FIRST, earlier)), pack="grid")
+    published = lifecycle.reimport(
+        path, registry=grid.with_change(given(LATER, later)), pack="grid", at=LATER
+    )
+    entry = _entry_of(store, published.manifest, id_, pointer)
+    assert entry.at == LATER
+    assert entry.status == later.get("status", "imported")
+    assert entry.by == later.get("by", "importer:grid@1.0.0")
+    assert entry.evidence == later.get("evidence")
+
+
+_KEYED = _set("yields", "primary_key", ["season", "tree_id"])
+_ZEROS = [("autumn", "t_zero"), ("spring", "t_zero"), ("autumn", "t_spring")]
+_SCOPE_FIRST = _declared(digest=cell_digest(_ZEROS))
+
+
+_SOURCE = {"kind": "pack", "name": "yields", "original_name": "grades.tsv"}
+_RENAMED = {**_SOURCE, "original_name": "grades-v2.tsv"}
+
+
+@pytest.mark.parametrize(
+    ("id_", "pointer", "change", "value", "entry"),
+    [
+        ("yields.grade", "/fields/absent", _declared(absent=("0", "N")), ["0", "N"], {}),
+        (
+            "yields",
+            "/fields/primary_key",
+            lambda result: _SCOPE_FIRST(_KEYED(result)),
+            ["season", "tree_id"],
+            {},
+        ),
+        # An entry that is the same but for its time while the value changes: the core fills
+        # ``inferred`` only for an importer's entry that has none, so a pack's own does not track
+        # the value, and an entry by another author has none.
+        (
+            "yields",
+            "/fields/source",
+            _set("yields", "source", _RENAMED),
+            _RENAMED,
+            {"inferred": _SOURCE},
+        ),
+        (
+            "yields",
+            "/fields/source",
+            _set("yields", "source", _RENAMED),
+            _RENAMED,
+            {"status": "proposed", "by": "agent:grid"},
+        ),
+    ],
+    ids=["absent", "key", "source with its own inference", "source by an agent"],
+)
+def test_a_changed_value_of_the_importer_s_field_publishes_with_a_note(
+    lifecycle: Lifecycle,
+    grid: Grid,
+    store: Store,
+    id_: str,
+    pointer: str,
+    change: Callable[..., Any],
+    value: Any,
+    entry: dict[str, Any],
+) -> None:
+    """The value changes though the entry is the earlier one's but for its time: it is the new
+    import's, and a ``reimported`` note says so."""
+
+    def given(result: ImportResult) -> ImportResult:
+        return _entries(
+            lambda entry_id, entry_pointer, held: held.update(
+                entry if (entry_id, entry_pointer) == (id_, pointer) else {}
+            )
+        )(result)
+
+    def stamped(result: ImportResult) -> ImportResult:
+        return given(_stamped(LATER)(change(result)))
+
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.with_change(given), pack="grid")
+    published = lifecycle.reimport(path, registry=grid.with_change(stamped), pack="grid", at=LATER)
+    assert ("reimported", id_ + pointer) in {(n.kind, n.subject) for n in published.notes}
+    assert _entry_of(store, published.manifest, id_, pointer).at == LATER
+    descriptors: dict[str, Any] = {d.id: d for d in store.descriptors(published.manifest)}
+    found = descriptors[id_].fields.model_dump(mode="json", exclude_none=True)
+    assert found[pointer.rsplit("/", 1)[1]] == value
+
+
+def test_the_importer_s_entry_replaces_an_operator_s_of_the_absent_values(
+    lifecycle: Lifecycle, grid: Grid, store: Store
+) -> None:
+    """An operator may confirm the column's ``absent`` (the importer's field, D401); a re-import
+    gives the importer's entry back (D239), and the next one of the same bytes is ``NO_CHANGE``."""
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.registry, pack="grid")
+    opened = open_session(store, "d", ADA)
+    request = ChangeRequest.model_validate(
+        {"edits": [{"op": "confirm", "descriptor": "yields.grade", "pointers": ["/fields/absent"]}]}
+    )
+    draft = change(store, "d", opened.handle, opened.draft, request, ADA)
+    publish(store, "d", opened.handle, draft, ADA)
+    confirmed = _entry_of(store, draft, "yields.grade", "/fields/absent")
+    assert confirmed.by == ADA
+    published = lifecycle.reimport(
+        path, registry=grid.with_change(_stamped(LATER)), pack="grid", at=LATER
+    )
+    entry = _entry_of(store, published.manifest, "yields.grade", "/fields/absent")
+    assert (entry.by, entry.status, entry.at) == ("importer:grid@1.0.0", "imported", LATER)
+    with pytest.raises(ImportRefused) as refused:
+        lifecycle.reimport(
+            path,
+            registry=grid.with_change(_stamped("2026-03-01T00:00:00Z")),
+            pack="grid",
+            at="2026-03-01T00:00:00Z",
+        )
+    assert [r.code for r in refused.value.refusals] == ["NO_CHANGE"]
+
+
+def test_a_pack_whose_inference_really_differs_publishes(
+    lifecycle: Lifecycle, grid: Grid, store: Store
+) -> None:
+    """The earlier entry's ``inferred`` is carried forward (D239), and a pack that writes another
+    one for the same value and entry is the importer's new say."""
+
+    def inferring(result: ImportResult) -> ImportResult:
+        return _entries(
+            lambda id_, pointer, entry: entry.update(
+                at=LATER,
+                **({"inferred": ["season"]} if (id_, pointer) == _TABLE_FIELDS[1] else {}),
+            )
+        )(result)
+
+    path = _orchard(grid)
+    lifecycle.import_(path, registry=grid.registry, pack="grid")
+    published = lifecycle.reimport(
+        path, registry=grid.with_change(inferring), pack="grid", at=LATER
+    )
+    entry = _entry_of(store, published.manifest, "yields", "/fields/primary_key")
+    assert entry.at == LATER
+    assert entry.inferred == ["season"]
+
+
 _REMOVALS = [
     {"op": "remove", "descriptor": "cov:yields.tree_id", "pointer": "/fields/parents"},
     {"op": "remove_descriptor", "descriptor": "cov:yields.tree_id"},
