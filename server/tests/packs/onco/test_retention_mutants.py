@@ -1,9 +1,12 @@
 """D438's mutation table for the retention guards (``retention_mutants/table.py``, issue #136): its
 anchors still name the code they change, every mutant has a stated outcome, and, under ``-m
-mutation`` (CI's ``mutation`` job, about 17.8 to 36.5 minutes: D438's figure), every mutant
-replayed against a copy of the tree has that outcome (``retention_mutants/replay.py``)."""
+mutation`` (CI's ``mutation`` job, whose two legs each replay half of the table, about 9.5 to 19
+minutes a leg: D438's figure), every mutant replayed against a copy of the tree has that outcome
+(``retention_mutants/replay.py``). ``AIBI_MUTANT_SHARD=i/n`` replays leg ``i`` of ``n``'s share
+(``mutation_report.dealt``; the whole table when it is not set)."""
 
 import importlib.util
+import os
 import re
 import tomllib
 from collections.abc import Mapping
@@ -12,6 +15,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+import yaml
 
 HERE = Path(__file__).resolve().parent
 SERVER = HERE.parents[2]
@@ -28,7 +32,14 @@ def _load(path: Path, name: str) -> ModuleType:
 
 table = _load(HERE / "retention_mutants" / "table.py", "retention_table")
 replay = _load(HERE / "retention_mutants" / "replay.py", "retention_replay")
+reporting = _load(SERVER.parent / ".github" / "scripts" / "mutation_report.py", "mutation_report")
 MUTANTS: tuple[Any, ...] = table.MUTANTS
+SHARD = "AIBI_MUTANT_SHARD"
+"""The leg of CI's ``mutation`` job (``i/n``) whose share of the table this run replays."""
+LEG: tuple[int, int] = reporting.shard(os.environ.get(SHARD, "1/1"))
+DEALT = frozenset(reporting.dealt([(m.name, len(m.tests)) for m in MUTANTS], LEG))
+SELECTED: tuple[Any, ...] = tuple(mutant for mutant in MUTANTS if mutant.name in DEALT)
+"""The mutants this run replays: the leg's share, in the table's order."""
 FILES = frozenset(
     {table.CLINICAL, table.IMPORTER, table.FACETS, table.ENDPOINTS, table.VALIDATORS, table.BUILD}
     | {table.SCAN, table.TEST, table.PINS, table.STATE, table.STATE_PINS, table.REPORT}
@@ -227,9 +238,12 @@ def _steps(ci: str, job: str) -> list[list[str]]:
 
 
 def test_the_replay_runs_in_a_ci_job_of_its_own() -> None:
-    """``addopts`` deselects the registered ``mutation`` marker, and CI's ``mutation`` job runs the
-    replay with ``-m mutation`` in a step that always runs and fails the job, then checks its
-    report holds every mutant replayed (``mutation_report.py``)."""
+    """``addopts`` deselects the registered ``mutation`` marker, and CI's ``mutation`` job, a matrix
+    of legs ``1`` to ``n`` (none of which cancels the others), runs the replay with ``-m
+    mutation`` in a step that always runs and fails the job, each leg its share of the table by
+    ``AIBI_MUTANT_SHARD``, set for the whole job from its leg and the matrix's size (no step sets
+    one of its own), then checks its report holds that share replayed (``mutation_report.py
+    --shard``)."""
     options = tomllib.loads((SERVER / "pyproject.toml").read_text())["tool"]["pytest"]
     given = options["ini_options"]["addopts"]
     assert "not mutation" in given[given.index("-m") + 1]
@@ -239,12 +253,69 @@ def test_the_replay_runs_in_a_ci_job_of_its_own() -> None:
     assert not any(re.match(r"    (if|continue-on-error):", line) for line in job)
     command = "uv run pytest tests/packs/onco/test_retention_mutants.py -m mutation"
     [step] = [step for step in steps if any(line.strip().startswith(command) for line in step)]
-    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell):", line) for line in step)
+    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell|env):", line) for line in step)
     assert not any("||" in line for line in step)
     after = steps[steps.index(step) + 1 :]
-    report = "python3 ../.github/scripts/mutation_report.py reports/mutation.xml"
-    [checked] = [step for step in after if any(report in line for line in step)]
-    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell):", line) for line in checked)
+    report = (
+        'python3 ../.github/scripts/mutation_report.py reports/mutation.xml --shard "${'
+        + SHARD
+        + '}"'
+    )
+    [checked] = [step for step in after if any(line.endswith(f"run: {report}") for line in step)]
+    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell|env):", line) for line in checked)
+    parsed = yaml.safe_load(ci)["jobs"]["mutation"]
+    legs = parsed["strategy"]["matrix"]["shard"]
+    assert parsed["strategy"] == {"fail-fast": False, "matrix": {"shard": legs}}
+    assert legs == list(range(1, len(legs) + 1))
+    assert parsed["env"] == {SHARD: "${{ matrix.shard }}/${{ strategy.job-total }}"}
+
+
+def test_the_legs_of_the_mutation_job_replay_every_mutant_once() -> None:
+    """``mutation_report.dealt``: for the matrix's number of legs (and for one to five), the legs'
+    shares are disjoint, together the table, and differ in size by one at most; the script reads
+    from the table's source the names and test counts the test module deals by."""
+    path = HERE / "retention_mutants" / "table.py"
+    mutants = [(mutant.name, len(mutant.tests)) for mutant in MUTANTS]
+    assert reporting.table_mutants(path) == mutants
+    ci = (SERVER.parent / ".github" / "workflows" / "ci.yml").read_text()
+    legs = len(yaml.safe_load(ci)["jobs"]["mutation"]["strategy"]["matrix"]["shard"])
+    for n in sorted({legs, 1, 2, 3, 4, 5}):
+        shares = [reporting.expected(path, (i, n)) for i in range(1, n + 1)]
+        assert sorted(name for share in shares for name in share) == sorted(
+            mutant.name for mutant in MUTANTS
+        ), n
+        assert max(map(len, shares)) - min(map(len, shares)) <= 1, n
+    assert reporting.expected(path) == reporting.dealt(mutants, (1, 1))
+    assert {mutant.name for mutant in SELECTED} == set(reporting.dealt(mutants, LEG))
+
+
+def test_a_shard_is_read_as_one_leg_of_n_or_refused() -> None:
+    """``mutation_report.shard`` and its command line: ``i/n`` with ``1 <= i <= n``."""
+    assert reporting.shard("1/1") == (1, 1)
+    assert reporting.shard("2/2") == (2, 2)
+    for given in (
+        "",
+        "1",
+        "/",
+        "0/2",
+        "3/2",
+        "1/0",
+        "-1/2",
+        "1/-2",
+        "a/2",
+        "1/2/3",
+        " 1/2",
+        "\u0661/2",
+    ):
+        with pytest.raises(ValueError, match="a shard is i/n"):
+            reporting.shard(given)
+    assert reporting.arguments(["r.xml"]) == ("r.xml", (1, 1))
+    assert reporting.arguments(["r.xml", "--shard", "2/3"]) == ("r.xml", (2, 3))
+    for argv in ([], ["r.xml", "--shard"], ["r.xml", "--shard", "1/2", "x"], ["r.xml", "1/2"]):
+        with pytest.raises(ValueError, match=r"usage: mutation_report\.py"):
+            reporting.arguments(argv)
+    with pytest.raises(ValueError, match="1 <= i <= n"):
+        reporting.arguments(["r.xml", "--shard", "3/2"])
 
 
 def _junit(path: Path, names: list[str], bodies: Mapping[str, str] | None = None) -> Path:
@@ -260,7 +331,9 @@ def test_the_job_s_report_check_refuses_an_incomplete_replay(tmp_path: Path) -> 
     the control and the coverage test, and fails (non-zero) without the control, without a
     mutant's case, with a case twice, with a case for no mutant of the table, with a case (a
     mutant's or a required one) failed, errored or skipped (pytest exits 0 on a skip), and
-    against a table with no mutant."""
+    against a table with no mutant; a leg's report (``--shard i/n``) passes with its share and
+    the required cases, and fails with the whole table, another leg's share, or its share less
+    a mutant or with one of another leg's."""
     script = _load(SERVER.parent / ".github" / "scripts" / "mutation_report.py", "report")
     path = HERE / "retention_mutants" / "table.py"
     cases = [f"test_the_mutant_has_its_recorded_outcome[{m.name}]" for m in MUTANTS]
@@ -283,6 +356,29 @@ def test_the_job_s_report_check_refuses_an_incomplete_replay(tmp_path: Path) -> 
     empty.write_text("MUTANTS = ()\n")
     required = _junit(tmp_path / "required.xml", list(script.REQUIRED))
     assert script.main(str(required), empty) == 1
+    assert script.main(str(required), empty, (1, 2)) == 1
+    shares = [
+        [f"test_the_mutant_has_its_recorded_outcome[{name}]" for name in script.expected(path, leg)]
+        for leg in ((1, 2), (2, 2))
+    ]
+    for leg, share, other in (((1, 2), *shares), ((2, 2), *reversed(shares))):
+        assert (
+            script.main(str(_junit(tmp_path / "leg.xml", [*share, *script.REQUIRED])), path, leg)
+            == 0
+        )
+        wrong = {
+            "the whole table": whole,
+            "the other leg's share": [*other, *script.REQUIRED],
+            "a mutant missing": [*share[1:], *script.REQUIRED],
+            "one of the other leg's": [*share, other[0], *script.REQUIRED],
+            "no control": [*share, script.REQUIRED[1]],
+        }
+        for name, names in wrong.items():
+            report = _junit(tmp_path / "wrong.xml", names)
+            assert script.main(str(report), path, leg) == 1, (leg, name)
+        for body in ("<failure/>", "<error/>", "<skipped/>"):
+            report = _junit(tmp_path / "bad.xml", [*share, *script.REQUIRED], {share[0]: body})
+            assert script.main(str(report), path, leg) == 1, (leg, body)
 
 
 CONTROL = table.Mutant(
@@ -297,11 +393,12 @@ CONTROL = table.Mutant(
 
 @pytest.fixture(scope="module")
 def replayed(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
-    """Every mutant of the table, and the control, each replayed against a copy of its own."""
+    """Every mutant of the leg's share of the table (``SELECTED``), and the control, each replayed
+    against a copy of its own."""
     guards = _load(HERE / "test_retention.py", "retention_guards")
     scan = _load(HERE / "retention_scan.py", "retention_scan_report")
     return replay.replay_all(
-        [CONTROL, *MUTANTS],
+        [CONTROL, *SELECTED],
         guards.banned,
         guards.OUTCOMES,
         scan.report_of,
@@ -319,7 +416,7 @@ def test_the_replay_of_the_unchanged_tree_kills_nothing(replayed: dict[str, Any]
 
 
 @pytest.mark.mutation
-@pytest.mark.parametrize("mutant", MUTANTS, ids=[mutant.name for mutant in MUTANTS])
+@pytest.mark.parametrize("mutant", SELECTED, ids=[mutant.name for mutant in SELECTED])
 def test_the_mutant_has_its_recorded_outcome(mutant: Any, replayed: dict[str, Any]) -> None:
     found = replayed[mutant.name]
     assert (found.scan, found.banned) == (mutant.scan, mutant.banned), mutant.route
@@ -330,4 +427,5 @@ def test_the_mutant_has_its_recorded_outcome(mutant: Any, replayed: dict[str, An
 
 @pytest.mark.mutation
 def test_the_replay_covered_the_table(replayed: dict[str, Any]) -> None:
-    assert set(replayed) == {CONTROL.name} | {mutant.name for mutant in MUTANTS}
+    """The replay holds the control and the leg's share of the table, no more."""
+    assert set(replayed) == {CONTROL.name} | {mutant.name for mutant in SELECTED}

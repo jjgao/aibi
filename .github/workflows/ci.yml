@@ -18,15 +18,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  server:
-    name: Server checks
+  static:
+    name: Static checks
+    # Lint, format, types and the import boundary, once, beside the tests: about a minute and a
+    # half, pyright 30 to 56 seconds of it (D340).
     runs-on: ubuntu-latest
-    # The core tests take about 49.5 to 52 minutes (49.5 on main at 7a99a62, whose whole job took
-    # 55.8; run 42395886015), within their step's 55; the job's limit leaves them and every other
-    # step room,
-    # and each test step's own limit leaves the annotations' step time to run when one is reached
-    # (D340).
-    timeout-minutes: 70
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Type check
+        timeout-minutes: 10
+        run: uv run pyright
+      - name: Import boundary
+        run: uv run lint-imports
+
+  core:
+    name: Core tests (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
+    # tests/core in three shards of whole directories, given to pytest as paths (never --ignore,
+    # -k or a deselection: those turn D422's pin guard off, or make it ask for pins another shard
+    # runs), so that each shard's session still fails when it loads a pack (P8) or a pin it
+    # collected did not run (D422); tests/core/determinism runs in its own job, and
+    # tests/core/test_package.py checks that every other directory runs in exactly one shard. The
+    # whole suite took 47.3 minutes in one serial run on four processors (issue #135's survey):
+    # 15.8, 15.5 and 15.8 of it in these shards, so each takes about a third of CI's 39 to 52
+    # minutes for the whole (13 to 17.5); the step's limit is 30 and the job's 40, and the
+    # step's own limit leaves the annotations' step time to run when it is reached (D340).
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            tests: tests/core/analyses tests/core/schema tests/core/measurement
+          - shard: 2
+            tests: tests/core/importers tests/core/catalog tests/core/mcp tests/core/test_*.py
+          - shard: 3
+            tests: tests/core/engine tests/core/api tests/core/store tests/core/operator
     defaults:
       run:
         working-directory: server
@@ -51,7 +97,7 @@ jobs:
         # template, or of a result's text, with CACHE_WORDING untouched and the files written
         # again passes them and fails against the base's copies. A stacked pull request's base is
         # its parent's branch, which is the right one. A file the base lacks is one this change
-        # introduces.
+        # introduces. Every shard reads it, whichever holds those tests.
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -66,18 +112,42 @@ jobs:
             fi
           done
           echo "AIBI_WORDING_BASE=${RUNNER_TEMP}/wording-base" >> "${GITHUB_ENV}"
-      - name: Lint
-        run: uv run ruff check .
-      - name: Format
-        run: uv run ruff format --check .
-      - name: Type check
-        run: uv run pyright
-      - name: Import boundary
-        run: uv run lint-imports
       - name: Core tests, which must load no pack (SPEC P8)
         id: core
-        timeout-minutes: 55
-        run: uv run pytest tests/core --tb=short -o junit_family=xunit1 --junitxml=reports/core.xml
+        timeout-minutes: 30
+        run: >-
+          uv run pytest ${{ matrix.tests }} --tb=short -o junit_family=xunit1
+          --junitxml=reports/core-${{ matrix.shard }}.xml
+      - name: Failed tests as annotations
+        # Each failed test's id, place and message becomes a check-run annotation, which the
+        # checks API serves where the job's log cannot be read (D334).
+        if: failure()
+        env:
+          OUTCOMES: "Core tests, shard ${{ matrix.shard }}=${{ steps.core.outcome }}"
+        run: python3 ../.github/scripts/annotations.py
+
+  other:
+    name: Other tests
+    # Every test outside tests/core (the pack suites): 5.0 to 6.5 minutes on CI, within the
+    # step's 15; the job has 25 (D340).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
       - name: Other tests
         id: other
         timeout-minutes: 15
@@ -86,12 +156,36 @@ jobs:
           uv run pytest --ignore=tests/core --tb=short -o junit_family=xunit1
           --junitxml=reports/other.xml || test $? -eq 5
       - name: Failed tests as annotations
-        # Each failed test's id, place and message becomes a check-run annotation, which the
-        # checks API serves where the job's log cannot be read (D334).
+        # As the core shards' (D334).
         if: failure()
         env:
-          OUTCOMES: "Core tests=${{ steps.core.outcome }};Other tests=${{ steps.other.outcome }}"
+          OUTCOMES: "Other tests=${{ steps.other.outcome }}"
         run: python3 ../.github/scripts/annotations.py
+
+  server:
+    name: Server checks
+    # One check for the server's static checks, its core shards and its other tests, under the
+    # name the single server job had: it runs whatever they did (a failed job would otherwise
+    # skip it, and a skipped check passes) and fails unless each of them succeeded, so a
+    # failed, cancelled or skipped one fails it; tests/core/test_package.py holds it to that.
+    needs: [static, core, other]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every server job succeeded
+        env:
+          STATIC: ${{ needs.static.result }}
+          CORE: ${{ needs.core.result }}
+          OTHER: ${{ needs.other.result }}
+        # The step fails, with an annotation naming each job's result (D334), unless all three
+        # succeeded, with or without the shell's -e. The results are GitHub's own words.
+        run: |
+          echo "static: ${STATIC}; core: ${CORE}; other: ${OTHER}"
+          test "${STATIC}" = success && test "${CORE}" = success && test "${OTHER}" = success || {
+            echo "::error title=Server checks::static ${STATIC}; core ${CORE}; other ${OTHER}"
+            exit 1
+          }
 
   determinism:
     name: Determinism at a million rows
@@ -131,15 +225,25 @@ jobs:
         run: python3 ../.github/scripts/annotations.py
 
   mutation:
-    name: The retention guards' mutants
+    name: The retention guards' mutants (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
     # D438's mutation table (tests/packs/onco/retention_mutants/table.py), replayed against a copy
-    # of the tree on a runner of its own beside the server checks: each mutant's marker scan (a
+    # of the tree on runners of their own beside the server checks: each mutant's marker scan (a
     # fresh interpreter, about 13 s), its source guard and the tests it names, one mutant a
-    # processor at a time (about 17.8 to 36.5 minutes on four runners' processors, which vary:
-    # 17.8 and 26.6 on main's pushes, 36.5 on a pull request's runner; D438's figure; its step has
-    # 40 minutes, beside the server job's 55).
+    # processor at a time. The whole table took 17.8 to 36.5 minutes on one runner's four
+    # processors, which vary (17.8 and 26.6 on main's pushes, 36.5 on a pull request's runner);
+    # each leg replays the control and half of the table (mutation_report.dealt, by
+    # AIBI_MUTANT_SHARD), about 9.5 to 19 minutes (D438's figure); its step has 25 minutes and
+    # the job 30 (D340). Each leg's report holds its share (mutation_report.py --shard), and the
+    # legs together are the table: tests/packs/onco/test_retention_mutants.py holds the matrix to
+    # legs 1 to n.
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      AIBI_MUTANT_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     defaults:
       run:
         working-directory: server
@@ -158,16 +262,16 @@ jobs:
         run: uv sync --locked
       - name: The retention guards' mutation table (SPEC D438)
         id: mutation
-        timeout-minutes: 40
+        timeout-minutes: 25
         run: >-
           uv run pytest tests/packs/onco/test_retention_mutants.py -m mutation --durations=0
           --tb=short -o junit_family=xunit1 --junitxml=reports/mutation.xml
-      - name: Every mutant was replayed
-        run: python3 ../.github/scripts/mutation_report.py reports/mutation.xml
+      - name: Every mutant of the shard was replayed
+        run: python3 ../.github/scripts/mutation_report.py reports/mutation.xml --shard "${AIBI_MUTANT_SHARD}"
       - name: Failed tests as annotations
         if: failure()
         env:
-          OUTCOMES: "Mutation tests=${{ steps.mutation.outcome }}"
+          OUTCOMES: "Mutation tests, shard ${{ matrix.shard }}=${{ steps.mutation.outcome }}"
         run: python3 ../.github/scripts/annotations.py
 
   web:
