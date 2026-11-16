@@ -12,7 +12,9 @@ as empty (``Reshaped``). The core, not the pack:
 - on a re-import, makes the fields that are the importer's (a reshaped table's ``source`` and
   ``primary_key``, and its column's ``absent``) the new import's in the latest release before its
   curation is carried forward (``owned``), so that a value an operator set before these fields
-  were the importer's is not carried, and the field tombstones of those fields go. A coverage's
+  were the importer's is not carried, and the field tombstones of those fields go. A field whose
+  value and entry are the earlier release's, but for the entry's time (its ``at``), keeps its
+  earlier entry, so that a re-import of the same bytes is ``NO_CHANGE`` (D241). A coverage's
   ``parents`` is not among them: an operator who removed it keeps it removed (D239), which leaves
   the relationship open.
 """
@@ -81,6 +83,19 @@ def notes(reshaped: Mapping[str, Reshaped]) -> list[ImportNote]:
     return found
 
 
+_MADE = ("at",)
+"""What an entry holds of when it was made: its time."""
+
+
+def _unchanged(earlier: JsonValue | None, entry: JsonValue | None) -> bool:
+    """Whether the earlier release's entry is the new import's but for ``_MADE``."""
+    if not isinstance(earlier, dict) or not isinstance(entry, dict):
+        return False
+    return {k: v for k, v in earlier.items() if k not in _MADE} == {
+        k: v for k, v in entry.items() if k not in _MADE
+    }
+
+
 @dataclass(frozen=True)
 class Owned:
     descriptors: tuple[Descriptor, ...]
@@ -138,6 +153,8 @@ def owned(
             had = cast(Json, dumped["fields"]).get(name)
             value = cast(Json, given["fields"]).get(name)
             entry = cast(Json, given["curation"]).get(pointer)
+            if had == value and _unchanged(cast(Json, dumped["curation"]).get(pointer), entry):
+                continue
             for part, put in (("fields", value), ("curation", entry)):
                 held = cast(Json, dumped[part])
                 key = name if part == "fields" else pointer
