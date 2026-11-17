@@ -508,8 +508,8 @@ STUDY_SIZES: dict[tuple[str, str], list[StudyShape]] = {
     ("bytes", "lists"): [(300, 100, 5), (300, 100, 200)],
     ("bytes", "ids"): [(2_000, 200, 0), (2_000, 2_000, 0)],
 }
-"""An import's shapes: the sample-id set behind a fixed MAF and SV file (D445), one list's ids, and
-many lists."""
+"""An import's shapes: the sample-id set behind a fixed MAF, SV file (D445) and discrete CNA matrix
+(D446), one list's ids, and many lists."""
 
 
 SV_COLUMNS = [
@@ -551,6 +551,55 @@ SV_SIZES: dict[tuple[str, str], list[MafShape]] = {
 """The SV reader's shapes (D445): rows, columns, unparseable cells and repeated keys."""
 
 
+CNA_META = (
+    b"cancer_study_identifier: m\ngenetic_alteration_type: COPY_NUMBER_ALTERATION\n"
+    b"datatype: DISCRETE\nstable_id: cna\nshow_profile_in_analysis_tab: true\nprofile_name: p\n"
+    b"profile_description: p\ndata_filename: data_cna.txt\n"
+)
+CNA_TOKENS = ("-2", "-1.5", "0", "NA", "2", "-1", "1")
+
+
+def cna_file(genes: int, samples: int = 100, kind: str = "mixed") -> bytes:
+    """A discrete CNA matrix (M4.2b-3, D446) of ``genes`` rows over ``samples`` samples: every
+    token in turn (``mixed``: calls, ``0`` and ``NA``, each sample's ``NA`` pattern its own, so as
+    many groups as samples), every cell a call (``calls``: rows of calls), or every cell ``NA``
+    (``na``: no group, no row)."""
+    out = ["\t".join(["Hugo_Symbol", *(f"S{i}" for i in range(samples))]) + "\n"]
+    for gene in range(genes):
+        if kind == "calls":
+            cells = ["2"] * samples
+        elif kind == "na":
+            cells = ["NA"] * samples
+        else:
+            cells = [CNA_TOKENS[(gene * 3 + i) % len(CNA_TOKENS)] for i in range(samples)]
+        out.append("\t".join([f"G{gene}", *cells]) + "\n")
+    return "".join(out).encode()
+
+
+CNA_SIZES: dict[tuple[str, str], list[MafShape]] = {
+    ("blocks", "tall"): [(200, 100, "mixed"), (2_000, 100, "mixed")],
+    ("blocks", "wide"): [(20, 100, "mixed"), (20, 1_000, "mixed")],
+    ("blocks", "calls"): [(200, 100, "calls"), (2_000, 100, "calls")],
+    ("blocks", "na"): [(200, 100, "na"), (2_000, 100, "na")],
+    ("bytes", "tall"): [(20, 100, "mixed"), (200, 100, "mixed")],
+}
+"""The discrete CNA reader's shapes (D446): genes, samples (the matrix's width, and with the mixed
+tokens its groups), all calls (the rows it returns) and all ``NA`` (no coverage)."""
+
+
+def _cna_read(measure: str) -> Callable[[Shape], int]:
+    def held(shape: Shape) -> int:
+        from aibi.packs.onco import cna
+
+        genes, width, kind = shape  # pyright: ignore[reportAssignmentType]
+        data = cna_file(int(genes), int(width), str(kind))
+        samples = frozenset(f"S{i}" for i in range(int(width)))
+        limits = ImportLimits()
+        return MEASURES[measure](lambda: cna.read(data, "c.txt", samples, limits))
+
+    return held
+
+
 def _sv_read(measure: str) -> Callable[[Shape], int]:
     def held(shape: Shape) -> int:
         from aibi.packs.onco import structural
@@ -590,8 +639,11 @@ def _maf_imported(make_study: MakeStudy, measure: str) -> Callable[[Shape], int]
             "data_mutations.txt": maf_file(200),
             "meta_sv.txt": SV_META,
             "data_sv.txt": sv_file(200),
+            "meta_cna.txt": CNA_META,
+            "data_cna.txt": cna_file(50),
             "case_lists": {
                 "cases_sequenced.txt": case_list_file(int(ids)),
+                "cases_cna.txt": case_list_file(int(ids), "cna"),
                 **{f"cases_{k}.txt": case_list_file(50, f"l{k}") for k in range(int(lists))},
             },
         }
@@ -626,6 +678,11 @@ def test_a_maf_read_retains_nothing_that_grows_with_the_file(measure: str, shape
 @pytest.mark.parametrize(("measure", "shape"), SV_SIZES, ids=lambda key: key)
 def test_an_sv_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
     _grown_from(_sv_read(measure), measure, SV_SIZES[(measure, shape)])
+
+
+@pytest.mark.parametrize(("measure", "shape"), CNA_SIZES, ids=lambda key: key)
+def test_a_cna_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
+    _grown_from(_cna_read(measure), measure, CNA_SIZES[(measure, shape)])
 
 
 @pytest.mark.parametrize(("measure", "shape"), STUDY_SIZES, ids=lambda key: key)

@@ -53,7 +53,11 @@ meta's (phase 8); the MAF is a member of Reads(S), so phase 9 refuses another me
 From M4.2b-4 (D445) the SV meta's data file is an imported role too (``meta.IMPORTED``), taken
 after phase 8 by ``structural.discovered``, which holds every check of it: its value is resolved by
 phase 9's rule over Reads(S) (``STRUCTURAL_DATA``, so that a value naming the MAF or a clinical
-file is refused as phase 9 refuses it), and its file then joins Reads(S) for phase 9.
+file is refused as phase 9 refuses it), and its file then joins Reads(S) for phase 9. From M4.2b-3
+(D446) the discrete CNA meta's data file is imported the same way, after the SV meta's, by
+``cna.discovered`` (``CNA_DATA``): its value is checked before phase 9's loop, so it leaves that
+loop's order by meta name, and its file joins Reads(S) for phase 9 (a CNA meta's
+``pd_annotations_filename`` stays a ``PATH_SITES`` row, checked there).
 
 **What it says.** A refusal or a note names an entry as ``data`` only (``refusals.shown``), and
 never a value a file holds. Every entry discover does not import gets one ``skipped_source``
@@ -75,9 +79,11 @@ from aibi.core.schema.pack_api import (
     SourceReader,
 )
 from aibi.core.schema.refusals import RefusalCode
-from aibi.packs.onco import structural
+from aibi.packs.onco import cna, structural
+from aibi.packs.onco.cna import CnaMeta
 from aibi.packs.onco.meta import (
     CLINICAL,
+    CNA_DISCRETE,
     DISCOVERED,
     IMPORTED,
     MANDATORY,
@@ -238,6 +244,19 @@ STRUCTURAL_DATA = PathSite(
 """The SV meta's ``data_filename`` (D445): ``structural.discovered`` checks it by phase 9's rule
 (``_path_value``) against Reads(S) before the SV file joins it."""
 
+CNA_DATA = PathSite(
+    "data_filename",
+    frozenset({CNA_DISCRETE}),
+    DATA,
+    (
+        "V:4854-4856, V:398, V:437, V:445, V:453: as the data_filename row; the discrete CNA "
+        "meta's data file is imported (D446), so its value is checked by this row's rule outside "
+        "PATH_SITES",
+    ),
+)
+"""The discrete CNA meta's ``data_filename`` (D446): ``cna.discovered`` checks it by phase 9's
+rule (``_path_value``) against Reads(S), the SV file among them, before the CNA file joins it."""
+
 _DATA_FILE_NOTE = "a data file of a meta file M4.2a does not import"
 _TAGS_NOTE = "the study's tags file"
 
@@ -263,7 +282,8 @@ class MutationMeta:
 @dataclass(frozen=True)
 class Study:
     """What ``discover`` found: the study meta's values, the clinical metas, the mutation meta,
-    the ``case_lists`` directory's entry when the study has one, the SV meta, and the notes."""
+    the ``case_lists`` directory's entry when the study has one, the SV meta, the discrete CNA
+    meta, and the notes."""
 
     fields: StudyFields
     patient: ClinicalMeta | None
@@ -272,6 +292,7 @@ class Study:
     mutation: MutationMeta | None = None
     case_lists: bool = False
     structural: StructuralMeta | None = None
+    cna: CnaMeta | None = None
 
 
 def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> dict[str, str]:
@@ -488,6 +509,10 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         lambda name, value: _path_value(STRUCTURAL_DATA, name, value, listed, folded, reads),
     )
     reads = reads | frozenset(structural.used(sv))
+    copies = cna.discovered(
+        metas, lambda name, value: _path_value(CNA_DATA, name, value, listed, folded, reads)
+    )
+    reads = reads | frozenset(cna.used(copies))
     for role, note in ((DATA, _DATA_FILE_NOTE), (TAGS, _TAGS_NOTE)):
         for name, (kind, found) in metas.items():
             for site in PATH_SITES:
@@ -509,6 +534,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             *(entry.name for entry in data.values()),
             *((CASE_LISTS_ENTRY,) if has_lists else ()),
             *structural.used(sv),
+            *cna.used(copies),
         }
     )
     for name in metas:
@@ -526,12 +552,14 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         mutation=mutation,
         case_lists=has_lists,
         structural=sv,
+        cna=copies,
     )
 
 
 __all__ = [
     "CASE_LISTS",
     "CASE_LISTS_ENTRY",
+    "CNA_DATA",
     "DATA",
     "LISTING",
     "META_FILES_MOST",

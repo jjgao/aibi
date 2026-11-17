@@ -23,8 +23,10 @@ only when ``closure(study)`` finds nothing wrong, by these legs, each a failure 
   ``DATA_TYPES`` are those tables' types without the clinical ones; ``holds``, the types whose
   ``meta.MANDATORY`` keys hold ``data_filename`` are the codomain without ``STUDY``; ``data``, the
   ``data_filename`` row's types are those; ``listing``, the ``listing:meta`` row's are exactly the
-  codomain and the clinical types; ``pd``, the PD row's are exactly the type the discrete CNA pair
-  classifies to (V:1250, the one fact the tables cannot state); ``tags``, the ``tags_file`` row
+  codomain and the imported types; ``pd``, the PD row's are exactly the type the key table gives
+  the discrete CNA pair (V:1250, the one fact the tables cannot state; read from ``meta.PAIR_TYPES``
+  from M4.2b-3, which imports that type, D446, and whose PD row's cases add one on a valid
+  discrete CNA meta, ``paths_oracle.imported_case``); ``tags``, the ``tags_file`` row
   exists and its types are among the types whose keys lack ``data_filename`` (a subset: the tables
   do not say which of them carries ``tags_file``, but ``holds`` makes that set ``STUDY`` alone; that
   the row reads at all is the ``refuses`` leg's); ``roles``, the rows whose key holds no ``:`` (a
@@ -190,6 +192,18 @@ def derived_heads(meta: Any) -> dict[str, str]:
     return heads
 
 
+def imported_heads(meta: Any) -> dict[str, str]:
+    """A meta file's head for each imported type a checked row may read (the PD row's discrete CNA
+    type, D446), from the first ``meta.PAIR_TYPES`` label naming it: its cases are built on a
+    valid meta of that type (``paths_oracle.imported_case``)."""
+    heads: dict[str, str] = {}
+    for label, kind in sorted(meta.PAIR_TYPES.items()):
+        if kind in meta.IMPORTED and kind in helper("paths_oracle").IMPORTED_CASES:
+            alteration, datatype = label.split(":", 1)
+            heads.setdefault(kind, f"genetic_alteration_type: {alteration}\ndatatype: {datatype}\n")
+    return heads
+
+
 def tabled_types(meta: Any) -> set[str]:
     """The types the pack's key tables name that it never imports, with ``STUDY``."""
     named = {*meta.PAIR_TYPES.values(), *meta.RESOURCE_TYPES.values()}
@@ -200,13 +214,14 @@ def anchored(
     oracle: Any,
     hand: Sequence[Any],
     codomain: set[str],
-    labelled: Mapping[str, str],
     statements: frozenset[str] = frozenset(STATEMENTS),
 ) -> str | None:
     """Why a hand fact is not what ``meta`` says, else ``None``: the oracle's pairs, resources and
     data types, and the hand rows' types, are held to the pack's key tables, ``codomain`` and the
     mandatory keys, and the rows' roles to the structure of their keys, each by its own statement
-    (``STATEMENTS``); ``labelled`` is the type each ``PAIR_TYPES`` label classifies to."""
+    (``STATEMENTS``); the PD row's type is read from the key table (``meta.PAIR_TYPES``), as the
+    MAF's and the SV file's are, since from M4.2b-3 the discrete CNA type is imported and the
+    guard's own heads (``derived_heads``) no longer classify its pair (D446)."""
     meta = importlib.import_module(MODULE + ".meta")
     study_type: str = oracle.STUDY
     holds = {kind for kind in codomain if "data_filename" in meta.MANDATORY.get(kind, ())}
@@ -247,7 +262,7 @@ def anchored(
             "the listing:meta row's types are not the codomain and the imported types",
         ),
         "pd": (
-            types.get("pd_annotations_filename") == {labelled.get(DISCRETE_CNA)},
+            types.get("pd_annotations_filename") == {meta.PAIR_TYPES.get(DISCRETE_CNA)},
             "the pd_annotations_filename row's types are not the discrete CNA pair's type",
         ),
         "tags": (
@@ -308,13 +323,11 @@ def closure(
                 return Verdict(f"types: the {row.key} row's types are not the hand row's", 0, 0)
 
     codomain: dict[str, str | None] = {}
-    labelled: dict[str, str] = {}
-    for label, head in derived_heads(meta).items():
+    for head in derived_heads(meta).values():
         try:
             kind = typed(oracle.fields(oracle.EVERY_KEY + head), "meta_x.txt")
         except Refused:
             continue
-        labelled[label] = kind
         codomain.setdefault(kind, head)
     codomain[oracle.STUDY] = None
     checked = [row for row in hand if row.role in oracle.CHECKED]
@@ -322,16 +335,21 @@ def closure(
     if "codomain" in legs and set(codomain) != wanted:
         return Verdict(f"codomain: {sorted(set(codomain) ^ wanted)} differ", 0, 0)
     if "anchor" in legs:
-        why = anchored(oracle, hand, set(codomain), labelled, statements)
+        why = anchored(oracle, hand, set(codomain), statements)
         if why is not None:
             return Verdict(f"anchor: {why}", 0, 0)
 
     cases: list[tuple[dict[str, tuple[str, bytes]], tuple[str, str] | None]] = []
     refusing = 0
+    imported = imported_heads(meta)
     for row in checked:
         refuse = []
-        for kind in sorted(codomain):
-            entries = oracle.guard_case(base, kind, codomain[kind], row.key)
+        own = sorted(row.types & meta.IMPORTED & set(imported))
+        for kind in [*sorted(codomain), *own]:
+            if kind in codomain:
+                entries = oracle.guard_case(base, kind, codomain[kind], row.key)
+            else:
+                entries = oracle.imported_case(base, kind, imported[kind], row.key)
             want = oracle.guard_expected(row, kind)
             got = oracle.outcome(study, entries)
             cases.append((entries, got))
@@ -388,12 +406,13 @@ def test_discover_not_reachable_before_paths(onco: ModuleType) -> None:
 
 
 def test_the_real_table_is_closed() -> None:
-    """The pack's ``study``, under a wired importer, is closed: 24 types (23 data types and the
-    study meta: from M4.2b-1b the MAF's type is imported, D444, and from M4.2b-4 the structural
-    variants', D445) for each of the 3 checked rows, 25 of them refuse cases (23, 1 and 1), and a
-    case for each of the 3 declared rows: 75 cases."""
+    """The pack's ``study``, under a wired importer, is closed: 23 types (22 data types and the
+    study meta: from M4.2b-1b the MAF's type is imported, D444, from M4.2b-4 the structural
+    variants', D445, and from M4.2b-3 the discrete copy-number matrix's, D446) for each of the 3
+    checked rows, and for the PD row one more, its own imported type's (a valid discrete CNA meta),
+    24 of them refuse cases (22, 1 and 1), and a case for each of the 3 declared rows: 73 cases."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(study) == Verdict(None, 75, 25)
+    assert closure(study) == Verdict(None, 73, 24)
     assert closed(WIRED, study)
 
 
@@ -827,9 +846,9 @@ MUTANTS: dict[str, tuple[str, Mutant]] = {
         "codomain",
         late(lambda: classify_and_rows_narrowed(never_imported_type())),
     ),
-    "data row without CNA_DISCRETE in the table and the hand rows": (
+    "data row without CNA_DISCRETE_LONG in the table and the hand rows": (
         "anchor",
-        data_minus_in_both("CNA_DISCRETE"),
+        data_minus_in_both("CNA_DISCRETE_LONG"),
     ),
     "discover skips TIMELINE": ("refused", consulting(skips_timeline)),
     "discover reads the tags value as data": ("names", consulting(tags_as_data)),
@@ -854,7 +873,7 @@ PINNING = {
     "pairs": "a declared row relabelled",
     "types": "listing row narrowed (no TIMELINE)",
     "codomain": "classify and the rows narrowed alike (no never-imported type)",
-    "anchor": "data row without CNA_DISCRETE in the table and the hand rows",
+    "anchor": "data row without CNA_DISCRETE_LONG in the table and the hand rows",
     "refused": "discover skips TIMELINE",
     "names": "discover reads the tags value as data",
     "ignored": "discover reads PD from DISCRETE_LONG too",
@@ -878,7 +897,7 @@ STATEMENT_MUTANTS: dict[str, tuple[Mutant, ...]] = {
     ),
     "datatypes": (oracle_edited(DATA_TYPES=lambda oracle: oracle.DATA_TYPES - {"GSVA_PVALUES"}),),
     "holds": (mandatory_stripped("SEG"),),
-    "data": (data_minus_in_both("CNA_DISCRETE"),),
+    "data": (data_minus_in_both("CNA_DISCRETE_LONG"),),
     "listing": (
         row_without_in_both("listing:meta", "TIMELINE"),
         row_without_in_both("listing:meta", "SAMPLE_ATTRIBUTES"),
@@ -911,7 +930,7 @@ STATEMENT_CASES = [
 def test_the_stand_in_is_the_pack_s_own_behaviour() -> None:
     """The control of the self-checks: ``Consulting`` with no change is closed."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(Consulting(study)) == Verdict(None, 75, 25)
+    assert closure(Consulting(study)) == Verdict(None, 73, 24)
 
 
 @pytest.mark.parametrize("name", list(MUTANTS))
@@ -962,13 +981,13 @@ def test_each_anchor_statement_is_needed(
 def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """For each of the 23 data types in turn: dropped from every row of the table and from the
+    """For each of the 22 data types in turn: dropped from every row of the table and from the
     oracle's rows, pairs, resource types and data types alike (the pack's key tables still name
     it), the guard is red at the anchor leg, whatever another row still covers."""
     study = importlib.import_module(MODULE + ".study")
     oracle = helper("paths_oracle")
     kinds = sorted(oracle.DATA_TYPES)
-    assert len(kinds) == 23
+    assert len(kinds) == 22
     for kind in kinds:
         with monkeypatch.context() as patch:
             subject, given = dropped_in_both(kind)(study, patch)
@@ -981,23 +1000,25 @@ def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
 def test_a_row_swapped_to_one_type_in_both_is_red(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The PD row and the tags row, each swapped to every one type (the 23 data types and
-    ``STUDY``) in the table and the hand rows alike: red at the anchor leg for all but the type the
-    row reads (the control, which is closed)."""
+    """The PD row and the tags row, each swapped to every one type (the 22 data types, ``STUDY``
+    and the type the row reads, the discrete CNA type for the PD row, imported from M4.2b-3) in the
+    table and the hand rows alike: red at the anchor leg for all but the type the row reads (the
+    control, which is closed)."""
     study = importlib.import_module(MODULE + ".study")
     oracle = helper("paths_oracle")
     real = keyed(study.PATH_SITES)[key].meta_types
     red = 0
-    for kind in sorted(oracle.DATA_TYPES | {oracle.STUDY}):
+    kinds = sorted(oracle.DATA_TYPES | {oracle.STUDY} | set(real))
+    for kind in kinds:
         with monkeypatch.context() as patch:
             subject, given = swapped_in_both(key, kind)(study, patch)
             verdict = closure(subject, **given)
         if real == {kind}:
-            assert verdict == Verdict(None, 75, 25), kind
+            assert verdict == Verdict(None, 73, 24), kind
         else:
             assert (verdict.failure or "").split(":")[0] == "anchor", (kind, verdict)
             red += 1
-    assert red == 23
+    assert red == len(kinds) - 1 == {"pd_annotations_filename": 23, "tags_file": 22}[key]
 
 
 def test_the_table_is_restored_when_discover_raises() -> None:

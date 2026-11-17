@@ -1104,7 +1104,10 @@ def test_phase_9_by_meta_name_then_data_before_pd(
     make_study: Any, discovery: Any, base: Any
 ) -> None:
     """Within phase 9 the metas are taken in the order of their names, whatever their types, and
-    within one meta its ``data_filename`` before its ``pd_annotations_filename``."""
+    within one meta its ``data_filename`` before its ``pd_annotations_filename``. From M4.2b-3
+    (D446) the discrete CNA meta's ``data_filename`` is an imported role's, checked by
+    ``cna.discovered`` before phase 9's loop: it leaves the order by name, and its PD value stays in
+    the loop, in its meta's place."""
     both = CNA_META.replace(b"data_cna.txt", b"/data_cna.txt") + b"pd_annotations_filename: .\n"
     tree = {**base, "meta_cna.txt": both}
     assert discovery.outcome(make_study(tree)) == (
@@ -1114,6 +1117,7 @@ def test_phase_9_by_meta_name_then_data_before_pd(
     )
     tree = {
         **base,
+        "data_cna.txt": b"Hugo_Symbol\tS1\nTP53\t0\n",
         "meta_a_cna.txt": CNA_META + b"pd_annotations_filename: meta_study.txt\n",
         "meta_b_meth.txt": METH_META.replace(b"data_methylation.txt", b"x/y"),
     }
@@ -1123,6 +1127,15 @@ def test_phase_9_by_meta_name_then_data_before_pd(
     tree["meta_c_cna.txt"] = tree.pop("meta_a_cna.txt")
     outcome = discovery.outcome(make_study(tree))
     assert outcome[:2] == ("onco.DATA_FILE", "meta_b_meth.txt")
+    # the CNA meta's own data value comes before the loop, whatever the names
+    tree = {
+        **base,
+        "meta_a_meth.txt": METH_META.replace(b"data_methylation.txt", b"x/y"),
+        "meta_z_cna.txt": CNA_META.replace(b"data_cna.txt", b"x/y"),
+    }
+    outcome = discovery.outcome(make_study(tree))
+    assert outcome[:2] == ("onco.DATA_FILE", "meta_z_cna.txt")
+    assert "has a data_filename that is not a file name M4.2a accepts" in outcome[2]
 
 
 def test_a_bad_stable_id_before_a_file_that_cannot_be_read(
@@ -1639,8 +1652,13 @@ def test_the_refusal_codes_are_pinned() -> None:
         "DRIVER_VALUE",
         "PADDED_VALUE",
         "SV_STATUS",
+        "NO_CNA_LIST",
+        "BYTE_ORDER_MARK",
+        "LINE_ENDS",
+        "DUPLICATE_GENE",
+        "CNA_VALUE",
     )
-    assert len(importlib.import_module(REFUSALS).CODES) == 62
+    assert len(importlib.import_module(REFUSALS).CODES) == 67
 
 
 # --- Sentinel: no value a file holds is shown -----------------------------------------------------

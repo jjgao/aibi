@@ -4,8 +4,9 @@ Their ids are a stable contract (D405): a concept is added, never renamed or rem
 concept's ``version`` is bumped when its fields change, each with a pack version bump.
 
 - **Tables:** ``onco:patient``, ``onco:sample``, ``onco:gene``, from 0.4.0 (D444)
-  ``onco:mutation``, ``onco:case_list`` and ``onco:case_list_member``, and from 0.5.0 (D445)
-  ``onco:structural_variant``.
+  ``onco:mutation``, ``onco:case_list`` and ``onco:case_list_member``, from 0.5.0 (D445)
+  ``onco:structural_variant``, and from 0.6.0 (D446) ``onco:cna_call``, ``onco:cna_assignment``
+  and ``onco:cna_group``.
 - **Values:**
   - ``onco:gene_symbol``, with neither units nor permissible values;
   - ``onco:sample_type``, cBioPortal's seven ``Sample.Type`` constants, labelled with its display
@@ -206,6 +207,25 @@ CONCEPTS: tuple[ConceptDescriptor, ...] = (
         "table",
     ),
     _concept(
+        "onco:cna_call",
+        "Copy-number call",
+        "Rows are the calls of a discrete copy-number matrix other than neutral: one sample, one "
+        "gene and its level, as the matrix gives it.",
+        "table",
+    ),
+    _concept(
+        "onco:cna_assignment",
+        "Copy-number assignment",
+        "Rows assign a sample to the group of genes a discrete copy-number matrix assessed for it.",
+        "table",
+    ),
+    _concept(
+        "onco:cna_group",
+        "Copy-number group",
+        "Rows are the genes a group of samples was assessed at in a discrete copy-number matrix.",
+        "table",
+    ),
+    _concept(
         "onco:case_list",
         "Case list",
         "Rows are case lists: named sets of samples a study declares.",
@@ -288,4 +308,4 @@ CONCEPTS: tuple[ConceptDescriptor, ...] = (
         "time_origin",
     ),
 )
-"""The pack's 19 concepts."""
+"""The pack's 22 concepts."""

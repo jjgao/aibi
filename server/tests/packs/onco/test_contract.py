@@ -24,7 +24,7 @@ from typing import Any
 from aibi.core.schema.descriptors import ConceptDescriptor
 from aibi.core.schema.pack_api import PackRegistry
 
-MANIFEST = {"id": "onco", "version": "0.5.0", "results_version": 1, "requires_core": ">=0.0.1"}
+MANIFEST = {"id": "onco", "version": "0.6.0", "results_version": 1, "requires_core": ">=0.0.1"}
 
 TEXTS = {
     "onco:patient": ("Patient", "Rows are patients: the people a study follows."),
@@ -43,6 +43,19 @@ TEXTS = {
         "Structural variant",
         "Rows are structural variant events: one event called in one sample, with its two sites, "
         "as a structural variant file gives it.",
+    ),
+    "onco:cna_call": (
+        "Copy-number call",
+        "Rows are the calls of a discrete copy-number matrix other than neutral: one sample, one "
+        "gene and its level, as the matrix gives it.",
+    ),
+    "onco:cna_assignment": (
+        "Copy-number assignment",
+        "Rows assign a sample to the group of genes a discrete copy-number matrix assessed for it.",
+    ),
+    "onco:cna_group": (
+        "Copy-number group",
+        "Rows are the genes a group of samples was assessed at in a discrete copy-number matrix.",
     ),
     "onco:gene_symbol": ("Gene symbol", "A gene's approved symbol."),
     "onco:sample_type": (
@@ -82,6 +95,9 @@ SORTS = {
     "onco:case_list": "table",
     "onco:case_list_member": "table",
     "onco:structural_variant": "table",
+    "onco:cna_call": "table",
+    "onco:cna_assignment": "table",
+    "onco:cna_group": "table",
     "onco:gene_symbol": "value",
     "onco:sample_type": "value",
     "onco:mutation_class": "value",

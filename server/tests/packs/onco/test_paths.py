@@ -121,6 +121,12 @@ PD = (
     b"SAMPLE_ID\tHugo_Symbol\tEntrez_Gene_Id\tcbp_driver\tcbp_driver_annotation\n"
     b"S1\tTP53\t7157\tPutative_Driver\tx\n"
 )
+BAD_PD = (
+    b"SAMPLE_ID\tHugo_Symbol\tEntrez_Gene_Id\tcbp_driver\tcbp_driver_annotation\n"
+    b"S9\tTP53\t7157\tPutative_Driver\tx\n"
+)
+"""A PD file whose sample the study does not hold: the reference reads it and errs; aibi never
+reads it (D409's (20), its content)."""
 YAML = b"a: 1\n"
 DUAL_PATIENT = (
     b"#Patient\tStart\tStop\tEvent\n#a\tb\tc\td\n#STRING\tNUMBER\tNUMBER\tSTRING\n#1\t1\t1\t1\n"
@@ -378,6 +384,7 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
             ("meta_cna.txt", cna_meta("link/data_cna.txt", "data_clinical_sample.txt")),
             ("link", (SYM, ".")),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
         ),
         data("meta_cna.txt", P0),
     ),
@@ -385,12 +392,17 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         cell(
             ("meta_cna.txt", cna_meta("data_cna.txt", "data_clinical_sample.txt")),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
         ),
         data("meta_cna.txt", READS, "pd_annotations_filename"),
     ),
     "22": (
-        cell(("meta_cna.txt", cna_meta("data_cna.txt", None)), ("data_cna.txt", CNA)),
-        Accept({"data_cna.txt": DATA_NOTE}),
+        cell(
+            ("meta_cna.txt", cna_meta("data_cna.txt", None)),
+            ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
+        ),
+        Accept({"data_cna.txt": None}),
     ),
     "23": (
         cell(("meta_meth.txt", meth_meta("DATA_CLINICAL_SAMPLE.txt"))),
@@ -428,7 +440,12 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"data_cnal.txt": DATA_NOTE}),
     ),
     **{
-        f"3{index}{tag}": (cell(_generic(index, target)), data("meta_x.txt", READS))
+        f"3{index}{tag}": (
+            cell(
+                _generic(index, target), *([("case_lists/cases_cna.txt", CNA_LIST)] * (index == 0))
+            ),
+            data("meta_x.txt", READS),
+        )
         for index in range(len(GENERIC))
         for tag, target in GENERIC_TARGETS.items()
     },
@@ -466,11 +483,19 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         Accept({"data_tl.txt": DATA_NOTE}),
     ),
     "59": (
-        cell(("meta_cna.txt", cna_meta("data_cna.txt", "nofile.txt")), ("data_cna.txt", CNA)),
-        Accept({"data_cna.txt": DATA_NOTE}),
+        cell(
+            ("meta_cna.txt", cna_meta("data_cna.txt", "nofile.txt")),
+            ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
+        ),
+        Accept({"data_cna.txt": None}),
     ),
     "60": (
-        cell(("meta_cna.txt", cna_meta("data_cna.txt", "")), ("data_cna.txt", CNA)),
+        cell(
+            ("meta_cna.txt", cna_meta("data_cna.txt", "")),
+            ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
+        ),
         data("meta_cna.txt", P0, "pd_annotations_filename"),
     ),
     "61": (cell(("meta_meth.txt", meth_meta(""))), data("meta_meth.txt", P0)),
@@ -498,8 +523,12 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         data("meta_meth.txt", READS),
     ),
     "66": (
-        cell(("meta_cna.txt", cna_meta("data_cna.txt", "data_cna.txt")), ("data_cna.txt", CNA)),
-        Accept({"data_cna.txt": DATA_NOTE}),
+        cell(
+            ("meta_cna.txt", cna_meta("data_cna.txt", "data_cna.txt")),
+            ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
+        ),
+        data("meta_cna.txt", READS, "pd_annotations_filename"),
     ),
     "67": (
         cell(
@@ -560,22 +589,34 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
         cell(
             ("meta_cna.txt", cna_meta("data_cna.txt", "data_pd.txt")),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
             ("data_pd.txt", PD),
         ),
-        Accept({"data_cna.txt": DATA_NOTE, "data_pd.txt": DATA_NOTE}),
+        Accept({"data_cna.txt": None, "data_pd.txt": DATA_NOTE}),
+    ),
+    "80c": (
+        cell(
+            ("meta_cna.txt", cna_meta("data_cna.txt", "data_pd.txt")),
+            ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
+            ("data_pd.txt", BAD_PD),
+        ),
+        Accept({"data_cna.txt": None, "data_pd.txt": DATA_NOTE}),
     ),
     "81": (
         cell(
             ("meta_cna.txt", cna_meta("data_cna.txt", "DATA_PD.txt")),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
             ("data_pd.txt", PD),
         ),
-        Accept({"data_cna.txt": DATA_NOTE, "data_pd.txt": PLAIN}),
+        Accept({"data_cna.txt": None, "data_pd.txt": PLAIN}),
     ),
     "82": (
         cell(
             ("meta_cna.txt", cna_meta("data_cna.txt", "data_pd.txt")),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
             ("data_pd.txt", (SYM, "real_pd.txt")),
             ("real_pd.txt", PD),
         ),
@@ -654,8 +695,9 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
                 cna_meta("data_cna.txt", unicodedata.normalize("NFD", "Data_clinical_samplé.txt")),
             ),
             ("data_cna.txt", CNA),
+            ("case_lists/cases_cna.txt", CNA_LIST),
         ),
-        Accept({"data_cna.txt": DATA_NOTE}),
+        Accept({"data_cna.txt": None}),
     ),
     "94": (
         cell(("meta_meth.txt", meth_meta("data_meth.txt")), ("data_meth.txt", FIFO)),
@@ -873,10 +915,11 @@ CELLS: dict[str, tuple[Build, Refuse | Accept]] = {
 }
 """Each cell of the live differential by its id, with aibi's expected outcome. The recorded cells:
 02-27, 30m-33p (four types, each naming the study meta, a clinical meta or the patient file), 40,
-50-97 (70, 72 and 89 among them), the code reviews' N01, N05, N22, N25 and N13, their C cells that
-exist (C01-C14, C16, C18, C20-C24, C30, C31, C40 and C41: 25, C30 and C31 of mode 000, run only
-where a file of that mode cannot be read) and their D cells that exist (D01-D07 and D09-D12: 11,
-D08 being cell 09); and two modelled rows."""
+50-97 (70, 72 and 89 among them), 80c (M4.2b-3's: a PD file the reference reads and errs on), the
+code reviews' N01, N05, N22, N25 and N13, their C cells that exist (C01-C14, C16, C18, C20-C24,
+C30, C31, C40 and C41: 25, C30 and C31 of mode 000, run only where a file of that mode cannot be
+read) and their D cells that exist (D01-D07 and D09-D12: 11, D08 being cell 09); and two modelled
+rows."""
 
 RECORDED = [
     "02",
@@ -949,6 +992,7 @@ RECORDED = [
     "78",
     "79",
     "80",
+    "80c",
     "81",
     "82",
     "83",
@@ -1035,6 +1079,8 @@ MODELLED = ("23-apfs", "50-apfs")
 # The modelled rows hold what APFS would give, never run.
 
 CASCADE = "cna"
+"""The cascade's identity: no cell carries it from M4.2b-3 (D446), whose discrete CNA cells hold
+the ``<study>_cna`` list; it stays the one error D409's definition of ``stricter:`` sets aside."""
 
 
 class Recorded(NamedTuple):
@@ -1088,17 +1134,17 @@ REFERENCE: dict[str, Recorded] = {
     "19": Recorded(
         "1", ("case-list",), via=("data_clinical_sample.txt",), exits=(("case-list", "19"),)
     ),
-    "20": Recorded("1", ("cna", "content"), "29", via=("data_clinical_sample.txt",)),
-    "21": Recorded("1", ("cna", "content"), "33", via=("data_clinical_sample.txt",)),
-    "22": Recorded("1", ("cna",), exits=(("cna", "24"),)),
+    "20": Recorded("1", ("content",), "29", via=("data_clinical_sample.txt",)),
+    "21": Recorded("1", ("content",), "33", via=("data_clinical_sample.txt",)),
+    "22": Recorded("3", ()),
     "23": Recorded("1", ("open-fail",), "33"),
     "24": Recorded("3", (), "30"),
     "25": Recorded("1", ("type-meta",), exits=(("type-meta", "25"),)),
     "26": Recorded("3", (), "32", via=("meta_meth.txt",)),
     "27": Recorded("3", ()),
-    "30m": Recorded("1", ("cna",), "32", via=("meta_study.txt",)),
-    "30s": Recorded("1", ("cna",), "32", via=("meta_clinical_sample.txt",)),
-    "30p": Recorded("1", ("cna", "content"), "33", via=("data_clinical_patient.txt",)),
+    "30m": Recorded("3", (), "32", via=("meta_study.txt",)),
+    "30s": Recorded("3", (), "32", via=("meta_clinical_sample.txt",)),
+    "30p": Recorded("1", ("content",), "33", via=("data_clinical_patient.txt",)),
     "31m": Recorded("3", (), "32", via=("meta_study.txt",)),
     "31s": Recorded("3", (), "32", via=("meta_clinical_sample.txt",)),
     "31p": Recorded("1", ("content",), "33", via=("data_clinical_patient.txt",)),
@@ -1118,14 +1164,14 @@ REFERENCE: dict[str, Recorded] = {
     "56": Recorded("3", (), "28"),
     "57": Recorded("3", ()),
     "58": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
-    "59": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
-    "60": Recorded("1", ("cna", "open-fail"), "27"),
+    "59": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
+    "60": Recorded("1", ("open-fail",), "27"),
     "61": Recorded("1", ("open-fail",), "27"),
     "62": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
     "63": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
     "64": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
     "65": Recorded("3", (), "32"),
-    "66": Recorded("1", ("cna", "content"), exits=(("cna", "24"), ("content", "20"))),
+    "66": Recorded("1", ("content",), "33", via=("data_cna.txt",)),
     "67": Recorded("3", ()),
     "68": Recorded("3", ()),
     "69": Recorded("1, crash", ("tags-open",), "35"),
@@ -1139,9 +1185,10 @@ REFERENCE: dict[str, Recorded] = {
     "77": Recorded("3", ()),
     "78": Recorded("1", ("tags-content",), exits=(("tags-content", "21"),)),
     "79": Recorded("3", ()),
-    "80": Recorded("1", ("cna",), exits=(("cna", "24"),)),
-    "81": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
-    "82": Recorded("1", ("cna",), "30"),
+    "80": Recorded("3", ()),
+    "80c": Recorded("1", ("content",), exits=(("content", "20"),)),
+    "81": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
+    "82": Recorded("3", (), "30"),
     "83": Recorded("3", (), "30"),
     "84": Recorded("3", (), "28"),
     "85": Recorded("1", ("open-fail",), "29"),
@@ -1152,7 +1199,7 @@ REFERENCE: dict[str, Recorded] = {
     "90": Recorded("3", (), "32"),
     "91": Recorded("1, crash", ("tags-open",), "33"),
     "92": Recorded("3", ()),
-    "93": Recorded("1", ("cna", "open-fail"), exits=(("cna", "24"), ("open-fail", "20"))),
+    "93": Recorded("1", ("open-fail",), exits=(("open-fail", "20"),)),
     "94": Recorded("timeout", ("blocked",), exits=(("blocked", "20"),)),
     "95": Recorded("1, crash", ("tags-open",), "35"),
     "96": Recorded("3", ()),
@@ -1206,7 +1253,7 @@ REFERENCE: dict[str, Recorded] = {
 def test_the_corpus_is_every_recorded_cell_and_the_modelled_rows() -> None:
     assert list(CELLS) == [*RECORDED, *MODELLED]
     assert set(REFERENCE) == set(CELLS)
-    assert len(RECORDED) == 128
+    assert len(RECORDED) == 129
 
 
 # --- D409's items, and the cell that is an instance of each --------------------------------------
@@ -1324,21 +1371,25 @@ def test_the_cells_an_item_lists_are_the_cells_that_name_it() -> None:
 EXITS: Mapping[str, str] = {
     "case-list": "19",
     "open-fail": "20",
-    "content": "20",
     "blocked": "20",
+    "content": "20",
     "tags-content": "21",
     "tags-open": "21",
-    CASCADE: "24",
     "type-meta": "25",
 }
 """The D409 exit 3 item each error identity of an accepted cell falls under, written by hand from
 D409's text: (19) a case list's content; (20) a data file of a kind never imported, its open
 failing without opening a member of Reads(S), its content or a FIFO the reference blocks on; (21)
-the tags file's content, or its open failing for its permissions alone; (24) the missing ``_cna``
-case list, the cascade; (25) a type-specific meta check. Total over today's accepted cells'
-identities and single-valued: when an identity needs a second exit, the identity is split
-(``open-fail`` and ``open-fail-dir``, say), and the map never maps one to two. Every entry is
-witnessed: some accepted cell records that identity under that exit."""
+the tags file's content, or its open failing for its permissions alone; (25) a type-specific meta
+check. (24), the missing ``_cna`` case list, the cascade, has no instance from M4.2b-3 (D446): a
+discrete CNA meta is imported, its cells carry the ``<study>_cna`` list, and a study without it is
+refused (``NO_CNA_LIST``), never accepted with the cascade. ``content`` under (20), whose witness
+was cell 66 (a PD value naming the CNA file, then a file never imported, refused by the Reads rule
+from M4.2b-3, its file being imported), is witnessed by cell 80c: a PD file the reference reads
+and errs on, which aibi never reads. Total over today's
+accepted cells' identities and single-valued: when an identity needs a second exit, the identity
+is split (``open-fail`` and ``open-fail-dir``, say), and the map never maps one to two. Every
+entry is witnessed: some accepted cell records that identity under that exit."""
 
 
 def exit_failures(
@@ -1381,12 +1432,13 @@ def test_an_accepted_cell_s_exits_are_its_errors_by_the_map() -> None:
     assert set(EXITS.values()) <= numbers
     assert exit_failures(REFERENCE, EXITS, numbers) == []
     accepted = [c for c, (_, e) in CELLS.items() if isinstance(e, Accept)]
-    assert (len(accepted), sum(len(REFERENCE[c].exits) for c in accepted)) == (34, 24)
+    assert (len(accepted), sum(len(REFERENCE[c].exits) for c in accepted)) == (34, 18)
 
 
 def test_every_other_exit_on_an_accepted_cell_is_caught() -> None:
     """The label-flip mutants: each exit of each accepted cell, changed to every other exit 3 item
-    or to ``same``, is caught; so is a cascade pair dropped (cell 59), the pairs reordered, an exit
+    or to ``same``, is caught; so is a cell's exit dropped (cell 59), one added that is not an
+    error of the cell, the cascade's given to an accepted cell that does not carry it, an exit
     given to a refused cell, and the map widened, extended or narrowed."""
     numbers = d409().exits
     flips = 0
@@ -1397,9 +1449,9 @@ def test_every_other_exit_on_an_accepted_cell_is_caught() -> None:
                 mutant = {**REFERENCE, cell_id: record._replace(exits=changed)}
                 assert exit_failures(mutant, EXITS, numbers), (cell_id, identity, other)
                 flips += 1
-    assert flips == 24 * len(numbers)
+    assert flips == 18 * len(numbers)
     cell_59 = REFERENCE["59"]
-    for exits in (cell_59.exits[1:], cell_59.exits[::-1], ()):
+    for exits in ((), (*cell_59.exits, ("content", "20")), ((CASCADE, "24"), *cell_59.exits)):
         mutant = {**REFERENCE, "59": cell_59._replace(exits=exits)}
         assert exit_failures(mutant, EXITS, numbers), exits
     given = {**REFERENCE, "30m": REFERENCE["30m"]._replace(exits=((CASCADE, "24"),))}
@@ -1561,7 +1613,9 @@ def test_a_corpus_cell(
 class Role:
     """Where a value is written: the meta file ``meta`` (its content made by ``content``) or the
     study meta (``meta_study.txt``), under ``key``. ``checked`` is false for a site the rule
-    ignores. ``extra`` are entries the meta needs."""
+    ignores. ``extra`` are entries the meta needs. ``imported`` is true for a meta of a type the
+    pack imports (the discrete CNA meta, from M4.2b-3, D446): its ``extra`` is its data file, which
+    joins Reads(S) once its own ``data_filename`` passes the rule."""
 
     name: str
     meta: str
@@ -1569,6 +1623,7 @@ class Role:
     checked: bool
     content: Callable[[Mapping[str, bytes], str], bytes]
     extra: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
+    imported: bool = False
 
 
 ROLES = (
@@ -1593,6 +1648,7 @@ ROLES = (
         True,
         lambda b, v: cna_meta("data_cna.txt", v),
         {"data_cna.txt": CNA},
+        imported=True,
     ),
     Role("study tags_file", "meta_study.txt", "tags_file", True, study_with_tags),
     Role(
@@ -1751,8 +1807,11 @@ def build_case(
     meta_files = frozenset(
         {"meta_study.txt", "meta_clinical_sample.txt", patient_meta_name, role.meta}
     )
-    data_files = {sample_data, patient_data}
-    used = frozenset({"meta_study.txt", "meta_clinical_sample.txt", patient_meta_name, *data_files})
+    data_files = {sample_data, patient_data, *(role.extra if role.imported else ())}
+    imported = (role.meta,) if role.imported else ()
+    used = frozenset(
+        {"meta_study.txt", "meta_clinical_sample.txt", patient_meta_name, *data_files, *imported}
+    )
     return Case(role, value, entries, frozenset({*meta_files, *data_files}), meta_files, used)
 
 
@@ -1761,6 +1820,21 @@ def expected(case: Case) -> tuple[str, ...]:
     entry that is not imported, in name order."""
     role = case.role
     value = case.value.strip()  # the parse strips a value
+    for name in role.extra if role.imported else ():
+        # the imported meta's own data_filename, checked by the rule before phase 9 (D446)
+        alike = [entry for entry in case.entries if fold(entry) == fold(name)]
+        before = case.reads - set(role.extra)
+        reason = None
+        if any(case.entries[entry][0] == "symlink" for entry in alike):
+            reason = SYMLINK
+        elif any(entry in before for entry in alike):
+            reason = READS
+        if reason is not None:
+            return (
+                "refused",
+                "onco.DATA_FILE",
+                f"\u00ab{role.meta}\u00bb has a data_filename that {reason}",
+            )
     if role.checked:
         code = "onco.META_VALUE" if role.key == "tags_file" else "onco.DATA_FILE"
         verb = "holds" if role.key == "tags_file" else "has"
@@ -2111,7 +2185,7 @@ HOSTILE = ("", "/abs", "x/../data_clinical_sample.txt", "data_clinical_sample.tx
         ),
         (
             "meta_cna.txt",
-            lambda b, v: cna_meta("nofile.txt", None) + f"tags_file: {v}\n".encode(),
+            lambda b, v: cna_meta("data_cna.txt", None) + f"tags_file: {v}\n".encode(),
         ),
     ],
     ids=[
@@ -2135,7 +2209,7 @@ def test_the_ignored_sites(
     ``pd_annotations_filename`` outside CNA_DISCRETE (cell 27) are not read by the reference and
     are ignored: no value there, however hostile, changes the outcome."""
     for value in HOSTILE:
-        tree = {**base, "link": kinds.symlink("data_clinical_sample.txt")}
+        tree = {**base, "link": kinds.symlink("data_clinical_sample.txt"), "data_cna.txt": CNA}
         tree[meta] = content(base, value)
         assert discovery.outcome(make_study(tree))[0] == "ok", value
 
@@ -2322,7 +2396,9 @@ def test_any_value_against_any_listing(
         {"meta_study.txt", "meta_clinical_sample.txt", "meta_clinical_patient.txt", role.meta}
     )
     data_files = {"data_clinical_sample.txt", "data_clinical_patient.txt"}
+    data_files |= set(role.extra) if role.imported else set()
     used = frozenset({"meta_study.txt", "meta_clinical_sample.txt", "meta_clinical_patient.txt"})
+    used |= {role.meta} if role.imported else set()
     case = Case(role, value, entries, meta_files | data_files, meta_files, used | data_files)
     study = importlib.import_module(STUDY_MODULE)
     found, refusal = oracle.discover_listing(study, entries)

@@ -139,13 +139,17 @@ MUTATION = "MUTATION"
 """The type of a ``MUTATION_EXTENDED:MAF`` meta file, whose data file (a MAF) M4.2b-1b imports."""
 STRUCTURAL_VARIANT = "STRUCTURAL_VARIANT"
 """The type of a ``STRUCTURAL_VARIANT:SV`` meta file, whose data file M4.2b-4 imports (D445)."""
+CNA_DISCRETE = "CNA_DISCRETE"
+"""The type of a ``COPY_NUMBER_ALTERATION:DISCRETE`` meta file, whose data file M4.2b-3 imports
+(D446)."""
 DISCOVERED = CLINICAL | {MUTATION}
 """The imported types whose metas discovery's phases 6 and 7 take and whose data files phase 7
 resolves (D409, D444): the clinical types and the MAF's."""
-IMPORTED = DISCOVERED | {STRUCTURAL_VARIANT}
-"""The types whose data files the pack imports: the clinical types, the MAF's (D444) and the
-structural variants' (D445), whose meta ``structural.discovered`` takes and whose data file is
-resolved by phase 9's rule. A meta file of any other type names a data file the pack never reads
+IMPORTED = DISCOVERED | {STRUCTURAL_VARIANT, CNA_DISCRETE}
+"""The types whose data files the pack imports: the clinical types, the MAF's (D444), the
+structural variants' (D445) and the discrete copy-number matrix's (D446), whose metas
+``structural.discovered`` and ``cna.discovered`` take and whose data files are resolved by phase
+9's rule. A meta file of any other type names a data file the pack never reads
 (D409's exit 3 (20))."""
 
 UNKNOWN_TYPE = "has no meta file type cBioPortal defines"
@@ -603,6 +607,7 @@ def fold(name: str) -> str:
 
 __all__ = [
     "CLINICAL",
+    "CNA_DISCRETE",
     "DISCOVERED",
     "GENOME_BUILDS",
     "IMPORTED",

@@ -41,10 +41,10 @@ from pydantic import JsonValue, TypeAdapter
 from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.ids import normalise_names
 from aibi.core.schema.output import Segment, data, text
-from aibi.core.schema.pack_api import ImportNote, Previous
+from aibi.core.schema.pack_api import ImportNote, Previous, Reshaped
 from aibi.core.store.build import Layout
 from aibi.core.store.sources import RawSource, SourceValue, TextSource, TypedSource
-from aibi.packs.onco import structural
+from aibi.packs.onco import cna, structural
 from aibi.packs.onco.attributes import MONTHS_UNITS, PATIENT_ID, SAMPLE_ID, TIME_OFFSETS
 from aibi.packs.onco.caselists import CaseList
 from aibi.packs.onco.clinical import SETTINGS, Clinical, Column
@@ -62,6 +62,7 @@ from aibi.packs.onco.mutation import (
     Maf,
     MafColumn,
 )
+from aibi.packs.onco.refusals import shown
 
 Status = Literal["imported", "imported_default", "proposed"]
 Entry = tuple[JsonValue, Status, str | None]
@@ -74,6 +75,9 @@ MUTATIONS = "mutations"
 CASE_LISTS = "case_lists"
 MEMBERS = "case_list_members"
 STRUCTURAL_VARIANTS = "structural_variants"
+CNA_CALLS = "cna_calls"
+CNA_ASSIGNMENT = "cna_assignment"
+CNA_GROUPS = "cna_groups"
 TABLES: Mapping[str, tuple[str, str, str, str]] = MappingProxyType(
     {
         PATIENTS: ("Patients", "One row per patient", "onco:patient", f"CLINICAL:{PATIENT}"),
@@ -479,6 +483,195 @@ def _structural_variants(
     return descriptors, TextSource(sv.data), layout, notes
 
 
+CNA_FORMAT = (
+    "cBioPortal's discrete copy-number format: a matrix of genes by samples, unpivoted into one "
+    "row per call; a 0 (neutral) is dropped and counted, an NA (not assessed) is empty (D401, "
+    "D446)"
+)
+CNA_COVERAGE = (
+    "The samples' patterns of NA in the discrete copy-number matrix: a group per distinct pattern, "
+    "and the genes it assessed (D446)"
+)
+CNA_LEVELS = (
+    "cBioPortal's discrete copy-number format: its calls other than 0, the absent value, which "
+    "the column never holds (D401, D407)"
+)
+CNA_MAP = (
+    "cBioPortal's discrete copy-number levels; -1.5 as -2, as cBioPortal's loader is said to read "
+    "it, which the pinned reference does not show (D446)"
+)
+CNA_GENE = "cBioPortal's discrete copy-number format: a row's Hugo_Symbol, as written"
+CNA_SAMPLE = "cBioPortal's discrete copy-number format: a sample's id, a column of the matrix"
+CNA_GROUP = "A pattern's id: the digest of the genes it assessed (D446)"
+CNA_RELATIONSHIP = (
+    "A discrete copy-number matrix's columns are samples of the sample file (D446: every one is "
+    "one)"
+)
+CNA_HALVES = (
+    " holds -1.5, as the matrix writes it; cBioPortal's loader is said to read it as -2 (not "
+    "verified against its source), which the column's value map states, for a curator to assert"
+)
+
+
+def _cna_column(
+    curation: "_Curation",
+    table: str,
+    id: str,
+    label: str,
+    evidence: str,
+    more: Mapping[str, Entry] | None = None,
+) -> Descriptor:
+    fields: dict[str, Entry] = {"datatype": ("string", "imported", evidence), **(more or {})}
+    fields["source"] = ({"original_name": id}, "imported", None)
+    return curation.descriptor("column", f"{table}.{id}", (label, "imported"), fields)
+
+
+def _cna(
+    curation: "_Curation", found: cna.Cna, sample_key: str
+) -> tuple[list[Descriptor], dict[str, RawSource], dict[str, Layout], list[ImportNote], Reshaped]:
+    def source(table: str) -> dict[str, JsonValue]:
+        return {"kind": "pack", "name": table, "original_name": found.name}
+
+    levels: dict[str, JsonValue] = {
+        "values": [{"value": level} for level in cna.LEVELS],
+        "ordered": True,
+    }
+    mapping: dict[str, JsonValue] = {
+        "concept": "onco:cna_level",
+        "transform": {"value_map": dict(cna.VALUE_MAP)},
+    }
+    meta: Mapping[str, Entry] = {"meta": ("COPY_NUMBER_ALTERATION:DISCRETE", "imported", None)}
+    descriptors = [
+        _plain_table(
+            curation,
+            CNA_CALLS,
+            (
+                "Copy-number calls",
+                "One row per sample and gene the matrix calls other than 0 or NA",
+            ),
+            "measurement",
+            ["sample_id", "gene"],
+            "onco:cna_call",
+            source(CNA_CALLS),
+            CNA_FORMAT,
+            meta,
+        ),
+        _cna_column(
+            curation,
+            CNA_CALLS,
+            "sample_id",
+            "Sample id",
+            CNA_SAMPLE,
+            {"identifier": (True, "imported", CNA_SAMPLE)},
+        ),
+        _cna_column(
+            curation,
+            CNA_CALLS,
+            "gene",
+            "Gene",
+            CNA_GENE,
+            {"maps_to": ({"concept": "onco:gene_symbol"}, "imported", CNA_GENE)},
+        ),
+        curation.descriptor(
+            "column",
+            f"{CNA_CALLS}.cna",
+            ("Copy-number level", "imported"),
+            {
+                "datatype": ("category", "imported", CNA_LEVELS),
+                "permissible_values": (levels, "imported", CNA_LEVELS),
+                "maps_to": (mapping, "imported", CNA_MAP),
+                "source": ({"original_name": "cna"}, "imported", None),
+            },
+        ),
+        _plain_table(
+            curation,
+            CNA_ASSIGNMENT,
+            ("Copy-number assignments", "One row per sample the matrix assessed at some gene"),
+            "coverage",
+            None,
+            "onco:cna_assignment",
+            source(CNA_ASSIGNMENT),
+            CNA_COVERAGE,
+            meta,
+        ),
+        _cna_column(curation, CNA_ASSIGNMENT, "sample_id", "Sample id", CNA_SAMPLE),
+        _cna_column(curation, CNA_ASSIGNMENT, "group", "Group", CNA_GROUP),
+        _plain_table(
+            curation,
+            CNA_GROUPS,
+            ("Copy-number groups", "One row per group and gene its samples were assessed at"),
+            "coverage",
+            None,
+            "onco:cna_group",
+            source(CNA_GROUPS),
+            CNA_COVERAGE,
+            meta,
+        ),
+        _cna_column(curation, CNA_GROUPS, "group", "Group", CNA_GROUP),
+        _cna_column(curation, CNA_GROUPS, "gene", "Gene", CNA_GENE),
+        _relationship(curation, CNA_CALLS, "sample_id", SAMPLES, sample_key, CNA_RELATIONSHIP),
+    ]
+    parents: dict[str, JsonValue] = {
+        "assignment": {
+            "table": CNA_ASSIGNMENT,
+            "parent_columns": {"sample_id": sample_key},
+            "group_column": "group",
+        },
+        "groups": {
+            "table": CNA_GROUPS,
+            "group_column": "group",
+            "scope_columns": {"gene": "gene"},
+        },
+    }
+    descriptors.append(
+        curation.descriptor(
+            "coverage",
+            f"cov:{CNA_CALLS}.sample_id",
+            (f"{CNA_CALLS}.sample_id coverage", "imported_default"),
+            {
+                "relationship": (f"rel:{CNA_CALLS}.sample_id", "imported", CNA_COVERAGE),
+                "parents": (parents, "imported", CNA_COVERAGE),
+            },
+        )
+    )
+    columns = {
+        CNA_CALLS: ("sample_id", "gene", "cna"),
+        CNA_ASSIGNMENT: ("sample_id", "group"),
+        CNA_GROUPS: ("group", "gene"),
+    }
+    rows: dict[str, tuple[tuple[SourceValue, ...], ...]] = {
+        CNA_CALLS: found.calls,
+        CNA_ASSIGNMENT: found.assignment,
+        CNA_GROUPS: found.groups,
+    }
+    sources: dict[str, RawSource] = {
+        table: TypedSource(names, rows[table]) for table, names in columns.items()
+    }
+    layouts = {
+        table: Layout(table, tuple((name, name) for name in names))
+        for table, names in columns.items()
+    }
+    notes: list[ImportNote] = []
+    if found.halves:
+        message: list[Segment] = [text("The column "), data("cna"), text(CNA_HALVES)]
+        notes.append(ImportNote("not_proposed", f"{CNA_CALLS}.cna", message, count=found.halves))
+    if found.unread:
+        said: list[Segment] = [text("The discrete copy-number file ")]
+        said.extend(shown(found.name))
+        said.append(text(" has gene columns the pack does not import: "))
+        for index, column in enumerate(found.unread):
+            said.extend([text(", " if index else ""), data(column)])
+        notes.append(ImportNote("not_proposed", CNA_CALLS, said))
+    reshaped = Reshaped(
+        column="cna",
+        absent=(cna.ABSENT,),
+        dropped=found.dropped,
+        digest=found.digest,
+        empty=found.empty,
+    )
+    return descriptors, sources, layouts, notes, reshaped
+
+
 LIST_COLUMNS = ("stable_id", "name", "description", "category")
 MEMBER_COLUMNS = ("case_list", "sample_id")
 
@@ -553,6 +746,7 @@ class Described:
     sources: dict[str, RawSource]
     layouts: dict[str, Layout]
     notes: list[ImportNote]
+    reshaped: dict[str, Reshaped]
 
 
 def describe(
@@ -567,10 +761,12 @@ def describe(
     maf: Maf | None = None,
     lists: Sequence[CaseList] = (),
     sv: structural.Structural | None = None,
+    copy_number: cna.Cna | None = None,
 ) -> Described:
     """The study's descriptors, snapshots, layouts and notes: ``files`` are the clinical files,
     the patient file first where there is one; ``maf`` the study's MAF, read, and ``lists`` its
-    case lists (D444); ``sv`` its structural variant file, read (D445)."""
+    case lists (D444); ``sv`` its structural variant file, read (D445); ``copy_number`` its discrete
+    copy-number matrix, read, whose table's dropped cells are declared (D401, D446)."""
     curation = _Curation(by, at)
     descriptors: list[Descriptor] = [_dataset(curation, fields, name, location)]
     sources: dict[str, RawSource] = {}
@@ -646,11 +842,22 @@ def describe(
         sources[STRUCTURAL_VARIANTS] = raw
         layouts[STRUCTURAL_VARIANTS] = layout
         notes.extend(renamed)
-    return Described(descriptors, sources, layouts, notes)
+    reshaped: dict[str, Reshaped] = {}
+    if copy_number is not None:
+        more, raws, laid, said, declared = _cna(curation, copy_number, sample_key)
+        descriptors.extend(more)
+        sources.update(raws)
+        layouts.update(laid)
+        notes.extend(said)
+        reshaped[CNA_CALLS] = declared
+    return Described(descriptors, sources, layouts, notes, reshaped)
 
 
 __all__ = [
     "CASE_LISTS",
+    "CNA_ASSIGNMENT",
+    "CNA_CALLS",
+    "CNA_GROUPS",
     "MEMBERS",
     "MUTATIONS",
     "PATIENTS",

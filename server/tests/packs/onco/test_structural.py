@@ -8,6 +8,7 @@ The corpus (``test_structural_corpus.py``) holds each class against the referenc
 outcomes and the predicates; this module holds what needs other limits, a store or many tokens.
 """
 
+import ast
 import collections
 import contextlib
 import functools
@@ -463,24 +464,34 @@ def test_the_namespaces_are_the_sv_reference_s_rule() -> None:
 
 # --- One file, one role (review r4 MJ-D) ----------------------------------------------------------
 
-KINDS = ("patient", "sample", "maf", "sv")
 FILES = {
-    "patient": "data_clinical_patient.txt",
-    "sample": "data_clinical_sample.txt",
-    "maf": "data_mutations.txt",
-    "sv": "data_sv.txt",
+    "PATIENT_ATTRIBUTES": "data_clinical_patient.txt",
+    "SAMPLE_ATTRIBUTES": "data_clinical_sample.txt",
+    "MUTATION": "data_mutations.txt",
+    "STRUCTURAL_VARIANT": "data_sv.txt",
+    "CNA_DISCRETE": "data_cna.txt",
 }
 METAS = {
-    "patient": "meta_clinical_patient.txt",
-    "sample": "meta_clinical_sample.txt",
-    "maf": "meta_mutations.txt",
-    "sv": "meta_sv.txt",
+    "PATIENT_ATTRIBUTES": "meta_clinical_patient.txt",
+    "SAMPLE_ATTRIBUTES": "meta_clinical_sample.txt",
+    "MUTATION": "meta_mutations.txt",
+    "STRUCTURAL_VARIANT": "meta_sv.txt",
+    "CNA_DISCRETE": "meta_cna.txt",
 }
+"""Each imported type's meta file and data file in the listing: the keys are ``meta.IMPORTED``,
+exactly (review r1 of M4.2b-3, minor 4: a type made imported fails the brute force until it is
+here)."""
 
 
 def _listing() -> dict[str, tuple[str, bytes]]:
     base = _load("mutation_corpus")
-    files = base.study(meta_sv_DOT_txt=corpus().META.encode(), data_sv_DOT_txt=corpus().VALID)
+    copies = _load("cna_corpus")
+    files = base.study(
+        meta_sv_DOT_txt=corpus().META.encode(),
+        data_sv_DOT_txt=corpus().VALID,
+        meta_cna_DOT_txt=copies.meta(),
+        data_cna_DOT_txt=copies.VALID,
+    )
     return {
         name: ("file", content)
         for name, content in files.items()
@@ -489,26 +500,32 @@ def _listing() -> dict[str, tuple[str, bytes]]:
 
 
 def test_no_two_imported_metas_name_one_data_file() -> None:
-    """Review r4 MJ-D, brute force over every ordered pair of imported roles: the second's meta
-    naming the first's data file (its own removed) is refused ``DATA_FILE``, by the rule that
-    already refused the pair (D409's phase 7 for the clinical files and the MAF, phase 9's Reads
-    rule for the SV file in either direction)."""
+    """Review r4 MJ-D, brute force over every ordered pair of imported roles (``meta.IMPORTED``,
+    tied to it: review r1 of M4.2b-3, minor 4): the second's meta naming the first's data file (its
+    own removed) is refused ``DATA_FILE``, by the rule that already refused the pair (D409's phase 7
+    for the clinical files and the MAF, phase 9's Reads rule for the SV file and the CNA file in
+    either direction)."""
     paths = _load("paths_oracle")
     study = importlib.import_module("aibi.packs.onco.study")
+    meta = importlib.import_module("aibi.packs.onco.meta")
+    assert set(METAS) == set(FILES) == set(meta.IMPORTED)
     found, refusal = paths.discover_listing(study, _listing())
     assert refusal is None
     assert found.structural is not None
+    assert found.cna is not None
     pairs = 0
-    for first, second in itertools.permutations(KINDS, 2):
+    for first, second in itertools.permutations(sorted(meta.IMPORTED), 2):
         entries = _listing()
-        meta = entries[METAS[second]][1].replace(FILES[second].encode(), FILES[first].encode())
-        entries[METAS[second]] = ("file", meta)
+        meta_text = entries[METAS[second]][1]
+        changed = meta_text.replace(FILES[second].encode(), FILES[first].encode())
+        assert changed != meta_text, (first, second)
+        entries[METAS[second]] = ("file", changed)
         del entries[FILES[second]]
         _, refusal = paths.discover_listing(study, entries)
         assert refusal is not None, (first, second)
         assert str(refusal.code) == "onco.DATA_FILE", (first, second)
         pairs += 1
-    assert pairs == 12
+    assert pairs == len(meta.IMPORTED) * (len(meta.IMPORTED) - 1) == 20
 
 
 @pytest.mark.parametrize("name", ["data_sv.txt", "DATA_SV.txt", "data_SV.TXT"])
@@ -592,9 +609,12 @@ MAIN_SHARED: Mapping[str, tuple[int, int, Mapping[str, int]]] = {
         },
     ),
 }
-"""Main's (7a99a62) refusal sites, checks and templates (a multiset) of the modules slice 1b's
-walker holds, which slice 4 changes in place only (review r4 MJ-B'): every check of the SV meta
-and file is in ``structural``, reached through calls that hold none."""
+"""The refusal sites, checks and templates (a multiset) of the modules slice 1b's walker holds,
+as main held them before slice 4 (7a99a62) and after it (2017b82, re-pinned for M4.2b-3: the
+counts did not change), which slices 4 and 3 change in place only (review r4 MJ-B', M4.2b-3 plan
+r2 MJ4 (h)): every check of the SV meta and file is in ``structural``, and every check of the
+discrete CNA meta, its case list and its file in ``cna``, each reached through calls that hold
+none."""
 
 
 def test_the_shared_modules_are_main_s() -> None:
@@ -631,6 +651,106 @@ def test_the_shared_pin_fails_on_a_check_added_to_study(monkeypatch: pytest.Monk
     monkeypatch.setattr(walker.WALKER, "PACK", Pack())
     found = walker.sites("study")
     assert len(found) == MAIN_SHARED["study"][0] + 1
+
+
+CNA_CALLS = {
+    "study": (
+        "    reads = reads | frozenset(cna.used(copies))\n",
+        "    if copies is not None and copies.data.name in reads:\n"
+        '        raise entry_refused("DATA_FILE", copies.meta, "has a data_filename that names a '
+        'meta file")\n',
+    ),
+    "importer": (
+        "        location = reader.location(source)\n",
+        "        if copies is not None and not lists:\n"
+        '            raise entry_refused("NO_SEQUENCED_LIST", "x", "has a data_filename that names '
+        'a MAF whose name is not Unicode text")\n',
+    ),
+}
+
+
+@pytest.mark.parametrize("module", sorted(CNA_CALLS))
+def test_the_shared_pin_fails_on_a_check_added_beside_the_cna_calls(
+    module: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The re-pinned self-check (M4.2b-3, plan r2 MJ4 (h)): an ``if`` added beside the thin CNA
+    calls in ``study.py`` or ``importer.py``, reusing a template the module already holds, fails
+    the pin, as the walker reads it."""
+    walker = _load("structural_checks")
+    source = (walker.WALKER.PACK / f"{module}.py").read_text(encoding="utf-8")
+    anchor, check = CNA_CALLS[module]
+    assert source.count(anchor) == 1, module
+    added = source.replace(anchor, anchor + check)
+    original = walker.WALKER.PACK
+
+    class Pack:
+        def __truediv__(self, name: str) -> Any:
+            if name == f"{module}.py":
+                return _Text(added)
+            return original / name
+
+    monkeypatch.setattr(walker.WALKER, "PACK", Pack())
+    assert len(walker.checks(module)) == MAIN_SHARED[module][1] + 1
+    counted = collections.Counter(t for _, ts in walker.sites(module) for t in ts)
+    assert counted != collections.Counter(MAIN_SHARED[module][2])
+
+
+BRANCHES = (ast.Assert, ast.IfExp, ast.BoolOp, ast.Raise, ast.If, ast.While, ast.Match, ast.Try)
+
+
+def census(source: str) -> dict[str, int]:
+    """Every construct of a module that can branch or refuse, by kind: ``assert``, a conditional
+    expression, a short-circuit ``and``/``or``, a ``raise``, ``if``, ``while``, ``match``, ``try``,
+    and each ``if`` of a comprehension."""
+    found: collections.Counter[str] = collections.Counter()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.comprehension):
+            found["comprehension_if"] += len(node.ifs)
+        elif isinstance(node, BRANCHES):
+            found[type(node).__name__] += 1
+    return {kind_: count for kind_, count in sorted(found.items()) if count}
+
+
+MAIN_CENSUS: Mapping[str, Mapping[str, int]] = {
+    "study": {"BoolOp": 11, "If": 38, "IfExp": 5, "Raise": 23, "Try": 1, "comprehension_if": 3},
+    "meta": {"BoolOp": 14, "If": 31, "IfExp": 4, "Raise": 12, "Try": 1},
+    "importer": {"BoolOp": 3, "If": 8, "IfExp": 2, "Raise": 3},
+}
+"""The shared modules' branching constructs as main held them (54804b3), which slice 3 leaves as
+they were (review r2 minor 2): the walker sees an ``if`` that raises a template; this census sees
+an ``assert``, a conditional expression, a short-circuit, a comprehension's filter or a ``raise``
+of any kind added to ``study``, ``meta`` or ``importer``. What it cannot see is stated in D446: a
+plain call to a function that refuses (a refuser under another name, a helper)."""
+
+
+def test_the_shared_modules_branch_as_main_s() -> None:
+    walker = _load("structural_checks")
+    for module, pinned in MAIN_CENSUS.items():
+        source = (walker.WALKER.PACK / f"{module}.py").read_text(encoding="utf-8")
+        assert census(source) == pinned, module
+
+
+CENSUS_MUTANTS = {
+    "assert": ("study", "    assert copies is None or copies.data.name != 'x'\n"),
+    "ternary": (
+        "study",
+        "    _ = None if copies is None else (_ for _ in ()).throw(ValueError())\n",
+    ),
+    "short_circuit": ("importer", "        _ = copies is None or copies.calls.pop()\n"),
+    "filter": ("importer", "        lists = [x for x in lists if copies is not None]\n"),
+    "raise": ("study", "    raise ValueError() from None\n"),
+}
+"""The reviewer's P2, P3, P5 and P6 and a bare ``raise``, each added beside the CNA calls."""
+
+
+@pytest.mark.parametrize("mutant", sorted(CENSUS_MUTANTS))
+def test_the_census_fails_on_any_branch_added_beside_the_cna_calls(mutant: str) -> None:
+    walker = _load("structural_checks")
+    module, added = CENSUS_MUTANTS[mutant]
+    anchor = CNA_CALLS[module][0]
+    source = (walker.WALKER.PACK / f"{module}.py").read_text(encoding="utf-8")
+    assert source.count(anchor) == 1
+    assert census(source.replace(anchor, anchor + added)) != MAIN_CENSUS[module], mutant
 
 
 class _Text:
