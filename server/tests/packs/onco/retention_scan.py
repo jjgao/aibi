@@ -744,6 +744,35 @@ def sv_file(marker: Marker) -> bytes:
     return "".join(out).encode()
 
 
+CNA_LEVELS = ("-2", "-1.5", "-1", "0", "1", "2", "NA")
+CNA_GENES = 40
+
+
+def cna_file(marker: Marker) -> bytes:
+    """A discrete CNA matrix (M4.2b-3, D446) of ``CNA_GENES`` genes by the sample file's ``ROWS``
+    samples, a value of the marker in every value-bearing position: the header's sample ids (the
+    sample file's) and the genes' symbols; its cells are the format's seven tokens, in turn."""
+    _, up, _ = marker
+    out = ["\t".join(["Hugo_Symbol", *(f"S{i}{up}" for i in range(ROWS))]) + "\n"]
+    for gene in range(CNA_GENES):
+        cells = [CNA_LEVELS[(gene + i) % len(CNA_LEVELS)] for i in range(ROWS)]
+        out.append("\t".join([f"G{gene}{up}", *cells]) + "\n")
+    return "".join(out).encode()
+
+
+def cna_list_file(marker: Marker) -> bytes:
+    """The ``_cna`` case list the CNA meta needs: its study id, name and description carry the
+    marker, its ids are the sample file's."""
+    lo, up, _ = marker
+    ids = [f"S{i}{up}" for i in range(ROWS)]
+    return (
+        f"cancer_study_identifier: m_{lo}\nstable_id: m_{lo}_cna\n"
+        f"case_list_name: Copies {up}\ncase_list_description: Calls {lo}\n"
+        "case_list_category: all_cases_with_cna_data\n"
+        "case_list_ids: " + "\t".join(ids) + "\n"
+    ).encode()
+
+
 def case_list_file(marker: Marker, *, late: bool = False) -> bytes:
     """The ``_sequenced`` case list: its study id, name and description carry the marker, its
     ids are the sample file's; with ``late`` its last id is no sample's."""
@@ -762,8 +791,8 @@ def study(
 ) -> Path:
     """A study directory whose every meta value, file name and directory name carries the marker,
     but for cBioPortal's vocabulary (``FIELDS``): its ``type_of_cancer`` is an OncoTree code by
-    its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444) and an
-    SV file (D445)."""
+    its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444), an
+    SV file (D445) and a discrete CNA matrix with its ``_cna`` list (D446)."""
     lo, up, _ = marker
     directory = root / f"s{lo}"
     directory.mkdir()
@@ -793,6 +822,12 @@ def study(
             f"profile_name: Events {up}\nprofile_description: Fusions {lo}\n"
             f"data_filename: sv_{lo}.txt\n"
         ),
+        "meta_cna.txt": (
+            f"cancer_study_identifier: m_{lo}\ngenetic_alteration_type: COPY_NUMBER_ALTERATION\n"
+            "datatype: DISCRETE\nstable_id: cna\nshow_profile_in_analysis_tab: true\n"
+            f"profile_name: Copies {up}\nprofile_description: Levels {lo}\n"
+            f"data_filename: cna_{lo}.txt\n"
+        ),
     }
     for name, text in meta.items():
         (directory / name).write_text(text, encoding="utf-8")
@@ -800,10 +835,12 @@ def study(
     (directory / f"sample_{lo}.txt").write_bytes(sample_file(marker))
     (directory / f"maf_{lo}.txt").write_bytes(maf_file(marker, late=maf_late))
     (directory / f"sv_{lo}.txt").write_bytes(sv_file(marker))
+    (directory / f"cna_{lo}.txt").write_bytes(cna_file(marker))
     (directory / "case_lists").mkdir()
     (directory / "case_lists" / f"cases_{lo}.txt").write_bytes(
         case_list_file(marker, late=list_late)
     )
+    (directory / "case_lists" / f"cnas_{lo}.txt").write_bytes(cna_list_file(marker))
     return directory
 
 
@@ -1047,6 +1084,7 @@ FIELDS: Mapping[str, frozenset[str]] = {
             "meta_clinical_sample.txt",
             "meta_mutations.txt",
             "meta_sv.txt",
+            "meta_cna.txt",
             "case_lists",
         }
     ),
@@ -1085,12 +1123,25 @@ FIELDS: Mapping[str, frozenset[str]] = {
     "sv: NCBI_Build": frozenset({"GRCh#"}),
     "sv: Event_Info": frozenset(),
     "sv: V_{up}": frozenset(),
+    "meta_cna.txt: cancer_study_identifier": frozenset(),
+    "meta_cna.txt: genetic_alteration_type": frozenset({"COPY_NUMBER_ALTERATION"}),
+    "meta_cna.txt: datatype": frozenset({"DISCRETE"}),
+    "meta_cna.txt: stable_id": frozenset({"cna"}),
+    "meta_cna.txt: show_profile_in_analysis_tab": frozenset({"true"}),
+    "meta_cna.txt: profile_name": frozenset(),
+    "meta_cna.txt: profile_description": frozenset(),
+    "meta_cna.txt: data_filename": frozenset(),
+    "cna: column name": frozenset({"Hugo_Symbol"}),
+    "cna: Hugo_Symbol": frozenset(),
+    "cna: S#{up}": frozenset({"-#", "-#.#", "#", "NA"}),
     "a case list's file name": frozenset(),
     "case list: cancer_study_identifier": frozenset(),
     "case list: stable_id": frozenset(),
     "case list: case_list_name": frozenset(),
     "case list: case_list_description": frozenset(),
-    "case list: case_list_category": frozenset({"all_cases_with_mutation_data"}),
+    "case list: case_list_category": frozenset(
+        {"all_cases_with_mutation_data", "all_cases_with_cna_data"}
+    ),
     "case list: case_list_ids": frozenset(),
     "a study's directory name": frozenset(),
     "importer.import_source's options.dataset": frozenset(),
@@ -1171,13 +1222,14 @@ def _study(directory: Path, out: dict[str, list[str]]) -> None:
             for line in lines[2:]:
                 for name, value in zip(names, line.split("\t"), strict=True):
                     out.setdefault(f"maf: {name}", []).append(value)
-        elif path.name.startswith("sv_"):
+        elif path.name.startswith(("sv_", "cna_")):
+            role = path.name.split("_")[0]
             lines = path.read_text(encoding="utf-8").splitlines()
             names = lines[0].split("\t")
-            out.setdefault("sv: column name", []).extend(names)
+            out.setdefault(f"{role}: column name", []).extend(names)
             for line in lines[1:]:
                 for name, value in zip(names, line.split("\t"), strict=True):
-                    out.setdefault(f"sv: {name}", []).append(value)
+                    out.setdefault(f"{role}: {name}", []).append(value)
         elif path.name.startswith("meta_"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 key, _, value = line.partition(": ")

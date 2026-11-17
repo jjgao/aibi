@@ -76,16 +76,28 @@ scripts/testsite.sh import-study demo_onco fixtures/onco/demo_study   # a cBioPo
 The site's server installs the oncology pack, and `import-study <name> <dir>` imports a cBioPortal
 study directory with it (copied whole into the site; the clinical files become the `patients` and
 `samples` tables, a `MUTATION_EXTENDED` profile's MAF the `mutations` table, the case lists the
-`case_lists` and `case_list_members` tables, SPEC D444, and a `STRUCTURAL_VARIANT` profile's file the
-`structural_variants` table, one row per event as the file holds it, SPEC D445), restarting the server
-first if it is running.
+`case_lists` and `case_list_members` tables, SPEC D444, a `STRUCTURAL_VARIANT` profile's file the
+`structural_variants` table, one row per event as the file holds it, SPEC D445, and a discrete
+`COPY_NUMBER_ALTERATION` matrix the `cna_calls` table, one row per call other than `0` and `NA`, with
+its coverage by the samples' `NA` patterns, `cna_assignment` and `cna_groups`, which needs the
+`<study>_cna` case list, SPEC D446), restarting the server first if it is running.
 An import's peak memory grows with its cells (rows times columns, summed over every table it imports),
 about 80 to 200 bytes a cell above the server's baseline (about 193 for a case list's members, D444), and
 `import_cells` (default 20M) refuses more: a synthetic MAF of 129 columns and 54,000 rows (7.0M cells)
 published at a peak of about 1.1 GiB, and one of 160,000 rows (20.6M cells) is refused at the
 default. The real `msk_chord_2024` MAF's size is unmeasured here; if its rows times columns are over
 about 18.5M (the public database holds about 208,000 of its mutation rows, which at 129 columns
-would be 26.8M cells), raise `import_cells` in `[limits]` and give the server the RAM D444 states. `fixtures/onco/demo_study` is a
+would be 26.8M cells), raise `import_cells` in `[limits]` and give the server the RAM D444 states. A discrete CNA matrix
+counts its cells as the core does (3 a call, 1 a `0` or `NA`, 2 a coverage row) though it keeps only
+one byte of code a cell and its calls' rows: the real `msk_chord_2024` matrix (702 genes by 25,034
+samples) counts 17,753,698 cells, the study without its MAF and SV file 19,253,766, which the default
+admits (published in about 35 s at a peak of about 320 MiB, SPEC D446); with its MAF the study is far
+over the default, and the matrix adds its cells to the MAF's, so raise `import_cells` for the sum. A discrete
+CNA matrix's memory at the default limit is a measured range, not a bound: about 3.0-3.5 GiB,
+depending on its cells, its number of `NA` groups and the run (SPEC D446: an all-calls matrix of
+19.6M cells peaked at 3.3 GiB, ones with a group per sample at 3.0-3.5 GiB); give a server that imports one 6 GiB, and more in
+proportion if you raise `import_cells`. The
+defaults stay as they are. `fixtures/onco/demo_study` is a
 synthetic study; a real one (such as `msk_chord_2024`, whose licence keeps it out of the repository)
 is imported from wherever it was downloaded. The pack proposes the study's survival endpoints
 (`ep:os` and the like, SPEC D439): run `aibi proposers <dataset>` once for a study imported before

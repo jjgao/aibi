@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.5.0"
+BY = "importer:onco@0.6.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:
@@ -102,6 +102,9 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "case_lists",
         "case_list_members",
         "structural_variants",
+        "cna_calls",
+        "cna_assignment",
+        "cna_groups",
     }
     patients = found["patients"]
     assert isinstance(patients, TableDescriptor)
@@ -152,6 +155,13 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "structural_variants.sv_status": "category",
         "structural_variants.event_info": "string",
         "structural_variants.class": "string",
+        "cna_calls.sample_id": "string",
+        "cna_calls.gene": "string",
+        "cna_calls.cna": "category",
+        "cna_assignment.sample_id": "string",
+        "cna_assignment.group": "string",
+        "cna_groups.group": "string",
+        "cna_groups.gene": "string",
     }
     mutations = found["mutations"]
     assert isinstance(mutations, TableDescriptor)
@@ -183,8 +193,10 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         assert isinstance(found_relationship, RelationshipDescriptor)
         assert found_relationship.fields.parent_table == parent
         assert found_relationship.curation["/fields/child_columns"].status == "imported"
-    assert "coverage" not in {
-        d.fields.role for d in found.values() if isinstance(d, TableDescriptor)
+    roles = {d.id: d.fields.role for d in found.values() if isinstance(d, TableDescriptor)}
+    assert {t for t, role in roles.items() if role == "coverage"} == {
+        "cna_assignment",
+        "cna_groups",
     }
     os_months = found["patients.os_months"]
     assert isinstance(os_months, ColumnDescriptor)
@@ -212,8 +224,15 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
 
 
 DEMO_NOTES = [
+    "not_proposed cna_calls.cna: The column \u00abcna\u00bb holds -1.5, as the matrix writes it; "
+    "cBioPortal's loader is said to read it as -2 (not verified against its source), which the "
+    "column's value map states, for a curator to assert (1; rows [])",
     "not_proposed patients.sex: The column \u00abSEX\u00bb has cells with spaces around them, "
     "read as written; cBioPortal trims them, and trimming is not proposed (1; rows [7])",
+    "reshaped cna_calls.cna: Source cells the pack's importer dropped because their value means "
+    "nothing there: \u00ab0\u00bb (20; rows [])",
+    "reshaped cna_calls.cna: Empty source cells the pack's importer dropped as not assessed; the "
+    "coverage leaves them out (5; rows [])",
     "unparsed samples.tmb_nonsynonymous: Cells whose value does not parse as the column's "
     "datatype, which are UNKNOWN (1; rows [5])",
 ]
@@ -615,7 +634,11 @@ def test_the_facet_serves_the_study_s_own_spelling(world: Any, registry: PackReg
     assert facets.facet(View()) == {
         "type_of_cancer": ["mixed"],
         "reference_genome": ["hg19"],
-        "profiles": ["MUTATION_EXTENDED:MAF", "STRUCTURAL_VARIANT:SV"],
+        "profiles": [
+            "COPY_NUMBER_ALTERATION:DISCRETE",
+            "MUTATION_EXTENDED:MAF",
+            "STRUCTURAL_VARIANT:SV",
+        ],
     }
 
 

@@ -65,7 +65,7 @@ the 52 cells and C24 again, live, on the pinned reference, and re-record ``test_
 and its ``RECORDED_UNDER`` (the type the cells were recorded under, which a test pins to this
 constant)."""
 
-DATA_TYPES = frozenset(
+NAMING = frozenset(
     {
         "CANCER_TYPE",
         "CNA_DISCRETE",
@@ -73,6 +73,7 @@ DATA_TYPES = frozenset(
         "CNA_LOG2",
         "CNA_CONTINUOUS",
         "SEG",
+        "MUTATION",
         "MUTATION_UNCALLED",
         "EXPRESSION",
         "METHYLATION",
@@ -86,15 +87,26 @@ DATA_TYPES = frozenset(
         "GENERIC_ASSAY_CONTINUOUS",
         "GENERIC_ASSAY_BINARY",
         "GENERIC_ASSAY_CATEGORICAL",
+        "STRUCTURAL_VARIANT",
         "SAMPLE_RESOURCES",
         "PATIENT_RESOURCES",
         "STUDY_RESOURCES",
         "RESOURCES_DEFINITION",
+        "SAMPLE_ATTRIBUTES",
+        "PATIENT_ATTRIBUTES",
     }
 )
-"""Every type whose meta file names a data file the pack never imports (all but the study meta, the
-two clinical types, from M4.2b-1b the MAF's type ``MUTATION``, D444, and from M4.2b-4 the
-structural variants' type ``STRUCTURAL_VARIANT``, D445), written by hand."""
+"""Every type whose meta file names a data file (C:95-370: all but the study meta), written by
+hand."""
+IMPORTED = frozenset(
+    {"SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION", "STRUCTURAL_VARIANT", "CNA_DISCRETE"}
+)
+"""The types whose data files the pack imports, written by hand: the two clinical types, from
+M4.2b-1b the MAF's (D444), from M4.2b-4 the structural variants' (D445) and from M4.2b-3 the
+discrete copy-number matrix's (D446)."""
+DATA_TYPES = NAMING - IMPORTED
+"""Every type whose meta file names a data file the pack never imports, by the rule: every type
+naming a data file but the imported ones."""
 
 
 @dataclass(frozen=True)
@@ -110,12 +122,7 @@ ROWS = (
     Row("data_filename", DATA, DATA_TYPES),
     Row("pd_annotations_filename", DATA, frozenset({"CNA_DISCRETE"})),
     Row("tags_file", TAGS, frozenset({STUDY})),
-    Row(
-        "listing:meta",
-        LISTING,
-        DATA_TYPES
-        | {STUDY, "SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION", "STRUCTURAL_VARIANT"},
-    ),
+    Row("listing:meta", LISTING, DATA_TYPES | {STUDY} | IMPORTED),
     Row("listing:case_lists", CASE_LISTS, frozenset()),
     Row("isdir:case_lists", CASE_LISTS, frozenset()),
 )
@@ -126,8 +133,10 @@ tags file, which the study meta alone holds; the listing of the study's director
 file's type; the case lists, which ``discover`` neither lists nor reads (exit 3 (19)). Each role is
 stated above, where its constant is."""
 
-PAIRS = (
+ALL_PAIRS = (
     ("CANCER_TYPE", "CANCER_TYPE", "CANCER_TYPE"),
+    ("CLINICAL", "PATIENT_ATTRIBUTES", "PATIENT_ATTRIBUTES"),
+    ("CLINICAL", "SAMPLE_ATTRIBUTES", "SAMPLE_ATTRIBUTES"),
     ("CLINICAL", "TIMELINE", "TIMELINE"),
     ("PROTEIN_LEVEL", "LOG2-VALUE", "PROTEIN"),
     ("PROTEIN_LEVEL", "Z-SCORE", "PROTEIN"),
@@ -140,9 +149,11 @@ PAIRS = (
     ("MRNA_EXPRESSION", "CONTINUOUS", "EXPRESSION"),
     ("MRNA_EXPRESSION", "Z-SCORE", "EXPRESSION"),
     ("MRNA_EXPRESSION", "DISCRETE", "EXPRESSION"),
+    ("MUTATION_EXTENDED", "MAF", "MUTATION"),
     ("MUTATION_UNCALLED", "MAF", "MUTATION_UNCALLED"),
     ("METHYLATION", "CONTINUOUS", "METHYLATION"),
     ("GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX"),
+    ("STRUCTURAL_VARIANT", "SV", "STRUCTURAL_VARIANT"),
     ("GISTIC_GENES_AMP", "Q-VALUE", "GISTIC_GENES"),
     ("GISTIC_GENES_DEL", "Q-VALUE", "GISTIC_GENES"),
     ("MUTSIG", "Q-VALUE", "MUTATION_SIGNIFICANCE"),
@@ -152,9 +163,11 @@ PAIRS = (
     ("GENERIC_ASSAY", "BINARY", "GENERIC_ASSAY_BINARY"),
     ("GENERIC_ASSAY", "CATEGORICAL", "GENERIC_ASSAY_CATEGORICAL"),
 )
-"""Every pair of a type the pack never imports (C:651-689), written by hand, with the type it is:
-the clinical pairs, from M4.2b-1b ``MUTATION_EXTENDED:MAF`` (D444) and from M4.2b-4
-``STRUCTURAL_VARIANT:SV`` (D445) are left out."""
+"""Every pair of C:651-689, written by hand, with the type it is."""
+PAIRS = tuple(pair for pair in ALL_PAIRS if pair[2] not in IMPORTED)
+"""Every pair of a type the pack never imports, by the rule: ``ALL_PAIRS`` without the imported
+types' (the clinical pairs, from M4.2b-1b ``MUTATION_EXTENDED:MAF``, D444, from M4.2b-4
+``STRUCTURAL_VARIANT:SV``, D445, and from M4.2b-3 ``COPY_NUMBER_ALTERATION:DISCRETE``, D446)."""
 RESOURCES = {
     "PATIENT": "PATIENT_RESOURCES",
     "SAMPLE": "SAMPLE_RESOURCES",
@@ -248,6 +261,33 @@ def guard_case(
         assert head is not None
         clean = "" if key == "data_filename" else f"data_filename: {PLAIN}\n"
         entries["meta_x.txt"] = ("file", f"{EVERY_KEY}{head}{clean}{key}: {VALUE}\n".encode())
+    return entries
+
+
+IMPORTED_CASES: Mapping[str, tuple[str, str, bytes]] = {
+    "CNA_DISCRETE": ("cna", "data_cna.txt", b"Hugo_Symbol\tS1\tS2\nTP53\t0\t2\n"),
+}
+"""For a type a checked row reads that the pack imports (the PD row's discrete CNA type, D446),
+what a valid meta of it needs beside every key: its ``stable_id`` (C:739-744) and its data file, a
+valid one of ``clinical_grid.BASE``'s samples, named exactly. The guard's cases are
+``discover``'s, which reads no case list, so the ``<study>_cna`` list the importer needs (D446) is
+not part of them: a ``case_lists`` directory is the declared rows' case alone."""
+
+
+def imported_case(
+    base: Mapping[str, bytes], kind: str, head: str, key: str
+) -> dict[str, tuple[str, bytes]]:
+    """``base`` with ``key: VALUE`` in ``meta_x.txt``, a valid meta of the imported type ``kind``
+    (``IMPORTED_CASES``) whose data file is a valid file of its type; no other site holds a
+    value."""
+    stable, name, content = IMPORTED_CASES[kind]
+    entries = {name_: ("file", data) for name_, data in base.items()}
+    entries[name] = ("file", content)
+    keys = EVERY_KEY.replace("stable_id: s\n", f"stable_id: {stable}\n")
+    entries["meta_x.txt"] = (
+        "file",
+        f"{keys}{head}data_filename: {name}\n{key}: {VALUE}\n".encode(),
+    )
     return entries
 
 
