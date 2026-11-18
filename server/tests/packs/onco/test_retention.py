@@ -508,8 +508,8 @@ STUDY_SIZES: dict[tuple[str, str], list[StudyShape]] = {
     ("bytes", "lists"): [(300, 100, 5), (300, 100, 200)],
     ("bytes", "ids"): [(2_000, 200, 0), (2_000, 2_000, 0)],
 }
-"""An import's shapes: the sample-id set behind a fixed MAF, SV file (D445) and discrete CNA matrix
-(D446), one list's ids, and many lists."""
+"""An import's shapes: the sample-id set behind a fixed MAF, SV file (D445), discrete CNA matrix
+(D446) and gene panel matrix (D447), one list's ids, and many lists."""
 
 
 SV_COLUMNS = [
@@ -587,6 +587,52 @@ CNA_SIZES: dict[tuple[str, str], list[MafShape]] = {
 tokens its groups), all calls (the rows it returns) and all ``NA`` (no coverage)."""
 
 
+MATRIX_META = (
+    b"cancer_study_identifier: m\ngenetic_alteration_type: GENE_PANEL_MATRIX\n"
+    b"datatype: GENE_PANEL_MATRIX\ndata_filename: data_gene_panel_matrix.txt\n"
+)
+MATRIX_PROFILES = ("mutations", "cna", "structural_variants")
+
+
+def matrix_file(rows: int, width: int = 3, kind: str = "panels", samples: int = 100) -> bytes:
+    """A gene panel matrix (M4.2b-2a, D447) of ``rows`` rows (each a sample of its own, past
+    ``samples`` the sample ids ``S<i>`` the reads are given) and ``width`` profile columns: a
+    distinct panel a cell (``panels``) or every cell ``NA`` (``na``)."""
+    names = ["SAMPLE_ID", *(MATRIX_PROFILES[k] if k < 3 else f"p{k}" for k in range(width))]
+    out = ["\t".join(names) + "\n"]
+    for i in range(rows):
+        cells = ["NA" if kind == "na" else f"P{i}_{k}" for k in range(width)]
+        out.append("\t".join([f"S{i}", *cells]) + "\n")
+    return "".join(out).encode()
+
+
+MATRIX_SIZES: dict[tuple[str, str], list[MafShape]] = {
+    ("blocks", "tall"): [(2_000, 3, "panels"), (20_000, 3, "panels")],
+    ("blocks", "wide"): [(200, 20, "panels"), (200, 200, "panels")],
+    ("blocks", "na"): [(2_000, 3, "na"), (20_000, 3, "na")],
+    ("bytes", "tall"): [(200, 3, "panels"), (2_000, 3, "panels")],
+}
+"""The gene panel matrix reader's shapes (D447): samples (its rows), profiles (its columns) and
+all ``NA``."""
+
+
+def _matrix_read(measure: str) -> Callable[[Shape], int]:
+    def held(shape: Shape) -> int:
+        from aibi.packs.onco import panels
+
+        rows, width, kind = shape  # pyright: ignore[reportAssignmentType]
+        data = matrix_file(int(rows), int(width), str(kind))
+        samples = frozenset(f"S{i}" for i in range(int(rows)))
+        names = data.split(b"\n", 1)[0].decode().split("\t")[1:]
+        found = panels.Profiles(frozenset(names), frozenset(), False)
+        limits = ImportLimits()
+        return MEASURES[measure](
+            lambda: panels.read(data, "g.txt", samples, limits, found=found, sequenced=samples)
+        )
+
+    return held
+
+
 def _cna_read(measure: str) -> Callable[[Shape], int]:
     def held(shape: Shape) -> int:
         from aibi.packs.onco import cna
@@ -641,6 +687,8 @@ def _maf_imported(make_study: MakeStudy, measure: str) -> Callable[[Shape], int]
             "data_sv.txt": sv_file(200),
             "meta_cna.txt": CNA_META,
             "data_cna.txt": cna_file(50),
+            "meta_gene_panel_matrix.txt": MATRIX_META,
+            "data_gene_panel_matrix.txt": matrix_file(100),
             "case_lists": {
                 "cases_sequenced.txt": case_list_file(int(ids)),
                 "cases_cna.txt": case_list_file(int(ids), "cna"),
@@ -683,6 +731,11 @@ def test_an_sv_read_retains_nothing_that_grows_with_the_file(measure: str, shape
 @pytest.mark.parametrize(("measure", "shape"), CNA_SIZES, ids=lambda key: key)
 def test_a_cna_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
     _grown_from(_cna_read(measure), measure, CNA_SIZES[(measure, shape)])
+
+
+@pytest.mark.parametrize(("measure", "shape"), MATRIX_SIZES, ids=lambda key: key)
+def test_a_matrix_read_retains_nothing_that_grows_with_the_file(measure: str, shape: str) -> None:
+    _grown_from(_matrix_read(measure), measure, MATRIX_SIZES[(measure, shape)])
 
 
 @pytest.mark.parametrize(("measure", "shape"), STUDY_SIZES, ids=lambda key: key)

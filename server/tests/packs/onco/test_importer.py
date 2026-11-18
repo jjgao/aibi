@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.6.0"
+BY = "importer:onco@0.7.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:
@@ -105,6 +105,7 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "cna_calls",
         "cna_assignment",
         "cna_groups",
+        "gene_panel_matrix",
     }
     patients = found["patients"]
     assert isinstance(patients, TableDescriptor)
@@ -162,6 +163,10 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "cna_assignment.group": "string",
         "cna_groups.group": "string",
         "cna_groups.gene": "string",
+        "gene_panel_matrix.sample_id": "string",
+        "gene_panel_matrix.mutations": "string",
+        "gene_panel_matrix.cna": "category",
+        "gene_panel_matrix.structural_variants": "string",
     }
     mutations = found["mutations"]
     assert isinstance(mutations, TableDescriptor)
@@ -188,6 +193,7 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         ("mutations", "tumor_sample_barcode", "samples"),
         ("case_list_members", "sample_id", "samples"),
         ("case_list_members", "case_list", "case_lists"),
+        ("gene_panel_matrix", "sample_id", "samples"),
     ):
         found_relationship = found[f"rel:{child}.{column}"]
         assert isinstance(found_relationship, RelationshipDescriptor)

@@ -57,7 +57,11 @@ file is refused as phase 9 refuses it), and its file then joins Reads(S) for pha
 (D446) the discrete CNA meta's data file is imported the same way, after the SV meta's, by
 ``cna.discovered`` (``CNA_DATA``): its value is checked before phase 9's loop, so it leaves that
 loop's order by meta name, and its file joins Reads(S) for phase 9 (a CNA meta's
-``pd_annotations_filename`` stays a ``PATH_SITES`` row, checked there).
+``pd_annotations_filename`` stays a ``PATH_SITES`` row, checked there). From M4.2b-2a (D447) the
+gene panel matrix meta's data file is imported the same way, after the CNA meta's, by
+``panels.discovered`` (``PANEL_DATA``), which also takes every meta file's bytes, so that it builds
+the reference's dictionary of meta files from the reference's reading of them; ``panels.noted``
+notes each meta file holding ``gene_panel``, which the pack never reads.
 
 **What it says.** A refusal or a note names an entry as ``data`` only (``refusals.shown``), and
 never a value a file holds. Every entry discover does not import gets one ``skipped_source``
@@ -79,12 +83,13 @@ from aibi.core.schema.pack_api import (
     SourceReader,
 )
 from aibi.core.schema.refusals import RefusalCode
-from aibi.packs.onco import cna, structural
+from aibi.packs.onco import cna, panels, structural
 from aibi.packs.onco.cna import CnaMeta
 from aibi.packs.onco.meta import (
     CLINICAL,
     CNA_DISCRETE,
     DISCOVERED,
+    GENE_PANEL_MATRIX,
     IMPORTED,
     MANDATORY,
     META_MOST,
@@ -107,6 +112,7 @@ from aibi.packs.onco.meta import (
     stable_id,
     study_fields,
 )
+from aibi.packs.onco.panels import PanelMeta
 from aibi.packs.onco.refusals import Code, entry_refused, refused, shown
 from aibi.packs.onco.structural import StructuralMeta
 
@@ -257,6 +263,21 @@ CNA_DATA = PathSite(
 """The discrete CNA meta's ``data_filename`` (D446): ``cna.discovered`` checks it by phase 9's
 rule (``_path_value``) against Reads(S), the SV file among them, before the CNA file joins it."""
 
+PANEL_DATA = PathSite(
+    "data_filename",
+    frozenset({GENE_PANEL_MATRIX}),
+    DATA,
+    (
+        "V:4854-4856, V:398, V:437, V:445, V:453: as the data_filename row; the gene panel "
+        "matrix meta's data file is imported (D447), so its value is checked by this row's rule "
+        "outside PATH_SITES",
+        "V:5579-5586: the matrix is validated after the case lists, before every other data file",
+    ),
+)
+"""The gene panel matrix meta's ``data_filename`` (D447): ``panels.discovered`` checks it by
+phase 9's rule (``_path_value``) against Reads(S), the SV and CNA files among them, before the
+matrix joins it."""
+
 _DATA_FILE_NOTE = "a data file of a meta file M4.2a does not import"
 _TAGS_NOTE = "the study's tags file"
 
@@ -283,7 +304,7 @@ class MutationMeta:
 class Study:
     """What ``discover`` found: the study meta's values, the clinical metas, the mutation meta,
     the ``case_lists`` directory's entry when the study has one, the SV meta, the discrete CNA
-    meta, and the notes."""
+    meta, the gene panel matrix meta, and the notes."""
 
     fields: StudyFields
     patient: ClinicalMeta | None
@@ -293,11 +314,12 @@ class Study:
     case_lists: bool = False
     structural: StructuralMeta | None = None
     cna: CnaMeta | None = None
+    panels: PanelMeta | None = None
 
 
-def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> dict[str, str]:
-    """The meta file ``entry``, read and parsed; ``META_FILE`` for an entry that is not a
-    regular file, or that is larger than ``META_MOST`` while the operator's limit is larger."""
+def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> bytes:
+    """The meta file ``entry``'s bytes, read; ``META_FILE`` for an entry that is not a regular
+    file, or that is larger than ``META_MOST`` while the operator's limit is larger."""
     if entry.kind != "file" or entry.path is None:
         reason = _KIND_REASONS.get(entry.kind, "cannot be confined")
         raise entry_refused("META_FILE", entry.name, reason)
@@ -308,7 +330,7 @@ def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> 
         if not (mine and all(r.code == RefusalCode.LIMIT_EXCEEDED for r in error.refusals)):
             raise
         raise entry_refused("META_FILE", entry.name, "is larger than a meta file may be") from None
-    return parse(raw, entry.name)
+    return raw
 
 
 def _clinical_data(
@@ -428,8 +450,10 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             text("The study's directory holds more meta-named entries than M4.2a reads"),
         )
     metas: dict[str, tuple[str, dict[str, str]]] = {}
+    raws: dict[str, bytes] = {}
     for entry in candidates:
-        found = _read(reader, entry, limits)
+        raws[entry.name] = _read(reader, entry, limits)
+        found = parse(raws[entry.name], entry.name)
         kind = classify(found, entry.name)
         check_mandatory(kind, found, entry.name)
         metas[entry.name] = (kind, found)
@@ -513,6 +537,10 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         metas, lambda name, value: _path_value(CNA_DATA, name, value, listed, folded, reads)
     )
     reads = reads | frozenset(cna.used(copies))
+    matrix = panels.discovered(
+        metas, raws, lambda name, value: _path_value(PANEL_DATA, name, value, listed, folded, reads)
+    )
+    reads = reads | frozenset(panels.used(matrix))
     for role, note in ((DATA, _DATA_FILE_NOTE), (TAGS, _TAGS_NOTE)):
         for name, (kind, found) in metas.items():
             for site in PATH_SITES:
@@ -535,11 +563,13 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             *((CASE_LISTS_ENTRY,) if has_lists else ()),
             *structural.used(sv),
             *cna.used(copies),
+            *panels.used(matrix),
         }
     )
     for name in metas:
         why.setdefault(name, "a meta file of a type M4.2a does not import")
     notes = _notes(entries, used, why)
+    notes.extend(panels.noted(metas))
     if "tags_file" in study:
         message = [text("the study's tags file is not read by M4.2a")]
         notes.append(ImportNote("not_proposed", None, message))
@@ -553,6 +583,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         case_lists=has_lists,
         structural=sv,
         cna=copies,
+        panels=matrix,
     )
 
 
@@ -565,6 +596,7 @@ __all__ = [
     "META_FILES_MOST",
     "NON_CLINICAL_DATA",
     "NOTES_MOST",
+    "PANEL_DATA",
     "PATH_SITES",
     "STRUCTURAL_DATA",
     "TAGS",

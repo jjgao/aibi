@@ -27,9 +27,10 @@ def _walker() -> ModuleType:
 WALKER = _walker()
 MODULES = ("cna",)
 """The modules whose checks the discrete copy-number corpus holds one by one."""
-SHARED = ("study", "meta", "importer", "caselists")
+SHARED = ("study", "meta", "importer", "caselists", "panels")
 """The modules whose sites a CNA cell reaches besides ``cna``: D409's (``study``, ``meta``,
-``importer``) and D444's case lists, to which slice 3 adds no site."""
+``importer``) and D444's case lists, to which slice 3 adds no site, and from M4.2b-2a the gene
+panel matrix's (D447), which a CNA cell beside a matrix meta reaches before the CNA file."""
 checks = WALKER.checks
 sites = WALKER.sites
 templates = WALKER.templates

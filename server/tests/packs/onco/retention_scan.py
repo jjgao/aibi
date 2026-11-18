@@ -773,6 +773,21 @@ def cna_list_file(marker: Marker) -> bytes:
     ).encode()
 
 
+MATRIX_NAMES = ("SAMPLE_ID", "mutations", "cna", "structural_variants")
+
+
+def matrix_file(marker: Marker) -> bytes:
+    """A gene panel matrix (M4.2b-2a, D447) of the sample file's ``ROWS`` samples, a value of the
+    marker in every value-bearing position: the sample ids (the sample file's) and the panels;
+    ``NA`` (the format's) a cell in three; its column names are the profiles' ``stable_id``s."""
+    _, up, _ = marker
+    out = ["\t".join(MATRIX_NAMES) + "\n"]
+    for i in range(ROWS):
+        panels = [f"P{(i + k) % 3}{up}" if (i + k) % 3 else "NA" for k in range(3)]
+        out.append("\t".join([f"S{i}{up}", *panels]) + "\n")
+    return "".join(out).encode()
+
+
 def case_list_file(marker: Marker, *, late: bool = False) -> bytes:
     """The ``_sequenced`` case list: its study id, name and description carry the marker, its
     ids are the sample file's; with ``late`` its last id is no sample's."""
@@ -792,7 +807,8 @@ def study(
     """A study directory whose every meta value, file name and directory name carries the marker,
     but for cBioPortal's vocabulary (``FIELDS``): its ``type_of_cancer`` is an OncoTree code by
     its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444), an
-    SV file (D445) and a discrete CNA matrix with its ``_cna`` list (D446)."""
+    SV file (D445), a discrete CNA matrix with its ``_cna`` list (D446) and a gene panel matrix
+    (D447)."""
     lo, up, _ = marker
     directory = root / f"s{lo}"
     directory.mkdir()
@@ -828,6 +844,10 @@ def study(
             f"profile_name: Copies {up}\nprofile_description: Levels {lo}\n"
             f"data_filename: cna_{lo}.txt\n"
         ),
+        "meta_gene_panel_matrix.txt": (
+            f"cancer_study_identifier: m_{lo}\ngenetic_alteration_type: GENE_PANEL_MATRIX\n"
+            f"datatype: GENE_PANEL_MATRIX\ndata_filename: gpm_{lo}.txt\n"
+        ),
     }
     for name, text in meta.items():
         (directory / name).write_text(text, encoding="utf-8")
@@ -836,6 +856,7 @@ def study(
     (directory / f"maf_{lo}.txt").write_bytes(maf_file(marker, late=maf_late))
     (directory / f"sv_{lo}.txt").write_bytes(sv_file(marker))
     (directory / f"cna_{lo}.txt").write_bytes(cna_file(marker))
+    (directory / f"gpm_{lo}.txt").write_bytes(matrix_file(marker))
     (directory / "case_lists").mkdir()
     (directory / "case_lists" / f"cases_{lo}.txt").write_bytes(
         case_list_file(marker, late=list_late)
@@ -1085,6 +1106,7 @@ FIELDS: Mapping[str, frozenset[str]] = {
             "meta_mutations.txt",
             "meta_sv.txt",
             "meta_cna.txt",
+            "meta_gene_panel_matrix.txt",
             "case_lists",
         }
     ),
@@ -1134,6 +1156,15 @@ FIELDS: Mapping[str, frozenset[str]] = {
     "cna: column name": frozenset({"Hugo_Symbol"}),
     "cna: Hugo_Symbol": frozenset(),
     "cna: S#{up}": frozenset({"-#", "-#.#", "#", "NA"}),
+    "meta_gene_panel_matrix.txt: cancer_study_identifier": frozenset(),
+    "meta_gene_panel_matrix.txt: genetic_alteration_type": frozenset({"GENE_PANEL_MATRIX"}),
+    "meta_gene_panel_matrix.txt: datatype": frozenset({"GENE_PANEL_MATRIX"}),
+    "meta_gene_panel_matrix.txt: data_filename": frozenset(),
+    "gpm: column name": frozenset(MATRIX_NAMES),
+    "gpm: SAMPLE_ID": frozenset(),
+    "gpm: mutations": frozenset({"NA"}),
+    "gpm: cna": frozenset({"NA"}),
+    "gpm: structural_variants": frozenset({"NA"}),
     "a case list's file name": frozenset(),
     "case list: cancer_study_identifier": frozenset(),
     "case list: stable_id": frozenset(),
@@ -1222,7 +1253,7 @@ def _study(directory: Path, out: dict[str, list[str]]) -> None:
             for line in lines[2:]:
                 for name, value in zip(names, line.split("\t"), strict=True):
                     out.setdefault(f"maf: {name}", []).append(value)
-        elif path.name.startswith(("sv_", "cna_")):
+        elif path.name.startswith(("sv_", "cna_", "gpm_")):
             role = path.name.split("_")[0]
             lines = path.read_text(encoding="utf-8").splitlines()
             names = lines[0].split("\t")

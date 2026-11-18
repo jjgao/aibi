@@ -12,7 +12,11 @@ matrix when it has a discrete CNA meta (``cna.imported``, which holds every chec
 ``<study>_cna`` case list it needs, D446), and describes them (``build.describe``), the matrix's
 table with what it dropped (``ImportResult.reshaped``, D401). A study with a
 MAF must have the case list ``<study>_sequenced`` (V:5034-5040), found by its exact
-``stable_id``, else ``NO_SEQUENCED_LIST``; no coverage is declared from it (D444). Every note,
+``stable_id``, else ``NO_SEQUENCED_LIST``; no coverage is declared from it (D444). The gene panel
+matrix, when the study has a matrix meta, is read after that check and before the MAF, as the
+reference validates it after the case lists and before every other data file (V:5579-5586;
+``panels.imported``, which holds every check of it, D447); the MAF's read waits for it, and its
+cells are counted before the MAF's, the SV file's and the CNA matrix's. Every note,
 discovery's first, goes through one ``notes.Budget``. It returns the importer's result, which
 the core checks (``importers.checks``), or raises ``Refused`` with one of ``refusals.CODES``;
 what the reader refuses passes out as the reader's instance.
@@ -36,7 +40,7 @@ from aibi.core.schema.pack_api import (
     ImportResult,
     SourceReader,
 )
-from aibi.packs.onco import caselists, cna, mutation, structural
+from aibi.packs.onco import caselists, cna, mutation, panels, structural
 from aibi.packs.onco.build import describe, list_cells
 from aibi.packs.onco.clinical import Clinical, Role, read
 from aibi.packs.onco.facets import PACK_ID
@@ -44,7 +48,7 @@ from aibi.packs.onco.notes import Budget
 from aibi.packs.onco.refusals import entry_refused
 from aibi.packs.onco.study import ClinicalMeta, MutationMeta, discover
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 """The pack's version, which its manifest states and its curation entries name."""
 BY = f"importer:{PACK_ID}@{VERSION}"
 NO_LOCATION = (
@@ -121,7 +125,7 @@ class OncoImporter:
                 global_list=study.fields.add_global_case_list,
             )
             cells += list_cells(lists)
-        maf = None
+        mafs: tuple[MutationMeta, ...] = ()
         if study.mutation is not None:
             sequenced = identifier + caselists.SEQUENCED
             if not any(found.stable_id == sequenced for found in lists):
@@ -131,7 +135,20 @@ class OncoImporter:
                     "is a mutation meta file, and no case list's stable_id is the study id "
                     "followed by _sequenced",
                 )
-            maf = _maf(reader, study.mutation, sample.samples, options, cells)
+            mafs = (study.mutation,)
+        matrix = panels.imported(
+            reader,
+            study.panels,
+            sample.samples,
+            options.limits,
+            cells,
+            lists,
+            identifier,
+            study.mutation,
+            options.previous,
+        )
+        cells += panels.counted(matrix)
+        maf = next((_maf(reader, found, sample.samples, options, cells) for found in mafs), None)
         sv = structural.imported(
             reader, study.structural, sample.samples, options.limits, cells, maf
         )
@@ -154,6 +171,7 @@ class OncoImporter:
             lists=lists,
             sv=sv,
             copy_number=copies,
+            matrix=matrix,
         )
         budget = Budget()
         budget.add(study.notes)

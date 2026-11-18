@@ -89,6 +89,9 @@ Code = Literal[
     "LINE_ENDS",
     "DUPLICATE_GENE",
     "CNA_VALUE",
+    "STABLE_ID_KEYS",
+    "DUPLICATE_SAMPLE",
+    "NOT_SEQUENCED",
 ]
 CODES: tuple[Code, ...] = get_args(Code)
 """Every code the pack refuses with, without its ``onco.`` prefix: discovery's eleven (M4.2a-1a),
@@ -97,7 +100,9 @@ then the clinical files' thirty (``clinical``) and the validator's ``TYPE_OF_CAN
 and ``CASE_LISTS``, the case lists' ``CASE_LIST`` and ``NO_SEQUENCED_LIST`` (``caselists``), and
 the MAF's fifteen (``mutation``); then M4.2b-4's (D445): the structural variants' ``SV_STATUS``
 (``structural``); then M4.2b-3's (D446): the discrete copy-number matrix's ``NO_CNA_LIST``,
-``BYTE_ORDER_MARK``, ``LINE_ENDS``, ``DUPLICATE_GENE`` and ``CNA_VALUE`` (``cna``).
+``BYTE_ORDER_MARK``, ``LINE_ENDS``, ``DUPLICATE_GENE`` and ``CNA_VALUE`` (``cna``); then
+M4.2b-2a's (D447): the gene panel matrix's ``STABLE_ID_KEYS``, ``DUPLICATE_SAMPLE`` and
+``NOT_SEQUENCED`` (``panels``).
 ``UNREADABLE_ROWS`` is the settled list's code for a clinical file the core's parse would read
 otherwise than the pack's reader; no input reaches it (the parse
 differential of the pack's tests holds the two readers to one reading), so nothing raises it."""

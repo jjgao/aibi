@@ -1584,6 +1584,9 @@ def _types() -> None:
         pair: kind for pair, kind in tables.PAIR_TYPES.items() if kind not in tables.IMPORTED_TYPES
     }
     pairs.update({f"resource:{key}": kind for key, kind in tables.RESOURCE_TYPES.items()})
+    # The gene panel matrix's type, imported from M4.2b-2a (D447), keeps its three cells: the
+    # matrix is refused before the CNA file is read, out of this map (``cna_checks.SHARED``).
+    pairs["GENE_PANEL_MATRIX:GENE_PANEL_MATRIX"] = "GENE_PANEL_MATRIX"
     for pair, kind in sorted(pairs.items()):
         label = "".join(c if c.isalnum() else "_" for c in pair.lower())
         keys = tables.MANDATORY[kind]

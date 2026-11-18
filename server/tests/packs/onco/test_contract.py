@@ -24,7 +24,7 @@ from typing import Any
 from aibi.core.schema.descriptors import ConceptDescriptor
 from aibi.core.schema.pack_api import PackRegistry
 
-MANIFEST = {"id": "onco", "version": "0.6.0", "results_version": 1, "requires_core": ">=0.0.1"}
+MANIFEST = {"id": "onco", "version": "0.7.0", "results_version": 1, "requires_core": ">=0.0.1"}
 
 TEXTS = {
     "onco:patient": ("Patient", "Rows are patients: the people a study follows."),
@@ -56,6 +56,11 @@ TEXTS = {
     "onco:cna_group": (
         "Copy-number group",
         "Rows are the genes a group of samples was assessed at in a discrete copy-number matrix.",
+    ),
+    "onco:gene_panel_matrix": (
+        "Gene panel matrix",
+        "Rows are samples, each with the gene panel it was profiled with for each profile, as a "
+        "gene panel matrix gives them; a panel is named, never defined.",
     ),
     "onco:gene_symbol": ("Gene symbol", "A gene's approved symbol."),
     "onco:sample_type": (
@@ -98,6 +103,7 @@ SORTS = {
     "onco:cna_call": "table",
     "onco:cna_assignment": "table",
     "onco:cna_group": "table",
+    "onco:gene_panel_matrix": "table",
     "onco:gene_symbol": "value",
     "onco:sample_type": "value",
     "onco:mutation_class": "value",
