@@ -99,11 +99,18 @@ NAMING = frozenset(
 """Every type whose meta file names a data file (C:95-370: all but the study meta), written by
 hand."""
 IMPORTED = frozenset(
-    {"SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION", "STRUCTURAL_VARIANT", "CNA_DISCRETE"}
+    {
+        "SAMPLE_ATTRIBUTES",
+        "PATIENT_ATTRIBUTES",
+        "MUTATION",
+        "STRUCTURAL_VARIANT",
+        "CNA_DISCRETE",
+        "GENE_PANEL_MATRIX",
+    }
 )
 """The types whose data files the pack imports, written by hand: the two clinical types, from
-M4.2b-1b the MAF's (D444), from M4.2b-4 the structural variants' (D445) and from M4.2b-3 the
-discrete copy-number matrix's (D446)."""
+M4.2b-1b the MAF's (D444), from M4.2b-4 the structural variants' (D445), from M4.2b-3 the
+discrete copy-number matrix's (D446) and from M4.2b-2a the gene panel matrix's (D447)."""
 DATA_TYPES = NAMING - IMPORTED
 """Every type whose meta file names a data file the pack never imports, by the rule: every type
 naming a data file but the imported ones."""

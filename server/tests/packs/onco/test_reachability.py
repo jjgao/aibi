@@ -406,13 +406,14 @@ def test_discover_not_reachable_before_paths(onco: ModuleType) -> None:
 
 
 def test_the_real_table_is_closed() -> None:
-    """The pack's ``study``, under a wired importer, is closed: 23 types (22 data types and the
+    """The pack's ``study``, under a wired importer, is closed: 22 types (21 data types and the
     study meta: from M4.2b-1b the MAF's type is imported, D444, from M4.2b-4 the structural
-    variants', D445, and from M4.2b-3 the discrete copy-number matrix's, D446) for each of the 3
-    checked rows, and for the PD row one more, its own imported type's (a valid discrete CNA meta),
-    24 of them refuse cases (22, 1 and 1), and a case for each of the 3 declared rows: 73 cases."""
+    variants', D445, from M4.2b-3 the discrete copy-number matrix's, D446, and from M4.2b-2a the
+    gene panel matrix's, D447) for each of the 3 checked rows, and for the PD row one more, its own
+    imported type's (a valid discrete CNA meta), 23 of them refuse cases (21, 1 and 1), and a case
+    for each of the 3 declared rows: 70 cases."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(study) == Verdict(None, 73, 24)
+    assert closure(study) == Verdict(None, 70, 23)
     assert closed(WIRED, study)
 
 
@@ -930,7 +931,7 @@ STATEMENT_CASES = [
 def test_the_stand_in_is_the_pack_s_own_behaviour() -> None:
     """The control of the self-checks: ``Consulting`` with no change is closed."""
     study = importlib.import_module(MODULE + ".study")
-    assert closure(Consulting(study)) == Verdict(None, 73, 24)
+    assert closure(Consulting(study)) == Verdict(None, 70, 23)
 
 
 @pytest.mark.parametrize("name", list(MUTANTS))
@@ -981,13 +982,13 @@ def test_each_anchor_statement_is_needed(
 def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """For each of the 22 data types in turn: dropped from every row of the table and from the
+    """For each of the 21 data types in turn: dropped from every row of the table and from the
     oracle's rows, pairs, resource types and data types alike (the pack's key tables still name
     it), the guard is red at the anchor leg, whatever another row still covers."""
     study = importlib.import_module(MODULE + ".study")
     oracle = helper("paths_oracle")
     kinds = sorted(oracle.DATA_TYPES)
-    assert len(kinds) == 22
+    assert len(kinds) == 21
     for kind in kinds:
         with monkeypatch.context() as patch:
             subject, given = dropped_in_both(kind)(study, patch)
@@ -1000,7 +1001,7 @@ def test_a_type_dropped_from_the_oracle_and_the_table_alike_is_red(
 def test_a_row_swapped_to_one_type_in_both_is_red(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The PD row and the tags row, each swapped to every one type (the 22 data types, ``STUDY``
+    """The PD row and the tags row, each swapped to every one type (the 21 data types, ``STUDY``
     and the type the row reads, the discrete CNA type for the PD row, imported from M4.2b-3) in the
     table and the hand rows alike: red at the anchor leg for all but the type the row reads (the
     control, which is closed)."""
@@ -1014,11 +1015,11 @@ def test_a_row_swapped_to_one_type_in_both_is_red(
             subject, given = swapped_in_both(key, kind)(study, patch)
             verdict = closure(subject, **given)
         if real == {kind}:
-            assert verdict == Verdict(None, 73, 24), kind
+            assert verdict == Verdict(None, 70, 23), kind
         else:
             assert (verdict.failure or "").split(":")[0] == "anchor", (kind, verdict)
             red += 1
-    assert red == len(kinds) - 1 == {"pd_annotations_filename": 23, "tags_file": 22}[key]
+    assert red == len(kinds) - 1 == {"pd_annotations_filename": 22, "tags_file": 21}[key]
 
 
 def test_the_table_is_restored_when_discover_raises() -> None:

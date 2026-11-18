@@ -44,7 +44,7 @@ from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import ImportNote, Previous, Reshaped
 from aibi.core.store.build import Layout
 from aibi.core.store.sources import RawSource, SourceValue, TextSource, TypedSource
-from aibi.packs.onco import cna, structural
+from aibi.packs.onco import cna, panels, structural
 from aibi.packs.onco.attributes import MONTHS_UNITS, PATIENT_ID, SAMPLE_ID, TIME_OFFSETS
 from aibi.packs.onco.caselists import CaseList
 from aibi.packs.onco.clinical import SETTINGS, Clinical, Column
@@ -78,6 +78,7 @@ STRUCTURAL_VARIANTS = "structural_variants"
 CNA_CALLS = "cna_calls"
 CNA_ASSIGNMENT = "cna_assignment"
 CNA_GROUPS = "cna_groups"
+GENE_PANEL_MATRIX = "gene_panel_matrix"
 TABLES: Mapping[str, tuple[str, str, str, str]] = MappingProxyType(
     {
         PATIENTS: ("Patients", "One row per patient", "onco:patient", f"CLINICAL:{PATIENT}"),
@@ -313,7 +314,13 @@ def _maf_column(curation: "_Curation", id: str, column: MafColumn) -> Descriptor
 
 
 def _relationship(
-    curation: "_Curation", child: str, column: str, parent: str, key: str, evidence: str
+    curation: "_Curation",
+    child: str,
+    column: str,
+    parent: str,
+    key: str,
+    evidence: str,
+    cardinality: str = "many-to-one",
 ) -> Descriptor:
     return curation.descriptor(
         "relationship",
@@ -324,7 +331,7 @@ def _relationship(
             "child_columns": ([column], "imported", evidence),
             "parent_table": (parent, "imported", evidence),
             "parent_columns": ([key], "imported", evidence),
-            "cardinality": ("many-to-one", "imported", evidence),
+            "cardinality": (cardinality, "imported", evidence),
         },
     )
 
@@ -672,6 +679,94 @@ def _cna(
     return descriptors, sources, layouts, notes, reshaped
 
 
+MATRIX_FORMAT = (
+    "cBioPortal's gene panel matrix format: tab-separated, a line of column names, SAMPLE_ID and "
+    "one column a profile's stable_id, one row a sample (D447)"
+)
+MATRIX_SAMPLE = "cBioPortal's gene panel matrix format: a sample's id, once a file"
+MATRIX_PANEL = (
+    "cBioPortal's gene panel matrix format: the gene panel the sample was profiled with for the "
+    "column's profile, as written; the pack reads no panel's definition (D447)"
+)
+MATRIX_CATEGORY = "A gene panel matrix column with few distinct panels (D228)"
+MATRIX_MISSING = (
+    "cBioPortal's gene panel matrix format: NA gives no panel, so whether the sample was profiled "
+    "is unknown (D437, D447)"
+)
+MATRIX_RELATIONSHIP = (
+    "A gene panel matrix's SAMPLE_ID names a sample of the sample file, once (D447: every one is "
+    "one)"
+)
+MATRIX_MISSING_CODES: Mapping[str, str] = MappingProxyType({panels.NA: "UNKNOWN"})
+"""The gene panel matrix's one missing spelling, ``NA`` exactly as written (V:3420): no panel is
+given (D447)."""
+
+
+def _matrix_column(
+    curation: "_Curation", id: str, column: panels.MatrixColumn, key: bool
+) -> Descriptor:
+    fields: dict[str, Entry] = {}
+    if key:
+        fields["datatype"] = ("string", "imported", MATRIX_SAMPLE)
+        fields["identifier"] = (True, "imported", MATRIX_SAMPLE)
+    else:
+        if column.category:
+            fields["datatype"] = ("category", "proposed", MATRIX_CATEGORY)
+        else:
+            fields["datatype"] = ("string", "imported", MATRIX_PANEL)
+        codes: dict[str, JsonValue] = dict(MATRIX_MISSING_CODES)
+        fields["missing_codes"] = (codes, "imported", MATRIX_MISSING)
+    fields["source"] = ({"original_name": column.name}, "imported", None)
+    return curation.descriptor(
+        "column", f"{GENE_PANEL_MATRIX}.{id}", (column.name, "imported_default"), fields
+    )
+
+
+def _gene_panel_matrix(
+    curation: "_Curation", matrix: panels.Matrix, previous: Previous | None, sample_key: str
+) -> tuple[list[Descriptor], RawSource, Layout, list[ImportNote]]:
+    before = previous.columns.get(GENE_PANEL_MATRIX) if previous is not None else None
+    names = [column.name for column in matrix.columns]
+    ids = normalise_names(names, "column", before)
+    source: dict[str, JsonValue] = {
+        "kind": "file",
+        "name": GENE_PANEL_MATRIX,
+        "original_name": matrix.name,
+        "parse": matrix.settings.model_dump(mode="json"),
+    }
+    descriptors = [
+        _plain_table(
+            curation,
+            GENE_PANEL_MATRIX,
+            ("Gene panel matrix", "One row per sample the gene panel matrix lists"),
+            "measurement",
+            [ids[0]],
+            "onco:gene_panel_matrix",
+            source,
+            MATRIX_FORMAT,
+            {"meta": ("GENE_PANEL_MATRIX:GENE_PANEL_MATRIX", "imported", None)},
+        )
+    ]
+    notes: list[ImportNote] = []
+    for index, (id, column) in enumerate(zip(ids, matrix.columns, strict=True)):
+        descriptors.append(_matrix_column(curation, id, column, index == 0))
+        if id != column.name.lower():
+            notes.append(_renamed(f"{GENE_PANEL_MATRIX}.{id}", column.name))
+    descriptors.append(
+        _relationship(
+            curation,
+            GENE_PANEL_MATRIX,
+            ids[0],
+            SAMPLES,
+            sample_key,
+            MATRIX_RELATIONSHIP,
+            "one-to-one",
+        )
+    )
+    layout = Layout(GENE_PANEL_MATRIX, tuple(zip(ids, names, strict=True)))
+    return descriptors, TextSource(matrix.data), layout, notes
+
+
 LIST_COLUMNS = ("stable_id", "name", "description", "category")
 MEMBER_COLUMNS = ("case_list", "sample_id")
 
@@ -762,11 +857,13 @@ def describe(
     lists: Sequence[CaseList] = (),
     sv: structural.Structural | None = None,
     copy_number: cna.Cna | None = None,
+    matrix: panels.Matrix | None = None,
 ) -> Described:
     """The study's descriptors, snapshots, layouts and notes: ``files`` are the clinical files,
     the patient file first where there is one; ``maf`` the study's MAF, read, and ``lists`` its
     case lists (D444); ``sv`` its structural variant file, read (D445); ``copy_number`` its discrete
-    copy-number matrix, read, whose table's dropped cells are declared (D401, D446)."""
+    copy-number matrix, read, whose table's dropped cells are declared (D401, D446); ``matrix`` its
+    gene panel matrix, read (D447)."""
     curation = _Curation(by, at)
     descriptors: list[Descriptor] = [_dataset(curation, fields, name, location)]
     sources: dict[str, RawSource] = {}
@@ -850,6 +947,12 @@ def describe(
         layouts.update(laid)
         notes.extend(said)
         reshaped[CNA_CALLS] = declared
+    if matrix is not None:
+        found, raw, layout, renamed = _gene_panel_matrix(curation, matrix, previous, sample_key)
+        descriptors.extend(found)
+        sources[GENE_PANEL_MATRIX] = raw
+        layouts[GENE_PANEL_MATRIX] = layout
+        notes.extend(renamed)
     return Described(descriptors, sources, layouts, notes, reshaped)
 
 
@@ -858,6 +961,7 @@ __all__ = [
     "CNA_ASSIGNMENT",
     "CNA_CALLS",
     "CNA_GROUPS",
+    "GENE_PANEL_MATRIX",
     "MEMBERS",
     "MUTATIONS",
     "PATIENTS",

@@ -470,6 +470,7 @@ FILES = {
     "MUTATION": "data_mutations.txt",
     "STRUCTURAL_VARIANT": "data_sv.txt",
     "CNA_DISCRETE": "data_cna.txt",
+    "GENE_PANEL_MATRIX": "data_gene_panel_matrix.txt",
 }
 METAS = {
     "PATIENT_ATTRIBUTES": "meta_clinical_patient.txt",
@@ -477,6 +478,7 @@ METAS = {
     "MUTATION": "meta_mutations.txt",
     "STRUCTURAL_VARIANT": "meta_sv.txt",
     "CNA_DISCRETE": "meta_cna.txt",
+    "GENE_PANEL_MATRIX": "meta_gene_panel_matrix.txt",
 }
 """Each imported type's meta file and data file in the listing: the keys are ``meta.IMPORTED``,
 exactly (review r1 of M4.2b-3, minor 4: a type made imported fails the brute force until it is
@@ -486,11 +488,14 @@ here)."""
 def _listing() -> dict[str, tuple[str, bytes]]:
     base = _load("mutation_corpus")
     copies = _load("cna_corpus")
+    matrix = _load("panels_corpus")
     files = base.study(
         meta_sv_DOT_txt=corpus().META.encode(),
         data_sv_DOT_txt=corpus().VALID,
         meta_cna_DOT_txt=copies.meta(),
         data_cna_DOT_txt=copies.VALID,
+        meta_gene_panel_matrix_DOT_txt=matrix.meta(),
+        data_gene_panel_matrix_DOT_txt=matrix.VALID,
     )
     return {
         name: ("file", content)
@@ -503,8 +508,8 @@ def test_no_two_imported_metas_name_one_data_file() -> None:
     """Review r4 MJ-D, brute force over every ordered pair of imported roles (``meta.IMPORTED``,
     tied to it: review r1 of M4.2b-3, minor 4): the second's meta naming the first's data file (its
     own removed) is refused ``DATA_FILE``, by the rule that already refused the pair (D409's phase 7
-    for the clinical files and the MAF, phase 9's Reads rule for the SV file and the CNA file in
-    either direction)."""
+    for the clinical files and the MAF, phase 9's Reads rule for the SV file, the CNA file and,
+    from M4.2b-2a, the gene panel matrix in either direction: 30 ordered pairs, D447)."""
     paths = _load("paths_oracle")
     study = importlib.import_module("aibi.packs.onco.study")
     meta = importlib.import_module("aibi.packs.onco.meta")
@@ -513,6 +518,7 @@ def test_no_two_imported_metas_name_one_data_file() -> None:
     assert refusal is None
     assert found.structural is not None
     assert found.cna is not None
+    assert found.panels is not None
     pairs = 0
     for first, second in itertools.permutations(sorted(meta.IMPORTED), 2):
         entries = _listing()
@@ -525,7 +531,7 @@ def test_no_two_imported_metas_name_one_data_file() -> None:
         assert refusal is not None, (first, second)
         assert str(refusal.code) == "onco.DATA_FILE", (first, second)
         pairs += 1
-    assert pairs == len(meta.IMPORTED) * (len(meta.IMPORTED) - 1) == 20
+    assert pairs == len(meta.IMPORTED) * (len(meta.IMPORTED) - 1) == 30
 
 
 @pytest.mark.parametrize("name", ["data_sv.txt", "DATA_SV.txt", "data_SV.TXT"])

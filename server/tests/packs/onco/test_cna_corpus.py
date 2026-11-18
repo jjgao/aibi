@@ -1312,6 +1312,7 @@ def test_the_oracle_s_type_tables_are_the_pack_s() -> None:
         meta.MUTATION: "MUTATION",
         meta.STRUCTURAL_VARIANT: "STRUCTURAL_VARIANT",
         meta.CNA_DISCRETE: "CNA_DISCRETE",
+        meta.GENE_PANEL_MATRIX: "GENE_PANEL_MATRIX",
     }
     assert {names[kind] for kind in meta.IMPORTED} == set(o.IMPORTED_TYPES)
 

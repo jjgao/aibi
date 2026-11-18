@@ -142,15 +142,18 @@ STRUCTURAL_VARIANT = "STRUCTURAL_VARIANT"
 CNA_DISCRETE = "CNA_DISCRETE"
 """The type of a ``COPY_NUMBER_ALTERATION:DISCRETE`` meta file, whose data file M4.2b-3 imports
 (D446)."""
+GENE_PANEL_MATRIX = "GENE_PANEL_MATRIX"
+"""The type of a ``GENE_PANEL_MATRIX:GENE_PANEL_MATRIX`` meta file, whose data file M4.2b-2a imports
+(D447)."""
 DISCOVERED = CLINICAL | {MUTATION}
 """The imported types whose metas discovery's phases 6 and 7 take and whose data files phase 7
 resolves (D409, D444): the clinical types and the MAF's."""
-IMPORTED = DISCOVERED | {STRUCTURAL_VARIANT, CNA_DISCRETE}
+IMPORTED = DISCOVERED | {STRUCTURAL_VARIANT, CNA_DISCRETE, GENE_PANEL_MATRIX}
 """The types whose data files the pack imports: the clinical types, the MAF's (D444), the
-structural variants' (D445) and the discrete copy-number matrix's (D446), whose metas
-``structural.discovered`` and ``cna.discovered`` take and whose data files are resolved by phase
-9's rule. A meta file of any other type names a data file the pack never reads
-(D409's exit 3 (20))."""
+structural variants' (D445), the discrete copy-number matrix's (D446) and the gene panel
+matrix's (D447), whose metas ``structural.discovered``, ``cna.discovered`` and
+``panels.discovered`` take and whose data files are resolved by phase 9's rule. A meta file of any
+other type names a data file the pack never reads (D409's exit 3 (20))."""
 
 UNKNOWN_TYPE = "has no meta file type cBioPortal defines"
 
@@ -609,8 +612,10 @@ __all__ = [
     "CLINICAL",
     "CNA_DISCRETE",
     "DISCOVERED",
+    "GENE_PANEL_MATRIX",
     "GENOME_BUILDS",
     "IMPORTED",
+    "LINES",
     "MANDATORY",
     "META_MOST",
     "MUTATION",

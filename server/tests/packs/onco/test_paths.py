@@ -2130,7 +2130,8 @@ def test_every_non_clinical_type_naming_reads_is_refused(
     clinical data file, is refused (cells 09-13, 26, 30-33 and 40 for a few types; stricter, for
     a meta file, than the reference, which is clean). From M4.2b-4 the structural variants' type is
     imported and out of the row, and stays in this loop (review r4 MJ-D): its meta naming a member
-    of Reads(S) is refused by the same rule (``study.STRUCTURAL_DATA``, D445)."""
+    of Reads(S) is refused by the same rule (``study.STRUCTURAL_DATA``, D445); and so, from
+    M4.2b-2a, is the gene panel matrix's (``study.PANEL_DATA``, D447: cell 40's type)."""
     seen = set()
     imported = (
         "STRUCTURAL_VARIANT",
@@ -2140,7 +2141,8 @@ def test_every_non_clinical_type_naming_reads_is_refused(
             f"profile_name: p\nprofile_description: p\ndata_filename: {target}\n"
         ).encode(),
     )
-    for kind, content in (*every_type_meta(oracle, target), imported):
+    matrix = ("GENE_PANEL_MATRIX", gpm_meta(target))
+    for kind, content in (*every_type_meta(oracle, target), imported, matrix):
         seen.add(kind)
         directory = make_study({**base, "meta_x.txt": content})
         assert discovery.outcome(directory) == (
@@ -2148,7 +2150,7 @@ def test_every_non_clinical_type_naming_reads_is_refused(
             "meta_x.txt",
             f"«meta_x.txt» has a data_filename that {READS}",
         ), kind
-    assert seen == oracle.DATA_TYPES | {"STRUCTURAL_VARIANT"}
+    assert seen == oracle.DATA_TYPES | {"STRUCTURAL_VARIANT", "GENE_PANEL_MATRIX"}
 
 
 def test_every_non_clinical_type_naming_a_plain_file_is_noted(

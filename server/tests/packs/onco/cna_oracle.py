@@ -397,6 +397,8 @@ OUT_OF_MAP = frozenset(
         "list_prefix",
         "list_repeat",
         "list_category",
+        "matrix_no_file",
+        "matrix_first_not_sample",
     }
 )
 """The predicates of the shared modules' refusals a CNA cell can reach on a meta or a case list
@@ -579,9 +581,34 @@ MANDATORY: Mapping[str, tuple[str, ...]] = {
 """C:94-371: each type's mandatory keys in order (``test_cna_corpus`` holds it equal to the
 pack's)."""
 IMPORTED_TYPES = frozenset(
-    {"SAMPLE_ATTRIBUTES", "PATIENT_ATTRIBUTES", "MUTATION", "STRUCTURAL_VARIANT", "CNA_DISCRETE"}
+    {
+        "SAMPLE_ATTRIBUTES",
+        "PATIENT_ATTRIBUTES",
+        "MUTATION",
+        "STRUCTURAL_VARIANT",
+        "CNA_DISCRETE",
+        "GENE_PANEL_MATRIX",
+    }
 )
-"""The types whose data files the pack imports (``meta.IMPORTED``)."""
+"""The types whose data files the pack imports (``meta.IMPORTED``; the gene panel matrix's from
+M4.2b-2a, D447)."""
+MATRIX = ("GENE_PANEL_MATRIX", "GENE_PANEL_MATRIX")
+
+
+def _panels() -> Any:
+    """The gene panel matrix's predicates (``panels_oracle.py``, D447), loaded by path when a cell
+    holds a matrix meta: a CNA cell beside a matrix meets the matrix's items first (the matrix is
+    read before the CNA file, V:5579-5586), out of the CNA map."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "panels_oracle.py"
+    spec = importlib.util.spec_from_file_location("panels_oracle_for_cna_oracle", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def classify(found: Mapping[str, str]) -> str | None:
@@ -634,6 +661,10 @@ def list_fault(
     if any(item.strip() not in samples for item in found["case_list_ids"].split("\t")):
         return "list_id", (), stable
     return None, (), stable
+
+
+def _pair(found: Mapping[str, str]) -> tuple[str | None, str | None]:
+    return found.get("genetic_alteration_type"), found.get("datatype")
 
 
 def _samples(content: bytes) -> frozenset[str]:
@@ -730,6 +761,19 @@ def expected(cell: Mapping[str, Any]) -> str:
         if metas[copies]["stable_id"].strip() not in STABLE_IDS:
             return said("stable_id")
         reads.add(value)
+    matrices = [name for name, found in metas.items() if _pair(found) == MATRIX]
+    matrix = None
+    if len(matrices) > 1:
+        return _panels().said("second_meta")
+    if matrices:
+        value = metas[matrices[0]]["data_filename"]
+        failed = _path(value, listed, reads, "data_filename")
+        if failed is not None:
+            return failed
+        if not isinstance(listed.get(value), bytes):
+            return _panels().said("no_file")
+        reads.add(value)
+        matrix = value
     for found in metas.values():
         pair = (found.get("genetic_alteration_type"), found.get("datatype"))
         if classify(found) not in (*IMPORTED_TYPES, "STUDY") and "data_filename" in found:
@@ -760,6 +804,15 @@ def expected(cell: Mapping[str, Any]) -> str:
         if fault is not None:
             return said(fault, *fields)
         stable_ids.append(stable)
+    if matrix is not None:
+        panels = _panels()
+        if not _is_text(matrix):
+            return panels.said("name_not_text")
+        content = listed[matrix]
+        assert isinstance(content, bytes)
+        found_item = panels.read_item(content, samples, panels.profiles(named), None)
+        if found_item is not None:
+            return panels.said(found_item)
     if copies is None:
         return "ok"
     if metas["meta_study.txt"]["cancer_study_identifier"] + "_cna" not in stable_ids:

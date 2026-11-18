@@ -80,7 +80,10 @@ study directory with it (copied whole into the site; the clinical files become t
 `structural_variants` table, one row per event as the file holds it, SPEC D445, and a discrete
 `COPY_NUMBER_ALTERATION` matrix the `cna_calls` table, one row per call other than `0` and `NA`, with
 its coverage by the samples' `NA` patterns, `cna_assignment` and `cna_groups`, which needs the
-`<study>_cna` case list, SPEC D446), restarting the server first if it is running.
+`<study>_cna` case list, SPEC D446, and a `GENE_PANEL_MATRIX` file the `gene_panel_matrix` table, one
+row per sample and a column per profile's panel, `NA` unknown, with no coverage yet, so that it
+answers whether a sample was given a panel, TRUE or UNKNOWN, never FALSE, SPEC D447), restarting the
+server first if it is running.
 An import's peak memory grows with its cells (rows times columns, summed over every table it imports),
 about 80 to 200 bytes a cell above the server's baseline (about 193 for a case list's members, D444), and
 `import_cells` (default 20M) refuses more: a synthetic MAF of 129 columns and 54,000 rows (7.0M cells)
@@ -92,7 +95,9 @@ counts its cells as the core does (3 a call, 1 a `0` or `NA`, 2 a coverage row) 
 one byte of code a cell and its calls' rows: the real `msk_chord_2024` matrix (702 genes by 25,034
 samples) counts 17,753,698 cells, the study without its MAF and SV file 19,253,766, which the default
 admits (published in about 35 s at a peak of about 320 MiB, SPEC D446); with its MAF the study is far
-over the default, and the matrix adds its cells to the MAF's, so raise `import_cells` for the sum. A discrete
+over the default, and the matrix adds its cells to the MAF's, so raise `import_cells` for the sum. The gene panel
+matrix adds its columns times its rows (the real one 4 by 25,040, 100,160 cells, SPEC D447), counted
+before the MAF's. A discrete
 CNA matrix's memory at the default limit is a measured range, not a bound: about 3.0-3.5 GiB,
 depending on its cells, its number of `NA` groups and the run (SPEC D446: an all-calls matrix of
 19.6M cells peaked at 3.3 GiB, ones with a group per sample at 3.0-3.5 GiB); give a server that imports one 6 GiB, and more in
