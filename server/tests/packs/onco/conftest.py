@@ -252,6 +252,18 @@ def oracle() -> ModuleType:
 
 
 @pytest.fixture(scope="session")
+def symbol_model() -> ModuleType:
+    """``symbol_oracle.py``, loaded by its path: the test's own model of a padded ``Hugo_Symbol``
+    (M4.2b-2b-i), the one loader ``test_mutation`` and ``test_mutation_corpus`` read it by."""
+    spec = importlib.util.spec_from_file_location("symbol_oracle", HERE / "symbol_oracle.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="session")
 def corpus() -> ModuleType:
     """``clinical_corpus.py``, loaded by its path: the clinical files' corpus (M4.2a-1b)."""
     spec = importlib.util.spec_from_file_location("clinical_corpus", HERE / "clinical_corpus.py")

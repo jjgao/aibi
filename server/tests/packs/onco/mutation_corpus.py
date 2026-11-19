@@ -28,7 +28,9 @@ cell's id to it; an id is ``<generator>:<case>``. The generators:
 - ``meta``: the mutation meta's values, a second mutation meta, another meta naming the MAF, an
   uncalled-mutation meta;
 - ``list``: a case list's keys, values, ids, bytes and file names, and the ``case_lists``
-  directory itself.
+  directory itself;
+- ``symbol``: a ``Hugo_Symbol`` with a code point of each class of a padded symbol (and of text)
+  before, after, around or inside it, on a validated and on a skipped row (M4.2b-2b-i).
 """
 
 from collections.abc import Callable, Mapping
@@ -210,6 +212,9 @@ def _bytes() -> None:
     cell("byte", "bom_no_top", data(BOM + maf([R1, R2], top=b"")))
     cell("byte", "bom_before_header", data(maf([R1, R2], top=b"#a\n" + BOM)))
     cell("byte", "bom_at_row", data(maf([R2, row(Hugo_Symbol="﻿KRAS")])))
+    # since M4.2b-2b-i the symbol's mark above is an edged symbol: a mark at a row is content in
+    # another column
+    cell("byte", "bom_at_row_center", data(maf([R2, row(Center="\ufeffMSKCC")])))
     cell("byte", "crlf", data(VALID.replace(b"\n", b"\r\n")))
     cell("byte", "cr", data(VALID.replace(b"\n", b"\r")))
     cell("byte", "mixed", data(VALID.replace(b"\n", b"\r\n", 1)))
@@ -987,6 +992,56 @@ def _study_meta() -> None:
             cell("study", f"global_{name}_{'all' if listed else 'none'}", study(**over))
 
 
+SYMBOL_POINTS: Mapping[str, tuple[int, ...]] = {
+    "whitespace": (0x20, 0xA0, 0x3000, 0x85, 0x2028),
+    "braille": (0x2800,),
+    "unsafe": (0x9F, 0x200B, 0x202E, 0xFEFF, 0xAD, 0xE0001, 0x110BD),
+    "ignorable": (0x034F, 0xFE0F, 0xE0100, 0x3164, 0x17B4, 0x180B, 0x200D),
+    "text": (0x41, 0x2010, 0x212A, 0x0301),
+}
+"""Code points of each class of D444's padded symbol (M27; ``symbol_oracle``'s classes, which
+``test_mutation_corpus`` holds each to): whitespace by ``str.strip()``, U+2800, D312's unsafe
+class, ``Default_Ignorable_Code_Point`` but unsafe, and text. Each is one a strict UTF-8 line can
+hold and no earlier check refuses (no control character, line end or lone surrogate)."""
+SYMBOL_PLACES: Mapping[str, Callable[[str], str]] = {
+    "leading": lambda point: point + "TP53",
+    "trailing": lambda point: "TP53" + point,
+    "both": lambda point: point + "TP53" + point,
+    "inside": lambda point: "TP" + point + "53",
+}
+SYMBOL_ROWS: Mapping[str, Mapping[str, str]] = {
+    "valid": {},
+    "silent": {"Variant_Classification": "Silent"},
+}
+
+
+def _symbols() -> None:
+    """M4.2b-2b-i: a ``Hugo_Symbol`` holding a code point of each class at each place, on a row
+    the reference validates and on one it skips (the default list's ``Silent``)."""
+    for kind, points in SYMBOL_POINTS.items():
+        for point in points:
+            for place, written in SYMBOL_PLACES.items():
+                for name, changes in SYMBOL_ROWS.items():
+                    changed = {**R1, **changes, "Hugo_Symbol": written(chr(point))}
+                    case = f"{kind}_{point:04x}_{place}_{name}"
+                    cell("symbol", case, data(maf([R2, changed])))
+    for name, symbol in SKIPPED_SYMBOLS.items():
+        changed = {**R1, **SYMBOL_ROWS["silent"], "Hugo_Symbol": symbol}
+        cell("symbol", f"skipped_{name}_silent", data(maf([R2, changed])))
+
+
+SKIPPED_SYMBOLS: Mapping[str, str] = {
+    "space": " ",
+    "ideographic": "\u3000",
+    "empty": "",
+    "padded-na": " NA",
+    "unknown-padded": "Unknown ",
+    "zwsp": "\u200b",
+}
+"""A symbol on a row the reference skips (``Silent``) for D444's sub-cases there: blank by
+``str.strip()``, empty, a padded spelling of no value, an invisible code point alone."""
+
+
 GENERATORS: tuple[Callable[[], None], ...] = (
     _bytes,
     _header,
@@ -996,6 +1051,7 @@ GENERATORS: tuple[Callable[[], None], ...] = (
     _lists,
     _study_meta,
     _dimensions,
+    _symbols,
 )
 for _generator in GENERATORS:
     _generator()

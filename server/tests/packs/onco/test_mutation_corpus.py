@@ -31,6 +31,7 @@ import importlib.util
 import json
 import os
 import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from pathlib import Path
@@ -438,6 +439,15 @@ INVENTORY: frozenset[tuple[str, str, str]] = frozenset(
             ),
             "stricter",
         ),
+        (
+            "onco.PADDED_VALUE",
+            (
+                "the gene symbol starts or ends with whitespace, a control or format character, "
+                "or a code point drawn as nothing, which cBioPortal accepts and the published "
+                "column would keep as written"
+            ),
+            "stricter",
+        ),
         ("onco.POSITION_VALUE", "the position is not a number", "same outcome"),
         ("onco.POSITION_VALUE", "the position is not an integer", "same outcome"),
         ("onco.REPEATED_HEADER", "the line repeats the column names", "same outcome"),
@@ -627,15 +637,127 @@ and the reference's error on such a cell, when it reports one, is about the list
 (a repeated ``stable_id``), so the check is always stricter (review r1 MJ2)."""
 
 
+EDGED = (
+    "the gene symbol starts or ends with whitespace, a control or format character, or a code "
+    "point drawn as nothing, which cBioPortal accepts and the published column would keep as "
+    "written"
+)
+"""The edged symbol's reason (M4.2b-2b-i): the one stricter item of the MAF reader held to a
+predicate written here (``edged_cell``), not to its code's class alone."""
+
+
+MODEL: dict[str, ModuleType] = {}
+"""The test's model of a padded symbol (``symbol_oracle``), as the conftest's ``symbol_model``
+loads it (its one loader), set for the module's tests by ``_symbol_model``."""
+
+
+@pytest.fixture(autouse=True)
+def _symbol_model(symbol_model: ModuleType) -> None:
+    MODEL["model"] = symbol_model
+
+
+def model() -> ModuleType:
+    """The model ``_symbol_model`` set."""
+    return MODEL["model"]
+
+
+LINES = re.compile(r"\r\n|\n|\r")
+
+
+def symbols(cell: Mapping[str, Any]) -> list[str]:
+    """Every ``Hugo_Symbol`` cell of every data row of the cell's MAFs, as written: a file of the
+    cell, no meta file or case list, whose first line not starting with ``#`` (past a byte order
+    mark) holds a column named ``Hugo_Symbol``; a row too short for that column has none."""
+    found: list[str] = []
+    for name, content in cell.items():
+        if not isinstance(content, bytes) or name.startswith(("meta_", "case_lists/")):
+            continue
+        lines = LINES.split(content.decode("utf-8", "replace").removeprefix("\ufeff"))
+        rows = [line for line in lines if not line.startswith("#")]
+        if not rows or "Hugo_Symbol" not in rows[0].split("\t"):
+            continue
+        at = rows[0].split("\t").index("Hugo_Symbol")
+        found += [fields[at] for line in rows[1:] if len(fields := line.split("\t")) > at]
+    return found
+
+
+@cache
+def edged_cell(cell: str) -> bool:
+    """The predicate of the edged symbol (M27, M4.2b-2b-i), written from D444 and the test's
+    model, never from ``mutation.py``: some data row of the cell's MAF, validated or skipped, has a
+    ``Hugo_Symbol`` whose first or last code point pads it (``symbol_oracle.edged``)."""
+    return any(model().edged(symbol) for symbol in symbols(corpus().CELLS[cell]))
+
+
+@cache
+def accepted_by_reference(cell: str) -> bool:
+    """The live outcome the stricter kind reads: the reference did not crash on the cell and
+    every error it reported has an exit whose predicate holds (it accepts the cell)."""
+    recorded = REFERENCE[cell]
+    return not recorded["crash"] and all(
+        any(holds(corpus().CELLS[cell], file) for _, holds in EXITS.get(identity, ()))
+        for identity, file in recorded["errors"]
+    )
+
+
+def symbol_problems(cell: str, found: str) -> list[str]:
+    """The edged symbol's item against its predicate and the live outcome: a refusal of it where
+    the predicate does not hold or the reference does not accept the cell, an accepted cell the
+    predicate holds for; and a cell of the ``symbol`` generator (one symbol of one class at one
+    place, the rest valid) refused other than by the item where the predicate holds, or refused
+    where it does not."""
+    problems: list[str] = []
+    edged = edged_cell(cell)
+    if found.partition("|")[2] == EDGED:
+        if not edged:
+            problems.append(f"{cell}: refused as an edged symbol, and no symbol of it is edged")
+        if not accepted_by_reference(cell):
+            problems.append(f"{cell}: refused as an edged symbol, and the reference refuses it")
+    elif found == "ok" and edged:
+        problems.append(f"{cell}: accepted, and a symbol of it is edged")
+    if cell in SKIPPED_SYMBOLS:
+        refused = SKIPPED_SYMBOLS[cell]
+    elif cell.startswith("symbol:"):
+        # review r1 m1: from the cell's own class and place, a literal of the test, never from the
+        # predicate: a code point of a padding class at an edge is refused, text or inside is not
+        kind, place = cell.split(":")[1].split("_")[0], cell.split("_")[-2]
+        refused = kind in PADDING_CLASSES and place != "inside"
+    else:
+        return problems
+    wanted = f"onco.PADDED_VALUE|{EDGED}" if refused else "ok"
+    if found != wanted:
+        problems.append(f"{cell}: {found!r} is not the class's {wanted!r}")
+    if refused != edged:
+        problems.append(f"{cell}: the predicate says {edged}, the cell's class {refused}")
+    return problems
+
+
+PADDING_CLASSES = frozenset({"whitespace", "braille", "unsafe", "ignorable"})
+"""The classes of D444's edged symbol, written here (the corpus names a cell by its class)."""
+SKIPPED_SYMBOLS: Mapping[str, bool] = {
+    "symbol:skipped_space_silent": True,
+    "symbol:skipped_ideographic_silent": True,
+    "symbol:skipped_empty_silent": False,
+    "symbol:skipped_padded-na_silent": True,
+    "symbol:skipped_unknown-padded_silent": True,
+    "symbol:skipped_zwsp_silent": True,
+}
+"""Review r1 m2: D444's sub-cases on a row the reference skips (``Silent``), each refused by the
+edged symbol or not, written here: a symbol blank by ``str.strip()`` (a space, U+3000), padded
+``NA`` and ``Unknown``, and U+200B alone are refused; an empty symbol is not edged."""
+
+
 def explain(outcomes: Mapping[str, str], cells: Sequence[str]) -> list[str]:
     """Why the leniency map does not explain ``outcomes`` over ``cells``, one line a problem: a
     refusal whose ``(code, kind)`` is no item, a pack refusal whose reason matches no template or
     several, an accepted cell that crashed the reference, an accepted cell's error no exit's
-    predicate holds for (an identity with no exit among them)."""
+    predicate holds for (an identity with no exit among them), and the edged symbol's item held to
+    its predicate (``symbol_problems``)."""
     problems: list[str] = []
     for cell in cells:
         found = outcomes[cell]
         recorded = REFERENCE[cell]
+        problems += symbol_problems(cell, found)
         if found == "ok":
             if recorded["crash"]:
                 problems.append(f"{cell}: accepted, and the reference crashed")
@@ -816,7 +938,7 @@ def test_d444_lists_the_inventory_and_the_corpus_size() -> None:
     for template in templates:
         assert f"`{in_d444(template)}`" in row, template
     assert f"a corpus of {len(CELL_IDS)} cells" in row
-    (changelog,) = [line for line in text.splitlines() if line.startswith("- **v0.8.100**")]
+    (changelog,) = [line for line in text.splitlines() if line.startswith("- **v0.8.108**")]
     assert f"held by {len(CELL_IDS)} generated cells" in changelog
 
 
@@ -949,3 +1071,97 @@ def published_cells() -> list[str]:
 def test_an_accepted_cell_publishes(cell: str, world: Any, registry: PackRegistry) -> None:
     directory = build(world.root / "cell", corpus().CELLS[cell])
     world.publish("study", directory, registry, pack="onco")
+
+
+SYMBOL_CELLS = [cell for cell in CELL_IDS if cell.startswith("symbol:")]
+
+
+def test_the_reference_accepts_every_padded_symbol() -> None:
+    """M4.2b-2b-i, the live outcome the stricter item reads: on the pinned reference, offline
+    (``-n``), every cell of the ``symbol`` generator, a symbol of each class at each place on a
+    validated and on a skipped row, exits 3 with no error and no crash: it strips the whitespace
+    (V:1806) and reads the rest as a symbol. Every class of the model has a code point there, on
+    every place and row."""
+    for cell in SYMBOL_CELLS:
+        assert REFERENCE[cell] == {"crash": False, "errors": [], "rc": 3}, cell
+    assert set(SKIPPED_SYMBOLS) <= set(SYMBOL_CELLS)
+    kinds = {
+        cell.split(":")[1].split("_")[0] for cell in SYMBOL_CELLS if cell not in SKIPPED_SYMBOLS
+    }
+    assert kinds == set(model().CLASSES)
+    shapes = {tuple(cell.split("_")[-2:]) for cell in set(SYMBOL_CELLS) - set(SKIPPED_SYMBOLS)}
+    assert shapes == {
+        (place, row)
+        for place in ("leading", "trailing", "both", "inside")
+        for row in ("valid", "silent")
+    }
+
+
+@pytest.mark.skipif(
+    unicodedata.unidata_version != "15.0.0",
+    reason="the symbol model's literals are Unicode 15.0's, the pinned Python's",
+)
+def test_each_symbol_cell_s_code_point_is_of_its_class() -> None:
+    """The corpus names each code point's class; the model says it is that class."""
+    points = corpus().SYMBOL_POINTS
+    assert set(points) == set(model().CLASSES)
+    for kind, found in points.items():
+        for point in found:
+            assert model().class_of(point) == kind, (kind, hex(point))
+
+
+@pytest.mark.parametrize(
+    "narrowed",
+    ["deleted", "strip", "validated", "unsafe", "ignorable", "leading", "stripped"],
+)
+def test_narrowing_the_edged_symbol_fails_the_map(
+    narrowed: str, onco: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4.2b-2b-i: the check narrowed or deleted, and the cells it refused re-imported (as a
+    re-recording would), the map alone reports a problem: the check deleted; padding read by
+    ``str.strip()`` alone; checked on validated rows alone; without D312's unsafe class; without
+    the default-ignorable table; at the first code point alone; on the symbol after
+    ``str.strip()``."""
+    mutation = importlib.import_module("aibi.packs.onco.mutation")
+    edge_point = mutation.edge_point
+    edged = mutation.edged
+    checked = mutation._Reading.checked
+    visible = importlib.import_module("aibi.core.schema.visible")
+
+    def narrow_point(character: str) -> bool:
+        point = ord(character)
+        if narrowed == "strip":
+            return character.isspace()
+        if narrowed == "unsafe" and visible.unsafe_point(point):
+            return character.isspace() or point == visible.BRAILLE_BLANK
+        if narrowed == "ignorable" and not visible.unsafe_point(point):
+            return character.isspace() or point == visible.BRAILLE_BLANK
+        return edge_point(character)
+
+    def narrow(symbol: str) -> bool:
+        if narrowed == "deleted":
+            return False
+        if narrowed == "leading":
+            return symbol != "" and narrow_point(symbol[0])
+        if narrowed == "stripped":
+            return edged(symbol.strip())
+        return symbol != "" and (narrow_point(symbol[0]) or narrow_point(symbol[-1]))
+
+    def validated_only(self: Any, fields: list[str]) -> Any:
+        if narrowed == "validated" and self.skipped(fields):
+            # a row skipped by its class (an edged symbol is never exactly ``Unknown``) keeps
+            # being skipped with a plain symbol, which the narrowed check never refuses
+            fields = [*fields]
+            fields[self.hugo] = "TP53"
+        return checked(self, fields)
+
+    monkeypatch.setattr(mutation, "edge_point", narrow_point)
+    monkeypatch.setattr(mutation, "edged", narrow)
+    monkeypatch.setattr(mutation._Reading, "checked", validated_only)
+    cells = [cell for cell in CELL_IDS if OUTCOMES[cell].endswith(EDGED)]
+    fresh = {
+        cell: outcome(onco, build(tmp_path / str(index), corpus().CELLS[cell]))
+        for index, cell in enumerate(cells)
+    }
+    assert fresh != {cell: OUTCOMES[cell] for cell in cells}, narrowed
+    assert judged({**OUTCOMES, **fresh}) != [], narrowed

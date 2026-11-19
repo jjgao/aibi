@@ -7,6 +7,8 @@ The corpus (``test_mutation_corpus.py``) holds each class against the reference'
 outcomes; this module holds what needs other limits, a store or many bytes.
 """
 
+import ast
+import collections
 import contextlib
 import hashlib
 import importlib
@@ -15,7 +17,9 @@ import itertools
 import random
 import shutil
 import time
+import unicodedata
 from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -677,7 +681,15 @@ ATOMS = (
     "\u2028",
     "\x1f",
     "\x00",
+    "\u200b",
+    "\u2800",
+    "\u034f",
+    "\ufe0f",
+    "\U000e0001",
+    "\u200d",
 )
+"""The tokens the fuzz inserts; since M4.2b-2b-i a code point of each class of the edged symbol
+too (U+200B, U+2800, U+034F, U+FE0F, a tag, U+200D)."""
 RAW = (b"\xed\xa0\x80", b"\xff", b"\xc0\xaf", b"\xef\xbb\xbf")
 
 
@@ -987,29 +999,34 @@ def core_reads_integer(token: str) -> bool:
     return token not in ("", "0", "NA") and _integer(token, token) is not None
 
 
-def rule(symbol: str, entrez: str, classification: str) -> str:
+def rule(symbol: str, entrez: str, classification: str, oracle: ModuleType) -> str:
     """D444's rule for a row's symbol and Entrez id, written from the reference's reading as D444
     states it (never read from ``mutation_outcomes.json``): the code aibi must refuse the row
     with, or ``ok``.
 
-    A row the reference skips (a skip class, or exactly ``Unknown`` and ``0``) is checked for
-    nothing. On a validated row, by column (the symbol's first): a symbol ``str.strip()`` makes
-    ``NA`` or ``Unknown``, not written so, beside a given Entrez id (one the reference reads as an
-    id: stripped, neither empty, ``NA`` nor ``0``) is ``PADDED_VALUE`` (M27); such a symbol, padded
-    or not, with no given Entrez id is ``NO_GENE`` (M21). Then the Entrez id: one that strips to
+    A row the reference skips (a skip class, or exactly ``Unknown`` and ``0``, as written) is
+    checked for one thing alone: a symbol ``symbol_oracle.edged`` holds for is ``PADDED_VALUE``
+    (M27, every row). On a validated row, by column (the symbol's first): a symbol
+    ``str.strip()`` makes ``NA`` or ``Unknown``, not written so, beside a given Entrez id (one the
+    reference reads as an id: stripped, neither empty, ``NA`` nor ``0``) is ``PADDED_VALUE``
+    (M27); such a symbol, padded or not, with no given Entrez id is ``NO_GENE`` (M21); after
+    those, an edged symbol is ``PADDED_VALUE`` (M27). Then the Entrez id: one that strips to
     ``0``, not written so, that the core would publish as 0 is ``PADDED_VALUE`` (M27); one
     ``int()`` reads as 0 or less is ``ENTREZ_VALUE`` (M19); one ``int()`` cannot read, which the
     reference warns it will not load, is ``ENTREZ_VALUE`` where the core would publish it as an
     integer (M20), else accepted and counted."""
-    if classification in SKIPPED or (symbol == "Unknown" and entrez == "0"):
-        return "ok"
+    skipped = classification in SKIPPED or (symbol == "Unknown" and entrez == "0")
     stripped = entrez.strip()
     given = stripped not in ("", "NA", "0")
-    if symbol.strip() in ("NA", "Unknown"):
+    if not skipped and symbol.strip() in ("NA", "Unknown"):
         if symbol != symbol.strip() and given:
             return "onco.PADDED_VALUE"
         if not given:
             return "onco.NO_GENE"
+    if oracle.edged(symbol):
+        return "onco.PADDED_VALUE"
+    if skipped:
+        return "ok"
     if stripped == "0":
         padded_zero = entrez != stripped and core_reads_integer(entrez)
         return "onco.PADDED_VALUE" if padded_zero else "ok"
@@ -1021,8 +1038,14 @@ def rule(symbol: str, entrez: str, classification: str) -> str:
     return "onco.ENTREZ_VALUE" if core_reads_integer(entrez) else "ok"
 
 
+@cache
+def loaded() -> ModuleType:
+    """The corpus, loaded once for the row generators (its cells are built at load)."""
+    return corpus()
+
+
 def row_code(symbol: str, entrez: str, classification: str) -> str:
-    c = corpus()
+    c = loaded()
     changed = {
         **c.R1,
         "Hugo_Symbol": symbol,
@@ -1032,7 +1055,7 @@ def row_code(symbol: str, entrez: str, classification: str) -> str:
     return code(c.maf([c.R2, changed]))
 
 
-def test_m20_every_entrez_token_follows_the_rule() -> None:
+def test_m20_every_entrez_token_follows_the_rule(symbol_model: ModuleType) -> None:
     """Review r4 (split, M20 and M19), independent of the recorded outcomes: every Entrez body
     of ``ENTREZ_BODIES`` under every padding, on a validated and a skipped row, is refused or
     accepted exactly as ``rule`` says, so that narrowing the check (a decimal point exempted, an
@@ -1043,25 +1066,283 @@ def test_m20_every_entrez_token_follows_the_rule() -> None:
         for token in padded(body)
         for classification in ROW_CLASSES
         if (found := row_code("TP53", token, classification))
-        != (expected := rule("TP53", token, classification))
+        != (expected := rule("TP53", token, classification, symbol_model))
     ]
     assert wrong == []
 
 
-def test_m27_every_padded_null_symbol_follows_the_rule() -> None:
-    """Review r4 (split, M27 and M21), independent of the recorded outcomes: a symbol ``NA``,
-    ``Unknown`` or a gene's, as written and under every padding, beside an Entrez id given in
-    digits, given as ``+7157`` or padded, empty, ``0``, ``NA``, padded ``0`` or padded ``NA``, on
-    a validated and a skipped row, is refused or accepted exactly as ``rule`` says (a padded null
-    symbol beside a padded ``0`` is ``NO_GENE``, never ``PADDED_VALUE``)."""
+SYMBOL_PADS = (
+    *PADS,
+    "\u0085",
+    "\u2800",
+    "\u034f",
+    "\ufe0f",
+    "\u3164",
+    "\u00ad",
+    "\u200d",
+    "\U000e0001",
+    "\U000e0fff",
+    "\u0301",
+    "\u212a",
+)
+"""``PADS`` and a code point of each other class of ``symbol_oracle`` (a C1 control that
+``str.strip()`` removes, U+2800, the combining grapheme joiner, a variation selector, a Hangul
+filler, the soft hyphen, the zero-width joiner, a tag, an unassigned default-ignorable point), and
+two of text (a combining accent, the Kelvin sign), which pad nothing."""
+
+
+def symbol_padded(body: str) -> list[str]:
+    """``body`` as written, and padded before, after and around by each of ``SYMBOL_PADS``."""
+    found = [body]
+    for pad in SYMBOL_PADS[1:]:
+        found += [pad + body, body + pad, pad + body + pad]
+    return found
+
+
+def test_m27_every_padded_symbol_follows_the_rule(symbol_model: ModuleType) -> None:
+    """Review r4 (split, M27 and M21), M4.2b-2b-i, independent of the recorded outcomes: a symbol
+    ``NA``, ``Unknown`` or a gene's, as written and under every padding of ``SYMBOL_PADS``,
+    beside an Entrez id given in digits, given as ``+7157`` or padded, empty, ``0``, ``NA``,
+    padded ``0`` or padded ``NA``, on a validated and a skipped row, is refused or accepted
+    exactly as ``rule`` says (a padded null symbol beside a padded ``0`` is ``NO_GENE``, never
+    ``PADDED_VALUE``; a padded gene's symbol is ``PADDED_VALUE`` on either row)."""
     entrez_ids = ("7157", "+7157", " 7157", "", "0", "NA", " 0 ", "0 ", " NA")
     wrong = [
         (symbol, entrez, classification, found, expected)
         for body in ("NA", "Unknown", "TP53")
-        for symbol in padded(body)
+        for symbol in symbol_padded(body)
         for entrez in entrez_ids
         for classification in ROW_CLASSES
         if (found := row_code(symbol, entrez, classification))
-        != (expected := rule(symbol, entrez, classification))
+        != (expected := rule(symbol, entrez, classification, symbol_model))
     ]
     assert wrong == []
+
+
+UNICODE_15 = pytest.mark.skipif(
+    unicodedata.unidata_version != "15.0.0",
+    reason="the symbol model's literals are Unicode 15.0's, the pinned Python's",
+)
+
+
+def test_the_symbol_model_imports_nothing_of_aibi() -> None:
+    """The model is the test's own: ``symbol_oracle.py`` imports ``unicodedata`` alone, never the
+    pack or ``aibi.core.schema.visible``, which it is held against."""
+    tree = ast.parse((HERE / "symbol_oracle.py").read_text(encoding="utf-8"))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert imported == {"unicodedata"}
+    # review r2 n3: the corpus test's predicate and judge (``symbols``, ``edged_cell``,
+    # ``accepted_by_reference``, ``symbol_problems``) are the test's own too: the module imports
+    # nothing of the pack by name, and those functions name no pack module and import nothing
+    corpus_test = ast.parse((HERE / "test_mutation_corpus.py").read_text(encoding="utf-8"))
+    modules = {
+        node.module for node in ast.walk(corpus_test) if isinstance(node, ast.ImportFrom)
+    } | {
+        alias.name
+        for node in ast.walk(corpus_test)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert not any(str(module).startswith("aibi.packs") for module in modules)
+    judge = ("symbols", "edged_cell", "accepted_by_reference", "symbol_problems")
+    functions = [
+        node
+        for node in corpus_test.body
+        if isinstance(node, ast.FunctionDef) and node.name in judge
+    ]
+    assert sorted(node.name for node in functions) == sorted(judge)
+    for function in functions:
+        for node in ast.walk(function):
+            assert not isinstance(node, ast.Import | ast.ImportFrom), function.name
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert "aibi" not in node.value, function.name
+            if isinstance(node, ast.Name | ast.Attribute):
+                name = node.id if isinstance(node, ast.Name) else node.attr
+                assert name not in ("importlib", "import_module", "mutation", "onco"), (
+                    function.name,
+                    name,
+                )
+
+
+@UNICODE_15
+def test_the_symbol_model_s_padding_is_its_classes(symbol_model: ModuleType) -> None:
+    """Review r1 m1, the model anchored to D444's list of classes: a code point pads a symbol
+    exactly when ``class_of`` gives it a padding class (whitespace, U+2800, unsafe,
+    default-ignorable), over all 1,114,112 code points, and the classes are those five; each
+    padding class is not empty."""
+    oracle = symbol_model
+    assert oracle.CLASSES == ("whitespace", "braille", "unsafe", "ignorable", "text")
+    every = range(oracle.LAST + 1)
+    assert [
+        point for point in every if oracle.pads(point) != (oracle.class_of(point) != "text")
+    ] == []
+    assert oracle.class_of(0x2800) == "braille"
+    assert {oracle.class_of(point) for point in every} == set(oracle.CLASSES)
+    # review r2 n1: each class anchored by a literal of its own, not by the model: the code points
+    # ``str.strip()`` removes (Python 3.12, Unicode 15.0), written out, and the classes' sizes
+    stripped = {point for point in every if chr(point).strip() == ""}
+    assert stripped == WHITESPACE
+    assert {point for point in every if oracle.whitespace(point)} == WHITESPACE
+    assert {point for point in every if oracle.class_of(point) == "whitespace"} == WHITESPACE
+    assert collections.Counter(oracle.class_of(point) for point in every) == CLASS_SIZES
+
+
+WHITESPACE = frozenset(
+    {
+        *range(0x09, 0x0D + 1),
+        *range(0x1C, 0x20 + 1),
+        0x85,
+        0xA0,
+        0x1680,
+        *range(0x2000, 0x200A + 1),
+        0x2028,
+        0x2029,
+        0x202F,
+        0x205F,
+        0x3000,
+    }
+)
+"""The 29 code points ``str.strip()`` removes under Python 3.12 (Unicode 15.0), written out."""
+CLASS_SIZES = {
+    "whitespace": 29,
+    "braille": 1,
+    "unsafe": 2271,
+    "ignorable": 4038,
+    "text": 1107773,
+}
+"""How many of the 1,114,112 code points ``symbol_oracle.class_of`` puts in each class under
+Unicode 15.0: a narrowing of any class in the model (and the code with it) changes a count."""
+
+
+@UNICODE_15
+def test_the_core_s_tables_are_the_symbol_model_s(symbol_model: ModuleType) -> None:
+    """M4.2b-2b-i, mi-d: the pack reads ``visible.DEFAULT_IGNORABLE`` and D312's unsafe class, and
+    no table of its own; the model derives both from ``unicodedata`` and Unicode 15.0's
+    definitions, and they are equal over all 1,114,112 code points. The ranges are ascending and
+    apart, as the pack's bisection reads them."""
+    from aibi.core.schema import visible
+
+    oracle = symbol_model
+    every = range(oracle.LAST + 1)
+    table = {point for first, last in visible.DEFAULT_IGNORABLE for point in range(first, last + 1)}
+    assert {point for point in every if oracle.default_ignorable(point)} == table
+    assert [point for point in every if oracle.unsafe(point) != visible.unsafe_point(point)] == []
+    ranges = visible.DEFAULT_IGNORABLE
+    assert all(first <= last for first, last in ranges)
+    assert all(before[1] < after[0] for before, after in itertools.pairwise(ranges))
+
+
+SYMBOL_HEADER = "\t".join(
+    (
+        "Hugo_Symbol",
+        "Entrez_Gene_Id",
+        "Variant_Classification",
+        "Tumor_Sample_Barcode",
+        "HGVSp_Short",
+    )
+)
+PLACES = {
+    "leading": lambda point: point + "TP53",
+    "trailing": lambda point: "TP53" + point,
+    "both": lambda point: point + "TP53" + point,
+    "inside": lambda point: "TP" + point + "53",
+}
+
+
+def symbol_reading() -> Any:
+    """The reader's state after a header of the symbol, the Entrez id, the class, the barcode and
+    the amino-acid change: its ``checked`` is the row check of the file's reader."""
+    mutation, meta = modules()
+    fields = meta.MutationFields(None, None, (), "GRCh37")
+    reading = mutation._Reading("m.txt", SAMPLES, fields, ImportLimits(), 0)
+    assert reading.header(1, SYMBOL_HEADER, 0) is None
+    return reading
+
+
+@UNICODE_15
+@pytest.mark.parametrize("classification", ROW_CLASSES)
+def test_every_code_point_at_every_place_of_a_symbol_follows_the_model(
+    classification: str, symbol_model: ModuleType
+) -> None:
+    """M4.2b-2b-i (D444 M27), by class: every one of the 1,114,112 code points before, after,
+    around and inside a gene's symbol, on a validated and on a skipped row, through the reader's
+    own row check: the row is refused ``PADDED_VALUE`` at the symbol's column, with the edged
+    symbol's reason, exactly where the model says a code point at an edge pads it, and passes
+    otherwise (inside, a code point is text)."""
+    mutation, _ = modules()
+    oracle = symbol_model
+    reading = symbol_reading()
+    # review r1 m5: the row class is what the test says it is (a skip class, or validated)
+    assert reading.skipped(["TP53", "7157", classification, "S1", "p.R1H"]) == (
+        classification in SKIPPED
+    )
+    refused = ("PADDED_VALUE", 0, mutation.EDGED_SYMBOL)
+    wrong = []
+    for point in range(oracle.LAST + 1):
+        character = chr(point)
+        pads = oracle.pads(point)
+        for place, written in PLACES.items():
+            found = reading.checked([written(character), "7157", classification, "S1", "p.R1H"])
+            expected = refused if pads and place != "inside" else None
+            if found != expected:
+                wrong.append((hex(point), place, found))
+    assert wrong == []
+
+
+NO_GENE = ("NO_GENE", "the row names neither a gene symbol nor an id")
+BLANK = ("REQUIRED_VALUE", "the required value is blank")
+
+
+@pytest.mark.parametrize(
+    ("symbol", "entrez", "classification", "expected"),
+    [
+        (" ", "7157", "Missense_Mutation", BLANK),
+        ("\u3000", "7157", "Missense_Mutation", BLANK),
+        (" ", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("\u200b", "7157", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        (" NA", "", "Missense_Mutation", NO_GENE),
+        (" NA", "7157", "Missense_Mutation", ("PADDED_VALUE", "NULL")),
+        (" NA", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("Unknown", "0", "Missense_Mutation", None),
+        (" Unknown", "0", "Missense_Mutation", NO_GENE),
+        ("Unknown\u200b", "0", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        ("TP53 ", "-5", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        ("TP53", "-5", "Missense_Mutation", ("ENTREZ_VALUE", "NOT_POSITIVE")),
+        ("T P53", "7157", "Missense_Mutation", None),
+        ("\u2800TP53", "7157", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        ("TP53\u2800", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("\u034fTP53", "7157", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        ("TP53\u034f", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("\u009fTP53", "7157", "Missense_Mutation", ("PADDED_VALUE", "EDGED")),
+        ("TP53\U000110bd", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("\u00a0TP53", "7157", "Silent", ("PADDED_VALUE", "EDGED")),
+        ("TP\u2800\u034f\u009f53", "7157", "Missense_Mutation", None),
+        ("", "7157", "Silent", None),
+    ],
+)
+def test_the_symbol_s_checks_keep_their_order(
+    symbol: str, entrez: str, classification: str, expected: tuple[str, str] | None
+) -> None:
+    """M4.2b-2b-i, review m8: the symbol column's checks keep their places and the edged symbol
+    follows them: a symbol blank by ``str.strip()`` is ``REQUIRED_VALUE`` on a validated row and
+    edged on a skipped one (an empty one is not); a padded ``NA`` is ``NO_GENE`` with no Entrez id
+    and the null spelling's ``PADDED_VALUE`` beside one; the skip test reads the symbol as written
+    (``Unknown`` and ``0`` are skipped, `` Unknown`` is validated); the symbol's column comes
+    before the Entrez id's; a space inside a symbol is text."""
+    mutation, _ = modules()
+    reasons = {"EDGED": mutation.EDGED_SYMBOL, "NULL": mutation.PADDED_SYMBOL}
+    entrez_reason = "the Entrez gene id is not positive"
+    found = symbol_reading().checked([symbol, entrez, classification, "S1", "p.R1H"])
+    if expected is None:
+        assert found is None
+        return
+    code, reason = expected
+    if reason == "NOT_POSITIVE":
+        assert found == (code, 1, entrez_reason)
+        return
+    assert found == (code, 0, reasons.get(reason, reason))
