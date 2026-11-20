@@ -64,7 +64,13 @@ refusal gives after the place, and which the corpus holds check by check (D444):
    cannot read where both positions are given and neither is blank or ``NA``, V:1876-1881, where
    the reference crashes; r08); ``AMINO_ACID_CHANGE`` (V:2236-2265 and V:1840-1846; r10, r11);
    ``NCBI_BUILD`` (V:2162-2177 against the study's build, ``meta.GENOME_BUILDS``, GRCh37 by
-   default; r12) and ``NORMAL_SAMPLE`` (V:2179-2188; r13).
+   default; r12) and ``NORMAL_SAMPLE`` (V:2179-2188; r13). Then, on **every** row again, after
+   the symbol's checks above: ``PADDED_VALUE`` (stricter, D444 M27): a ``Hugo_Symbol`` whose
+   first or last code point is whitespace by ``str.strip()``, U+2800, of D312's unsafe class or
+   ``Default_Ignorable_Code_Point`` (``edged``), which the reference accepts (it strips the
+   whitespace, V:1806, and keeps the rest) and the core would keep as written, a symbol no
+   question names; a code point inside the symbol is text. On a row the reference skips it is
+   the one check of the symbol.
 
 **The skip predicate** (V:2267-2291): a row is skipped when its ``Hugo_Symbol`` is exactly
 ``Unknown`` and its ``Entrez_Gene_Id`` exactly ``0`` (``0`` when the file has no such column:
@@ -97,6 +103,7 @@ from aibi.core.schema.descriptors import ParseSettings
 from aibi.core.schema.jsonio import is_text
 from aibi.core.schema.limits import MAX_STRING, ImportLimits
 from aibi.core.schema.pack_api import Refused
+from aibi.core.schema.visible import BRAILLE_BLANK, DEFAULT_IGNORABLE, unsafe_point
 from aibi.core.store.sources import FIELD_CHARACTERS
 from aibi.packs.onco.clinical import COMMENT, CONTROL, LINE_END, identity, spans
 from aibi.packs.onco.meta import MutationFields
@@ -159,6 +166,11 @@ PADDED_ENTREZ = (
     "published column would read as the value 0"
 )
 SKIPPED_BARCODE = "the barcode is no sample id of the sample file, on a row cBioPortal skips"
+EDGED_SYMBOL = (
+    "the gene symbol starts or ends with whitespace, a control or format character, or a code "
+    "point drawn as nothing, which cBioPortal accepts and the published column would keep as "
+    "written"
+)
 CORE_SPACE = " \t\r\n\f\v"
 CORE_DIGITS = re.compile(r"[+-]?[0-9]+")
 CORE_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
@@ -184,6 +196,28 @@ def core_integer(token: str) -> bool:
         except InvalidOperation:
             return False
     return False
+
+
+IGNORABLE_FIRST = tuple(first for first, _ in DEFAULT_IGNORABLE)
+"""The first code point of each range of ``visible.DEFAULT_IGNORABLE``, ascending, which a
+bisection reads."""
+
+
+def edge_point(character: str) -> bool:
+    """Whether a code point pads a ``Hugo_Symbol`` at its edge (D444): whitespace by
+    ``str.strip()``, U+2800, D312's unsafe class or ``Default_Ignorable_Code_Point``, as
+    ``aibi.core.schema.visible`` holds the last three (no table of the pack's own)."""
+    point = ord(character)
+    if character.isspace() or point == BRAILLE_BLANK:
+        return True
+    at = bisect.bisect_right(IGNORABLE_FIRST, point) - 1
+    return (at >= 0 and point <= DEFAULT_IGNORABLE[at][1]) or unsafe_point(point)
+
+
+def edged(symbol: str) -> bool:
+    """Whether a ``Hugo_Symbol`` cell's first or last code point is an ``edge_point``: a code
+    point inside the symbol is text."""
+    return symbol != "" and (edge_point(symbol[0]) or edge_point(symbol[-1]))
 
 
 AMINO_ACID_MOST = 255
@@ -461,6 +495,8 @@ class _Reading:
         found.extend(self.driver(fields))
         if not skipped:
             found.extend(self.validated(fields))
+        if edged(fields[self.hugo]):
+            found.append((self.hugo, "PADDED_VALUE", EDGED_SYMBOL))
         if not found:
             return None
         column, code, reason = min(found, key=lambda item: item[0])
