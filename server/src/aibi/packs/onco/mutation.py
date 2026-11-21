@@ -110,7 +110,6 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from functools import cache
 from types import MappingProxyType
 
 from aibi.core.importers.infer import CATEGORY_VALUES
@@ -340,26 +339,54 @@ def _merged(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return found
 
 
-SCANNED_PLANES = ((0x0000, 0x1FFFF), (0xE0000, 0xE0FFF))
-"""The code points the pre-pass's patterns are read from: planes 0 and 1 and the tags and
-variation selectors of plane 14. Every unsafe code point and every ``str.isspace()`` one is in
-them (planes 2 to 13 and 15 to 16 hold none under Unicode 15.0; ``test_missing_spellings``
-checks it over every code point under the interpreter's Unicode), and ``DEFAULT_IGNORABLE`` is
-taken whole, so that a scan of 135,168 code points builds the same classes as one of all."""
+SCANNED_BLOCKS = (
+    (0x0000, 0x00FF),
+    (0x0600, 0x08FF),
+    (0x1600, 0x16FF),
+    (0x1800, 0x18FF),
+    (0x2000, 0x20FF),
+    (0x3000, 0x30FF),
+    (0xD800, 0xDFFF),
+    (0xFE00, 0xFFFF),
+    (0x11000, 0x110FF),
+    (0x13400, 0x134FF),
+    (0x1BC00, 0x1BCFF),
+    (0x1D100, 0x1D1FF),
+    (0xE0000, 0xE00FF),
+)
+"""The code points the pre-pass's classes are read from, at import: the 256-point blocks that
+hold a code point of D312's unsafe class or of ``str.isspace()`` under Unicode 15.0 (5,888 code
+points; ``test_missing_spellings`` checks over every code point, under the interpreter's
+Unicode, that none lies outside them). ``DEFAULT_IGNORABLE`` is taken whole. So a scan of a
+millisecond builds the same classes as one of all 1,114,112 code points, and the pack keeps no
+table of the classes themselves: ``visible.unsafe_point`` and ``str.isspace`` decide each."""
 
 
-@cache
-def _patterns() -> tuple[re.Pattern[str], str]:
-    """The pre-pass's pattern and characters, built once in a process at its first cell that is
-    not printable ASCII, by a scan of ``SCANNED_PLANES``: the removable code points
-    (``visible.DEFAULT_IGNORABLE`` and D312's unsafe class, ``visible.unsafe_point``, as
-    ``point_class`` asks ``_removable``), and the edge spaces (whitespace by ``str.isspace()`` and
-    U+2800, as ``point_class`` asks after it)."""
-    points = [point for first, last in SCANNED_PLANES for point in range(first, last + 1)]
-    unsafe = [(point, point) for point in points if unsafe_point(point)]
+def _prepass_classes() -> tuple[re.Pattern[str], str]:
+    """The pre-pass's pattern and characters, from a scan of ``SCANNED_BLOCKS`` when the module is
+    imported: the removable code points (``visible.DEFAULT_IGNORABLE``
+    and D312's unsafe class, ``visible.unsafe_point``, as ``point_class`` asks ``_removable``),
+    and the edge spaces (whitespace by ``str.isspace()`` and U+2800, as ``point_class`` asks after
+    it)."""
+    unsafe = [
+        (point, point)
+        for first, last in SCANNED_BLOCKS
+        for point in range(first, last + 1)
+        if unsafe_point(point)
+    ]
+    spaces = "".join(
+        chr(point)
+        for first, last in SCANNED_BLOCKS
+        for point in range(first, last + 1)
+        if chr(point).isspace()
+    )
     removable = _class(_merged([*DEFAULT_IGNORABLE, *unsafe]))
-    spaces = "".join(chr(point) for point in points if chr(point).isspace())
     return re.compile(f"[{removable}]+"), spaces + chr(BRAILLE_BLANK)
+
+
+REMOVABLE_RUNS, EDGE_SPACES = _prepass_classes()
+"""The pre-pass's compiled pattern of runs of removable code points and its string of edge
+spaces, built at import: constants, so that no state outlives a call (D438)."""
 
 
 def trimmed(cell: str) -> str | None:
@@ -374,8 +401,7 @@ def trimmed(cell: str) -> str | None:
     is linear in the cell and transient (``re.sub`` gathers the pieces between removable runs, a
     few times the cell for a cell of many short runs), and a cell is at most ``FIELD_CHARACTERS``
     code points, read one row at a time."""
-    removable, edges = _patterns()
-    core = removable.sub("", cell).strip(edges)
+    core = REMOVABLE_RUNS.sub("", cell).strip(EDGE_SPACES)
     return None if len(core) > NORMAL_KEPT else core
 
 

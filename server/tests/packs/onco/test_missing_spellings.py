@@ -575,21 +575,32 @@ def test_the_prepass_is_the_streaming_rule(symbol_model: ModuleType) -> None:
     assert prepass_disagreements(adversarial) == []
 
 
-def test_the_prepass_scans_every_plane_that_holds_its_classes() -> None:
-    """The pre-pass's patterns are read from ``SCANNED_PLANES`` alone: under the interpreter's
-    Unicode, no code point outside them is of D312's unsafe class or ``str.isspace()``, and every
-    default-ignorable range is taken whole, so the classes are those of all 1,114,112 code
-    points."""
+def test_the_prepass_classes_are_every_code_point_s() -> None:
+    """The pre-pass's classes, built at import from ``SCANNED_BLOCKS``, are those of all
+    1,114,112 code points under the interpreter's Unicode: no code point outside the blocks is of
+    D312's unsafe class or ``str.isspace()``; ``REMOVABLE_RUNS`` matches a code point exactly
+    where ``point_class`` says removable; ``EDGE_SPACES`` is every ``str.isspace()`` code point
+    and U+2800."""
     from aibi.core.schema import visible
 
     found = mutation()
-    inside = {p for first, last in found.SCANNED_PLANES for p in range(first, last + 1)}
+    inside = {p for first, last in found.SCANNED_BLOCKS for p in range(first, last + 1)}
     outside = [
         hex(p)
         for p in range(LAST + 1)
         if p not in inside and (visible.unsafe_point(p) or chr(p).isspace())
     ]
     assert outside == []
+    wrong = [
+        hex(p)
+        for p in range(LAST + 1)
+        if (found.REMOVABLE_RUNS.fullmatch(chr(p)) is not None)
+        != (found.point_class(chr(p)) == found.REMOVABLE)
+    ]
+    assert wrong == []
+    spaces = {chr(p) for p in range(LAST + 1) if chr(p).isspace()}
+    assert set(found.EDGE_SPACES) == spaces | {"\u2800"}
+    assert len(found.EDGE_SPACES) == len(set(found.EDGE_SPACES))
 
 
 def test_the_prepass_white_box() -> None:
@@ -631,7 +642,6 @@ def test_a_long_padded_cell_costs_a_pass_of_the_c_engine(monkeypatch: pytest.Mon
     CPU shared; the per-code-point scan was twenty to fifty times, and over a hundred for the
     last cell)."""
     found = mutation()
-    found.trimmed("\u00e9")  # the patterns, built once
     baseline = re.compile("[\x00]+")
     classify = found.point_class
     for cell, wanted in zip(LONG_CELLS, LONG_CALLS, strict=True):
