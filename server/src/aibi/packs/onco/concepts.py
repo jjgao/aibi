@@ -139,6 +139,11 @@ MUTATION_CLASSES = PermissibleValues(
 """cBioPortal's ``VARIANT_CLASSIFICATION_VALUES``: the MAF specification's twelve classes, the
 eight cBioPortal skips by default, ``Splice_Region``, ``Fusion`` and ``Unknown``.
 
+``Unknown`` is a class here, as cBioPortal lists it, while a MAF's ``Variant_Classification``
+column reads it, and every ASCII case of it, as no value (D444, M4.2b-2b-ii): the column maps to
+no concept, so the two never meet; a curator who maps the column to this concept maps no missing
+cell to a class.
+
 A call has one class, that of the most severe of its consequences (vcf2maf reads the first of a
 call's several Sequence Ontology terms, ordered by ``GetEffectPriority``), so a class is not the set
 of calls of a term, and no mutation class cites ``exact`` or ``narrower``. A citation's ``relation``

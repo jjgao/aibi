@@ -1660,8 +1660,9 @@ def test_the_refusal_codes_are_pinned() -> None:
         "STABLE_ID_KEYS",
         "DUPLICATE_SAMPLE",
         "NOT_SEQUENCED",
+        "MISSING_SPELLING",
     )
-    assert len(importlib.import_module(REFUSALS).CODES) == 70
+    assert len(importlib.import_module(REFUSALS).CODES) == 71
 
 
 # --- Sentinel: no value a file holds is shown -----------------------------------------------------

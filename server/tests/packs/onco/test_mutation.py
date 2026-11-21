@@ -772,6 +772,14 @@ def test_the_type_combinations_are_the_reference_s_table() -> None:
     assert digest == TYPES_AND_IDS_DIGEST
 
 
+SPELLED_FAMILY = frozenset(
+    "".join(spelled)
+    for word in ("unknown", "na", "n/a", "null")
+    for spelled in itertools.product(*({c.lower(), c.upper()} for c in word))
+)
+"""M4.2b-2b-ii (D444): every ASCII case of the four words, by ``itertools.product`` (the pack's
+own generator is a bit counter): 128 + 4 + 4 + 16, held by ``test_missing_spellings``."""
+
 EXPECTED_MISSING: Mapping[str, Mapping[str, str] | None] = {
     "Entrez_Gene_Id": {"0": "UNKNOWN", "NA": "UNKNOWN"},
     "Start_Position": {"NA": "UNKNOWN"},
@@ -783,8 +791,11 @@ EXPECTED_MISSING: Mapping[str, Mapping[str, str] | None] = {
     "Hugo_Symbol": {"NA": "UNKNOWN", "Unknown": "UNKNOWN"},
     "HGVSp_Short": {"NA": "UNKNOWN", "NULL": "UNKNOWN"},
     "Amino_Acid_Change": {"NA": "UNKNOWN", "NULL": "UNKNOWN"},
+    "Variant_Classification": dict.fromkeys(sorted(SPELLED_FAMILY), "UNKNOWN"),
+    "Mutation_Status": dict.fromkeys(sorted(SPELLED_FAMILY), "UNKNOWN"),
 }
-"""Every MAF column with missing codes, and its map; every other column has none (review r2)."""
+"""Every MAF column with missing codes, and its map; every other column has none (review r2). The
+class and the status hold the 152 spellings of M4.2b-2b-ii, the test's own (``SPELLED_FAMILY``)."""
 
 
 def test_every_maf_column_s_missing_codes_and_their_provenance(tmp_path: Path) -> None:
@@ -1149,7 +1160,15 @@ def test_the_symbol_model_imports_nothing_of_aibi() -> None:
         for alias in node.names
     }
     assert not any(str(module).startswith("aibi.packs") for module in modules)
-    judge = ("symbols", "edged_cell", "accepted_by_reference", "symbol_problems")
+    judge = (
+        "symbols",
+        "edged_cell",
+        "accepted_by_reference",
+        "symbol_problems",
+        "spelled_cell",
+        "spelling_wanted",
+        "spelling_problems",
+    )
     functions = [
         node
         for node in corpus_test.body

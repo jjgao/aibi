@@ -58,6 +58,7 @@ from aibi.packs.onco.mutation import (
     ENTREZ,
     HUGO,
     IDENTIFIERS,
+    MISSING_SPELLINGS,
     POSITIONS,
     Maf,
     MafColumn,
@@ -286,6 +287,20 @@ MAF_TEXT_MISSING_CODES: Mapping[str, Mapping[str, str]] = MappingProxyType(
 ``Unknown`` as a gene symbol (V:1806-1810), ``NULL`` and ``NA`` as an amino-acid change
 (V:1637). A padded ``NA`` or ``Unknown`` symbol, which the reference strips first, is refused on
 a validated row (``PADDED_VALUE``, D444)."""
+MAF_SPELLED_MISSING = (
+    "The spellings the pack reads as no value in this column, whatever the rows hold: every ASCII "
+    "case of unknown, NA, N/A and null (D444); cBioPortal's validator reads them as values"
+)
+MAF_SPELLED_MISSING_CODES: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        column: MappingProxyType(dict.fromkeys(sorted(spellings), "UNKNOWN"))
+        for column, spellings in MISSING_SPELLINGS.items()
+    }
+)
+"""``Variant_Classification``'s and ``Mutation_Status``'s missing codes, each of the 152 spellings
+of ``mutation.MISSING_FAMILY`` (D444, M4.2b-2b-ii): declared in every MAF study, ``imported``. A
+look-alike of one (``UNKNOWN `` padded, a fullwidth ``NA``, a blank-looking cell) is refused
+(``MISSING_SPELLING``)."""
 
 
 def _maf_column(curation: "_Curation", id: str, column: MafColumn) -> Descriptor:
@@ -303,6 +318,10 @@ def _maf_column(curation: "_Curation", id: str, column: MafColumn) -> Descriptor
     if text_codes is not None:
         found: dict[str, JsonValue] = dict(sorted(text_codes.items()))
         fields["missing_codes"] = (found, "imported", MAF_MISSING)
+    spelled = MAF_SPELLED_MISSING_CODES.get(column.name)
+    if spelled is not None:
+        family: dict[str, JsonValue] = dict(spelled)
+        fields["missing_codes"] = (family, "imported", MAF_SPELLED_MISSING)
     if column.name in IDENTIFIERS:
         fields["identifier"] = (True, "imported", MAF_SAMPLE)
     if column.name == HUGO:
