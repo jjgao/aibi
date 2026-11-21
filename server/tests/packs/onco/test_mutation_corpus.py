@@ -28,6 +28,7 @@ run this module with ``AIBI_RECORD_MUTATION_OUTCOMES=1`` and review the differen
 
 import ast
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -83,6 +84,7 @@ SAME_AS: Mapping[str, frozenset[str]] = {
     "NCBI_BUILD": frozenset({"ncbi-build"}),
     "NORMAL_SAMPLE": frozenset({"normal-sample"}),
     "PADDED_VALUE": frozenset(),
+    "MISSING_SPELLING": frozenset(),
     "META_VALUE": frozenset({"type-meta"}),
     "META_FILE": frozenset({"meta-type"}),
     "DUPLICATE_STABLE_ID": frozenset({"duplicate-stable-id"}),
@@ -149,6 +151,7 @@ _ITEMS = (
     ("CASE_LIST", STRICTER),
     ("NO_SEQUENCED_LIST", SAME),
     ("TOO_MANY_COLUMNS", STRICTER),
+    ("MISSING_SPELLING", STRICTER),
 )
 ITEMS: Mapping[tuple[str, str], str] = {
     (f"onco.{code}", kind): f"(M{number}) {kind}: [{code}]"
@@ -453,6 +456,15 @@ INVENTORY: frozenset[tuple[str, str, str]] = frozenset(
         ("onco.REPEATED_HEADER", "the line repeats the column names", "same outcome"),
         ("onco.REQUIRED_VALUE", "the required value is blank", "same outcome"),
         (
+            "onco.MISSING_SPELLING",
+            (
+                "the value looks blank, or reads as a spelling of no value once case, width, "
+                "spaces and invisible code points are set aside, but is not one of the column's "
+                "own spellings of no value, which the published column would keep as a value"
+            ),
+            "stricter",
+        ),
+        (
             "onco.ROW_WIDTH",
             "the line does not have as many fields as there are column names",
             "same outcome",
@@ -664,19 +676,20 @@ def model() -> ModuleType:
 LINES = re.compile(r"\r\n|\n|\r")
 
 
-def symbols(cell: Mapping[str, Any]) -> list[str]:
-    """Every ``Hugo_Symbol`` cell of every data row of the cell's MAFs, as written: a file of the
-    cell, no meta file or case list, whose first line not starting with ``#`` (past a byte order
-    mark) holds a column named ``Hugo_Symbol``; a row too short for that column has none."""
+def symbols(cell: Mapping[str, Any], column: str = "Hugo_Symbol") -> list[str]:
+    """Every ``Hugo_Symbol`` cell (or ``column``'s) of every data row of the cell's MAFs, as
+    written: a file of the cell, no meta file or case list, whose first line not starting with
+    ``#`` (past a byte order mark) holds a column of that name (its first); a row too short for
+    that column has none."""
     found: list[str] = []
     for name, content in cell.items():
         if not isinstance(content, bytes) or name.startswith(("meta_", "case_lists/")):
             continue
         lines = LINES.split(content.decode("utf-8", "replace").removeprefix("\ufeff"))
         rows = [line for line in lines if not line.startswith("#")]
-        if not rows or "Hugo_Symbol" not in rows[0].split("\t"):
+        if not rows or column not in rows[0].split("\t"):
             continue
-        at = rows[0].split("\t").index("Hugo_Symbol")
+        at = rows[0].split("\t").index(column)
         found += [fields[at] for line in rows[1:] if len(fields := line.split("\t")) > at]
     return found
 
@@ -747,6 +760,106 @@ edged symbol or not, written here: a symbol blank by ``str.strip()`` (a space, U
 ``NA`` and ``Unknown``, and U+200B alone are refused; an empty symbol is not edged."""
 
 
+SPELLING = (
+    "the value looks blank, or reads as a spelling of no value once case, width, spaces and "
+    "invisible code points are set aside, but is not one of the column's own spellings of no "
+    "value, which the published column would keep as a value"
+)
+"""The look-alike's reason (M4.2b-2b-ii): held, as the edged symbol is, to a predicate written
+here (``spelled_cell``)."""
+SPELLED_FAMILY = frozenset(
+    "".join(spelled)
+    for word in ("unknown", "na", "n/a", "null")
+    for spelled in itertools.product(*({c.lower(), c.upper()} for c in word))
+)
+"""D444's 152 spellings of no value of the class and the status: every ASCII case of the four
+words, by ``itertools.product`` (written here, never read from the pack)."""
+SPELLED_COLUMNS: Mapping[str, tuple[frozenset[str], tuple[str, ...]]] = {
+    "Hugo_Symbol": (frozenset({"NA", "Unknown"}), ("unknown", "na")),
+    "Variant_Classification": (SPELLED_FAMILY, ("unknown", "na", "n/a", "null")),
+    "Mutation_Status": (SPELLED_FAMILY, ("unknown", "na", "n/a", "null")),
+}
+"""D444's three columns of the look-alike, each with its exact spellings and its words."""
+
+
+@cache
+def spelled_cell(cell: str) -> bool:
+    """The predicate of the look-alike (M4.2b-2b-ii), written from D444 and the test's model, never
+    from ``mutation.py``: some data row of the cell's MAF, validated or skipped, has in one of
+    ``SPELLED_COLUMNS`` a cell the model reads as a look-alike (``symbol_oracle.lookalike``)."""
+    files = corpus().CELLS[cell]
+    return any(
+        model().lookalike(value, exact, words)
+        for column, (exact, words) in SPELLED_COLUMNS.items()
+        for value in symbols(files, column)
+    )
+
+
+SPELLING_REFUSED = frozenset(
+    {
+        "fullwidth-na",
+        "kelvin-unknown",
+        "square-na",
+        "zwj-na",
+        "padded-upper",
+        "zwsp",
+        "space",
+        "braille",
+        "fullwidth-null",
+    }
+)
+"""The ``spelling`` generator's values refused as look-alikes in the class and the status, written
+here from each value's class (review m1's lesson): a fullwidth, Kelvin, squared or joined spelling,
+a padded one, and a cell that looks blank."""
+SYMBOL_SPELLING_REFUSED = frozenset(
+    {"fullwidth-na", "kelvin-unknown", "square-na", "zwj-na", "lower-na", "mixed-unknown"}
+)
+"""Those refused as look-alikes in ``Hugo_Symbol``: its words are ``na`` and ``unknown`` alone,
+and its exact spellings ``NA`` and ``Unknown``, so ``na`` and ``uNkNoWn`` are look-alikes there."""
+SYMBOL_EDGED = frozenset({"padded-upper", "zwsp", "braille", "padded-somatic", "space"})
+"""Those the edged symbol refuses first in ``Hugo_Symbol`` (but a space on a validated row, which
+is blank: ``REQUIRED_VALUE``)."""
+
+
+def spelling_wanted(case: str) -> str:
+    """A ``spelling`` cell's outcome, from its column, value and row by the literals above."""
+    column, value, row = case.split("_")
+    if value == "space" and row == "valid" and column != "status":
+        return "onco.REQUIRED_VALUE|the required value is blank"
+    if column == "symbol":
+        if value in SYMBOL_EDGED:
+            return f"onco.PADDED_VALUE|{EDGED}"
+        refused = value in SYMBOL_SPELLING_REFUSED
+    else:
+        refused = value in SPELLING_REFUSED
+    return f"onco.MISSING_SPELLING|{SPELLING}" if refused else "ok"
+
+
+def spelling_problems(cell: str, found: str) -> list[str]:
+    """The look-alike's item against its predicate and the live outcome, as ``symbol_problems``
+    holds the edged symbol's: a refusal of it where the predicate does not hold or the reference
+    does not accept the cell, an accepted cell the predicate holds for; and a cell of the
+    ``spelling`` generator whose outcome is not its literal (``spelling_wanted``), or whose
+    predicate disagrees with a literal of a look-alike refused or a value accepted."""
+    problems: list[str] = []
+    spelled = spelled_cell(cell)
+    if found.partition("|")[2] == SPELLING:
+        if not spelled:
+            problems.append(f"{cell}: refused as a look-alike, and no cell of it is one")
+        if not accepted_by_reference(cell):
+            problems.append(f"{cell}: refused as a look-alike, and the reference refuses it")
+    elif found == "ok" and spelled:
+        problems.append(f"{cell}: accepted, and a cell of it is a look-alike")
+    if not cell.startswith("spelling:"):
+        return problems
+    wanted = spelling_wanted(cell.split(":", 1)[1])
+    if found != wanted:
+        problems.append(f"{cell}: {found!r} is not the class's {wanted!r}")
+    if (wanted.endswith(SPELLING) and not spelled) or (wanted == "ok" and spelled):
+        problems.append(f"{cell}: the predicate says {spelled}, the cell's class {wanted!r}")
+    return problems
+
+
 def explain(outcomes: Mapping[str, str], cells: Sequence[str]) -> list[str]:
     """Why the leniency map does not explain ``outcomes`` over ``cells``, one line a problem: a
     refusal whose ``(code, kind)`` is no item, a pack refusal whose reason matches no template or
@@ -758,6 +871,7 @@ def explain(outcomes: Mapping[str, str], cells: Sequence[str]) -> list[str]:
         found = outcomes[cell]
         recorded = REFERENCE[cell]
         problems += symbol_problems(cell, found)
+        problems += spelling_problems(cell, found)
         if found == "ok":
             if recorded["crash"]:
                 problems.append(f"{cell}: accepted, and the reference crashed")
@@ -861,6 +975,7 @@ READER_CODES = frozenset(
         "NCBI_BUILD",
         "NORMAL_SAMPLE",
         "PADDED_VALUE",
+        "MISSING_SPELLING",
         "CASE_LIST",
     }
 )
@@ -938,7 +1053,7 @@ def test_d444_lists_the_inventory_and_the_corpus_size() -> None:
     for template in templates:
         assert f"`{in_d444(template)}`" in row, template
     assert f"a corpus of {len(CELL_IDS)} cells" in row
-    (changelog,) = [line for line in text.splitlines() if line.startswith("- **v0.8.108**")]
+    (changelog,) = [line for line in text.splitlines() if line.startswith("- **v0.8.110**")]
     assert f"held by {len(CELL_IDS)} generated cells" in changelog
 
 
@@ -1165,3 +1280,133 @@ def test_narrowing_the_edged_symbol_fails_the_map(
     }
     assert fresh != {cell: OUTCOMES[cell] for cell in cells}, narrowed
     assert judged({**OUTCOMES, **fresh}) != [], narrowed
+
+
+SPELLING_CELLS = [cell for cell in CELL_IDS if cell.startswith("spelling:")]
+
+
+def test_the_reference_accepts_every_look_alike() -> None:
+    """M4.2b-2b-ii, the live outcome the stricter item reads: on the pinned reference, offline,
+    every cell of the ``spelling`` generator exits 3 with no error and no crash, but a lone space
+    on a validated row in the class and the symbol, which it reads as blank (``blank-required``);
+    it warns of a class outside the format's list and of a status outside its own, and loads the
+    row. The generator covers the three columns on a validated and a skipped row."""
+    blank = {"spelling:class_space_valid", "spelling:symbol_space_valid"}
+    for cell in SPELLING_CELLS:
+        if cell in blank:
+            wanted = {"crash": False, "errors": [["blank-required", "data_mutations.txt"]], "rc": 1}
+        else:
+            wanted = {"crash": False, "errors": [], "rc": 3}
+        assert REFERENCE[cell] == wanted, cell
+    shapes = {(cell.split(":")[1].split("_")[0], cell.split("_")[-1]) for cell in SPELLING_CELLS}
+    assert shapes == {
+        (column, row) for column in ("class", "status", "symbol") for row in ("valid", "skipped")
+    }
+    assert len(SPELLING_CELLS) == 90
+
+
+@pytest.mark.parametrize(
+    "narrowed",
+    [
+        "deleted",
+        "validated",
+        "class",
+        "status",
+        "symbol",
+        "casefold",
+        "nfkc",
+        "removal",
+        "strip",
+        "exact",
+    ],
+)
+def test_narrowing_the_look_alike_fails_the_map(
+    narrowed: str, onco: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4.2b-2b-ii: the look-alike's check narrowed or deleted, and the cells it refused
+    re-imported (as a re-recording would), the map alone reports a problem: the check deleted;
+    checked on validated rows alone; with the class, the status or the symbol column left out;
+    N without casefold; without NFKC; without deleting the ignorable and unsafe code points; N as
+    ``str.strip()`` and ``lower()``; and the column's exact spellings refused too."""
+    mutation = importlib.import_module("aibi.packs.onco.mutation")
+    normal_form = mutation.normal_form
+    lookalike = mutation.lookalike
+    setup = mutation._Reading.setup
+    checked = mutation._Reading.checked
+    columns = {
+        "class": "Variant_Classification",
+        "status": "Mutation_Status",
+        "symbol": "Hugo_Symbol",
+    }
+
+    def removed(cell: str) -> str:
+        return "".join(c for c in cell if not mutation._removable(ord(c)))
+
+    def narrow_normal(cell: str) -> str | None:
+        if narrowed == "strip":
+            return cell.strip().lower()
+        if narrowed == "removal":
+            folded = unicodedata.normalize("NFKC", cell.strip()).casefold()
+            return unicodedata.normalize("NFKC", folded)
+        if normal_form(cell) is None:
+            return None
+        if narrowed == "casefold":
+            return unicodedata.normalize("NFKC", removed(cell).strip())
+        if narrowed == "nfkc":
+            return removed(cell).strip().casefold()
+        return normal_form(cell)
+
+    def narrow(cell: str, exact: frozenset[str], words: tuple[str, ...]) -> bool:
+        if narrowed == "deleted":
+            return False
+        if narrowed == "exact":
+            return cell != "" and (lookalike(cell, exact, words) or cell in exact)
+        if cell == "" or cell in exact:
+            return False
+        found = narrow_normal(cell)
+        return found is not None and (found == "" or found in words)
+
+    def narrow_setup(self: Any, names: list[str]) -> None:
+        setup(self, names)
+        if narrowed in columns:
+            left = self.at.get(columns[narrowed])
+            self.spellings = [item for item in self.spellings if item[0] != left]
+
+    def validated_only(self: Any, fields: list[str]) -> Any:
+        if narrowed == "validated" and self.skipped(fields):
+            spellings, self.spellings = self.spellings, []
+            try:
+                return checked(self, fields)
+            finally:
+                self.spellings = spellings
+        return checked(self, fields)
+
+    monkeypatch.setattr(mutation, "lookalike", narrow)
+    monkeypatch.setattr(mutation._Reading, "setup", narrow_setup)
+    monkeypatch.setattr(mutation._Reading, "checked", validated_only)
+    cells = [cell for cell in CELL_IDS if OUTCOMES[cell].endswith(SPELLING)]
+    if narrowed == "exact":
+        cells = SPELLING_CELLS
+    fresh = {
+        cell: outcome(onco, build(tmp_path / str(index), corpus().CELLS[cell]))
+        for index, cell in enumerate(cells)
+    }
+    assert fresh != {cell: OUTCOMES[cell] for cell in cells}, narrowed
+    assert judged({**OUTCOMES, **fresh}) != [], narrowed
+
+
+def test_the_judges_report_a_refused_cell_accepted() -> None:
+    """Review r2 minor 2: each predicate's own arm, outside the ``spelling`` and ``symbol``
+    generators' literals: every cell refused as a look-alike, or as an edged symbol, given
+    ``ok`` instead (as a re-recording without the check would), is reported by its judge as
+    accepted while a cell of it is one, in those words."""
+    spelled = [cell for cell in CELL_IDS if OUTCOMES[cell].endswith(SPELLING)]
+    edged = [cell for cell in CELL_IDS if OUTCOMES[cell].endswith(EDGED)]
+    assert spelled
+    assert edged
+    for cell in spelled:
+        wanted = f"{cell}: accepted, and a cell of it is a look-alike"
+        assert wanted in spelling_problems(cell, "ok"), cell
+    for cell in edged:
+        wanted = f"{cell}: accepted, and a symbol of it is edged"
+        assert wanted in symbol_problems(cell, "ok"), cell

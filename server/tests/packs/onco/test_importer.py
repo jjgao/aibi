@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.8.0"
+BY = "importer:onco@0.9.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:

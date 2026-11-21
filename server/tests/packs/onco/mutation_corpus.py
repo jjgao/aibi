@@ -30,7 +30,10 @@ cell's id to it; an id is ``<generator>:<case>``. The generators:
 - ``list``: a case list's keys, values, ids, bytes and file names, and the ``case_lists``
   directory itself;
 - ``symbol``: a ``Hugo_Symbol`` with a code point of each class of a padded symbol (and of text)
-  before, after, around or inside it, on a validated and on a skipped row (M4.2b-2b-i).
+  before, after, around or inside it, on a validated and on a skipped row (M4.2b-2b-i);
+- ``spelling``: a ``Variant_Classification``, ``Mutation_Status`` or ``Hugo_Symbol`` that is a
+  look-alike of a spelling of no value, an exact spelling of one, or a value, on a validated and
+  on a skipped row (M4.2b-2b-ii).
 """
 
 from collections.abc import Callable, Mapping
@@ -1042,6 +1045,48 @@ SKIPPED_SYMBOLS: Mapping[str, str] = {
 ``str.strip()``, empty, a padded spelling of no value, an invisible code point alone."""
 
 
+SPELLING_VALUES: Mapping[str, str] = {
+    "fullwidth-na": "\uff2e\uff21",
+    "kelvin-unknown": "Un\u212anown",
+    "square-na": "\u3381",
+    "zwj-na": "N\u200dA",
+    "padded-upper": "UNKNOWN ",
+    "zwsp": "\u200b",
+    "space": " ",
+    "braille": "\u2800",
+    "fullwidth-null": "\uff4e\uff55\uff4c\uff4c",
+    "lower-na": "na",
+    "mixed-unknown": "uNkNoWn",
+    "null": "null",
+    "inner-space": "N A",
+    "none": "None",
+    "padded-somatic": " Somatic",
+}
+"""M4.2b-2b-ii (D444): a value of a class of D444's spellings of no value: a look-alike (a
+fullwidth ``NA``, ``Unknown`` with a Kelvin sign, U+3381, ``NA`` with an inner zero-width joiner,
+``UNKNOWN`` padded, U+200B, a space or U+2800 alone, a fullwidth ``null``), one of the 152 exact
+spellings or of the symbol's words (``na``, ``uNkNoWn``, ``null``), and values (``N A``, ``None``,
+`` Somatic``)."""
+SPELLING_COLUMNS: Mapping[str, tuple[str, Mapping[str, str]]] = {
+    "class": ("Variant_Classification", {"Hugo_Symbol": "Unknown", "Entrez_Gene_Id": "0"}),
+    "status": ("Mutation_Status", {"Variant_Classification": "Silent"}),
+    "symbol": ("Hugo_Symbol", {"Variant_Classification": "Silent"}),
+}
+"""Each column a look-alike is refused in, and the change that makes a row one the reference
+skips: ``Unknown`` with Entrez ``0`` for the class (whose own value is the cell), ``Silent``
+otherwise."""
+
+
+def _spellings() -> None:
+    """M4.2b-2b-ii: each of ``SPELLING_VALUES`` in each column of ``SPELLING_COLUMNS``, on a row the
+    reference validates and on one it skips."""
+    for column, (name, skipped) in SPELLING_COLUMNS.items():
+        for value_name, value in SPELLING_VALUES.items():
+            for row_name, changes in (("valid", {}), ("skipped", skipped)):
+                changed = {**R1, **changes, name: value}
+                cell("spelling", f"{column}_{value_name}_{row_name}", data(maf([R2, changed])))
+
+
 GENERATORS: tuple[Callable[[], None], ...] = (
     _bytes,
     _header,
@@ -1052,6 +1097,7 @@ GENERATORS: tuple[Callable[[], None], ...] = (
     _study_meta,
     _dimensions,
     _symbols,
+    _spellings,
 )
 for _generator in GENERATORS:
     _generator()

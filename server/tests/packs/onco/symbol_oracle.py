@@ -19,6 +19,12 @@ A code point **pads** a symbol at its first or last place when it is
 
 The model is Unicode 15.0's (``UNIDATA``), the pinned Python's: under another version the tests that
 read it skip, as the test of ``visible-form.json`` does.
+
+**The normal form** (D444, M4.2b-2b-ii): ``normal`` is N, unbounded, as D444 writes it,
+``NFKC(casefold(NFKC(strip_edges(remove_ignorable(x)))))``: ``remove_ignorable`` deletes every
+code point that is ``unsafe`` or ``default_ignorable`` wherever it is, ``strip_edges`` strips
+whitespace by ``str.strip()`` and U+2800 at the two ends, then NFKC, casefold and NFKC again, over
+the whole cell, with no bound. ``lookalike`` is the rule a look-alike of no value is refused by.
 """
 
 import unicodedata
@@ -136,3 +142,43 @@ def class_of(point: int) -> str:
     if default_ignorable(point):
         return "ignorable"
     return "text"
+
+
+def removable(point: int) -> bool:
+    """Whether N deletes the code point wherever it is: D312's unsafe class or default-ignorable."""
+    return unsafe(point) or default_ignorable(point)
+
+
+def edge_space(point: int) -> bool:
+    """Whether N strips the code point at an end (when it is not ``removable``)."""
+    return whitespace(point) or point == BRAILLE_BLANK
+
+
+def normal(cell: str, removed: frozenset[int] | None = None) -> str:
+    """N of ``cell``, unbounded; ``removed``, where given, is the set of ``removable`` code points
+    (a caller that reads many cells computes it once)."""
+    if removed is None:
+        kept = "".join(c for c in cell if not removable(ord(c)))
+    else:
+        kept = "".join(c for c in cell if ord(c) not in removed)
+    start, end = 0, len(kept)
+    while start < end and edge_space(ord(kept[start])):
+        start += 1
+    while end > start and edge_space(ord(kept[end - 1])):
+        end -= 1
+    folded = unicodedata.normalize("NFKC", kept[start:end]).casefold()
+    return unicodedata.normalize("NFKC", folded)
+
+
+def lookalike(
+    cell: str,
+    exact: frozenset[str],
+    words: tuple[str, ...],
+    removed: frozenset[int] | None = None,
+) -> bool:
+    """D444's look-alike of no value: a cell that is not empty, is none of the column's ``exact``
+    spellings, and whose N is empty or one of ``words``."""
+    if cell == "" or cell in exact:
+        return False
+    found = normal(cell, removed)
+    return found == "" or found in words

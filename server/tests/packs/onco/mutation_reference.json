@@ -6677,6 +6677,466 @@
 "errors": [],
 "rc": 3
 },
+"spelling:class_braille_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_braille_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_fullwidth-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_fullwidth-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_fullwidth-null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_fullwidth-null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_inner-space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_inner-space_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_kelvin-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_kelvin-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_lower-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_lower-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_mixed-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_mixed-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_none_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_none_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_padded-somatic_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_padded-somatic_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_padded-upper_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_padded-upper_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_space_valid": {
+"crash": false,
+"errors": [
+[
+"blank-required",
+"data_mutations.txt"
+]
+],
+"rc": 1
+},
+"spelling:class_square-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_square-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_zwj-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_zwj-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_zwsp_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:class_zwsp_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_braille_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_braille_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_fullwidth-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_fullwidth-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_fullwidth-null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_fullwidth-null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_inner-space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_inner-space_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_kelvin-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_kelvin-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_lower-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_lower-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_mixed-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_mixed-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_none_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_none_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_padded-somatic_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_padded-somatic_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_padded-upper_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_padded-upper_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_space_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_square-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_square-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_zwj-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_zwj-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_zwsp_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:status_zwsp_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_braille_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_braille_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_fullwidth-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_fullwidth-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_fullwidth-null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_fullwidth-null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_inner-space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_inner-space_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_kelvin-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_kelvin-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_lower-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_lower-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_mixed-unknown_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_mixed-unknown_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_none_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_none_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_null_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_null_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_padded-somatic_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_padded-somatic_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_padded-upper_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_padded-upper_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_space_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_space_valid": {
+"crash": false,
+"errors": [
+[
+"blank-required",
+"data_mutations.txt"
+]
+],
+"rc": 1
+},
+"spelling:symbol_square-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_square-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_zwj-na_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_zwj-na_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_zwsp_skipped": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
+"spelling:symbol_zwsp_valid": {
+"crash": false,
+"errors": [],
+"rc": 3
+},
 "study:global_TRUE_all": {
 "crash": false,
 "errors": [
