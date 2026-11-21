@@ -251,6 +251,25 @@ the budget in the same PR, saying why.
   `git rebase --onto main <parent branch> <child branch>` (the parent's branch still holds the
   commits the squash replaced), and push; retargeting alone doesn't re-run CI.
 
+## Real data for plans and probes
+
+The owner's standing permission (2026-11-21): real public cBioPortal data may be read to plan and to
+probe, never to ship.
+
+- **Gene panel definitions:** `https://github.com/cBioPortal/datahub/tree/master/reference_data/gene_panels`
+  (63 files, `data_gene_panel_<name>.txt`, including the five msk_chord panels `impact341`, `impact410`,
+  `impact468`, `impact505` and `heme400`). The files are Git LFS objects: a clone (`add_repo` with read
+  access, then a sparse `GIT_LFS_SKIP_SMUDGE=1` clone) holds only pointer stubs, so fetch the bytes from
+  `https://media.githubusercontent.com/media/cBioPortal/datahub/master/reference_data/gene_panels/<file>`.
+- **Study data (clinical, MAF, SV, CNA, panel matrix, derived tables):** through the cBioPortal MCP server
+  (`get_study_guide`, `clickhouse_list_table_columns`, `clickhouse_run_select_query`) when it is connected
+  and authorised; the datahub study files are LFS stubs too and are fetched the same way.
+- **Read the real files before settling a grammar, a bound or a refusal that a real study would meet** (the
+  five panel files each carry a `number_of_profiled_coding_base_pairs` key that a first plan refused).
+  State in the plan and the PR which outcomes the real data decides and which stay unknown.
+- **Never check real study data in** (CC BY-NC-ND 4.0: the probe, not the repository): keep it in the
+  scratchpad, and let tests use synthetic fixtures that have the real files' shapes.
+
 ## Conventions
 
 - Pydantic models in `core/schema/` are the single definition of every descriptor, document and
