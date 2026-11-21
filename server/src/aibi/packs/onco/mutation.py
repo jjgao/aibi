@@ -70,7 +70,18 @@ refusal gives after the place, and which the corpus holds check by check (D444):
    ``Default_Ignorable_Code_Point`` (``edged``), which the reference accepts (it strips the
    whitespace, V:1806, and keeps the rest) and the core would keep as written, a symbol no
    question names; a code point inside the symbol is text. On a row the reference skips it is
-   the one check of the symbol.
+   the one check of the symbol. Last, on **every** row, after each column's other checks:
+   ``MISSING_SPELLING`` (stricter, D444, M4.2b-2b-ii), a look-alike of no value
+   (``lookalike``): a ``Hugo_Symbol``, ``Variant_Classification`` or ``Mutation_Status`` cell,
+   not empty and none of the column's exact spellings of no value (the symbol's ``NA`` and
+   ``Unknown``, ``MISSING_FAMILY``'s 152 for the other two), whose normal form (``normal_form``)
+   is empty (it looks blank) or one of the column's words, which the reference reads as a value
+   and the core would keep as written beside the spellings it reads as missing.
+
+**Spellings of no value** (D444, M4.2b-2b-ii). ``Variant_Classification`` and ``Mutation_Status``
+declare every ASCII case of ``unknown``, ``na``, ``n/a`` and ``null`` (``MISSING_FAMILY``) as
+missing codes, whatever the rows hold (``build``), and D228's count leaves them out as the core's
+does: a cell of one is neither present nor a distinct value.
 
 **The skip predicate** (V:2267-2291): a row is skipped when its ``Hugo_Symbol`` is exactly
 ``Unknown`` and its ``Entrez_Gene_Id`` exactly ``0`` (``0`` when the file has no such column:
@@ -95,8 +106,12 @@ cache past a read (D438).
 
 import bisect
 import re
+import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from functools import cache
+from types import MappingProxyType
 
 from aibi.core.importers.infer import CATEGORY_VALUES
 from aibi.core.schema.descriptors import ParseSettings
@@ -143,10 +158,10 @@ CATEGORICAL = (
     "Validation_Status",
 )
 """The columns whose values the MAF format enumerates (or the reference checks against a list,
-V:2222-2240, V:2299, V:2420): a ``category`` by D228's rule where their cells allow, else a
-``string``. Every other column is a ``string``; no value of any of them is mapped to a concept's
-value (``Variant_Classification`` keeps its own values: the public probe of D444 found values
-outside the format's list)."""
+V:2222-2240, V:2299, V:2420): a ``category`` by D228's rule where their cells allow (a cell of
+``MISSING_SPELLINGS`` counted as missing), else a ``string``. Every other column is a ``string``;
+no value of any of them is mapped to a concept's value (``Variant_Classification`` keeps its own
+values: the public probe of D444 found values outside the format's list)."""
 IDENTIFIERS = (BARCODE, NORMAL)
 """The columns that hold sample ids (a normal barcode embeds the patient's: ``identifier``)."""
 SKIP_DEFAULT = ("Silent", "Intron", "3'UTR", "3'Flank", "5'UTR", "5'Flank", "IGR", "RNA")
@@ -170,6 +185,11 @@ EDGED_SYMBOL = (
     "the gene symbol starts or ends with whitespace, a control or format character, or a code "
     "point drawn as nothing, which cBioPortal accepts and the published column would keep as "
     "written"
+)
+MISSING_SPELLING = (
+    "the value looks blank, or reads as a spelling of no value once case, width, spaces and "
+    "invisible code points are set aside, but is not one of the column's own spellings of no "
+    "value, which the published column would keep as a value"
 )
 CORE_SPACE = " \t\r\n\f\v"
 CORE_DIGITS = re.compile(r"[+-]?[0-9]+")
@@ -203,6 +223,13 @@ IGNORABLE_FIRST = tuple(first for first, _ in DEFAULT_IGNORABLE)
 bisection reads."""
 
 
+def _removable(point: int) -> bool:
+    """Whether a code point is ``Default_Ignorable_Code_Point`` or of D312's unsafe class, as
+    ``aibi.core.schema.visible`` holds them (no table of the pack's own)."""
+    at = bisect.bisect_right(IGNORABLE_FIRST, point) - 1
+    return (at >= 0 and point <= DEFAULT_IGNORABLE[at][1]) or unsafe_point(point)
+
+
 def edge_point(character: str) -> bool:
     """Whether a code point pads a ``Hugo_Symbol`` at its edge (D444): whitespace by
     ``str.strip()``, U+2800, D312's unsafe class or ``Default_Ignorable_Code_Point``, as
@@ -210,14 +237,165 @@ def edge_point(character: str) -> bool:
     point = ord(character)
     if character.isspace() or point == BRAILLE_BLANK:
         return True
-    at = bisect.bisect_right(IGNORABLE_FIRST, point) - 1
-    return (at >= 0 and point <= DEFAULT_IGNORABLE[at][1]) or unsafe_point(point)
+    return _removable(point)
 
 
 def edged(symbol: str) -> bool:
     """Whether a ``Hugo_Symbol`` cell's first or last code point is an ``edge_point``: a code
     point inside the symbol is text."""
     return symbol != "" and (edge_point(symbol[0]) or edge_point(symbol[-1]))
+
+
+STATUS = "Mutation_Status"
+MISSING_WORDS = ("unknown", "na", "n/a", "null")
+"""The four words whose every ASCII case is a spelling of no value of ``Variant_Classification``
+and ``Mutation_Status`` (D444, M4.2b-2b-ii)."""
+SYMBOL_WORDS = ("unknown", "na")
+"""The words a ``Hugo_Symbol`` look-alike is read against: the normal forms of its two spellings
+of no value, ``NA`` and ``Unknown`` (``PADDED_NULL_GENE``)."""
+
+
+def case_spellings(word: str) -> frozenset[str]:
+    """Every spelling of the lower-case ASCII ``word`` with each letter in either case: one bit of
+    a counter a letter, so ``unknown`` has 2**7 and ``n/a`` 2**2."""
+    letters = [at for at, character in enumerate(word) if character.isalpha()]
+    found: set[str] = set()
+    for mask in range(1 << len(letters)):
+        spelled = list(word)
+        for bit, at in enumerate(letters):
+            if mask >> bit & 1:
+                spelled[at] = spelled[at].upper()
+        found.add("".join(spelled))
+    return frozenset(found)
+
+
+MISSING_FAMILY: frozenset[str] = frozenset().union(*(case_spellings(w) for w in MISSING_WORDS))
+"""The 152 spellings of no value of ``Variant_Classification`` and ``Mutation_Status``: every
+ASCII case of ``unknown`` (128), ``na`` (4), ``n/a`` (4) and ``null`` (16), whatever the rows
+hold. Each column declares them all as missing codes (``build``), and its D228 count leaves them
+out."""
+MISSING_SPELLINGS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {CLASSIFICATION: MISSING_FAMILY, STATUS: MISSING_FAMILY}
+)
+"""The ``CATEGORICAL`` columns with spellings of no value, and those spellings: a cell of one
+is not counted present by D228's rule. The six other categorical columns have none."""
+
+REMOVABLE = 0
+EDGE_SPACE = 1
+KEPT = 2
+NORMAL_KEPT = 16
+"""The kept code points a look-alike's scan reads before it answers "not a look-alike": the normal
+form of every word of ``MISSING_WORDS`` is at most 7 code points, no kept code point normalises to
+nothing and composition never makes ASCII, so a cell with more kept code points is no look-alike
+(any bound of 7 or more gives the same verdicts)."""
+
+
+def point_class(character: str) -> int:
+    """A code point's class for the normal form (D444): ``REMOVABLE`` (default-ignorable or of
+    D312's unsafe class, deleted wherever it is; asked first), else ``EDGE_SPACE`` (whitespace by
+    ``str.strip()`` or U+2800, stripped at the two ends only), else ``KEPT``."""
+    point = ord(character)
+    if _removable(point):
+        return REMOVABLE
+    if character.isspace() or point == BRAILLE_BLANK:
+        return EDGE_SPACE
+    return KEPT
+
+
+def normal_form(cell: str) -> str | None:
+    """A cell's normal form N, ``NFKC(casefold(NFKC(strip_edges(remove_ignorable(cell)))))``
+    (D444), when it can be a look-alike, else ``None``: in one pass, each code point classed once
+    (``point_class``), a removable one skipped wherever it is, an edge space before the first kept
+    code point skipped, a run of edge spaces after one held pending and dropped at the end, but a
+    kept code point after a pending run answers ``None`` (N would hold an inner space, which no
+    word does), and so does the kept code point past ``NORMAL_KEPT``. NFKC and casefold read at
+    most ``NORMAL_KEPT`` code points; the work is linear in the cell."""
+    kept: list[str] = []
+    pending = False
+    for character in cell:
+        found = point_class(character)
+        if found == REMOVABLE:
+            continue
+        if found == EDGE_SPACE:
+            pending = bool(kept)
+            continue
+        if pending or len(kept) == NORMAL_KEPT:
+            return None
+        kept.append(character)
+    return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", "".join(kept)).casefold())
+
+
+def _class(ranges: list[tuple[int, int]]) -> str:
+    """A regular expression's character class body for inclusive code point ``ranges``."""
+    return "".join(f"\\U{first:08x}-\\U{last:08x}" for first, last in ranges)
+
+
+def _merged(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    found: list[tuple[int, int]] = []
+    for first, last in sorted(ranges):
+        if found and first <= found[-1][1] + 1:
+            found[-1] = (found[-1][0], max(found[-1][1], last))
+        else:
+            found.append((first, last))
+    return found
+
+
+SCANNED_PLANES = ((0x0000, 0x1FFFF), (0xE0000, 0xE0FFF))
+"""The code points the pre-pass's patterns are read from: planes 0 and 1 and the tags and
+variation selectors of plane 14. Every unsafe code point and every ``str.isspace()`` one is in
+them (planes 2 to 13 and 15 to 16 hold none under Unicode 15.0; ``test_missing_spellings``
+checks it over every code point under the interpreter's Unicode), and ``DEFAULT_IGNORABLE`` is
+taken whole, so that a scan of 135,168 code points builds the same classes as one of all."""
+
+
+@cache
+def _patterns() -> tuple[re.Pattern[str], str]:
+    """The pre-pass's pattern and characters, built once in a process at its first cell that is
+    not printable ASCII, by a scan of ``SCANNED_PLANES``: the removable code points
+    (``visible.DEFAULT_IGNORABLE`` and D312's unsafe class, ``visible.unsafe_point``, as
+    ``point_class`` asks ``_removable``), and the edge spaces (whitespace by ``str.isspace()`` and
+    U+2800, as ``point_class`` asks after it)."""
+    points = [point for first, last in SCANNED_PLANES for point in range(first, last + 1)]
+    unsafe = [(point, point) for point in points if unsafe_point(point)]
+    removable = _class(_merged([*DEFAULT_IGNORABLE, *unsafe]))
+    spaces = "".join(chr(point) for point in points if chr(point).isspace())
+    return re.compile(f"[{removable}]+"), spaces + chr(BRAILLE_BLANK)
+
+
+def trimmed(cell: str) -> str | None:
+    """The pre-pass of ``normal_form``, at C speed: the cell with its removable code points
+    deleted wherever they are and then its edge spaces stripped at the two ends, which
+    ``normal_form`` then reads, or ``None`` when that is longer than ``NORMAL_KEPT``, where
+    ``normal_form`` answers ``None`` too (its two ends are kept code points, so it holds more kept
+    code points than the bound, or an edge space between two kept ones). The classes are
+    ``point_class``'s, removable first: an edge space that is removable is deleted, and a
+    removable point inside a run of edge spaces leaves one run. A long cell costs a pass of the C
+    regular expression engine and a ``str.strip``, never one Python call a code point; its memory
+    is linear in the cell and transient (``re.sub`` gathers the pieces between removable runs, a
+    few times the cell for a cell of many short runs), and a cell is at most ``FIELD_CHARACTERS``
+    code points, read one row at a time."""
+    removable, edges = _patterns()
+    core = removable.sub("", cell).strip(edges)
+    return None if len(core) > NORMAL_KEPT else core
+
+
+def lookalike(cell: str, exact: frozenset[str], words: tuple[str, ...]) -> bool:
+    """Whether a cell is a look-alike of no value (D444): not empty, not one of the column's
+    ``exact`` spellings, and its normal form empty (it looks blank) or one of ``words``. A cell of
+    printable ASCII with no space, as a MAF's cells mostly are, is read by ``str.lower()``, which
+    is its normal form; any other by ``trimmed``, then ``normal_form`` on what it leaves (at most
+    ``NORMAL_KEPT`` code points), which is the cell's own normal form."""
+    if cell == "" or cell in exact:
+        return False
+    if cell.isascii() and cell.isprintable() and " " not in cell:
+        # no code point of it is removable or an edge space, and NFKC and casefold of ASCII are
+        # ``str.lower()``: N is the cell in lower case, never empty
+        return cell.lower() in words
+    core = trimmed(cell)
+    if core is None:
+        return False
+    found = normal_form(core)
+    return found is not None and (found == "" or found in words)
 
 
 AMINO_ACID_MOST = 255
@@ -406,6 +584,12 @@ class _Reading:
             c: at[c] for c in (DRIVER, DRIVER_ANNOTATION, TIERS, TIERS_ANNOTATION) if c in at
         }
         self.categorical = [at[c] for c in CATEGORICAL if c in at]
+        self.nulls = {at[c]: MISSING_SPELLINGS.get(c, frozenset()) for c in CATEGORICAL if c in at}
+        self.spellings = [(self.hugo, frozenset(PADDED_NULL_GENE), SYMBOL_WORDS)] + [
+            (at[c], MISSING_FAMILY, MISSING_WORDS) for c in (CLASSIFICATION, STATUS) if c in at
+        ]
+        """The columns a look-alike of no value is refused in, each with its exact spellings of
+        no value and the words a look-alike reads as (D444)."""
         self.distinct: dict[int, set[str | bytes]] = {index: set() for index in self.categorical}
         self.present: dict[int, int] = dict.fromkeys(self.categorical, 0)
         self.joined = TAB.join(names)
@@ -463,7 +647,7 @@ class _Reading:
                 self.cell = self.refuse(code, number, column + 1, reason)
         for index in self.categorical:
             cell = fields[index]
-            if cell == "":
+            if cell == "" or cell in self.nulls[index]:
                 continue
             self.present[index] += 1
             kept = self.distinct[index]
@@ -497,6 +681,9 @@ class _Reading:
             found.extend(self.validated(fields))
         if edged(fields[self.hugo]):
             found.append((self.hugo, "PADDED_VALUE", EDGED_SYMBOL))
+        for column, exact, words in self.spellings:
+            if lookalike(fields[column], exact, words):
+                found.append((column, "MISSING_SPELLING", MISSING_SPELLING))
         if not found:
             return None
         column, code, reason = min(found, key=lambda item: item[0])
