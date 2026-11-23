@@ -101,6 +101,14 @@ def names(path: Path) -> tuple[str, ...]:
         return tuple(pq.read_schema(file).names)
 
 
+def footer(path: Path) -> tuple[tuple[str, ...], int]:
+    """The columns a file stores, in order, and its rows over all its row groups, from its footer
+    alone."""
+    with open(path, "rb") as file:  # a file, never a dataset directory to discover
+        parquet = pq.ParquetFile(file)
+        return tuple(parquet.schema_arrow.names), parquet.metadata.num_rows
+
+
 def read_columns(source: bytes, names: Collection[str]) -> tuple[int, list[Column]]:
     """The file's row count, and those of ``names`` it has, in the file's order; only they are
     read and decompressed."""

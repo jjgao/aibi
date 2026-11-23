@@ -29,8 +29,10 @@ from typing import Any, cast
 
 import pytest
 from hypothesis.control import currently_in_test_context
+from tests.core.engine.forcing import GroupedPath, forced_compiler, listings_checked
 
 from aibi.core.engine import build
+from aibi.core.engine import sql as compiler
 from aibi.core.engine.canonical import Canonicalisation, canonicalise
 from aibi.core.engine.data import Release
 from aibi.core.engine.evaluate import CohortResult, evaluate
@@ -185,7 +187,10 @@ def city_descriptors(
                 }
             ),
         ),
-        table("inspection_checklists", ["inspection_id"], role="coverage"),
+        # Keyed by inspection and checklist, so that the generators can give an inspection two
+        # checklists: a parent of two groups, which grouped coverage's one-group path splits on
+        # (D449).
+        table("inspection_checklists", ["inspection_id", "checklist"], role="coverage"),
         column("inspection_checklists.inspection_id", "string"),
         column("inspection_checklists.checklist", "string"),
         table("checklist_items", ["checklist", "code"], role="coverage"),
@@ -316,7 +321,8 @@ def canonicalise_document(
 
 def release_blobs(release: Release, directory: Path) -> dict[str, tables.TableSource]:
     """Each table of a release in memory written as the store writes its blob (§12.2), under its
-    digest, and read back as a query reads it."""
+    digest, and read back as a query reads it, its rows from its footer as ``Store.sources``
+    reads them (D449)."""
     found: dict[str, tables.TableSource] = {}
     for descriptor in release.descriptors:
         if not isinstance(descriptor, TableDescriptor):
@@ -336,7 +342,8 @@ def release_blobs(release: Release, directory: Path) -> dict[str, tables.TableSo
         path = directory / hashlib.sha256(data).hexdigest()
         if not path.exists():
             path.write_bytes(data)
-        found[descriptor.id] = tables.TableSource(str(path), frozenset(parquet.names(path)))
+        names, n_rows = parquet.footer(path)
+        found[descriptor.id] = tables.TableSource(str(path), frozenset(names), n_rows)
     return found
 
 
@@ -696,3 +703,19 @@ def run(tmp_path_factory: pytest.TempPathFactory, sessions: Sessions) -> Callabl
         return found if currently_in_test_context() else checked(found, directory, sessions)
 
     return resolved
+
+
+@pytest.fixture(scope="module", params=["auto", "main"])
+def grouped_path(request: pytest.FixtureRequest) -> Iterator[str]:
+    """The module's differential tests run twice: as the server runs them, where the fixtures'
+    grouped coverage is inside the bound and takes the one-group path, and by main's path; and
+    every compile entry checks that the listings its decision counted are those it built."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(compiler, "_Compiler", listings_checked(request.param))
+        yield request.param
+
+
+@pytest.fixture
+def force(monkeypatch: pytest.MonkeyPatch) -> Callable[[GroupedPath], None]:
+    """Every compiler of the test takes the given path."""
+    return lambda path: monkeypatch.setattr(compiler, "_Compiler", forced_compiler(path))

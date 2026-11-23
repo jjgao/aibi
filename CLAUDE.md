@@ -45,8 +45,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   `list_leaf_kinds`, `run_analysis`); `core/mcp/` serves them at `/mcp`. `served.py` bounds what
   the two listings serve alike to every call, checked once by the loader for `check` and `serve`.
 - `core/engine/`: canonicalisation, ids and counts, the reference evaluator, the SQL compiler
-  (`sql.py`), the worker that runs a document's queries in a child process (the server's process
-  never loads DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).
+  (`sql.py`; `grouped.py` admits grouped coverage to its one-group path, D449), the worker
+  that runs a document's queries in a child process (the server's process never loads
+  DuckDB), readbacks, and the disclosure pass over cohort counts (`suppression.py`).
 - `core/analyses/`: the registry and applicability (a per-call index of the release, D420), phase 2
   of canonicalisation (`views.py`), result envelopes, charts, disclosure of predicate counts, and
   the analyses: `compare.existence`, `summary.distribution`, `summary.members`, `compare.columns`,
@@ -82,6 +83,9 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   matrices (`e2e/`: Playwright against the built bundles served by the real server; a token is
   entered with `locator.evaluate`, never `fill`, whose step title holds the value, and
   `scan-reporter.ts` fails the run on a secret in the report or in the run's output).
+- `tests/core/domain/`: grouped coverage's one-group path (D449) held to the evaluator over a
+  derived domain, and its cost cells against main's path; they carry the `domain` marker, which
+  `addopts` deselects, and CI runs them in a job of their own.
 - `tests/core/determinism/`: thread-count determinism tests (§9.3, D372) over an orchard of a
   million trees; they carry the `million` marker, which `addopts` deselects, and CI runs them in a
   job of their own.
@@ -159,11 +163,12 @@ uv run lint-imports      # core must not import packs; the service layers no web
 uv run pytest tests/core # the core suite must load no pack; it fails if one is loaded
 uv run pytest
 uv run pytest tests/core/determinism -m million  # a million rows: about 5 minutes and 4 GB
+uv run pytest tests/core/domain -m domain       # grouped coverage's domain and cost cells (D449)
 uv run pytest tests/core/measurement -m measurement -s  # by hand: page-load costs, ~4 minutes
 ```
 
-`addopts` deselects the `million` and `measurement` tests, so without `-m million` that directory
-selects nothing (pytest exits 5).
+`addopts` deselects the `million`, `measurement`, `mutation` and `domain` tests, so without
+`-m million` (`-m domain`) that directory selects nothing (pytest exits 5).
 
 Keep command output out of the context. Run each gate above quietly and read only the end, keeping
 pytest's exit status (a pipe to `tail` would hide it):

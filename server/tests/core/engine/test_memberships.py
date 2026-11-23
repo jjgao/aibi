@@ -46,6 +46,9 @@ from aibi.core.schema.loading import load_document
 from aibi.core.schema.semantics import ExclusionReason, Flag, Reason
 from aibi.core.store import parquet
 
+pytestmark = pytest.mark.usefixtures("grouped_path")
+"""Every test runs by both paths of grouped coverage (D449), whose fixtures are inside the bound."""
+
 City = Callable[..., Release]
 Doc = Callable[..., dict[str, Any]]
 Resolved = Callable[..., Resolution]
@@ -188,6 +191,11 @@ def city_data(draw: st.DrawFn) -> tuple[dict[str, list[dict[str, Any]]], dict[st
                 rows["inspection_checklists"].append(
                     {"inspection_id": inspection, "checklist": checklist}
                 )
+                second = pick([None, None, "basic", "temps", "all", "missing"])
+                if second is not None and second != checklist:  # a parent of two groups
+                    rows["inspection_checklists"].append(
+                        {"inspection_id": inspection, "checklist": second}
+                    )
             for _ in range(draw(st.integers(0, 2))):
                 rows["violations"].append(
                     {

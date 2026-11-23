@@ -81,6 +81,7 @@ from aibi.core.catalog.cohorts import (
     log_full,
     named_count,
     parameters,
+    table_sources,
     withdrawn,
 )
 from aibi.core.catalog.service import DEADLINE, Catalog, Deadline, ToolRefused
@@ -556,8 +557,7 @@ def _analysed(catalog: Catalog, request: RunAnalysis, *, cached: bool) -> Analys
                     asked.append(
                         (members_of, [predicate.resolved for predicate in view.predicates])
                     )
-            manifests = sorted({cohort.release.manifest for cohort in cohorts.values()})
-            sources = {manifest: store.sources(manifest) for manifest in manifests}
+            sources = table_sources(catalog, found.canonical, cohorts.values())
             ran_views = (
                 _run(
                     [cohort.resolved for cohort in cohorts.values()],

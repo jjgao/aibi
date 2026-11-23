@@ -21,13 +21,13 @@ def test_version_comes_from_the_package_metadata() -> None:
     assert aibi.__version__ == version("aibi")
 
 
-def _marked(module: Path) -> bool:
-    """Whether a module assigns ``pytestmark = pytest.mark.million`` at its top level."""
+def _marked(module: Path, marker: str = "million") -> bool:
+    """Whether a module assigns ``pytestmark = pytest.mark.<marker>`` at its top level."""
     for node in ast.parse(module.read_text()).body:
         if isinstance(node, ast.Assign) and [ast.unparse(t) for t in node.targets] == [
             "pytestmark"
         ]:
-            return ast.unparse(node.value) == "pytest.mark.million"
+            return ast.unparse(node.value) == f"pytest.mark.{marker}"
     return False
 
 
@@ -46,7 +46,8 @@ def _steps(ci: str, job: str) -> list[list[str]]:
 
 def test_the_million_row_tests_are_deselected_by_default_and_run_by_a_ci_job_of_their_own() -> None:
     """D372: ``addopts`` deselects the ``million`` marker (and D422's ``measurement``, a run by
-    hand, and D438's ``mutation``, which a job of its own runs), which is registered; every module
+    hand, and D438's ``mutation`` and D449's ``domain``, which jobs of their own run), which is
+    registered; every module
     under ``tests/core/determinism`` but its conftests carries it at its top level (pytest
     collects ``*_test.py`` too, and subdirectories); CI's ``determinism`` job runs them with
     ``-m million`` in a step that always runs and fails the job, and a later step checks its
@@ -56,7 +57,10 @@ def test_the_million_row_tests_are_deselected_by_default_and_run_by_a_ci_job_of_
     ``test_every_core_test_runs_in_exactly_one_shard``)."""
     options = tomllib.loads((SERVER / "pyproject.toml").read_text())["tool"]["pytest"]
     given = options["ini_options"]["addopts"]
-    assert given[given.index("-m") + 1] == "not million and not measurement and not mutation"
+    assert (
+        given[given.index("-m") + 1]
+        == "not million and not measurement and not mutation and not domain"
+    )
     assert any(marker.startswith("million:") for marker in options["ini_options"]["markers"])
     modules = sorted((SERVER / "tests" / "core" / "determinism").rglob("*.py"))
     tests = [module for module in modules if module.name not in ("conftest.py", "__init__.py")]
@@ -89,6 +93,42 @@ def test_the_million_row_tests_are_deselected_by_default_and_run_by_a_ci_job_of_
     ]
     assert not re.search(r"\s-m|addopts", core["run"])
     assert not {"env", "shell"} & set(core)
+
+
+def test_the_domain_tests_are_deselected_by_default_and_run_by_a_ci_job_of_their_own() -> None:
+    """D449: ``addopts`` deselects the ``domain`` marker, which is registered; every module under
+    ``tests/core/domain`` but its conftests carries it at its top level; CI's ``domain`` job runs
+    them with ``-m domain`` in a step that always runs and fails the job, and a later step checks
+    its report holds a passing case of every test function there and nothing else
+    (``domain_report.py``, so that a run selecting none fails); and ``Server checks`` needs it."""
+    options = tomllib.loads((SERVER / "pyproject.toml").read_text())["tool"]["pytest"]
+    given = options["ini_options"]["addopts"]
+    assert "not domain" in given[given.index("-m") + 1].split(" and ")
+    assert any(marker.startswith("domain:") for marker in options["ini_options"]["markers"])
+    modules = sorted((SERVER / "tests" / "core" / "domain").rglob("*.py"))
+    tests = [module for module in modules if module.name not in ("conftest.py", "__init__.py")]
+    assert tests
+    assert [module.name for module in tests if not _marked(module, "domain")] == []
+    ci = CI.read_text()
+    [job, *steps] = _steps(ci, "domain")
+    assert not any(re.match(r"    (if|continue-on-error):", line) for line in job)
+    [step] = [
+        step
+        for step in steps
+        if any(
+            line.strip().startswith("uv run pytest tests/core/domain -m domain") for line in step
+        )
+    ]
+    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell):", line) for line in step)
+    assert not any("||" in line for line in step)
+    after = steps[steps.index(step) + 1 :]
+    [checked] = [
+        step
+        for step in after
+        if any("python3 ../.github/scripts/domain_report.py reports/" in line for line in step)
+    ]
+    assert not any(re.match(r"\s+-?\s*(if|continue-on-error|shell):", line) for line in checked)
+    assert "domain" in yaml.safe_load(ci)["jobs"]["server"]["needs"]
 
 
 WORDING_RUN = {
@@ -226,8 +266,8 @@ TOP_LEVEL = "tests/core/test_*.py"
 
 def _core_units() -> list[str]:
     """What the core shards must run between them, each once: every directory of ``tests/core``
-    that holds a test module (but ``determinism``, the ``determinism`` job's), and the modules at
-    its top level."""
+    that holds a test module (but ``determinism`` and ``domain``, their jobs'), and the modules
+    at its top level."""
     core = SERVER / "tests" / "core"
 
     def holds_tests(directory: Path) -> bool:
@@ -236,7 +276,9 @@ def _core_units() -> list[str]:
     units = [
         f"tests/core/{directory.name}"
         for directory in sorted(core.iterdir())
-        if directory.is_dir() and directory.name != "determinism" and holds_tests(directory)
+        if directory.is_dir()
+        and directory.name not in ("determinism", "domain")
+        and holds_tests(directory)
     ]
     return [*units, TOP_LEVEL] if any(core.glob("test_*.py")) else units
 
@@ -263,7 +305,7 @@ def test_every_core_test_runs_in_exactly_one_shard() -> None:
     assert not [directory for directory in core.glob("test_*") if directory.is_dir()]
 
 
-NEEDED = ("static", "core", "other")
+NEEDED = ("static", "core", "other", "domain")
 """The jobs the ``Server checks`` job stands for."""
 RESULTS = ("success", "failure", "cancelled", "skipped")
 """What a job the ``Server checks`` job needs can end as (``needs.<job>.result``)."""
@@ -338,7 +380,8 @@ def test_the_server_checks_stand_for_every_server_job() -> None:
 AGGREGATE_MUTANTS = {
     "the job is skipped when one it needs failed": ("    if: always()\n", ""),
     "the job runs on success alone": ("    if: always()\n", "    if: success()\n"),
-    "a job is not needed": ("needs: [static, core, other]", "needs: [static, core]"),
+    "a job is not needed": ("needs: [static, core, other, domain]", "needs: [static, core, other]"),
+    "the domain's result is not tested": (' && test "${DOMAIN}" = success', ""),
     "a result is not tested": (' && test "${OTHER}" = success', ""),
     "a failure is tolerated": ('test "${CORE}" = success', 'test "${CORE}" = success || true'),
     "a cancelled shard passes": ('test "${CORE}" = success', 'test "${CORE}" != failure'),
@@ -354,7 +397,7 @@ AGGREGATE_MUTANTS = {
     "the failure branch passes": ("            exit 1\n", "            exit 0\n"),
     "the failure is not annotated": (
         '            echo "::error title=Server checks::static ${STATIC}; core ${CORE}; '
-        'other ${OTHER}"\n',
+        'other ${OTHER}; domain ${DOMAIN}"\n',
         "",
     ),
     "the tests run one a line": (' && test "${CORE}"', '\n          test "${CORE}"'),

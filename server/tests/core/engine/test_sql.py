@@ -147,6 +147,11 @@ def city_data(draw: st.DrawFn) -> tuple[dict[str, list[dict[str, Any]]], dict[st
                 rows["inspection_checklists"].append(
                     {"inspection_id": inspection, "checklist": checklist}
                 )
+                second = pick([None, None, "basic", "temps", "all", "missing"])
+                if second is not None and second != checklist:  # a parent of two groups
+                    rows["inspection_checklists"].append(
+                        {"inspection_id": inspection, "checklist": second}
+                    )
             for _ in range(draw(st.integers(0, 2))):
                 rows["violations"].append(
                     {
@@ -633,6 +638,7 @@ def _agrees(found: Any, expected: Any) -> None:
 
 
 @EXAMPLES
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_the_compiler_gives_every_unit_the_evaluators_truth_value_reasons_and_flags(
     run: Runner, city: City, doc: Doc, sql: Sql, data: Any, extra: st.DataObject
@@ -647,6 +653,7 @@ def test_the_compiler_gives_every_unit_the_evaluators_truth_value_reasons_and_fl
 
 
 @FEWER
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_the_compiler_agrees_with_flags_spread_over_many_words(
     run: Runner, city: City, doc: Doc, sql: Sql, data: Any, extra: st.DataObject
@@ -664,6 +671,7 @@ def test_the_compiler_agrees_with_flags_spread_over_many_words(
 
 
 @FEWER
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_count_digests_from_the_compiler_equal_the_evaluators(
     canon: Canon, city: City, doc: Doc, sql: Sql, data: Any, extra: st.DataObject
@@ -682,6 +690,7 @@ def test_count_digests_from_the_compiler_equal_the_evaluators(
 
 
 @FEWER
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_a_crossing_by_the_compiler_counts_what_the_evaluator_s_truth_values_give(
     run: Runner, city: City, doc: Doc, crossed: Crossed, data: Any, extra: st.DataObject
@@ -719,6 +728,7 @@ def test_a_crossing_by_the_compiler_counts_what_the_evaluator_s_truth_values_giv
 
 
 @FEWER
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_variables_materialised_by_the_compiler_count_what_the_evaluator_gives_each_unit(
     city: City,
@@ -757,6 +767,7 @@ def test_variables_materialised_by_the_compiler_count_what_the_evaluator_gives_e
 
 
 @EXAMPLES
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_counts_of_rows_materialised_by_the_compiler_count_what_the_evaluator_reads_of_each_row(
     city: City,
@@ -803,6 +814,7 @@ def test_counts_of_rows_materialised_by_the_compiler_count_what_the_evaluator_re
 
 
 @FEWER
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_a_materialisation_counts_the_units_its_cohorts_share_as_the_evaluator_s_members_do(
     city: City,
@@ -913,6 +925,7 @@ def test_category_inputs_listed_by_the_compiler_give_what_the_evaluator_gives(
 
 
 @EXAMPLES
+@pytest.mark.usefixtures("grouped_path")
 @given(data=city_data(), extra=st.data())
 def test_category_variables_materialised_by_the_compiler_count_what_the_evaluator_gives(
     city: City,

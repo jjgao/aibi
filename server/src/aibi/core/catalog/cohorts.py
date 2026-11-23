@@ -52,7 +52,7 @@ are, and the tool call answers them ``INTERNAL_ERROR`` (``mcp.calls``).
 import copy
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -62,7 +62,13 @@ import aibi
 from aibi.core.analyses import views
 from aibi.core.analyses.views import CheckedView
 from aibi.core.catalog.service import ALTERNATIVES, DEADLINE, Catalog, Deadline, ToolRefused
-from aibi.core.engine.canonical import CanonicalCohort, Canonicalisation, canonicalise
+from aibi.core.engine import grouped
+from aibi.core.engine.canonical import (
+    CanonicalCohort,
+    Canonicalisation,
+    canonicalise,
+    setting_of,
+)
 from aibi.core.engine.counts import CountParts, count_parts, static_caveats
 from aibi.core.engine.data import Release
 from aibi.core.engine.queries import run_cohorts
@@ -116,6 +122,7 @@ from aibi.core.store.derivations import (
     WithdrawnReleaseError,
 )
 from aibi.core.store.store import Pin, StoreRefused
+from aibi.core.store.tables import TableSource
 
 ENGINE = f"aibi {aibi.__version__}"
 """The engine an output and an issuance name (§8.1, §12.2)."""
@@ -255,6 +262,22 @@ def _release(catalog: Catalog, pin: Pin, reference: str, found: _Releases) -> Re
     if resolution.label == "draft":
         found.floors[resolution.manifest] = catalog.published_k(pin, dataset)
     return None
+
+
+def table_sources(
+    catalog: Catalog, canonical: Canonicalisation, cohorts: Iterable[CanonicalCohort]
+) -> dict[str, dict[str, TableSource]]:
+    """The table blobs of the cohorts' releases, by manifest hash (``Store.sources``), each
+    table's rows clamped to its release's effective ``min_cell_count`` (``grouped.clamped``), so
+    that no count the catalogue withholds reaches the compiler (§8.4, D271, D449)."""
+    releases = {cohort.resolved.release.manifest: cohort.resolved.release for cohort in cohorts}
+    return {
+        manifest: grouped.clamped(
+            catalog.store.sources(manifest),
+            setting_of(release, catalog.floor, canonical.published.get(manifest)),
+        )
+        for manifest, release in sorted(releases.items())
+    }
 
 
 def withdrawn(labels: Sequence[str]) -> Refusal:
@@ -530,8 +553,7 @@ def count_cohort(catalog: Catalog, request: CountCohort) -> CohortCounts:
         if found.refusals or found.canonical is None:
             raise ToolRefused(found.refusals[:1])
         cohorts = by_name(found.canonical.cohorts)
-        manifests = sorted({cohort.release.manifest for cohort in cohorts})
-        sources = {manifest: store.sources(manifest) for manifest in manifests}
+        sources = table_sources(catalog, found.canonical, cohorts)
         ends = None if deadline is None else deadline.at - RECORD_SECONDS
         if ends is not None and time.monotonic() >= ends:
             raise late(cast(Deadline, deadline))

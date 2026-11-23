@@ -14,6 +14,9 @@ import pytest
 from aibi.core.engine.data import Release
 from aibi.core.schema.semantics import Flag
 
+pytestmark = pytest.mark.usefixtures("grouped_path")
+"""Every test runs by both paths of grouped coverage (D449), whose fixtures are inside the bound."""
+
 City = Callable[..., Release]
 Doc = Callable[..., dict[str, Any]]
 Runner = Callable[..., Any]

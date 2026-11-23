@@ -503,6 +503,13 @@ def intersection(
     )
 
 
+def setting_of(release: Release, floor: int | None, published: int | None) -> int | None:
+    """The effective ``min_cell_count`` of a release's cohorts under the deployment's ``floor``
+    and, for a draft, its latest published release's setting (D275): what each of its cohorts'
+    ``CohortIdentity`` carries, and the ``k`` its tables' rows are clamped to (D449)."""
+    return _setting_of(release, _effective(floor, published))
+
+
 def _setting_of(release: Release, floor: int | None) -> int | None:
     """The effective ``min_cell_count`` of a release's cohorts: the largest of ``floor`` and its
     dataset's setting (§8.4)."""

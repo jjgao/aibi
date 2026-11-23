@@ -333,15 +333,18 @@ class Store:
         return Release(found.dataset, manifest, self.descriptors(manifest), {})
 
     def sources(self, manifest: str) -> dict[str, TableSource]:
-        """Each table's blob, by table id, as a query reads it in place (D293): its path, and
-        the columns it stores. Each blob is verified as ``load`` verifies it (D221), once per
-        file (``BlobStore.verified``), so a damaged blob raises ``CorruptBlobError`` and a
-        missing one ``MissingBlobError`` rather than counting what it holds. A caller pins the
-        release first, for as long as its query runs (``pin``)."""
+        """Each table's blob, by table id, as a query reads it in place (D293): its path, the
+        columns it stores and its rows over all its row groups, from its footer (D449). Each
+        blob is verified as ``load`` verifies it (D221), once per file
+        (``BlobStore.verified``), so a damaged blob raises ``CorruptBlobError`` and a missing
+        one ``MissingBlobError`` rather than counting what it holds; the rows are the verified
+        blob's, so no caller chooses them. A caller pins the release first, for as long as its
+        query runs (``pin``)."""
         found: dict[str, TableSource] = {}
         for entry in self.manifest(manifest).tables:
             path = self.blobs.verified(entry.hash)
-            found[entry.id] = TableSource(str(path), frozenset(parquet.names(path)))
+            names, rows = parquet.footer(path)
+            found[entry.id] = TableSource(str(path), frozenset(names), rows)
         return found
 
     def pin(self, *, background: bool = False) -> Pin:

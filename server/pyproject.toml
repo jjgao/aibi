@@ -80,7 +80,7 @@ addopts = [
     "--strict-config",
     "--import-mode=importlib",
     "-m",
-    "not million and not measurement and not mutation",
+    "not million and not measurement and not mutation and not domain",
 ]
 xfail_strict = true
 junit_family = "xunit1"  # record_property, which the race tests use, is xunit1 only; CI passes it too
@@ -88,6 +88,7 @@ markers = [
     "million: a thread-count determinism test over a million rows (SPEC §9.3, D372); run with -m million",
     "measurement: records what a page load's calls cost (SPEC D422); run by hand with -m measurement",
     "mutation: replays the retention guards' mutation table (SPEC D438); run with -m mutation",
+    "domain: the derived domain and cost cells of grouped coverage (SPEC D449); run with -m domain",
     "databases: needs a Postgres or MySQL server, named by AIBI_TEST_POSTGRES_URL or AIBI_TEST_MYSQL_URL",
 ]
 filterwarnings = [
