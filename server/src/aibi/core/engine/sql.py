@@ -46,6 +46,14 @@ answers §6.5's of those tallies. A cohort's categories are listed and capped be
 counted, its defaults and each listed category's pairs and displaced defaults counted by code,
 reasons and flag words, and the server derives each category's units from them.
 
+**Grouped coverage (D449).** A grouped coverage's listing is main's join of each parent row to
+its assignment rows and their groups' rows, aggregated per parent, unless the compiler admits the
+coverage (``grouped.admitted``, from its tables' rows and its listings, decided once before any
+relation is built): then a parent row of one group reads that group's listing, aggregated once
+per group, and only parent rows of two groups or more take main's join (``one_group``); the
+relations of an admitted coverage's tables are ``NOT MATERIALIZED``. Everything else, and the
+whole listing of inputs, is main's SQL byte for byte.
+
 **Members (D333).** ``compile_members`` lists a cohort's members' unit keys, one row per member,
 each key column as it is stored, dates and datetimes as integers; the server orders them as the
 canonical form orders keys (``members.select``), since DuckDB's collation is not that order.
@@ -66,6 +74,7 @@ from pydantic import JsonValue
 from sqlglot import exp
 from sqlglot.expressions.core import Expression
 
+from aibi.core.engine import grouped
 from aibi.core.engine.canonical import canonical_clause, variable_form
 from aibi.core.engine.data import KeyPart, Release, key_part
 from aibi.core.engine.graph import Path, Step
@@ -1528,11 +1537,22 @@ class _Base:
 
 class _Compiler:
     def __init__(
-        self, cohort: ResolvedCohort, sources: Mapping[str, TableSource], *, declared: bool = False
+        self,
+        cohort: ResolvedCohort,
+        sources: Mapping[str, TableSource],
+        *,
+        declared: bool = False,
     ) -> None:
         self.cohort = cohort
         self.declared = declared
         """Memberships list their declared categories alone (``membership_listing``, D384)."""
+        self.admitted: frozenset[str] = frozenset()
+        """The grouped coverages, by relationship id, listed by the one-group path (``decide``)."""
+        self.decided = False
+        """Whether the compiler has decided (``admit``), which it does once."""
+        self.split_tables: frozenset[str] = frozenset()
+        """The assignment, groups and parent tables of those coverages, whose relations are
+        ``NOT MATERIALIZED`` (``base_cte``)."""
         self.release: Release = cohort.release
         self.sources = sources
         self.coverage: Mapping[str, Coverage] = cohort.coverage
@@ -1551,6 +1571,9 @@ class _Compiler:
         self.slots: dict[str, dict[str, str]] = {}
         """Each table's columns read, by the compiler's name for them."""
         self.memo: dict[object, str] = {}
+        self.counted: dict[str, tuple[str, str]] = {}
+        """A grouped coverage's numbered groups and count pass, by relationship id
+        (``group_counts``)."""
         self.blobs: set[str] = set()
 
     # --- Plumbing ------------------------------------------------------------------------------
@@ -1644,9 +1667,55 @@ class _Compiler:
             found = self.memo[key] = self.cte(select.from_(_table(base, "t"), copy=False))
         return found
 
+    def decide(
+        self, cohorts: Sequence[ResolvedCohort], variables: Sequence[ResolvedVariable] = ()
+    ) -> None:
+        """Which grouped coverages the one-group path lists, once for the compiler, before any
+        relation is built (D449): those ``grouped.admitted`` takes, from their tables' rows in the
+        sources and their listings over every part the compiler is given (``_Listings``). A
+        compiler has no switch: it decides once (``admit``), at its entry. That decision
+        replaces what was set on an instance's attributes before it, and an earlier ``admit``
+        makes the entry raise rather than build (the listing of inputs admits nothing)."""
+        listings = _Listings(self).of(cohorts, variables)
+        sizes: dict[str, grouped.Sizes | None] = {}
+        for relationship, count in listings.items():
+            coverage = self.coverage[relationship]
+            parents = _grouped(coverage)
+            rows = [
+                None if source is None else source.n_rows
+                for source in (
+                    self.sources.get(parents.assignment.table),
+                    self.sources.get(coverage.parent_table),
+                    self.sources.get(parents.groups.table),
+                )
+            ]
+            a, p, g = rows
+            sizes[relationship] = (
+                None
+                if a is None or p is None or g is None
+                else grouped.Sizes(assignment=a, parents=p, groups=g, listings=count)
+            )
+        self.admit(grouped.admitted(sizes))
+
+    def admit(self, chosen: frozenset[str]) -> None:
+        """The grouped coverages ``chosen`` listed by the one-group path, and their tables'
+        relations ``NOT MATERIALIZED``: once for the compiler, before it builds anything, so that
+        every statement of it holds one decision (D449)."""
+        if self.decided or self.ctes or self.bases or self.counted:
+            raise RuntimeError("a compiler decides once, before it builds anything (D449)")
+        self.decided = True
+        tables: set[str] = set()
+        for relationship in chosen:
+            coverage = self.coverage[relationship]
+            parents = _grouped(coverage)
+            tables |= {parents.assignment.table, parents.groups.table, coverage.parent_table}
+        self.admitted = chosen
+        self.split_tables = frozenset(tables)
+
     # --- The cohort ----------------------------------------------------------------------------
 
     def compile(self) -> CompiledCohort:
+        self.decide([self.cohort])
         unit = self.cohort.unit
         clauses = [self.node(clause, unit) for clause in self.cohort.clauses]
         cohort = self.combine("all", clauses, unit)
@@ -1756,7 +1825,12 @@ class _Compiler:
         columns: list[Expression] = [_as(exp.column(ROW_NUMBER, table="s"), "rid")]
         columns += [_as(_col("s", column), slot) for column, slot in self.slots[base.table].items()]
         select = _select(*columns).from_(source, copy=False)
-        return exp.CTE(this=select, alias=exp.TableAlias(this=_id(base.name)))
+        found = exp.CTE(this=select, alias=exp.TableAlias(this=_id(base.name)))
+        if base.table in self.split_tables:
+            # The one-group path reads these tables more often than main's join does; DuckDB
+            # would keep a copy of every row with each cell decoded (D449).
+            found.set("materialized", False)
+        return found
 
     # --- A crossing (D318) ---------------------------------------------------------------------
 
@@ -1773,6 +1847,7 @@ class _Compiler:
     def crossing(
         self, cohorts: Sequence[ResolvedCohort], predicates: Sequence[ResolvedCohort]
     ) -> CompiledCrossing:
+        self.decide([*cohorts, *predicates])
         members = [cast(str, self.part(cohort)) for cohort in cohorts]
         asked = [cast(str, self.part(predicate)) for predicate in predicates]
         other = [self.part(predicate, lifted=True) for predicate in predicates]
@@ -1908,6 +1983,7 @@ class _Compiler:
         *,
         shared: bool = False,
     ) -> CompiledMaterialised:
+        self.decide(cohorts, variables)
         members = [cast(str, self.part(cohort)) for cohort in cohorts]
         units = [
             None if variable.kind == "memberships" else self.variable(variable)
@@ -1946,6 +2022,7 @@ class _Compiler:
 
     def members(self) -> CompiledMembers:
         """A cohort's members' keys (``CompiledMembers``)."""
+        self.decide([self.cohort])
         select, kinds = self.keyed_members(self.cohort)
         ctes = [self.base_cte(one) for one in self.bases.values()]
         ctes += [
@@ -1967,7 +2044,10 @@ class _Compiler:
         than the caps admit over the view's positions, and every relation materialised once (``AS
         MATERIALIZED``), a variable's rows read from one join of the members to their units
         (``materialised_rows``): DuckDB inlined relations into the branches of the ``UNION ALL``
-        of a row per member and chose plans that did not end over 512,000 units (D342)."""
+        of a row per member and chose plans that did not end over 512,000 units (D342). Every
+        grouped coverage takes main's path here, whatever the sizes: the entry admits nothing
+        (D449)."""
+        self.admit(frozenset())
         units = [self.variable(variable) for variable in variables]
         most = MAX_INPUT_CELLS // max(1, len(variables))
         each = min(MAX_LISTED, most)
@@ -3983,8 +4063,31 @@ class _Compiler:
         row whose scope cell is not PRESENT (or holds a list) lists no whole tuple, as the
         evaluator reads it, so under ``every`` the parent is not closed by it alone. The gate
         refuses such a cell (``COVERAGE_NULL``), so no published release holds one; releases
-        built in memory can, and the differential tests hold the two readings together."""
+        built in memory can, and the differential tests hold the two readings together. A
+        grouped coverage the compiler admits is listed by the one-group path (``one_group``)."""
+        if coverage.relationship in self.admitted:
+            return self.one_group(coverage, columns, admitted)
         select, scope_holders, every = self.listed_by(coverage)
+        return self.cte(
+            self.listed(select, scope_holders, every, coverage, columns, admitted, _col("p", "rid"))
+        )
+
+    def listed(
+        self,
+        select: exp.Select,
+        scope_holders: Sequence[tuple[str, str, str]],
+        every: Expression,
+        coverage: Coverage,
+        columns: Sequence[str],
+        admitted: Mapping[str, frozenset[KeyPart]],
+        rid: Expression,
+        *,
+        lists: bool = False,
+    ) -> exp.Select:
+        """A listing's ``tuples``, ``every`` and ``within`` (``listing``) aggregated over
+        ``select``'s rows by ``rid``. With ``lists``, a list-typed scope cell is within no
+        admitted tuple without being compared (it lists no whole tuple, ``whole``), which main's
+        path compares, and which DuckDB refuses to bind."""
         whole = self.whole(scope_holders)
         by_column = dict(zip(coverage.scope_columns, scope_holders, strict=True))
         if columns:
@@ -3995,7 +4098,10 @@ class _Compiler:
                 value = self.value_of(alias, holder, name)
                 kind = self.physical(holder, name)
                 constants = [part for _, part in admitted[column]]
-                inside.append(self.member(kind, value, constants))
+                if lists and kind == "strings":
+                    inside.append(exp.false())
+                else:
+                    inside.append(self.member(kind, value, constants))
                 projected.append(exp.PropertyEQ(this=_id(f"k{index}"), expression=value))
             within: Expression = exp.Filter(
                 this=exp.Count(this=exp.Distinct(expressions=[_fn("struct_pack", *projected)])),
@@ -4004,13 +4110,174 @@ class _Compiler:
         else:
             within = _case([(_zero(_fn("bool_or", whole), exp.false()), _num(1))], _num(0))
         select = select.select(
-            _as(_col("p", "rid"), "rid"),
+            _as(rid, "rid"),
             _as(_fn("bool_or", whole), "tuples"),
             _as(_fn("bool_or", every), "every"),
             _as(within, "within"),
             copy=False,
         )
-        return self.cte(select.group_by(_col("p", "rid"), copy=False))
+        return select.group_by(rid.copy(), copy=False)
+
+    def one_group(
+        self,
+        coverage: Coverage,
+        columns: Sequence[str],
+        admitted: Mapping[str, frozenset[KeyPart]],
+    ) -> str:
+        """A grouped coverage's listing by the one-group path (D449): a parent row assigned to
+        exactly one group reads that group's ``tuples``, ``every`` and ``within``, aggregated once
+        per group over its rows (a parent's listing is its groups' rows', and an assignment row
+        repeated changes no ``bool_or`` nor distinct count); a parent row of two groups or more
+        takes main's join, restricted to those rows; one of none is listed by neither, as main's
+        join lists it. The two are stacked with ``UNION ALL``: no parent row is in both."""
+        key = ("one group", coverage.relationship, _admitted_key(columns, admitted))
+        found = self.memo.get(key)
+        if found is not None:
+            return found
+        parents = _grouped(coverage)
+        groups = parents.groups
+        numbered, counts = self.group_counts(coverage)
+        per_group = (
+            _select()
+            .from_(_table(numbered, "n"), copy=False)
+            .join(
+                _table(self.base(groups.table).name, "g"),
+                on=self.key_equal(
+                    "n",
+                    groups.table,
+                    groups.group_column,
+                    "g",
+                    groups.table,
+                    groups.group_column,
+                ),
+                copy=False,
+            )
+        )
+        mapped = groups.scope_columns or {}
+        holders = [
+            ("g", groups.table, next(k for k, v in mapped.items() if v == column))
+            for column in coverage.scope_columns
+        ]
+        every: Expression = exp.false()
+        covers = groups.covers_all_column
+        if covers is not None and self.physical(groups.table, covers) == "bool":
+            every = _zero(_col("g", cast(str, self.slot(groups.table, covers))), exp.false())
+        by_group = self.cte(
+            self.listed(
+                per_group, holders, every, coverage, columns, admitted, _col("n", "rid"), lists=True
+            )
+        )
+        one = (
+            _select(
+                _as(_col("c", "rid"), "rid"),
+                _as(_col("l", "tuples"), "tuples"),
+                _as(_col("l", "every"), "every"),
+                _as(_col("l", "within"), "within"),
+            )
+            .from_(_table(counts, "c"), copy=False)
+            .join(_table(by_group, "l"), on=_eq(_col("l", "rid"), _col("c", "gid")), copy=False)
+            .where(_eq(_col("c", "c"), _num(1)), copy=False)
+        )
+        select, scope_holders, many_every = self.listed_by(coverage)
+        select = select.join(
+            _table(counts, "c"),
+            on=_and(
+                _eq(_col("c", "rid"), _col("p", "rid")),
+                exp.GTE(this=_col("c", "c"), expression=_num(2)),
+            ),
+            copy=False,
+        )
+        many = self.listed(
+            select,
+            scope_holders,
+            many_every,
+            coverage,
+            columns,
+            admitted,
+            _col("p", "rid"),
+            lists=True,
+        )
+        stacked = exp.Union(this=one, expression=many, distinct=False)
+        found = self.memo[key] = self.cte(
+            _select(exp.Star()).from_(
+                exp.Subquery(this=stacked, alias=exp.TableAlias(this=_id("u"))), copy=False
+            )
+        )
+        return found
+
+    def group_counts(self, coverage: Coverage) -> tuple[str, str]:
+        """A grouped coverage's groups and the count pass, once for the compiler (D449): the
+        distinct group keys some assignment row reaches (a semi-join, under ``key_equal``),
+        numbered (``rid``); and, per parent row its assignment rows reach a group from, ``c``,
+        1 when they reach one group and 2 when more (the least and the greatest number of the
+        groups, equal or not), and ``gid``, the least. A null or dangling key reaches none, as
+        it joins nothing in main's join."""
+        found = self.counted.get(coverage.relationship)
+        if found is not None:
+            return found
+        parents = _grouped(coverage)
+        assignment, groups = parents.assignment, parents.groups
+        table = coverage.parent_table
+        slot = cast(str, self.slot(groups.table, groups.group_column))
+        group_key = _col("g", slot)
+        reached = (
+            _select(_as(group_key, slot))
+            .from_(_table(self.base(groups.table).name, "g"), copy=False)
+            .join(
+                _table(self.base(assignment.table).name, "a"),
+                on=self.key_equal(
+                    "a",
+                    assignment.table,
+                    assignment.group_column,
+                    "g",
+                    groups.table,
+                    groups.group_column,
+                ),
+                join_type="semi",
+                copy=False,
+            )
+            .where(exp.Not(this=exp.Is(this=group_key.copy(), expression=exp.Null())), copy=False)
+            .distinct(copy=False)
+        )
+        keys = self.cte(reached)
+        number = exp.Window(
+            this=exp.RowNumber(),
+            order=exp.Order(expressions=[exp.Ordered(this=_col("k", slot))]),
+        )
+        numbered = self.cte(
+            _select(_col("k", slot), _as(number, "rid")).from_(_table(keys, "k"), copy=False)
+        )
+        least, greatest = exp.Min(this=_col("n", "rid")), exp.Max(this=_col("n", "rid"))
+        condition = _and(
+            *(
+                self.key_equal("p", table, parent, "a", assignment.table, own)
+                for own, parent in assignment.parent_columns.items()
+            )
+        )
+        counted = (
+            _select(
+                _as(_col("p", "rid"), "rid"),
+                _as(_case([(_eq(least, greatest), _num(1))], _num(2)), "c"),
+                _as(least.copy(), "gid"),
+            )
+            .from_(_table(self.base(table).name, "p"), copy=False)
+            .join(_table(self.base(assignment.table).name, "a"), on=condition, copy=False)
+            .join(
+                _table(numbered, "n"),
+                on=self.key_equal(
+                    "a",
+                    assignment.table,
+                    assignment.group_column,
+                    "n",
+                    groups.table,
+                    groups.group_column,
+                ),
+                copy=False,
+            )
+            .group_by(_col("p", "rid"), copy=False)
+        )
+        found = self.counted[coverage.relationship] = (numbered, self.cte(counted))
+        return found
 
     # --- Existence questions (§6.5) ------------------------------------------------------------
 
@@ -4534,6 +4801,118 @@ def _within(value: int, gt: int | None, gte: int | None, lt: int | None, lte: in
         and (lt is None or value < lt)
         and (lte is None or value <= lte)
     )
+
+
+def _grouped(coverage: Coverage) -> GroupedCoverage:
+    """A grouped coverage's assignment and groups tables."""
+    descriptor = coverage.descriptor
+    assert descriptor is not None
+    parents = descriptor.fields.parents
+    assert isinstance(parents, GroupedCoverage)
+    return parents
+
+
+def _is_grouped(coverage: Coverage) -> bool:
+    descriptor = coverage.descriptor
+    return descriptor is not None and isinstance(descriptor.fields.parents, GroupedCoverage)
+
+
+def _admitted_key(
+    columns: Sequence[str], admitted: Mapping[str, frozenset[KeyPart]]
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """A listing's admitted values as a key: what tells two listings of a coverage apart."""
+    return tuple((column, tuple(sorted(map(repr, admitted[column])))) for column in columns)
+
+
+class _Listings:
+    """The listings of each grouped coverage a compiler builds over the parts it is given, a
+    pass over their resolved trees that builds nothing (D449): one for each distinct set of
+    admitted values a question, ``covered`` or aggregate's step asks of a coverage
+    (``closedness``), the one a membership step reads (``every_of``, or its closedness), and one
+    for each membership whose values it lists (``scope_values``); each coverage's parent scope is
+    a clause of its own. A lift asks nothing more: a flipped node asks what the node asks."""
+
+    def __init__(self, compiler: "_Compiler") -> None:
+        self.compiler = compiler
+        self.found: dict[str, set[object]] = {}
+        self.scopes: set[str] = set()
+
+    def of(
+        self, cohorts: Sequence[ResolvedCohort], variables: Sequence[ResolvedVariable]
+    ) -> dict[str, int]:
+        for cohort in cohorts:
+            for clause in cohort.clauses:
+                self.clause(clause, cohort.unit)
+        for variable in variables:
+            self.variable(variable)
+        return {relationship: len(keys) for relationship, keys in sorted(self.found.items())}
+
+    def coverage(self, relationship: str) -> Coverage:
+        coverage = self.compiler.coverage[relationship]
+        if coverage.parent_scope is not None and relationship not in self.scopes:
+            self.scopes.add(relationship)
+            self.clause(coverage.parent_scope, coverage.parent_table)
+        return coverage
+
+    def listing(self, coverage: Coverage, admitted: Mapping[str, frozenset[KeyPart]]) -> None:
+        if _is_grouped(coverage):
+            columns = [column for column in coverage.scope_columns if column in admitted]
+            keys = self.found.setdefault(coverage.relationship, set())
+            keys.add(_admitted_key(columns, admitted))
+
+    def clause(self, node: RClause, table: str) -> None:
+        if isinstance(node, RAll | RAny):
+            for member in node.members:
+                self.clause(member, table)
+        elif isinstance(node, RNot | RKnown | RUnknown):
+            self.clause(node.member, table)
+        elif isinstance(node, RExists):
+            coverage = self.coverage(node.step.rel)
+            for clause in node.where:
+                self.clause(clause, coverage.child_table)
+            self.listing(coverage, _admitted(node))
+        elif isinstance(node, RCovered):
+            downs = [step for step in node.via if step.dir != "up"]
+            for index, step in enumerate(downs):
+                coverage = self.coverage(step.rel)
+                last = index == len(downs) - 1
+                self.listing(
+                    coverage,
+                    {
+                        column: frozenset(key_part(value) for value in values)
+                        for column, values in node.scope or ()
+                    }
+                    if last
+                    else {},
+                )
+
+    def variable(self, variable: ResolvedVariable) -> None:
+        if variable.kind == "memberships":
+            shape = template(variable)
+            for index, node in enumerate(shape.levels):
+                coverage = self.coverage(node.step.rel)
+                if index == len(shape.levels) - 1 and shape.scoped and _is_grouped(coverage):
+                    groups = _grouped(coverage).groups
+                    mapped = groups.scope_columns or {}
+                    holder = next(k for k, v in mapped.items() if v == shape.column)
+                    if self.compiler.physical(groups.table, holder) == self.compiler.class_kind(
+                        shape
+                    ):
+                        keys = self.found.setdefault(coverage.relationship, set())
+                        keys.add(("values", canonical(variable_form(variable))))
+                self.listing(coverage, {})
+        elif variable.kind == "question":
+            assert variable.question is not None
+            self.clause(variable.question, variable.unit)
+        elif variable.kind != "column":
+            assert variable.rows is not None
+            chain = levels(variable.rows, variable.depth)
+            for index, node in enumerate(chain):
+                coverage = self.coverage(node.step.rel)
+                if index == len(chain) - 1:
+                    for clause in node.where:
+                        self.clause(clause, coverage.child_table)
+                self.listing(coverage, _admitted(node))
 
 
 def _admitted(node: RExists) -> dict[str, frozenset[KeyPart]]:

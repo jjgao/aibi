@@ -197,11 +197,13 @@ def _any_item_missing(cells: Sequence[Cell]) -> bool:
 
 @dataclass(frozen=True)
 class TableSource:
-    """A table's blob as a query reads it in place (D293): its path, and the columns the blob
-    stores, companions included."""
+    """A table's blob as a query reads it in place (D293): its path, the columns the blob
+    stores, companions included, and its rows (``None`` where not known), which decide whether
+    its grouped coverage takes the one-group path (``engine.grouped``, D449)."""
 
     path: str
     columns: frozenset[str]
+    n_rows: int | None = None
 
 
 class CorruptTableError(ValueError):

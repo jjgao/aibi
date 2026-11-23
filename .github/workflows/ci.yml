@@ -55,12 +55,16 @@ jobs:
     # tests/core in three shards of whole directories, given to pytest as paths (never --ignore,
     # -k or a deselection: those turn D422's pin guard off, or make it ask for pins another shard
     # runs), so that each shard's session still fails when it loads a pack (P8) or a pin it
-    # collected did not run (D422); tests/core/determinism runs in its own job, and
-    # tests/core/test_package.py checks that every other directory runs in exactly one shard. The
-    # whole suite took 47.3 minutes in one serial run on four processors (issue #135's survey):
-    # 15.8, 15.5 and 15.8 of it in these shards, so each takes about a third of CI's 39 to 52
-    # minutes for the whole (13 to 17.5); the step's limit is 30 and the job's 40, and the
-    # step's own limit leaves the annotations' step time to run when it is reached (D340).
+    # collected did not run (D422); tests/core/determinism and tests/core/domain run in jobs of
+    # their own, and tests/core/test_package.py checks that every other directory runs in
+    # exactly one shard. The whole suite took 47.3 minutes in one serial run on four
+    # processors (issue #135's survey): 15.8, 15.5 and 15.8 of it in these shards, about a
+    # third of CI's 39 to 52 minutes for the whole (13 to 17.5). D449 runs the engine's
+    # differential tests by both paths and moves operator to shard 2: summed locally under
+    # contention, the shards took about 20, 20 and 26 minutes, so CI's minutes on the pull
+    # request decide whether another directory moves. The step's limit is 30 and the job's 40,
+    # and the step's own limit leaves the annotations' step time to run when it is reached
+    # (D340).
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -70,9 +74,11 @@ jobs:
           - shard: 1
             tests: tests/core/analyses tests/core/schema tests/core/measurement
           - shard: 2
-            tests: tests/core/importers tests/core/catalog tests/core/mcp tests/core/test_*.py
+            tests: >-
+              tests/core/importers tests/core/catalog tests/core/mcp tests/core/operator
+              tests/core/test_*.py
           - shard: 3
-            tests: tests/core/engine tests/core/api tests/core/store tests/core/operator
+            tests: tests/core/engine tests/core/api tests/core/store
     defaults:
       run:
         working-directory: server
@@ -165,10 +171,11 @@ jobs:
   server:
     name: Server checks
     # One check for the server's static checks, its core shards and its other tests, under the
-    # name the single server job had: it runs whatever they did (a failed job would otherwise
-    # skip it, and a skipped check passes) and fails unless each of them succeeded, so a
-    # failed, cancelled or skipped one fails it; tests/core/test_package.py holds it to that.
-    needs: [static, core, other]
+    # name the single server job had, and for the domain of grouped coverage (D449): it runs
+    # whatever they did (a failed job would otherwise skip it, and a skipped check passes) and
+    # fails unless each of them succeeded, so a failed, cancelled or skipped one fails it;
+    # tests/core/test_package.py holds it to that.
+    needs: [static, core, other, domain]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -178,14 +185,53 @@ jobs:
           STATIC: ${{ needs.static.result }}
           CORE: ${{ needs.core.result }}
           OTHER: ${{ needs.other.result }}
-        # The step fails, with an annotation naming each job's result (D334), unless all three
+          DOMAIN: ${{ needs.domain.result }}
+        # The step fails, with an annotation naming each job's result (D334), unless all four
         # succeeded, with or without the shell's -e. The results are GitHub's own words.
         run: |
-          echo "static: ${STATIC}; core: ${CORE}; other: ${OTHER}"
-          test "${STATIC}" = success && test "${CORE}" = success && test "${OTHER}" = success || {
-            echo "::error title=Server checks::static ${STATIC}; core ${CORE}; other ${OTHER}"
+          echo "static: ${STATIC}; core: ${CORE}; other: ${OTHER}; domain: ${DOMAIN}"
+          test "${STATIC}" = success && test "${CORE}" = success && test "${OTHER}" = success && test "${DOMAIN}" = success || {
+            echo "::error title=Server checks::static ${STATIC}; core ${CORE}; other ${OTHER}; domain ${DOMAIN}"
             exit 1
           }
+
+  domain:
+    name: The domain of grouped coverage
+    # The one-group path of grouped coverage held to the evaluator over a derived domain, and
+    # its cost cells against main's path (D449): about 8.5 to 10 minutes of domain and 3.5 to 4
+    # of cells (measured locally under contention), on a runner of their own; the step has 25
+    # minutes and the job 30 (D340).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: The domain of grouped coverage (SPEC D449)
+        id: domain
+        timeout-minutes: 25
+        run: >-
+          uv run pytest tests/core/domain -m domain --durations=0 --tb=short
+          -o junit_family=xunit1 --junitxml=reports/domain.xml
+      - name: Every domain test ran and passed
+        run: python3 ../.github/scripts/domain_report.py reports/domain.xml
+      - name: Failed tests as annotations
+        if: failure()
+        env:
+          OUTCOMES: "Domain tests=${{ steps.domain.outcome }}"
+        run: python3 ../.github/scripts/annotations.py
 
   determinism:
     name: Determinism at a million rows

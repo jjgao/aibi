@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -282,7 +283,7 @@ def _coverage(
         return [*found, build.coverage(table.rel, parents, **options, **status)]
     assignment, groups = f"{table.name}_asg", f"{table.name}_grp"
     found += [
-        build.table(assignment, ["pid"], role="coverage"),
+        build.table(assignment, ["pid", "grp"], role="coverage"),
         build.column(f"{assignment}.pid", pid_type),
         build.column(f"{assignment}.grp", "string"),
         build.table(groups, ["grp"] if scope is None else ["grp", "s"], role="coverage"),
@@ -294,9 +295,12 @@ def _coverage(
         group["scope_columns"] = {"s": scope.name}
         if draw(st.booleans()):
             group["covers_all_column"] = "all"
-    rows[assignment] = [
-        {"pid": listed_key, "grp": pick(["g0", "g1", "gone"])}
+    rows[assignment] = [  # a parent of none, one or two groups
+        {"pid": listed_key, "grp": group}
         for listed_key in draw(st.lists(st.sampled_from(listed), max_size=3, unique=True))
+        for group in draw(
+            st.lists(st.sampled_from(["g0", "g1", "gone"]), min_size=1, max_size=2, unique=True)
+        )
     ]
     rows[groups] = []
     for name in ("g0", "g1"):
@@ -538,6 +542,7 @@ def _agrees(run: Runner, sql: Sql, case: tuple[Schema, str, list[Any]]) -> None:
 
 
 @SCHEMAS
+@pytest.mark.usefixtures("grouped_path")
 @given(case=cases())
 def test_the_compiler_agrees_with_the_evaluator_on_random_schemas_and_documents(
     run: Runner, sql: Sql, case: tuple[Schema, str, list[Any]]

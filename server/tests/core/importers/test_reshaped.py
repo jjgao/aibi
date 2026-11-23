@@ -21,6 +21,7 @@ from aibi.core.schema.descriptors import Descriptor
 from aibi.core.schema.limits import ImportLimits, QueryLimits
 from aibi.core.schema.loading import load_document
 from aibi.core.schema.pack_api import ImportResult, cell_digest
+from aibi.core.store import statistics
 from aibi.core.store.build import Layout
 from aibi.core.store.edits import EditRefused
 from aibi.core.store.sessions import change, open_session, publish
@@ -1948,3 +1949,17 @@ def test_the_digest_holds_a_relationship_s_child_columns_and_a_direct_coverage_s
         for d in descriptors
     ]
     assert gate.declaration_inputs("yields", entry.reshaped, changed, hashes) != expected
+
+
+def test_a_reshaped_tables_footer_rows_are_its_statistics_rows(
+    importing: Importing, grid: Grid, store: Store
+) -> None:
+    """The rows the compiler reads from a blob's footer (``Store.sources``, D449) are the rows
+    its catalogue statistics count, for a table the core rebuilt from a pack's unpivot too."""
+    manifest = _import(importing, grid)
+    found = store.manifest(manifest)
+    assert found.statistics is not None
+    counted = statistics.decode(store.blobs.read(found.statistics))
+    rows = {table: source.n_rows for table, source in store.sources(manifest).items()}
+    assert rows == {table: entry["n_rows"] for table, entry in counted.items()}
+    assert rows["yields"] == 4
