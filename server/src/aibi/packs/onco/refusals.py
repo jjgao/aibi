@@ -93,6 +93,14 @@ Code = Literal[
     "DUPLICATE_SAMPLE",
     "NOT_SEQUENCED",
     "MISSING_SPELLING",
+    "GENE_PANELS",
+    "GENE_PANEL",
+    "PANEL_ID",
+    "GENE_LIST",
+    "COMBINED_TOKEN",
+    "TOKEN_CLASS",
+    "TOO_MANY_GENES",
+    "GENE_SPELLING",
 ]
 CODES: tuple[Code, ...] = get_args(Code)
 """Every code the pack refuses with, without its ``onco.`` prefix: discovery's eleven (M4.2a-1a),
@@ -104,7 +112,9 @@ the MAF's fifteen (``mutation``); then M4.2b-4's (D445): the structural variants
 ``BYTE_ORDER_MARK``, ``LINE_ENDS``, ``DUPLICATE_GENE`` and ``CNA_VALUE`` (``cna``); then
 M4.2b-2a's (D447): the gene panel matrix's ``STABLE_ID_KEYS``, ``DUPLICATE_SAMPLE`` and
 ``NOT_SEQUENCED`` (``panels``); then M4.2b-2b-ii-a's (D444): the MAF's ``MISSING_SPELLING``
-(``mutation``).
+(``mutation``); then M4.2b-2b-ii slice B's (D448): the gene panel definitions' ``GENE_PANELS``,
+``GENE_PANEL``, ``PANEL_ID``, ``GENE_LIST``, ``COMBINED_TOKEN``, ``TOKEN_CLASS``,
+``TOO_MANY_GENES`` and ``GENE_SPELLING`` (``genepanels``).
 ``UNREADABLE_ROWS`` is the settled list's code for a clinical file the core's parse would read
 otherwise than the pack's reader; no input reaches it (the parse
 differential of the pack's tests holds the two readers to one reading), so nothing raises it."""

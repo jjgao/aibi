@@ -44,7 +44,10 @@ by name:
    its ``data_filename`` before its ``pd_annotations_filename`` (the order of ``PATH_SITES``);
 10. the study meta's ``tags_file``;
 11. the entry ``case_lists``: a symlink is ``CASE_LISTS`` (stricter: the reference follows it,
-    V:5566); a directory is read by the importer's case-list reader (``caselists``, D444).
+    V:5566); a directory is read by the importer's case-list reader (``caselists``, D444);
+12. the entry ``gene_panels`` (D448): any kind but a directory is ``GENE_PANELS``
+    (``genepanels.entry``, which holds the check); a directory is read by the importer, after the
+    gene panel matrix and before the MAF (``genepanels.definitions``), and gets no skip note.
 
 From M4.2b-1b (D444) the mutation meta's data file is an imported role, as a clinical meta's is
 (phases 6 and 7, ``meta.DISCOVERED``): a second mutation meta is ``DUPLICATE_PROFILE_META``
@@ -83,7 +86,7 @@ from aibi.core.schema.pack_api import (
     SourceReader,
 )
 from aibi.core.schema.refusals import RefusalCode
-from aibi.packs.onco import cna, panels, structural
+from aibi.packs.onco import cna, genepanels, panels, structural
 from aibi.packs.onco.cna import CnaMeta
 from aibi.packs.onco.meta import (
     CLINICAL,
@@ -315,6 +318,8 @@ class Study:
     structural: StructuralMeta | None = None
     cna: CnaMeta | None = None
     panels: PanelMeta | None = None
+    gene_panels: DirectoryEntry | None = None
+    """The ``gene_panels`` directory's entry, where the study has one (D448)."""
 
 
 def _read(reader: SourceReader, entry: DirectoryEntry, limits: ImportLimits) -> bytes:
@@ -554,6 +559,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
     if lists is not None and lists.kind == "symlink":
         raise entry_refused("CASE_LISTS", lists.name, "is a symlink, which the pack never follows")
     has_lists = lists is not None and lists.kind == "directory"
+    definitions = genepanels.entry(listed)
 
     used = frozenset(
         {
@@ -563,7 +569,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
             *((CASE_LISTS_ENTRY,) if has_lists else ()),
             *structural.used(sv),
             *cna.used(copies),
-            *panels.used(matrix),
+            *panels.used(matrix, definitions),
         }
     )
     for name in metas:
@@ -584,6 +590,7 @@ def discover(reader: SourceReader, source: ConfinedPath, limits: ImportLimits) -
         structural=sv,
         cna=copies,
         panels=matrix,
+        gene_panels=definitions,
     )
 
 

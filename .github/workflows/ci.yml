@@ -134,8 +134,9 @@ jobs:
 
   other:
     name: Other tests
-    # Every test outside tests/core (the pack suites): 8.6 minutes on #172's run and 12.8 on
-    # #174's, and M4.2b-2b-ii-a adds about 2 minutes, within the step's 20; the job has 25 (D340).
+    # Every test outside tests/core (the pack suites): main's last run took 10.0 minutes of the
+    # step's 20, and M4.2b-2b-ii slice B adds about 4.5 to 5 (the implementer's local estimate,
+    # 15.5 to 16 in all, measured contended: to be replaced by CI's figure); the job has 25 (D340).
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:

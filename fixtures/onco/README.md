@@ -7,11 +7,14 @@ from M4.2b-4, SPEC D445: three well-known fusions on three samples; the copy-num
 M4.2b-3, SPEC D446: four genes by eight samples, with a `-1.5`, a sample whose every cell is `NA`
 and two samples the matrix leaves out, so that they are not covered; the gene panel matrix from
 M4.2b-2a, SPEC D447: nine samples' panels for the mutation, copy-number and structural variant
-profiles, `NA` where none is given, the tenth sample left out): no row describes a real
+profiles, `NA` where none is given, the tenth sample left out; the gene panel definitions from
+M4.2b-2b-ii slice B, SPEC D448: `gene_panels/` defines `IMPACT468` and `IMPACT341` by short
+synthetic gene lists, not MSK-IMPACT's, and the MAF's two rows of one class make its class column
+a category, so that the MAF's coverage is built): no row describes a real
 person, and no file is taken from a real study (a study such as `msk_chord_2024` is CC BY-NC-ND
 and stays out of the repository). The pack imports its clinical files, its MAF, its case lists,
-its structural variants, its copy-number matrix (with the `<study>_cna` case list it needs) and
-its gene panel matrix:
+its structural variants, its copy-number matrix (with the `<study>_cna` case list it needs), its
+gene panel matrix and its gene panel definitions, from which the MAF gets its coverage:
 
 ```bash
 scripts/testsite.sh import-study demo_onco fixtures/onco/demo_study

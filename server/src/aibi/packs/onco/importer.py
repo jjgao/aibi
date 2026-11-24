@@ -16,10 +16,14 @@ MAF must have the case list ``<study>_sequenced`` (V:5034-5040), found by its ex
 matrix, when the study has a matrix meta, is read after that check and before the MAF, as the
 reference validates it after the case lists and before every other data file (V:5579-5586;
 ``panels.imported``, which holds every check of it, D447); the MAF's read waits for it, and its
-cells are counted before the MAF's, the SV file's and the CNA matrix's. Every note,
-discovery's first, goes through one ``notes.Budget``. It returns the importer's result, which
-the core checks (``importers.checks``), or raises ``Refused`` with one of ``refusals.CODES``;
-what the reader refuses passes out as the reader's instance.
+cells are counted before the MAF's, the SV file's and the CNA matrix's. A study's ``gene_panels``
+directory (D448) is read after the matrix and before the MAF (``genepanels.definitions``), whose
+reader compares each symbol with the defined genes; the MAF's coverage is decided after the MAF
+(``genepanels.coverage``: built, withheld, or refused), and its cells are counted before the SV
+file's and the CNA matrix's, so that the pack's ``TOO_MANY_CELLS`` comes before the core's.
+Every note, discovery's first, goes through one ``notes.Budget``. It returns the importer's
+result, which the core checks (``importers.checks``), or raises ``Refused`` with one of
+``refusals.CODES``; what the reader refuses passes out as the reader's instance.
 
 A clinical data file's name becomes its table's ``original_name``, a descriptor's string: one that
 is not Unicode text (a noncharacter, which a meta file's UTF-8 value can hold) is refused,
@@ -40,7 +44,7 @@ from aibi.core.schema.pack_api import (
     ImportResult,
     SourceReader,
 )
-from aibi.packs.onco import caselists, cna, mutation, panels, structural
+from aibi.packs.onco import caselists, cna, genepanels, mutation, panels, structural
 from aibi.packs.onco.build import describe, list_cells
 from aibi.packs.onco.clinical import Clinical, Role, read
 from aibi.packs.onco.facets import PACK_ID
@@ -48,7 +52,7 @@ from aibi.packs.onco.notes import Budget
 from aibi.packs.onco.refusals import entry_refused
 from aibi.packs.onco.study import ClinicalMeta, MutationMeta, discover
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 """The pack's version, which its manifest states and its curation entries name."""
 BY = f"importer:{PACK_ID}@{VERSION}"
 NO_LOCATION = (
@@ -82,6 +86,7 @@ def _maf(
     samples: frozenset[str],
     options: ImportOptions,
     cells_before: int,
+    defined: mutation.Defined | None,
 ) -> mutation.Maf:
     entry = meta.data
     if entry.path is None or len(entry.name) > MAX_STRING or not is_text(entry.name):
@@ -92,7 +97,13 @@ def _maf(
         )
     data = reader.read(entry.path, options.limits.import_bytes)
     return mutation.read(
-        data, entry.name, samples, meta.fields, options.limits, cells_before=cells_before
+        data,
+        entry.name,
+        samples,
+        meta.fields,
+        options.limits,
+        cells_before=cells_before,
+        defined=defined,
     )
 
 
@@ -148,7 +159,15 @@ class OncoImporter:
             options.previous,
         )
         cells += panels.counted(matrix)
-        maf = next((_maf(reader, found, sample.samples, options, cells) for found in mafs), None)
+        definitions = genepanels.definitions(
+            reader, source, study.gene_panels, study.mutation, matrix, options.limits
+        )
+        defined = genepanels.genes(definitions)
+        maf = next(
+            (_maf(reader, found, sample.samples, options, cells, defined) for found in mafs), None
+        )
+        covered = genepanels.coverage(definitions, maf, options.limits, cells)
+        cells += genepanels.covered(covered)
         sv = structural.imported(
             reader, study.structural, sample.samples, options.limits, cells, maf
         )
@@ -172,6 +191,7 @@ class OncoImporter:
             sv=sv,
             copy_number=copies,
             matrix=matrix,
+            coverage=covered,
         )
         budget = Budget()
         budget.add(study.notes)

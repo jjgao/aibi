@@ -98,10 +98,22 @@ core cannot read is counted ``unparsed``, and one it can read becomes a value (a
 Silent row is 1000, an Entrez `` 0`` there is 0), which the reference never loads. A repeated
 mutation key (V:1786; r05) is exit 1: every row is kept, read without loss.
 
+**For the coverage** (D448, M4.2b-2b-ii slice B): beside D228's sets, the reader keeps each
+``FILTERED`` column's distinct present values as written (cut at ``FILTER_KEPT`` characters, at
+most ``CATEGORY_VALUES + 1``) and counts its cells that are empty or a spelling of no value
+(``MafFilter``), from which ``genepanels.coverage`` builds the row-kind filter or withholds the
+coverage. Where the study has gene panel definitions (``Defined``), every row's ``Hugo_Symbol``,
+a skipped row's too, is compared with the defined genes: one whose normal form (``folded``,
+bounded at the longest gene's length) is a defined gene's ``str.lower()`` but which is not that
+gene as written is counted with its first line (``Maf.misspelled``; ``GENE_SPELLING`` where the
+coverage is built), and a validated row whose symbol no definition lists and is no spelling of
+no value is counted (``Maf.unlisted``, a note's count). Nothing here refuses.
+
 **Memory.** Nothing of a cell outlives its row but per-column state for the columns
 ``CATEGORICAL`` names: their distinct values, at most ``CATEGORY_VALUES + 1``, each as
-``clinical.identity`` keeps it. The sample ids are the sample file's, given. The module keeps no
-cache past a read (D438).
+``clinical.identity`` keeps it, and the filtered columns' values above. The sample ids are the
+sample file's, given; the defined genes are the definitions', given. The module keeps no cache
+past a read (D438).
 """
 
 import bisect
@@ -301,14 +313,17 @@ def point_class(character: str) -> int:
     return KEPT
 
 
-def normal_form(cell: str) -> str | None:
+def normal_form(cell: str, bound: int = NORMAL_KEPT) -> str | None:
     """A cell's normal form N, ``NFKC(casefold(NFKC(strip_edges(remove_ignorable(cell)))))``
     (D444), when it can be a look-alike, else ``None``: in one pass, each code point classed once
     (``point_class``), a removable one skipped wherever it is, an edge space before the first kept
     code point skipped, a run of edge spaces after one held pending and dropped at the end, but a
     kept code point after a pending run answers ``None`` (N would hold an inner space, which no
-    word does), and so does the kept code point past ``NORMAL_KEPT``. NFKC and casefold read at
-    most ``NORMAL_KEPT`` code points; the work is linear in the cell."""
+    word does), and so does the kept code point past ``bound`` (``NORMAL_KEPT`` for the words of
+    no value; the longest defined gene's length for a gene symbol, D448: no kept code point
+    normalises to nothing and composition never makes ASCII, so a symbol whose N is an ASCII
+    token of at most ``bound`` characters has at most ``bound`` kept code points). NFKC and
+    casefold read at most ``bound`` code points; the work is linear in the cell."""
     kept: list[str] = []
     pending = False
     for character in cell:
@@ -318,7 +333,7 @@ def normal_form(cell: str) -> str | None:
         if found == EDGE_SPACE:
             pending = bool(kept)
             continue
-        if pending or len(kept) == NORMAL_KEPT:
+        if pending or len(kept) == bound:
             return None
         kept.append(character)
     return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", "".join(kept)).casefold())
@@ -389,10 +404,10 @@ REMOVABLE_RUNS, EDGE_SPACES = _prepass_classes()
 spaces, built at import: constants, so that no state outlives a call (D438)."""
 
 
-def trimmed(cell: str) -> str | None:
+def trimmed(cell: str, bound: int = NORMAL_KEPT) -> str | None:
     """The pre-pass of ``normal_form``, at C speed: the cell with its removable code points
     deleted wherever they are and then its edge spaces stripped at the two ends, which
-    ``normal_form`` then reads, or ``None`` when that is longer than ``NORMAL_KEPT``, where
+    ``normal_form`` then reads, or ``None`` when that is longer than ``bound``, where
     ``normal_form`` answers ``None`` too (its two ends are kept code points, so it holds more kept
     code points than the bound, or an edge space between two kept ones). The classes are
     ``point_class``'s, removable first: an edge space that is removable is deleted, and a
@@ -402,7 +417,7 @@ def trimmed(cell: str) -> str | None:
     few times the cell for a cell of many short runs), and a cell is at most ``FIELD_CHARACTERS``
     code points, read one row at a time."""
     core = REMOVABLE_RUNS.sub("", cell).strip(EDGE_SPACES)
-    return None if len(core) > NORMAL_KEPT else core
+    return None if len(core) > bound else core
 
 
 def lookalike(cell: str, exact: frozenset[str], words: tuple[str, ...]) -> bool:
@@ -422,6 +437,47 @@ def lookalike(cell: str, exact: frozenset[str], words: tuple[str, ...]) -> bool:
         return False
     found = normal_form(core)
     return found is not None and (found == "" or found in words)
+
+
+def folded(symbol: str, bound: int) -> str | None:
+    """A ``Hugo_Symbol``'s normal form N where it can equal a defined gene's (D448), else
+    ``None``: every defined gene is printable ASCII of at most ``bound`` characters, whose N is
+    ``str.lower()``. A symbol of printable ASCII with no space is its own ``str.lower()``; any other
+    is read by ``trimmed`` and ``normal_form``, both bounded at ``bound`` kept code points."""
+    if symbol.isascii() and symbol.isprintable() and " " not in symbol:
+        return symbol.lower() if len(symbol) <= bound else None
+    core = trimmed(symbol, bound)
+    return None if core is None else normal_form(core, bound)
+
+
+@dataclass(frozen=True)
+class Defined:
+    """The genes the study's gene panel definitions list (D448), as the MAF's reader compares a
+    symbol with them: each gene's ``str.lower()`` to the gene as written (``lowered``; two genes of
+    one lower case are refused before, so each key has one gene), the genes as written
+    (``listed``), and the longest gene's length (``longest``, at least 1)."""
+
+    lowered: Mapping[str, str]
+    listed: frozenset[str]
+    longest: int
+
+
+FILTERED = (CLASSIFICATION, STATUS)
+"""The columns a coverage of the MAF's rows filters on, where the file has them (D448)."""
+FILTER_KEPT = 65
+"""The characters of a filter column's value the reader keeps beside D228's set: one more than a
+filter value may hold (``genepanels.FILTER_VALUE``), so a longer value is seen as one."""
+
+
+@dataclass(frozen=True)
+class MafFilter:
+    """A filtered column's values as the reader saw them (D448): its name, its distinct present
+    values, each cut at ``FILTER_KEPT`` characters and at most ``CATEGORY_VALUES + 1`` of them,
+    sorted, and the cells empty or a spelling of no value (``unset``)."""
+
+    name: str
+    values: tuple[str, ...]
+    unset: int
 
 
 AMINO_ACID_MOST = 255
@@ -476,6 +532,15 @@ class Maf:
     settings: ParseSettings
     columns: tuple[MafColumn, ...]
     rows: int
+    filters: tuple[MafFilter, ...] = ()
+    """The ``FILTERED`` columns the file has, in that order (D448)."""
+    misspelled: int = 0
+    """Rows, skipped ones too, whose symbol is a defined gene's but for case, width or invisible
+    code points, not as written (D448; with definitions only)."""
+    misspelled_line: int | None = None
+    """The first such row's line."""
+    unlisted: int = 0
+    """Validated rows whose symbol no definition lists (D448; with definitions only)."""
 
     @property
     def cells(self) -> int:
@@ -505,8 +570,13 @@ class _Reading:
         fields: MutationFields,
         limits: ImportLimits,
         cells_before: int,
+        defined: Defined | None = None,
     ) -> None:
         self.name = name
+        self.defined = defined
+        self.misspelled = 0
+        self.misspelled_line: int | None = None
+        self.unlisted = 0
         self.samples = samples
         self.fields = fields
         self.limits = limits
@@ -618,6 +688,9 @@ class _Reading:
         no value and the words a look-alike reads as (D444)."""
         self.distinct: dict[int, set[str | bytes]] = {index: set() for index in self.categorical}
         self.present: dict[int, int] = dict.fromkeys(self.categorical, 0)
+        self.filtered = [at[c] for c in FILTERED if c in at]
+        self.exact: dict[int, set[str]] = {index: set() for index in self.filtered}
+        self.unset: dict[int, int] = dict.fromkeys(self.filtered, 0)
         self.joined = TAB.join(names)
 
     # --- The data lines -------------------------------------------------------------------------
@@ -679,6 +752,32 @@ class _Reading:
             kept = self.distinct[index]
             if len(kept) <= CATEGORY_VALUES:
                 kept.add(identity(cell))
+        for index in self.filtered:
+            cell = fields[index]
+            if cell == "" or cell in MISSING_FAMILY:
+                self.unset[index] += 1
+                continue
+            values = self.exact[index]
+            if len(values) <= CATEGORY_VALUES:
+                values.add(cell[:FILTER_KEPT])
+        if self.defined is not None:
+            self.compared(number, fields)
+
+    def compared(self, number: int, fields: list[str]) -> None:
+        """A row's symbol against the definitions' genes (D448): one written otherwise than the
+        gene it reads as is counted (``misspelled``, a refusal where the coverage is built), and
+        a validated row's symbol no definition lists (``unlisted``, a note's count)."""
+        assert self.defined is not None
+        symbol = fields[self.hugo]
+        if symbol in self.defined.listed:
+            return
+        key = folded(symbol, self.defined.longest)
+        if key is not None and key in self.defined.lowered:
+            self.misspelled += 1
+            if self.misspelled_line is None:
+                self.misspelled_line = number
+        elif symbol not in NULL_GENE and not self.skipped(fields):
+            self.unlisted += 1
 
     def too_many(self, number: int | None) -> Refused:
         return self.refuse(
@@ -827,7 +926,21 @@ class _Reading:
                 and 2 * distinct <= self.present[index]
             )
             columns.append(MafColumn(found, category))
-        return Maf(self.name, data, settings(self.top, self.bom), tuple(columns), self.rows)
+        filters = tuple(
+            MafFilter(self.names[index], tuple(sorted(self.exact[index])), self.unset[index])
+            for index in self.filtered
+        )
+        return Maf(
+            self.name,
+            data,
+            settings(self.top, self.bom),
+            tuple(columns),
+            self.rows,
+            filters,
+            self.misspelled,
+            self.misspelled_line,
+            self.unlisted,
+        )
 
 
 SNIFFED_LINES = 5
@@ -873,11 +986,13 @@ def read(
     limits: ImportLimits,
     *,
     cells_before: int = 0,
+    defined: Defined | None = None,
 ) -> Maf:
     """The MAF ``name``, read from its bytes ``data`` against the sample ids ``samples`` and the
     mutation meta's ``fields`` (the module's docstring), with ``cells_before`` cells of the import
-    counted before it. Raises ``Refused``."""
-    reading = _Reading(name, samples, fields, limits, cells_before)
+    counted before it, and, where the study has gene panel definitions, their genes
+    (``defined``, D448). Raises ``Refused``."""
+    reading = _Reading(name, samples, fields, limits, cells_before, defined)
     view = memoryview(data)
     for number, start, end in spans(data):
         try:
@@ -920,8 +1035,10 @@ __all__ = [
     "POSITIONS",
     "REQUIRED",
     "SKIP_DEFAULT",
+    "Defined",
     "Maf",
     "MafColumn",
+    "MafFilter",
     "read",
     "settings",
 ]

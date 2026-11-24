@@ -59,7 +59,8 @@ a golden test is held to R where a reference fixture exists (`tests/core/analyse
   importer of a cBioPortal study's clinical files with its validator (`study.py`, `clinical.py`,
   `missing.py`, `build.py`, `importer.py`; D409, D437, D438), its MAF and case lists (`mutation.py`,
   `caselists.py`; D444), structural variants (`structural.py`; D445), discrete copy-number matrix
-  (`cna.py`; D446) and gene panel matrix (`panels.py`; D447, a table with no coverage yet). It
+  (`cna.py`; D446), gene panel matrix (`panels.py`; D447, a table) and gene panel definitions, which
+  give the MAF its grouped coverage and row-kind filter (`genepanels.py`; D448). It
   imports the pack API and, of the rest of
   the core, only what the packs' import-linter contract allows: `aibi.core.schema`,
   `aibi.core.importers.errors` and `infer`, `aibi.core.store.sources` and `build` (D438,

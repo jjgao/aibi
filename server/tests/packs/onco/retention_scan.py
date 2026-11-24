@@ -788,6 +788,22 @@ def matrix_file(marker: Marker) -> bytes:
     return "".join(out).encode()
 
 
+def definition_files(marker: Marker) -> dict[str, bytes]:
+    """The study's gene panel definitions (M4.2b-2b-ii slice B, D448), a value of the marker in
+    every value-bearing position: each file's name, its ``stable_id`` (the matrix's panels), its
+    description and its genes (the MAF's symbols, as written); the count of base pairs is a
+    number. The last line has no line end, as the real files'."""
+    lo, up, _ = marker
+    found: dict[str, bytes] = {}
+    for panel in (1, 2):
+        genes = "\t".join(f"G{i}{up}" for i in range(panel, ROWS, 3))
+        found[f"panel{panel}_{lo}.txt"] = (
+            f"stable_id: P{panel}{up}\ndescription: Panel {lo}\ngene_list: {genes}\n"
+            f"number_of_profiled_coding_base_pairs: {panel}000"
+        ).encode()
+    return found
+
+
 def case_list_file(marker: Marker, *, late: bool = False) -> bytes:
     """The ``_sequenced`` case list: its study id, name and description carry the marker, its
     ids are the sample file's; with ``late`` its last id is no sample's."""
@@ -807,8 +823,8 @@ def study(
     """A study directory whose every meta value, file name and directory name carries the marker,
     but for cBioPortal's vocabulary (``FIELDS``): its ``type_of_cancer`` is an OncoTree code by
     its form, as the validator reads it. It has a MAF and a ``case_lists`` directory (D444), an
-    SV file (D445), a discrete CNA matrix with its ``_cna`` list (D446) and a gene panel matrix
-    (D447)."""
+    SV file (D445), a discrete CNA matrix with its ``_cna`` list (D446), a gene panel matrix
+    (D447) and its ``gene_panels`` definitions (D448), from which the MAF's coverage is built."""
     lo, up, _ = marker
     directory = root / f"s{lo}"
     directory.mkdir()
@@ -862,6 +878,9 @@ def study(
         case_list_file(marker, late=list_late)
     )
     (directory / "case_lists" / f"cnas_{lo}.txt").write_bytes(cna_list_file(marker))
+    (directory / "gene_panels").mkdir()
+    for name, content in definition_files(marker).items():
+        (directory / "gene_panels" / name).write_bytes(content)
     return directory
 
 
@@ -1108,8 +1127,14 @@ FIELDS: Mapping[str, frozenset[str]] = {
             "meta_cna.txt",
             "meta_gene_panel_matrix.txt",
             "case_lists",
+            "gene_panels",
         }
     ),
+    "a definition's file name": frozenset(),
+    "definition: stable_id": frozenset(),
+    "definition: description": frozenset(),
+    "definition: gene_list": frozenset(),
+    "definition: number_of_profiled_coding_base_pairs": frozenset({"#"}),
     "meta_mutations.txt: cancer_study_identifier": frozenset(),
     "meta_mutations.txt: genetic_alteration_type": frozenset({"MUTATION_EXTENDED"}),
     "meta_mutations.txt: datatype": frozenset({"MAF"}),
@@ -1239,7 +1264,13 @@ def _study(directory: Path, out: dict[str, list[str]]) -> None:
     out.setdefault("a study's directory name", []).append(directory.name)
     for path in sorted(directory.iterdir()):
         out.setdefault("a study's file name", []).append(path.name)
-        if path.is_dir():
+        if path.is_dir() and path.name == "gene_panels":
+            for inner in sorted(path.iterdir()):
+                out.setdefault("a definition's file name", []).append(inner.name)
+                for line in inner.read_text(encoding="utf-8").splitlines():
+                    key, _, value = line.partition(": ")
+                    out.setdefault(f"definition: {key}", []).append(value)
+        elif path.is_dir():
             for inner in sorted(path.iterdir()):
                 out.setdefault("a case list's file name", []).append(inner.name)
                 for line in inner.read_text(encoding="utf-8").splitlines():
