@@ -19,12 +19,20 @@ with and without a scope x lookup leaves x ``negate`` x ``not``), before and aft
 
 *k* is not an axis: a per-unit answer does not depend on it (the analyses' refusals and withheld
 forms under *k* are held in ``test_coverage.py``).
+
+By default the SQL-vs-evaluator part runs on a deterministic stratified sample of the cases (every
+family of case, ``family``, keeps members at a fixed stride, ``SAMPLE_STRIDE``, in batches of
+``SAMPLE_BATCH``); the evaluator-vs-predictor part always runs on every case. The full sweep (every
+case through SQL, in batches of ``BATCH``) runs with ``AIBI_ORACLE_FULL=1`` in the environment.
+CI runs the sample alone; the full sweep (about 5 minutes) is run by hand before a change to
+``sql.py``, ``grouped.py`` or the coverage predictor.
 """
 
 import ast
 import functools
 import importlib.util
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -39,6 +47,38 @@ HERE = Path(__file__).resolve().parent
 TABLE = HERE / "coverage_consequences.md"
 BATCH = 120
 """The cohorts of one worker run: fewer worker runs than cases, each well inside the limits."""
+FULL = os.environ.get("AIBI_ORACLE_FULL") == "1"
+"""Whether every case goes through SQL (``AIBI_ORACLE_FULL=1``), else the stratified sample."""
+SAMPLE_STRIDE = 7
+"""The sample takes every seventh case of each family, from an offset the family's position
+turns, so that each ``where`` of the grammar is taken in some family."""
+SAMPLE_BATCH = 40
+"""The sample's cohorts of one worker run: several runs, the last a short one."""
+SAMPLE_COHORTS = 160
+"""The sample's size (SPEC D448 says it): a change of the stride or the grammar moves it here."""
+SAMPLE_FAMILIES = 90
+"""The families of case after the coverage, each of which the sample holds a member of."""
+
+
+def family(shape: str) -> str:
+    """A case's family: its shape without its ``where`` (negation, quantifier list, lift and
+    form for ``exists``; the scope and lift for ``covered``)."""
+    return shape.split("(", 1)[0]
+
+
+def sampled(shapes: Sequence[tuple[str, str]]) -> list[int]:
+    """The indices of ``shapes`` (unit, shape) the SQL part runs by default: in each family, in
+    order of first appearance, the members at ``SAMPLE_STRIDE`` from an offset of the family's
+    index modulo the stride (a family smaller than its offset keeps its first member)."""
+    members: dict[tuple[str, str], list[int]] = {}
+    for index, (unit, shape) in enumerate(shapes):
+        members.setdefault((unit, family(shape)), []).append(index)
+    chosen: list[int] = []
+    for position, found in enumerate(members.values()):
+        offset = position % SAMPLE_STRIDE
+        picked = found[offset::SAMPLE_STRIDE] or found[:1]
+        chosen.extend(picked)
+    return sorted(chosen)
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -152,7 +192,7 @@ def sql_values(
     cohorts: Sequence[Any], sources: Mapping[str, Any], path: str, monkeypatch: pytest.MonkeyPatch
 ) -> list[Any]:
     """Each cohort's truth values by the SQL compiler taking ``path``, through the worker, in
-    batches of ``BATCH`` cohorts a worker run."""
+    batches of ``BATCH`` cohorts a worker run (``SAMPLE_BATCH`` for the sample)."""
     from aibi.core.engine import sql
     from aibi.core.engine.queries import run_cohorts
     from aibi.core.engine.worker import Workers
@@ -162,8 +202,9 @@ def sql_values(
     found: list[Any] = []
     with monkeypatch.context() as patch:
         patch.setattr(sql, "_Compiler", forcing().forced_compiler(path))
-        for start in range(0, len(cohorts), BATCH):
-            part = cohorts[start : start + BATCH]
+        size = BATCH if FULL else SAMPLE_BATCH
+        for start in range(0, len(cohorts), size):
+            part = cohorts[start : start + size]
             counted = run_cohorts(part, sources, workers, values=True)
             found.extend(c.values for c in counted)
     return found
@@ -199,7 +240,8 @@ def test_the_engine_is_the_predictor_s(
     predictor (answer, reasons, flags; refusal codes), and after the coverage the SQL compiler
     equal to the evaluator by both paths, through the worker (before it, the release has no
     coverage of the pack's and the engine's own differential holds the compiler; a compile is
-    most of this test's time)."""
+    most of this test's time), on the stratified sample by default and on every case with
+    ``AIBI_ORACLE_FULL=1``; the sample holds a member of every family and every leaf kind."""
     from aibi.core.engine.evaluate import evaluate
 
     p = predictor()
@@ -211,6 +253,7 @@ def test_the_engine_is_the_predictor_s(
         sources = {manifest: world.store.sources(manifest)}
         cohorts: list[Any] = []
         expected: list[tuple[Any, ...]] = []
+        shapes: list[tuple[str, str]] = []
         for case in p.cases(definitions):
             totals["cases"] += 1
             found = resolved(release, case.clause, case.unit, registry)
@@ -231,6 +274,23 @@ def test_the_engine_is_the_predictor_s(
                 totals["answers"] += 1
             cohorts.append(found)
             expected.append(tuple(values))
+            shapes.append((case.unit, case.shape))
+        if definitions and not FULL:
+            chosen = sampled(shapes)
+            kept = [shapes[i] for i in chosen]
+            families = {(u, family(s)) for u, s in shapes}
+            assert {(u, family(s)) for u, s in kept} == families
+            assert (len(kept), len(families)) == (SAMPLE_COHORTS, SAMPLE_FAMILIES)
+            for kind in (
+                "sample_type=",
+                "not hgvsp_short=",
+                "hugo_symbol=TP53|GENEX",
+                "mutation_status=",
+            ):
+                assert any(kind in s for _, s in kept), kind
+            cohorts = [cohorts[i] for i in chosen]
+            expected = [expected[i] for i in chosen]
+            totals["sql"] = len(cohorts)
         for path in ("main", "one_group") if definitions else ():
             got = sql_values(cohorts, sources, path, monkeypatch)
             mismatched = [

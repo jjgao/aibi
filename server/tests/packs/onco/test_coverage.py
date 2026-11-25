@@ -24,6 +24,7 @@ import importlib
 import importlib.util
 import itertools
 import json
+import os
 import tracemalloc
 import unicodedata
 from collections.abc import Mapping
@@ -1735,9 +1736,11 @@ def test_the_fold_agrees_with_the_model_over_every_code_point() -> None:
     definitions (8) and at 4 (``TP53``'s own length, where a ligature or a fullwidth letter
     must still be read): ``folded`` is the unbounded N wherever a gene could equal it (plan r3
     m6: the two single-code-point lemmas, no kept point normalises to nothing and none but an
-    ASCII one's decomposition is ASCII, hold over every code point, so the bound is exact)."""
+    ASCII one's decomposition is ASCII, hold over every code point, so the bound is exact). By
+    default at 8 alone; at 4 too with ``AIBI_ORACLE_FULL=1`` (the seeded test below holds the
+    bounds 1, 4, 8, 15, 16, 17 and 100 on every run)."""
     removed = removed_points()
-    for bound in (4, 8):
+    for bound in (4, 8) if os.environ.get("AIBI_ORACLE_FULL") == "1" else (8,):
         cells = (
             cell
             for point in range(0x110000)
@@ -1750,8 +1753,8 @@ def test_the_fold_agrees_with_the_model_over_every_code_point() -> None:
 @UNICODE_15
 def test_the_fold_agrees_over_composition_at_each_bound() -> None:
     """Seeded sequences of combining marks, Hangul jamo, ligatures, fullwidth forms, the Kelvin
-    sign and invisible points around genes of 1 to 100 characters, at the bounds 1, 15, 16, 17
-    and 100 (plan r3 m5, m6): ``folded`` is the model's N wherever a gene could equal it, and a
+    sign and invisible points around genes of 1 to 100 characters, at the bounds 1, 4, 8, 15, 16,
+    17 and 100 (plan r3 m5, m6): ``folded`` is the model's N wherever a gene could equal it, and a
     cell one kept code point past the bound is never read as a gene."""
     import random
 
@@ -1762,7 +1765,7 @@ def test_the_fold_agrees_over_composition_at_each_bound() -> None:
         *"\uff34\uff30\uff15\uff13\u2160\u3381\u1d2c\u200b\u00ad\u2060\u2800 \u3000",
         *"TPKRASEGFtpkrasegf0123456789-._",
     ]
-    for bound in (1, 15, 16, 17, 100):
+    for bound in (1, 4, 8, 15, 16, 17, 100):
         cells = []
         for _ in range(4000):
             gene = "".join(
