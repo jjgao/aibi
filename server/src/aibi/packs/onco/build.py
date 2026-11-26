@@ -44,7 +44,7 @@ from aibi.core.schema.output import Segment, data, text
 from aibi.core.schema.pack_api import ImportNote, Previous, Reshaped
 from aibi.core.store.build import Layout
 from aibi.core.store.sources import RawSource, SourceValue, TextSource, TypedSource
-from aibi.packs.onco import cna, panels, structural
+from aibi.packs.onco import cna, genepanels, panels, structural
 from aibi.packs.onco.attributes import MONTHS_UNITS, PATIENT_ID, SAMPLE_ID, TIME_OFFSETS
 from aibi.packs.onco.caselists import CaseList
 from aibi.packs.onco.clinical import SETTINGS, Clinical, Column
@@ -786,6 +786,157 @@ def _gene_panel_matrix(
     return descriptors, TextSource(matrix.data), layout, notes
 
 
+MUTATION_COVERAGE = (
+    "The study's gene panel definitions (gene_panels/), each sample assigned the panel its gene "
+    "panel matrix mutations cell names, and the genes each panel lists (D448)"
+)
+MUTATION_FILTER = (
+    "The MAF's variant classifications and mutation statuses, each as the file writes it: the "
+    "kinds of row the coverage speaks for (D448)"
+)
+MUTATION_PANEL = "A gene panel definition's stable_id, as written (D448)"
+MUTATION_GENE = "A gene panel definition's gene_list: a gene symbol, as written (D448)"
+MUTATION_WITHHELD = (
+    "The study's gene panel definitions are read, and the mutations' coverage is withheld: "
+)
+MUTATION_UNUSED = "Gene panel definitions no sample's gene panel matrix mutations cell names"
+MUTATION_UNSET = (
+    " has cells that are empty or a spelling of no value: a row of one is UNKNOWN to a question "
+    "the coverage closes, never a closed FALSE"
+)
+MUTATION_OUTSIDE = (
+    "Values of the mutations' row-kind filter that are not a variant classification or mutation "
+    "status the MAF format names; two spellings of one kind are read as two kinds (D448)"
+)
+MUTATION_UNLISTED = (
+    "Mutation rows whose gene symbol no gene panel definition lists, by an alias or a symbol "
+    "outside the panels; each is evidence where it is, and a definition's gene is never read "
+    "through it (D448)"
+)
+
+
+def _mutation_coverage(
+    curation: "_Curation",
+    found: genepanels.Coverage,
+    ids: Mapping[str, str],
+    sample_key: str,
+) -> tuple[list[Descriptor], dict[str, RawSource], dict[str, Layout], list[ImportNote]]:
+    """The MAF's coverage (D448): its two tables, their columns and the coverage descriptor, or a
+    note of why it is withheld; and the notes of the samples it leaves out and of what it reads
+    of the MAF."""
+    definitions = found.definitions
+    notes: list[ImportNote] = [
+        ImportNote(
+            "not_proposed",
+            genepanels.MUTATION_ASSIGNMENT,
+            [text(genepanels.LEFT_OUT[reason])],
+            count=count,
+        )
+        for reason, count in definitions.left
+    ]
+    if definitions.unused:
+        notes.append(
+            ImportNote(
+                "not_proposed",
+                genepanels.MUTATION_GROUPS,
+                [text(MUTATION_UNUSED)],
+                count=definitions.unused,
+            )
+        )
+    if found.withheld is not None:
+        notes.append(
+            ImportNote("not_proposed", MUTATIONS, [text(MUTATION_WITHHELD + found.withheld)])
+        )
+        return [], {}, {}, notes
+
+    def source(table: str) -> dict[str, JsonValue]:
+        return {"kind": "pack", "name": table, "original_name": genepanels.GENE_PANELS}
+
+    meta: Mapping[str, Entry] = {"meta": ("MUTATION_EXTENDED:MAF", "imported", None)}
+    assignment, groups = genepanels.MUTATION_ASSIGNMENT, genepanels.MUTATION_GROUPS
+    descriptors = [
+        _plain_table(
+            curation,
+            assignment,
+            ("Mutation panel assignments", "One row per sample assigned a defined gene panel"),
+            "coverage",
+            None,
+            "onco:mutation_assignment",
+            source(assignment),
+            MUTATION_COVERAGE,
+            meta,
+        ),
+        _cna_column(curation, assignment, "sample_id", "Sample id", MATRIX_SAMPLE),
+        _cna_column(curation, assignment, "panel", "Panel", MUTATION_PANEL),
+        _plain_table(
+            curation,
+            groups,
+            ("Mutation panel genes", "One row per defined gene panel and gene it lists"),
+            "coverage",
+            None,
+            "onco:mutation_group",
+            source(groups),
+            MUTATION_COVERAGE,
+            meta,
+        ),
+        _cna_column(curation, groups, "panel", "Panel", MUTATION_PANEL),
+        _cna_column(curation, groups, "gene", "Gene", MUTATION_GENE),
+    ]
+    barcode = ids[BARCODE]
+    parents: dict[str, JsonValue] = {
+        "assignment": {
+            "table": assignment,
+            "parent_columns": {"sample_id": sample_key},
+            "group_column": "panel",
+        },
+        "groups": {
+            "table": groups,
+            "group_column": "panel",
+            "scope_columns": {"gene": ids[HUGO]},
+        },
+    }
+    record_filter: dict[str, JsonValue] = {
+        ids[name]: list(values) for name, values in found.record_filter
+    }
+    descriptors.append(
+        curation.descriptor(
+            "coverage",
+            f"cov:{MUTATIONS}.{barcode}",
+            (f"{MUTATIONS}.{barcode} coverage", "imported_default"),
+            {
+                "relationship": (f"rel:{MUTATIONS}.{barcode}", "imported", MUTATION_COVERAGE),
+                "parents": (parents, "imported", MUTATION_COVERAGE),
+                "record_filter": (record_filter, "imported", MUTATION_FILTER),
+            },
+        )
+    )
+    columns = {assignment: ("sample_id", "panel"), groups: ("panel", "gene")}
+    rows: dict[str, tuple[tuple[SourceValue, ...], ...]] = {
+        assignment: definitions.assignment,
+        groups: definitions.groups,
+    }
+    sources: dict[str, RawSource] = {
+        table: TypedSource(names, rows[table]) for table, names in columns.items()
+    }
+    layouts = {
+        table: Layout(table, tuple((name, name) for name in names))
+        for table, names in columns.items()
+    }
+    for name, count in found.unset:
+        said: list[Segment] = [text("The column "), data(name), text(MUTATION_UNSET)]
+        notes.append(ImportNote("not_proposed", f"{MUTATIONS}.{ids[name]}", said, count=count))
+    if found.outside:
+        notes.append(
+            ImportNote(
+                "not_proposed",
+                f"cov:{MUTATIONS}.{barcode}",
+                [text(MUTATION_OUTSIDE)],
+                count=found.outside,
+            )
+        )
+    return descriptors, sources, layouts, notes
+
+
 LIST_COLUMNS = ("stable_id", "name", "description", "category")
 MEMBER_COLUMNS = ("case_list", "sample_id")
 
@@ -877,12 +1028,14 @@ def describe(
     sv: structural.Structural | None = None,
     copy_number: cna.Cna | None = None,
     matrix: panels.Matrix | None = None,
+    coverage: genepanels.Coverage | None = None,
 ) -> Described:
     """The study's descriptors, snapshots, layouts and notes: ``files`` are the clinical files,
     the patient file first where there is one; ``maf`` the study's MAF, read, and ``lists`` its
     case lists (D444); ``sv`` its structural variant file, read (D445); ``copy_number`` its discrete
     copy-number matrix, read, whose table's dropped cells are declared (D401, D446); ``matrix`` its
-    gene panel matrix, read (D447)."""
+    gene panel matrix, read (D447); ``coverage`` the MAF's coverage from the study's gene panel
+    definitions, built or withheld (D448)."""
     curation = _Curation(by, at)
     descriptors: list[Descriptor] = [_dataset(curation, fields, name, location)]
     sources: dict[str, RawSource] = {}
@@ -947,6 +1100,22 @@ def describe(
         sources[MUTATIONS] = raw
         layouts[MUTATIONS] = layout
         notes.extend(renamed)
+        if coverage is not None:
+            ids = {name: id for id, name in layout.columns}
+            more, raws, laid, said = _mutation_coverage(curation, coverage, ids, sample_key)
+            descriptors.extend(more)
+            sources.update(raws)
+            layouts.update(laid)
+            notes.extend(said)
+            if maf.unlisted and coverage.withheld is None:
+                notes.append(
+                    ImportNote(
+                        "not_proposed",
+                        f"{MUTATIONS}.{ids[HUGO]}",
+                        [text(MUTATION_UNLISTED)],
+                        count=maf.unlisted,
+                    )
+                )
     if lists:
         more, raws, laid = _case_lists(curation, lists, sample_key)
         descriptors.extend(more)

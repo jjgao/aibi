@@ -5,8 +5,10 @@ meta reading of C:826-1000 and its place among the files, V:5579-5586).
 
 Discovery and the importer reach this module through calls that hold no check of their own
 (``discovered``, ``used``, ``noted``, ``imported``): every check of the matrix meta and of its data
-file is here. The matrix is a table and nothing more (D447): no coverage, no gene panel
-definition, no claim about what a panel assays.
+file is here. The matrix is a table and nothing more (D447): it declares no coverage, reads no
+gene panel definition and claims nothing about what a panel assays. From D448 it hands its rows'
+``mutations`` cells to ``genepanels`` (``Matrix.assigned``), which reads the study's definitions
+and builds the MAF's coverage from them; ``used`` takes the ``gene_panels`` entry too.
 
 **The meta** (``discovered``, after the discrete copy-number meta's): a second matrix meta is
 ``DUPLICATE_PROFILE_META`` (the reference validates neither, V:5582); the data file is resolved
@@ -270,6 +272,9 @@ class Matrix:
     settings: ParseSettings
     columns: tuple[MatrixColumn, ...]
     rows: int
+    assigned: tuple[tuple[str, str], ...] | None = None
+    """Each row's sample id and its ``mutations`` cell, in the file's order, where the study has a
+    mutation meta and the matrix the column ``mutations``; ``None`` otherwise (D448)."""
 
     @property
     def cells(self) -> int:
@@ -305,9 +310,11 @@ def discovered(
     return PanelMeta(name, entry, profiles(raws))
 
 
-def used(found: PanelMeta | None) -> tuple[str, ...]:
-    """The entries ``found`` names, the meta file and its data file, or none."""
-    return () if found is None else (found.meta, found.data.name)
+def used(found: PanelMeta | None, definitions: DirectoryEntry | None = None) -> tuple[str, ...]:
+    """The entries ``found`` names, the meta file and its data file, or none, and the
+    ``gene_panels`` directory's entry where the study has one (``entry``, D448)."""
+    named = () if found is None else (found.meta, found.data.name)
+    return named + (() if definitions is None else (definitions.name,))
 
 
 def noted(metas: Mapping[str, tuple[str, Mapping[str, str]]]) -> list[ImportNote]:
@@ -382,6 +389,7 @@ class _Reading:
         self.joined = ""
         self.maf: int | None = None
         self.seen: set[str] = set()
+        self.assigned: list[tuple[str, str]] = []
         self.distinct: list[set[str | bytes]] = []
         self.present: list[int] = []
 
@@ -501,6 +509,8 @@ class _Reading:
             self.cell = self.refuse(code, number, column + 1, reason)
             return
         self.seen.add(fields[0])
+        if self.maf is not None:
+            self.assigned.append((fields[0], fields[self.maf]))
         for index in range(1, self.width):
             cell = fields[index]
             if cell == NA:
@@ -573,7 +583,10 @@ class _Reading:
             distinct = len(self.distinct[index])
             category = 0 < distinct <= CATEGORY_VALUES and 2 * distinct <= self.present[index]
             columns.append(MatrixColumn(name, category))
-        return Matrix(self.name, data, settings(self.top, False), tuple(columns), self.rows)
+        assigned = None if self.maf is None else tuple(self.assigned)
+        return Matrix(
+            self.name, data, settings(self.top, False), tuple(columns), self.rows, assigned
+        )
 
 
 def read(

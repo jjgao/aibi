@@ -37,7 +37,7 @@ from aibi.core.store.edits import EditRefused
 
 HERE = Path(__file__).resolve().parent
 DEMO = HERE.parents[3] / "fixtures" / "onco" / "demo_study"
-BY = "importer:onco@0.9.0"
+BY = "importer:onco@0.10.0"
 
 
 def copy_demo(world: Any, name: str = "demo") -> Path:
@@ -106,6 +106,8 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "cna_assignment",
         "cna_groups",
         "gene_panel_matrix",
+        "mutation_assignment",
+        "mutation_groups",
     }
     patients = found["patients"]
     assert isinstance(patients, TableDescriptor)
@@ -135,7 +137,11 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
         "mutations.hugo_symbol": "string",
         "mutations.entrez_gene_id": "integer",
         "mutations.tumor_sample_barcode": "string",
-        "mutations.variant_classification": "string",
+        "mutations.variant_classification": "category",
+        "mutation_assignment.sample_id": "string",
+        "mutation_assignment.panel": "string",
+        "mutation_groups.panel": "string",
+        "mutation_groups.gene": "string",
         "mutations.hgvsp_short": "string",
         "case_lists.stable_id": "string",
         "case_lists.name": "string",
@@ -203,6 +209,8 @@ def test_the_demo_study_imports(world: Any, registry: PackRegistry) -> None:
     assert {t for t, role in roles.items() if role == "coverage"} == {
         "cna_assignment",
         "cna_groups",
+        "mutation_assignment",
+        "mutation_groups",
     }
     os_months = found["patients.os_months"]
     assert isinstance(os_months, ColumnDescriptor)
@@ -233,6 +241,8 @@ DEMO_NOTES = [
     "not_proposed cna_calls.cna: The column \u00abcna\u00bb holds -1.5, as the matrix writes it; "
     "cBioPortal's loader is said to read it as -2 (not verified against its source), which the "
     "column's value map states, for a curator to assert (1; rows [])",
+    "not_proposed mutation_assignment: Samples whose gene panel matrix mutations cell is NA, which "
+    "gives no panel (7; rows [])",
     "not_proposed patients.sex: The column \u00abSEX\u00bb has cells with spaces around them, "
     "read as written; cBioPortal trims them, and trimming is not proposed (1; rows [7])",
     "reshaped cna_calls.cna: Source cells the pack's importer dropped because their value means "

@@ -1661,8 +1661,16 @@ def test_the_refusal_codes_are_pinned() -> None:
         "DUPLICATE_SAMPLE",
         "NOT_SEQUENCED",
         "MISSING_SPELLING",
+        "GENE_PANELS",
+        "GENE_PANEL",
+        "PANEL_ID",
+        "GENE_LIST",
+        "COMBINED_TOKEN",
+        "TOKEN_CLASS",
+        "TOO_MANY_GENES",
+        "GENE_SPELLING",
     )
-    assert len(importlib.import_module(REFUSALS).CODES) == 71
+    assert len(importlib.import_module(REFUSALS).CODES) == 79
 
 
 # --- Sentinel: no value a file holds is shown -----------------------------------------------------

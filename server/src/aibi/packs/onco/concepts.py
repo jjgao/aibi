@@ -6,7 +6,8 @@ concept's ``version`` is bumped when its fields change, each with a pack version
 - **Tables:** ``onco:patient``, ``onco:sample``, ``onco:gene``, from 0.4.0 (D444)
   ``onco:mutation``, ``onco:case_list`` and ``onco:case_list_member``, from 0.5.0 (D445)
   ``onco:structural_variant``, from 0.6.0 (D446) ``onco:cna_call``, ``onco:cna_assignment``
-  and ``onco:cna_group``, and from 0.7.0 (D447) ``onco:gene_panel_matrix``.
+  and ``onco:cna_group``, from 0.7.0 (D447) ``onco:gene_panel_matrix``, and from 0.10.0 (D448)
+  ``onco:mutation_assignment`` and ``onco:mutation_group``.
 - **Values:**
   - ``onco:gene_symbol``, with neither units nor permissible values;
   - ``onco:sample_type``, cBioPortal's seven ``Sample.Type`` constants, labelled with its display
@@ -228,6 +229,19 @@ CONCEPTS: tuple[ConceptDescriptor, ...] = (
         "onco:cna_group",
         "Copy-number group",
         "Rows are the genes a group of samples was assessed at in a discrete copy-number matrix.",
+        "table",
+    ),
+    _concept(
+        "onco:mutation_assignment",
+        "Mutation panel assignment",
+        "Rows assign a sample to the gene panel its mutations were called on, by a gene panel "
+        "definition's stable_id.",
+        "table",
+    ),
+    _concept(
+        "onco:mutation_group",
+        "Mutation panel gene",
+        "Rows are the genes a gene panel definition lists, one row per panel and gene.",
         "table",
     ),
     _concept(
